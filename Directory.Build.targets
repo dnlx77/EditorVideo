@@ -5,6 +5,9 @@
       <WarningLevel>Level4</WarningLevel>
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <!-- Gli header inclusi con <> (Qt, FFmpeg, gtest) sono esterni: niente warning dal codice di terze parti. -->
+      <TreatAngleIncludeAsExternal>true</TreatAngleIncludeAsExternal>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
       <!-- Qt 6 richiede /Zc:__cplusplus; /utf-8 per le stringhe in italiano. -->
       <AdditionalOptions>/Zc:__cplusplus /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)src;$(VcpkgInstalledDir)$(VcpkgTriplet)\include\Qt6;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
