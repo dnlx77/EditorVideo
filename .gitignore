@@ -1,0 +1,11 @@
+# Visual Studio
+.vs/
+*.user
+*.aps
+x64/
+bin/
+obj/
+out/
+
+# vcpkg (manifest mode)
+vcpkg_installed/
