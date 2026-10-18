@@ -1,8 +1,9 @@
 #pragma once
 
+#include "EditorCore/MediaError.h"
+
 #include <atomic>
 #include <cstdint>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -57,10 +58,10 @@ struct MediaInfo
 };
 
 // Errore di analisi con un messaggio in italiano da mostrare all'utente.
-class ProbeError : public std::runtime_error
+class ProbeError : public MediaError
 {
 public:
-    using std::runtime_error::runtime_error;
+    using MediaError::MediaError;
 };
 
 // Lanciata quando l'analisi viene interrotta tramite il flag di annullamento.
