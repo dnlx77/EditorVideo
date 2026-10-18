@@ -1,11 +1,13 @@
 #include "EditorApp/MainWindow.h"
 
+#include "EditorApp/PlayerWidget.h"
 #include "EditorCore/LibraryInfo.h"
 #include "EditorCore/MediaProbe.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QThread>
+#include <QtGui/QKeyEvent>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QHeaderView>
@@ -99,7 +101,7 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     setWindowTitle(QStringLiteral("EditorVideo"));
-    resize(1100, 700);
+    resize(1300, 800);
 
     placeholder_ = new QLabel(QStringLiteral("Apri un file video da File > Apri..."));
     placeholder_->setAlignment(Qt::AlignCenter);
@@ -128,11 +130,30 @@ MainWindow::MainWindow(QWidget* parent)
     keyframeLayout->addWidget(keyframeTitle_);
     keyframeLayout->addWidget(keyframeList_);
 
+    // Gli elenchi userebbero Spazio e frecce per la selezione: li lasciamo ai comandi di riproduzione.
+    infoTree_->installEventFilter(this);
+    keyframeList_->installEventFilter(this);
+
+    // Un clic su un fotogramma chiave porta l'anteprima in quel punto.
+    connect(keyframeList_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item) {
+        player_->seekTo(item->data(1, Qt::UserRole).toDouble());
+    });
+
+    player_ = new PlayerWidget;
+
+    // Anteprima al centro; a destra informazioni sul file (sopra) e fotogrammi chiave (sotto).
+    auto* sidePanel = new QSplitter(Qt::Vertical);
+    sidePanel->addWidget(infoTree_);
+    sidePanel->addWidget(keyframePanel);
+    sidePanel->setStretchFactor(0, 2);
+    sidePanel->setStretchFactor(1, 1);
+
     auto* splitter = new QSplitter;
-    splitter->addWidget(infoTree_);
-    splitter->addWidget(keyframePanel);
+    splitter->addWidget(player_);
+    splitter->addWidget(sidePanel);
     splitter->setStretchFactor(0, 3);
     splitter->setStretchFactor(1, 1);
+    splitter->setSizes({900, 380});
 
     pages_ = new QStackedWidget(this);
     pages_->addWidget(placeholder_);
@@ -152,6 +173,19 @@ MainWindow::~MainWindow()
     }
 }
 
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event->type() == QEvent::ShortcutOverride) {
+        const auto* key = static_cast<QKeyEvent*>(event);
+        const bool playbackKey = key->key() == Qt::Key_Space || key->key() == Qt::Key_Left
+                              || key->key() == Qt::Key_Right || key->key() == Qt::Key_Home;
+        // Bloccando l'evento senza accettarlo, il tasto va alla scorciatoia del menu Riproduzione.
+        if (playbackKey && key->modifiers() == Qt::NoModifier)
+            return true;
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
 void MainWindow::createMenus()
 {
     QMenu* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
@@ -162,6 +196,19 @@ void MainWindow::createMenus()
     fileMenu->addSeparator();
     QAction* exitAction = fileMenu->addAction(QStringLiteral("&Esci"), this, &QWidget::close);
     exitAction->setShortcut(QKeySequence(QStringLiteral("Alt+F4")));
+
+    QMenu* playMenu = menuBar()->addMenu(QStringLiteral("&Riproduzione"));
+    QAction* playAction = playMenu->addAction(QStringLiteral("Riproduci / &Pausa"), this,
+                                              [this] { player_->togglePlayPause(); });
+    playAction->setShortcut(QKeySequence(Qt::Key_Space));
+    QAction* backAction = playMenu->addAction(QStringLiteral("&Indietro di 5 secondi"), this,
+                                              [this] { player_->seekRelative(-5.0); });
+    backAction->setShortcut(QKeySequence(Qt::Key_Left));
+    QAction* forwardAction = playMenu->addAction(QStringLiteral("&Avanti di 5 secondi"), this,
+                                                 [this] { player_->seekRelative(5.0); });
+    forwardAction->setShortcut(QKeySequence(Qt::Key_Right));
+    QAction* startAction = playMenu->addAction(QStringLiteral("Vai all'i&nizio"), this, [this] { player_->seekTo(0.0); });
+    startAction->setShortcut(QKeySequence(Qt::Key_Home));
 
     QMenu* helpMenu = menuBar()->addMenu(QStringLiteral("&Aiuto"));
     helpMenu->addAction(QStringLiteral("&Informazioni su EditorVideo"), this, &MainWindow::showAbout);
@@ -206,6 +253,7 @@ void MainWindow::openPath(const QString& path)
         if (outcome->cancelled)
             return;
         if (!outcome->info) {
+            keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> non disponibili"));
             statusBar()->showMessage(QStringLiteral("Impossibile aprire %1").arg(QFileInfo(nativePath).fileName()));
             QMessageBox::warning(this, QStringLiteral("Impossibile aprire il file"), outcome->error);
             return;
@@ -216,6 +264,14 @@ void MainWindow::openPath(const QString& path)
     setBusy(true);
     statusBar()->showMessage(QStringLiteral("Analisi di %1 in corso...").arg(QFileInfo(nativePath).fileName()));
     probeThread_->start();
+
+    // L'anteprima si apre subito, mentre l'analisi completa (che legge tutto il file) prosegue in background.
+    setWindowTitle(QStringLiteral("%1 - EditorVideo").arg(QFileInfo(nativePath).fileName()));
+    infoTree_->clear();
+    keyframeList_->clear();
+    keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> analisi in corso..."));
+    player_->openFile(nativePath);
+    pages_->setCurrentIndex(1);
 }
 
 void MainWindow::setBusy(bool busy)
@@ -254,8 +310,12 @@ void MainWindow::showInfo(const core::MediaInfo& info)
                                     .arg(info.keyframeStreamIndex));
         QList<QTreeWidgetItem*> rows;
         rows.reserve(static_cast<qsizetype>(info.keyframeTimes.size()));
-        for (std::size_t i = 0; i < info.keyframeTimes.size(); ++i)
-            rows.append(new QTreeWidgetItem({QString::number(i + 1), qs(core::formatDuration(info.keyframeTimes[i]))}));
+        for (std::size_t i = 0; i < info.keyframeTimes.size(); ++i) {
+            auto* row = new QTreeWidgetItem({QString::number(i + 1), qs(core::formatDuration(info.keyframeTimes[i]))});
+            row->setData(1, Qt::UserRole, info.keyframeTimes[i]);
+            row->setToolTip(1, QStringLiteral("Clic per portare l'anteprima qui"));
+            rows.append(row);
+        }
         keyframeList_->addTopLevelItems(rows);
     } else {
         keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> nessun flusso video"));

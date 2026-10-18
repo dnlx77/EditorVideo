@@ -46,11 +46,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="AudioOutput.h" />
     <ClInclude Include="MainWindow.h" />
+    <ClInclude Include="PlayerWidget.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="AudioOutput.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainWindow.cpp" />
+    <ClCompile Include="PlayerWidget.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\EditorCore\EditorCore.vcxproj">
