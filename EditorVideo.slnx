@@ -1,0 +1,18 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/EditorCore/EditorCore.vcxproj" />
+    <Project Path="src/EditorApp/EditorApp.vcxproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EditorTests/EditorTests.vcxproj" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Build.targets" />
+    <File Path="vcpkg.json" />
+    <File Path="README.md" />
+  </Folder>
+</Solution>

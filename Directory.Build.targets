@@ -1,0 +1,22 @@
+<Project>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <WarningLevel>Level4</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <!-- Qt 6 richiede /Zc:__cplusplus; /utf-8 per le stringhe in italiano. -->
+      <AdditionalOptions>/Zc:__cplusplus /utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)src;$(VcpkgInstalledDir)$(VcpkgTriplet)\include\Qt6;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <Import Project="$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets"
+          Condition="'$(VcpkgRoot)' != '' and Exists('$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets')" />
+
+  <Target Name="EditorVideoCheckVcpkg" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(VcpkgRoot)' == '' or !Exists('$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets')"
+           Text="vcpkg non trovato. Installa il componente vcpkg di Visual Studio oppure imposta la variabile d'ambiente VCPKG_ROOT (vedi README.md)." />
+  </Target>
+</Project>
