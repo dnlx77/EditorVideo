@@ -1,0 +1,59 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-2025-vs2026
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\..\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\..\vcpkg-cache
+      # In CI compiliamo solo Release: il triplet "release" evita di costruire anche le librerie Debug.
+      VCPKG_TRIPLET: x64-windows-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installa vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$env:VCPKG_ROOT"
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
+
+      - name: Ripristina la cache di vcpkg
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ env.VCPKG_TRIPLET }}-
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Compila (Release x64)
+        shell: pwsh
+        run: msbuild EditorVideo.slnx /m /nologo /p:Configuration=Release /p:Platform=x64 /p:VcpkgTriplet=$env:VCPKG_TRIPLET
+
+      - name: Salva la cache di vcpkg
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Test
+        shell: pwsh
+        run: bin\x64\Release\EditorTests.exe
+
+      - name: Avvio dell'applicazione
+        shell: pwsh
+        run: |
+          $p = Start-Process bin\x64\Release\EditorVideo.exe -ArgumentList '--smoke-test' -PassThru `
+                 -RedirectStandardOutput smoke.txt -RedirectStandardError smoke-err.txt
+          $null = $p.Handle  # necessario per leggere ExitCode
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "EditorVideo non si è chiuso entro 60 secondi" }
+          Get-Content smoke.txt, smoke-err.txt
+          if ($p.ExitCode -ne 0) { throw "EditorVideo è uscito con codice $($p.ExitCode)" }
