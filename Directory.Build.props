@@ -10,6 +10,12 @@
     <VcpkgEnableManifest>true</VcpkgEnableManifest>
     <VcpkgManifestRoot>$(MSBuildThisFileDirectory)</VcpkgManifestRoot>
     <VcpkgInstalledDir>$(MSBuildThisFileDirectory)vcpkg_installed\</VcpkgInstalledDir>
+    <!--
+      Le DLL le copiamo noi (EditorVideoDeployDlls in Directory.Build.targets). La copia automatica di vcpkg
+      le registra tra i file di ciascun progetto: con la cartella bin condivisa, la pulizia incrementale di
+      MSBuild finiva per cancellare le DLL di FFmpeg copiate da un altro progetto.
+    -->
+    <VcpkgApplocalDeps>false</VcpkgApplocalDeps>
 
     <PlatformToolset Condition="'$(PlatformToolset)' == ''">v145</PlatformToolset>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>

@@ -18,6 +18,22 @@
   <Import Project="$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets"
           Condition="'$(VcpkgRoot)' != '' and Exists('$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets')" />
 
+  <!--
+    Copia accanto a ogni eseguibile tutte le DLL di vcpkg (Qt, FFmpeg, gtest...). Le copie non sono registrate
+    come file del progetto, quindi la pulizia incrementale non le tocca; SkipUnchangedFiles rende la copia istantanea.
+  -->
+  <Target Name="EditorVideoDeployDlls" AfterTargets="Build" Condition="'$(ConfigurationType)' == 'Application'">
+    <PropertyGroup>
+      <_EditorVideoBinDir>$(VcpkgInstalledDir)$(VcpkgTriplet)\bin\</_EditorVideoBinDir>
+      <_EditorVideoBinDir Condition="'$(Configuration)' == 'Debug'">$(VcpkgInstalledDir)$(VcpkgTriplet)\debug\bin\</_EditorVideoBinDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <_EditorVideoDll Include="$(_EditorVideoBinDir)*.dll" />
+    </ItemGroup>
+    <Warning Condition="'@(_EditorVideoDll)' == ''" Text="Nessuna DLL di vcpkg trovata in $(_EditorVideoBinDir)" />
+    <Copy SourceFiles="@(_EditorVideoDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+
   <Target Name="EditorVideoCheckVcpkg" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(VcpkgRoot)' == '' or !Exists('$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets')"
            Text="vcpkg non trovato. Installa il componente vcpkg di Visual Studio oppure imposta la variabile d'ambiente VCPKG_ROOT (vedi README.md)." />

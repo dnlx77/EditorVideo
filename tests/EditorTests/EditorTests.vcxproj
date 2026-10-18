@@ -35,6 +35,11 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="LibraryInfoTests.cpp" />
+    <ClCompile Include="MediaProbeTests.cpp" />
+    <ClCompile Include="SampleMedia.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="SampleMedia.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\EditorCore\EditorCore.vcxproj">

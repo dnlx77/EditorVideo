@@ -21,6 +21,15 @@ int main(int argc, char* argv[])
     editor::app::MainWindow window;
     window.show();
 
+    // "EditorVideo.exe file.mp4" (o un file trascinato sull'icona) apre subito quel file.
+    const QStringList args = QApplication::arguments();
+    for (qsizetype i = 1; i < args.size(); ++i) {
+        if (!args[i].startsWith(QStringLiteral("--"))) {
+            window.openPath(args[i]);
+            break;
+        }
+    }
+
     if (smokeTest) {
         std::printf("Piattaforma Qt: %s\n%s\n", qPrintable(QGuiApplication::platformName()),
                     qPrintable(editor::app::versionSummary()));
