@@ -32,9 +32,15 @@ Se la compilazione dice "vcpkg non trovato", installa il componente vcpkg dal Vi
 | `src/EditorApp` | applicazione Qt 6 | interfaccia grafica, eseguibile `EditorVideo.exe` |
 | `tests/EditorTests` | console (Google Test) | test automatici di `EditorCore` |
 
-Gli eseguibili finiscono in `bin\x64\<Configurazione>\`.
+Gli eseguibili finiscono in `bin\x64\<Configurazione>\`, insieme alle DLL di Qt e FFmpeg copiate da `vcpkg_installed`.
+
+## Uso
+
+- **File > Apri...** (Ctrl+O) analizza un file video o audio e mostra formato del contenitore, durata, flussi (codec, risoluzione, fotogrammi al secondo, canali, bitrate...) e l'elenco dei fotogrammi chiave, cioè i punti in cui si potrà tagliare senza ricodifica.
+- Si può anche passare il file da riga di comando o trascinarlo sull'icona di `EditorVideo.exe`: `EditorVideo.exe "C:\Video\vacanze.mp4"`.
 
 ## Test
 
 - Esegui `EditorTests` (progetto di avvio o da `bin\x64\Debug\EditorTests.exe`), oppure usa Esplora test di Visual Studio.
+- I test di analisi dei file generano al volo piccoli video di prova (MKV, MP4, WAV) con FFmpeg in `%TEMP%\EditorVideoTests`: nel repository non ci sono file binari. Con la variabile d'ambiente `EDITORVIDEO_KEEP_SAMPLES=1` i file restano lì per provarli nell'applicazione.
 - A ogni push GitHub Actions compila la soluzione in Release, lancia i test e avvia l'applicazione con `--smoke-test` per verificare che parta con tutte le DLL.
