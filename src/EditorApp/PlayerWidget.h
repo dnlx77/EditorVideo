@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EditorApp/AudioOutput.h"
+#include "EditorCore/CutSegment.h"
 
 #include <QtWidgets/QWidget>
 
@@ -11,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 class QLabel;
 class QTimer;
@@ -24,10 +26,10 @@ struct VideoFrame;
 
 namespace editor::app {
 
-class SeekSlider;
+class TimelineWidget;
 class VideoView;
 
-// Anteprima con riproduzione audio/video sincronizzata, barra di posizione e spostamento in un punto.
+// Anteprima con riproduzione audio/video sincronizzata, linea del tempo con i fotogrammi chiave e segmento IN-OUT.
 //
 // Due thread di lavoro: uno decodifica il video in una piccola coda, l'altro decodifica l'audio e lo manda
 // alla scheda audio. Un timer nel thread dell'interfaccia legge l'orologio (quanto audio è già stato suonato,
@@ -50,6 +52,17 @@ public:
     double currentPosition();  // secondi
     QString statusText() const;  // es. "Decodifica: GPU (D3D11VA)"
 
+    // Segmento da tenere. IN si aggancia al fotogramma chiave nello stesso punto o prima (taglio senza
+    // ricodifica); OUT comprende il fotogramma visibile. Si lavora sul fotogramma che si vede.
+    void setKeyframes(const std::vector<double>& keyframes);  // dall'analisi del file
+    void markIn();
+    void markOut();
+    void clearSegment();
+    void goToIn();
+    void goToOut();
+    void stepFrame(int direction);  // +1 fotogramma successivo, -1 precedente (mette in pausa)
+    const core::CutSegment& segment() const;
+
 private:
     void play();
     void pause();
@@ -63,11 +76,14 @@ private:
     void showFrameAt(double seconds);
     void updateControls();
     void updatePositionLabel(double seconds);
+    void updateSegmentUi();
+    double markTime() const;
 
     VideoView* view_ = nullptr;
     QToolButton* playButton_ = nullptr;
-    SeekSlider* slider_ = nullptr;
+    TimelineWidget* timeline_ = nullptr;
     QLabel* timeLabel_ = nullptr;
+    QLabel* segmentLabel_ = nullptr;
     QLabel* decoderLabel_ = nullptr;
     QTimer* timer_ = nullptr;
     QTimer* resizeRefresh_ = nullptr;
@@ -80,7 +96,15 @@ private:
 
     double duration_ = 0.0;
     double position_ = 0.0;
+    double displayedTime_ = 0.0;      // tempo del fotogramma visibile
+    double frameDuration_ = 0.04;
+    bool decoderAtDisplayed_ = false; // il decoder è subito dopo il fotogramma visibile
     bool playing_ = false;
+
+    core::CutSegment segment_;
+    bool keyframesKnown_ = false;
+    QString segmentNote_;  // spiegazione dell'ultima operazione su IN/OUT (es. IN agganciato)
+    bool noteIsOutError_ = false;
 
     // Stato condiviso con i thread di lavoro.
     std::thread videoThread_;
