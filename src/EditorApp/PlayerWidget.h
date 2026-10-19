@@ -71,7 +71,8 @@ public:
     void removeRangeAtPlayhead();  // elimina il tratto sotto il cursore
     void clearRanges();
     const core::SegmentList& ranges() const { return ranges_; }
-
+    // Riprende un elenco salvato (es. tornando su un file del progetto). Va chiamato dopo setKeyframes().
+    void setRanges(const core::SegmentList& ranges);
     std::function<void()> onSegmentChanged;  // IN, OUT o elenco dei tratti cambiati (anche aprendo un altro file)
 
 private:

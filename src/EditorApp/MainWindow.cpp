@@ -5,6 +5,7 @@
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
 
+#include <QtCore/QAbstractItemModel>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QThread>
@@ -14,6 +15,7 @@
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QListWidget>
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressDialog>
@@ -146,14 +148,45 @@ MainWindow::MainWindow(QWidget* parent)
     });
 
     player_ = new PlayerWidget;
-    player_->onSegmentChanged = [this] { updateExportAction(); };
+    player_->onSegmentChanged = [this] {
+        // I tratti del file mostrato si salvano subito nel progetto.
+        storeCurrentRanges();
+        refreshClipList();
+        updateExportAction();
+    };
 
-    // Anteprima al centro; a destra informazioni sul file (sopra) e fotogrammi chiave (sotto).
+    // File del progetto: si uniscono nell'ordine dell'elenco, che si cambia trascinando.
+    clipList_ = new QListWidget;
+    clipList_->setDragDropMode(QAbstractItemView::InternalMove);
+    clipList_->setDefaultDropAction(Qt::MoveAction);
+    clipList_->setSelectionMode(QAbstractItemView::SingleSelection);
+    clipList_->setToolTip(QStringLiteral("Clic per modificare un file; trascina per cambiare l'ordine; Canc per toglierlo"));
+    clipList_->installEventFilter(this);
+    connect(clipList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* item) {
+        if (item != nullptr && !updatingList_)
+            selectClip(item->data(Qt::UserRole).toInt());
+    });
+    // Dopo il trascinamento l'elenco viene ricostruito: lo si fa al giro successivo, non dentro la notifica del modello.
+    connect(clipList_->model(), &QAbstractItemModel::rowsMoved, this,
+            [this] { QTimer::singleShot(0, this, [this] { syncOrderFromList(); }); });
+    projectLabel_ = new QLabel;
+    projectLabel_->setWordWrap(true);
+
+    auto* clipPanel = new QWidget;
+    auto* clipLayout = new QVBoxLayout(clipPanel);
+    clipLayout->setContentsMargins(0, 0, 0, 0);
+    clipLayout->addWidget(new QLabel(QStringLiteral("<b>File del progetto</b> (si uniscono in quest'ordine)")));
+    clipLayout->addWidget(clipList_);
+    clipLayout->addWidget(projectLabel_);
+
+    // Anteprima al centro; a destra i file del progetto, le informazioni sul file mostrato e i fotogrammi chiave.
     auto* sidePanel = new QSplitter(Qt::Vertical);
+    sidePanel->addWidget(clipPanel);
     sidePanel->addWidget(infoTree_);
     sidePanel->addWidget(keyframePanel);
-    sidePanel->setStretchFactor(0, 2);
-    sidePanel->setStretchFactor(1, 1);
+    sidePanel->setStretchFactor(0, 1);
+    sidePanel->setStretchFactor(1, 2);
+    sidePanel->setStretchFactor(2, 1);
 
     auto* splitter = new QSplitter;
     splitter->addWidget(player_);
@@ -185,42 +218,70 @@ MainWindow::~MainWindow()
     }
 }
 
-std::vector<core::TimeRange> MainWindow::rangesToExport() const
+std::vector<core::ClipRanges> MainWindow::exportPlan() const
 {
-    // L'elenco dei tratti, se c'è; altrimenti il solo IN-OUT (come allo step 4).
-    if (!player_->ranges().empty())
-        return player_->ranges().ranges();
+    if (project_.empty() || !project_.allAnalyzed())
+        return {};
+    if (project_.clips().size() > 1)
+        return project_.exportPlan();  // ogni file con i suoi tratti, o intero
+
+    // Un solo file: i suoi tratti, oppure il solo IN-OUT (come allo step 4). Il file intero no: sarebbe una copia.
+    const core::Clip& clip = project_.clips().front();
+    if (!clip.segments.empty())
+        return {{clip.path, clip.segments.ranges()}};
     const core::CutSegment& segment = player_->segment();
     if (segment.hasIn() && segment.hasOut())
-        return {{segment.in(), segment.out()}};
+        return {{clip.path, {{segment.in(), segment.out()}}}};
     return {};
+}
+
+double MainWindow::exportLength() const
+{
+    double total = 0.0;
+    for (const core::ClipRanges& clip : exportPlan()) {
+        for (const core::TimeRange& r : clip.ranges)
+            total += r.length();
+    }
+    return total;
 }
 
 void MainWindow::updateExportAction()
 {
     if (exportAction_ == nullptr)
         return;
-    const auto ranges = rangesToExport();
-    exportAction_->setEnabled(!currentPath_.isEmpty() && !ranges.empty() && exportThread_ == nullptr);
-    exportAction_->setText(ranges.size() > 1 ? QStringLiteral("&Esporta %1 tratti uniti...").arg(ranges.size())
-                                             : QStringLiteral("&Esporta segmento..."));
-    exportAction_->setToolTip(exportAction_->isEnabled()
-                                  ? QString()
-                                  : QStringLiteral("Segna IN e OUT (tasti I e O) o aggiungi dei tratti (tasto A)"));
+    const auto plan = exportPlan();
+    std::size_t ranges = 0;
+    for (const auto& clip : plan)
+        ranges += clip.ranges.size();
+    exportAction_->setEnabled(!plan.empty() && exportThread_ == nullptr);
+    if (project_.clips().size() > 1)
+        exportAction_->setText(QStringLiteral("&Esporta %1 file uniti...").arg(project_.clips().size()));
+    else
+        exportAction_->setText(ranges > 1 ? QStringLiteral("&Esporta %1 tratti uniti...").arg(ranges)
+                                          : QStringLiteral("&Esporta segmento..."));
+    QString tip;
+    if (!project_.allAnalyzed())
+        tip = QStringLiteral("Attendi la fine dell'analisi dei file");
+    else if (plan.empty())
+        tip = QStringLiteral("Segna IN e OUT (tasti I e O), aggiungi dei tratti (tasto A) o aggiungi altri file");
+    exportAction_->setToolTip(tip);
+    if (removeClipAction_ != nullptr)
+        removeClipAction_->setEnabled(currentClipId_ != 0);
 }
 
 void MainWindow::exportSegment()
 {
-    if (currentPath_.isEmpty() || rangesToExport().empty() || exportThread_ != nullptr)
+    const auto plan = exportPlan();
+    if (plan.empty() || exportThread_ != nullptr)
         return;
 
-    // Stesso contenitore dell'originale: si propone "<nome>_taglio.<estensione>" nella stessa cartella.
-    const QFileInfo source(currentPath_);
+    // Stesso contenitore del primo file: si propone "<nome>_taglio.<estensione>" (o "_unione") nella sua cartella.
+    const QFileInfo source(QString::fromStdString(plan.front().path));
     const QString extension = source.suffix();
-    const QString suggested = source.dir().filePath(source.completeBaseName() + QStringLiteral("_taglio.") + extension);
+    const QString suffix = plan.size() > 1 ? QStringLiteral("_unione.") : QStringLiteral("_taglio.");
+    const QString suggested = source.dir().filePath(source.completeBaseName() + suffix + extension);
     QString target = QFileDialog::getSaveFileName(
-        this, QStringLiteral("Esporta segmento"), suggested,
-        QStringLiteral("File %1 (*.%2)").arg(extension.toUpper(), extension));
+        this, QStringLiteral("Esporta"), suggested, QStringLiteral("File %1 (*.%2)").arg(extension.toUpper(), extension));
     if (target.isEmpty())
         return;
     if (QFileInfo(target).suffix().compare(extension, Qt::CaseInsensitive) != 0)
@@ -230,21 +291,21 @@ void MainWindow::exportSegment()
 
 bool MainWindow::startExport(const QString& target, bool showResult, std::chrono::milliseconds slowDown)
 {
-    const std::vector<core::TimeRange> ranges = rangesToExport();
-    if (currentPath_.isEmpty() || ranges.empty() || exportThread_ != nullptr)
+    const std::vector<core::ClipRanges> plan = exportPlan();
+    if (plan.empty() || exportThread_ != nullptr)
         return false;
-
     auto outcome = std::make_shared<ExportOutcome>();
     auto progress = std::make_shared<std::atomic<double>>(0.0);
-    const std::string inputPath = currentPath_.toStdString();
     const std::string outputPath = target.toStdString();
 
     cancelExport_ = false;
     exportThread_ = QThread::create([=, cancel = &cancelExport_] {
+        const auto started = std::chrono::steady_clock::now();
         try {
-            outcome->result = core::exportSegments(inputPath, outputPath, ranges, [=](double fraction) {
+            outcome->result = core::exportClips(plan, outputPath, [=](double fraction) {
                 *progress = fraction;
-                if (slowDown.count() > 0)
+                // Rallentamento solo per le prove, e solo all'inizio: quanto basta perché compaia la finestra.
+                if (slowDown.count() > 0 && std::chrono::steady_clock::now() - started < std::chrono::milliseconds(1500))
                     std::this_thread::sleep_for(slowDown);
                 return !cancel->load();
             });
@@ -305,18 +366,35 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
         QMessageBox::warning(this, QStringLiteral("Esportazione non riuscita"), outcome.error);
         return;
     }
-    statusBar()->showMessage(QStringLiteral("Segmento esportato in %1").arg(target), 10000);
+    statusBar()->showMessage(QStringLiteral("Esportato in %1").arg(target), 10000);
+    const int clips = outcome.result->clipCount;
     const int count = outcome.result->segmentCount;
+    QString what = QStringLiteral("Segmento salvato");
+    if (clips > 1)
+        what = QStringLiteral("%1 file uniti (%2 tratti) salvati").arg(clips).arg(count);
+    else if (count > 1)
+        what = QStringLiteral("%1 tratti uniti salvati").arg(count);
     QMessageBox::information(
         this, QStringLiteral("Esportazione completata"),
-        QStringLiteral("%1 salvat%2 in:\n%3\n\nDurata: %4\nSenza ricodifica: stessa qualità dell'originale.")
-            .arg(count > 1 ? QStringLiteral("%1 tratti uniti").arg(count) : QStringLiteral("Segmento"),
-                 count > 1 ? QStringLiteral("i") : QStringLiteral("o"), target,
-                 QString::fromStdString(core::formatDuration(outcome.result->durationSeconds))));
+        QStringLiteral("%1 in:\n%2\n\nDurata: %3\nSenza ricodifica: stessa qualità dell'originale.")
+            .arg(what, target, QString::fromStdString(core::formatDuration(outcome.result->durationSeconds))));
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    if (watched == clipList_ && (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)) {
+        const auto* key = static_cast<QKeyEvent*>(event);
+        if (key->key() == Qt::Key_Delete && key->modifiers() == Qt::NoModifier) {
+            // Con il fuoco sull'elenco dei file, Canc toglie il file dal progetto (non il tratto sotto il cursore).
+            if (event->type() == QEvent::ShortcutOverride) {
+                event->accept();
+                return true;
+            }
+            if (const int id = selectedClipId(); id != 0)
+                removeClip(id);
+            return true;
+        }
+    }
     if (event->type() == QEvent::ShortcutOverride) {
         const auto* key = static_cast<QKeyEvent*>(event);
         static const int playbackKeys[] = {Qt::Key_Space, Qt::Key_Left, Qt::Key_Right, Qt::Key_Home,
@@ -339,6 +417,15 @@ void MainWindow::createMenus()
 
     openAction_ = fileMenu->addAction(QStringLiteral("&Apri..."), this, &MainWindow::openFile);
     openAction_->setShortcut(QKeySequence::Open);
+    openAction_->setStatusTip(QStringLiteral("Apre un file in un nuovo progetto"));
+    QAction* addAction = fileMenu->addAction(QStringLiteral("A&ggiungi file..."), this, &MainWindow::addFilesDialog);
+    addAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    addAction->setStatusTip(QStringLiteral("Aggiunge altri file al progetto, da unire in fondo"));
+    removeClipAction_ = fileMenu->addAction(QStringLiteral("&Togli il file dal progetto"), this, [this] {
+        if (currentClipId_ != 0)
+            removeClip(currentClipId_);
+    });
+    fileMenu->addSeparator();
 
     exportAction_ = fileMenu->addAction(QStringLiteral("&Esporta segmento..."), this, &MainWindow::exportSegment);
     exportAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
@@ -397,26 +484,87 @@ void MainWindow::createMenus()
     helpMenu->addAction(QStringLiteral("&Informazioni su EditorVideo"), this, &MainWindow::showAbout);
 }
 
+namespace {
+
+const QString kVideoFilter = QStringLiteral(
+    "File video e audio (*.mp4 *.mkv *.mov *.avi *.m4v *.webm *.ts *.mts *.m2ts *.mpg *.wmv *.flv "
+    "*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus);;Tutti i file (*.*)");
+
+QString nativeAbsolute(const QString& path)
+{
+    return QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
+}
+
+}  // namespace
+
 void MainWindow::openFile()
 {
-    const QString path = QFileDialog::getOpenFileName(
-        this, QStringLiteral("Apri file video"), QString(),
-        QStringLiteral("File video e audio (*.mp4 *.mkv *.mov *.avi *.m4v *.webm *.ts *.mts *.m2ts *.mpg *.wmv *.flv "
-                       "*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus);;Tutti i file (*.*)"));
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Apri file video"), QString(), kVideoFilter);
     if (!path.isEmpty())
         openPath(path);
 }
 
+void MainWindow::addFilesDialog()
+{
+    const QStringList paths =
+        QFileDialog::getOpenFileNames(this, QStringLiteral("Aggiungi file al progetto"), QString(), kVideoFilter);
+    if (!paths.isEmpty())
+        addFiles(paths);
+}
+
 void MainWindow::openPath(const QString& path)
 {
-    if (probeThread_ != nullptr)
-        return;  // un file alla volta: il menu è comunque disabilitato durante l'analisi
+    // Nuovo progetto: si ferma un'eventuale analisi in corso e si riparte da zero.
+    if (probeThread_ != nullptr) {
+        cancelProbe_ = true;
+        probeThread_->wait();
+    }
+    probeQueue_.clear();
+    project_.clear();
+    clipInfo_.clear();
+    currentClipId_ = 0;
+    currentPath_.clear();
+    updatingList_ = true;
+    clipList_->clear();
+    updatingList_ = false;
+    loadingClip_ = true;
+    player_->closeFile();
+    loadingClip_ = false;
+    addFiles({path});
+}
 
-    const QString nativePath = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
-    const std::string utf8Path = nativePath.toStdString();  // in Qt 6 toStdString() produce UTF-8
+void MainWindow::addFiles(const QStringList& paths)
+{
+    int first = 0;
+    for (const QString& path : paths) {
+        const int id = project_.add(nativeAbsolute(path).toStdString());
+        if (first == 0)
+            first = id;
+        probeQueue_.push_back(id);
+    }
+    refreshClipList();
+    if (currentClipId_ == 0 && first != 0)
+        selectClip(first);
+    startNextProbe();
+    updateExportAction();
+}
+
+void MainWindow::startNextProbe()
+{
+    if (probeThread_ != nullptr || probeQueue_.empty())
+        return;
+    const int id = probeQueue_.front();
+    probeQueue_.pop_front();
+    const core::Clip* clip = project_.find(id);
+    if (clip == nullptr) {
+        startNextProbe();
+        return;
+    }
+    const std::string utf8Path = clip->path;
     auto outcome = std::make_shared<ProbeOutcome>();
 
     cancelProbe_ = false;
+    probingClipId_ = id;
     probeThread_ = QThread::create([utf8Path, outcome, cancel = &cancelProbe_] {
         try {
             outcome->info = core::probeFile(utf8Path, cancel);
@@ -428,45 +576,168 @@ void MainWindow::openPath(const QString& path)
     });
     probeThread_->setParent(this);
 
-    connect(probeThread_, &QThread::finished, this, [this, outcome, nativePath] {
+    connect(probeThread_, &QThread::finished, this, [this, outcome, id] {
         probeThread_->deleteLater();
         probeThread_ = nullptr;
-        setBusy(false);
+        probingClipId_ = 0;
+        QApplication::restoreOverrideCursor();
 
-        if (outcome->cancelled)
-            return;
-        if (!outcome->info) {
-            keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> non disponibili"));
-            statusBar()->showMessage(QStringLiteral("Impossibile aprire %1").arg(QFileInfo(nativePath).fileName()));
-            QMessageBox::warning(this, QStringLiteral("Impossibile aprire il file"), outcome->error);
-            return;
+        if (!outcome->cancelled && project_.find(id) != nullptr) {
+            if (!outcome->info) {
+                const QString name = QFileInfo(QString::fromStdString(project_.find(id)->path)).fileName();
+                if (id == currentClipId_)
+                    keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> non disponibili"));
+                removeClip(id);
+                statusBar()->showMessage(QStringLiteral("Impossibile aprire %1").arg(name));
+                QMessageBox::warning(this, QStringLiteral("Impossibile aprire il file"), outcome->error);
+            } else {
+                const core::MediaInfo& info = *outcome->info;
+                clipInfo_[id] = info;
+                project_.setAnalysis(id, info.keyframeTimes, info.durationSeconds);
+                if (id == currentClipId_) {
+                    showInfo(info);
+                    loadingClip_ = true;
+                    player_->setKeyframes(info.keyframeTimes);
+                    loadingClip_ = false;
+                }
+                refreshClipList();
+                updateExportAction();
+            }
         }
-        showInfo(*outcome->info);
+        startNextProbe();
     });
 
-    setBusy(true);
-    statusBar()->showMessage(QStringLiteral("Analisi di %1 in corso...").arg(QFileInfo(nativePath).fileName()));
+    QApplication::setOverrideCursor(Qt::BusyCursor);
+    statusBar()->showMessage(
+        QStringLiteral("Analisi di %1 in corso...").arg(QFileInfo(QString::fromStdString(utf8Path)).fileName()));
     probeThread_->start();
-
-    // L'anteprima si apre subito, mentre l'analisi completa (che legge tutto il file) prosegue in background.
-    setWindowTitle(QStringLiteral("%1 - EditorVideo").arg(QFileInfo(nativePath).fileName()));
-    infoTree_->clear();
-    keyframeList_->clear();
-    keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> analisi in corso..."));
-    currentPath_ = nativePath;
-    player_->openFile(nativePath);
-    pages_->setCurrentIndex(1);
 }
 
-void MainWindow::setBusy(bool busy)
+void MainWindow::storeCurrentRanges()
 {
-    openAction_->setEnabled(!busy);
-    if (busy)
-        QApplication::setOverrideCursor(Qt::BusyCursor);
-    else
-        QApplication::restoreOverrideCursor();
+    if (loadingClip_ || currentClipId_ == 0)
+        return;
+    core::Clip* clip = project_.find(currentClipId_);
+    if (clip != nullptr && clip->analyzed)
+        clip->segments = player_->ranges();
 }
 
+void MainWindow::selectClip(int id)
+{
+    const core::Clip* clip = project_.find(id);
+    if (clip == nullptr || id == currentClipId_)
+        return;
+    storeCurrentRanges();
+
+    currentClipId_ = id;
+    currentPath_ = QString::fromStdString(clip->path);
+    const QString fileName = QFileInfo(currentPath_).fileName();
+    setWindowTitle(QStringLiteral("%1 - EditorVideo").arg(fileName));
+
+    // Mentre si carica il file, i cambi nell'anteprima non vanno salvati sul progetto.
+    loadingClip_ = true;
+    player_->openFile(currentPath_);
+    if (clip->analyzed) {
+        showInfo(clipInfo_[id]);
+        player_->setKeyframes(clipInfo_[id].keyframeTimes);
+        player_->setRanges(clip->segments);
+    } else {
+        infoTree_->clear();
+        keyframeList_->clear();
+        keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> analisi in corso..."));
+    }
+    loadingClip_ = false;
+
+    refreshClipList();
+    pages_->setCurrentIndex(1);
+    updateExportAction();
+}
+
+void MainWindow::removeClip(int id)
+{
+    const int index = project_.indexOf(id);
+    if (index < 0)
+        return;
+    std::erase(probeQueue_, id);
+    if (id == probingClipId_)
+        cancelProbe_ = true;  // l'analisi finisce da sola e il risultato viene ignorato
+    project_.remove(id);
+    clipInfo_.erase(id);
+
+    if (id == currentClipId_) {
+        currentClipId_ = 0;
+        currentPath_.clear();
+        loadingClip_ = true;
+        player_->closeFile();
+        loadingClip_ = false;
+        if (!project_.empty()) {
+            const int next = project_.clips()[std::min<std::size_t>(index, project_.clips().size() - 1)].id;
+            selectClip(next);
+        } else {
+            infoTree_->clear();
+            keyframeList_->clear();
+            setWindowTitle(QStringLiteral("EditorVideo"));
+            pages_->setCurrentIndex(0);
+        }
+    }
+    refreshClipList();
+    updateExportAction();
+}
+
+int MainWindow::selectedClipId() const
+{
+    const QListWidgetItem* item = clipList_->currentItem();
+    return item != nullptr ? item->data(Qt::UserRole).toInt() : 0;
+}
+
+void MainWindow::syncOrderFromList()
+{
+    // Dopo un trascinamento: il progetto prende l'ordine dell'elenco.
+    for (int row = 0; row < clipList_->count(); ++row)
+        project_.move(clipList_->item(row)->data(Qt::UserRole).toInt(), row);
+    refreshClipList();
+    updateExportAction();
+}
+
+void MainWindow::refreshClipList()
+{
+    // L'elenco si ricostruisce dal progetto (numeri, durate e tratti cambiano spesso).
+    if (clipList_ == nullptr)
+        return;
+    updatingList_ = true;
+    clipList_->clear();
+    int row = 0;
+    for (const core::Clip& clip : project_.clips()) {
+        const QString name = QFileInfo(QString::fromStdString(clip.path)).fileName();
+        QString detail;
+        if (!clip.analyzed)
+            detail = QStringLiteral("analisi in corso...");
+        else if (clip.segments.empty())
+            detail = QStringLiteral("%1, tutto").arg(qs(core::formatDuration(clip.outputLength())));
+        else
+            detail = QStringLiteral("%1, %2 tratti")
+                         .arg(qs(core::formatDuration(clip.outputLength())))
+                         .arg(clip.segments.ranges().size());
+        auto* item = new QListWidgetItem(QStringLiteral("%1. %2  —  %3").arg(++row).arg(name, detail));
+        item->setData(Qt::UserRole, clip.id);
+        item->setToolTip(QString::fromStdString(clip.path));
+        clipList_->addItem(item);
+        if (clip.id == currentClipId_)
+            clipList_->setCurrentItem(item);
+    }
+    updatingList_ = false;
+
+    if (project_.empty()) {
+        projectLabel_->clear();
+        return;
+    }
+    QString text = QStringLiteral("%1 file  ·  durata finale <b>%2</b>")
+                       .arg(project_.clips().size())
+                       .arg(qs(core::formatDuration(project_.totalLength())));
+    if (!project_.allAnalyzed())
+        text += QStringLiteral("  ·  analisi in corso");
+    projectLabel_->setText(text);
+}
 void MainWindow::showInfo(const core::MediaInfo& info)
 {
     const QString path = qs(info.path);
@@ -504,7 +775,6 @@ void MainWindow::showInfo(const core::MediaInfo& info)
     } else {
         keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> nessun flusso video"));
     }
-    player_->setKeyframes(info.keyframeTimes);
 
     pages_->setCurrentIndex(1);
     statusBar()->showMessage(QStringLiteral("%1  ·  %2  ·  %3 fotogrammi chiave")

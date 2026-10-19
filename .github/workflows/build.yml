@@ -94,3 +94,22 @@ jobs:
             Get-Content export.txt, export-err.txt
             if ($p.ExitCode -ne 0) { throw "$($t[1]) : esportazione non riuscita (codice $($p.ExitCode))" }
           }
+
+      - name: Prova dell'unione di più file
+        shell: pwsh
+        run: |
+          # Due file compatibili si uniscono (codice 0); un file con un codec diverso viene rifiutato (codice 4).
+          $demo = "$env:TEMP\EditorVideoDemo"
+          $prove = @(
+            @{ atteso = 0; file = @('demo_mpeg2_gpu.mkv', 'demo_mpeg2_gpu.mkv') },
+            @{ atteso = 4; file = @('demo_mpeg2_gpu.mkv', 'demo_mpeg4_software.mkv') }
+          )
+          foreach ($prova in $prove) {
+            $argomenti = @('--join-test', "`"$demo\unione.mkv`"") + ($prova.file | ForEach-Object { "`"$demo\$_`"" })
+            $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru -ArgumentList $argomenti `
+                   -RedirectStandardOutput join.txt -RedirectStandardError join-err.txt
+            $null = $p.Handle  # necessario per leggere ExitCode
+            if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "unione bloccata" }
+            Get-Content join.txt, join-err.txt
+            if ($p.ExitCode -ne $prova.atteso) { throw "unione di $($prova.file -join ' + '): codice $($p.ExitCode) invece di $($prova.atteso)" }
+          }

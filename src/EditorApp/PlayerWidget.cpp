@@ -720,6 +720,14 @@ void PlayerWidget::removeRangeAtPlayhead()
     updateSegmentUi();
 }
 
+void PlayerWidget::setRanges(const core::SegmentList& ranges)
+{
+    ranges_ = ranges;
+    segmentNote_.clear();
+    noteIsOutError_ = false;
+    updateSegmentUi();
+}
+
 void PlayerWidget::clearRanges()
 {
     ranges_.clear();

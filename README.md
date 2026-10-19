@@ -37,7 +37,7 @@ Gli eseguibili finiscono in `bin\x64\<Configurazione>\`, insieme alle DLL di Qt 
 ## Uso
 
 - **File > Apri...** (Ctrl+O) apre un file video o audio. Al centro c'è l'anteprima; a destra formato del contenitore, durata, flussi (codec, risoluzione, fotogrammi al secondo, canali, bitrate...) e l'elenco dei fotogrammi chiave, cioè i punti in cui si potrà tagliare senza ricodifica. Un clic su un fotogramma chiave porta l'anteprima in quel punto.
-- Si può anche passare il file da riga di comando o trascinarlo sull'icona di `EditorVideo.exe`: `EditorVideo.exe "C:\Video\vacanze.mp4"`.
+- Si può anche passare il file da riga di comando o trascinarlo sull'icona di `EditorVideo.exe`: `EditorVideo.exe "C:\Video\vacanze.mp4"`. Con più file, quelli dopo il primo vengono aggiunti al progetto.
 
 ### Anteprima
 
@@ -55,7 +55,9 @@ Gli eseguibili finiscono in `bin\x64\<Configurazione>\`, insieme alle DLL di Qt 
 | Taglia via il tratto IN-OUT | X |
 | Elimina il tratto sotto il cursore | Canc |
 | Svuota l'elenco dei tratti | menu Modifica |
-| Esporta (elenco dei tratti, o il solo IN-OUT) | Ctrl+E (menu File) |
+| Aggiungi altri file al progetto | Ctrl+Maiusc+O (menu File) |
+| Togli un file dal progetto | Canc sull'elenco dei file, o menu File |
+| Esporta (file uniti, elenco dei tratti, o il solo IN-OUT) | Ctrl+E (menu File) |
 
 ### Segmento (IN e OUT)
 
@@ -72,6 +74,14 @@ Gli eseguibili finiscono in `bin\x64\<Configurazione>\`, insieme alle DLL di Qt 
 - I tratti sono sempre in ordine di tempo; quelli che si toccano o si sovrappongono vengono uniti. **Canc** elimina il tratto sotto il cursore.
 - Come per IN, ogni tratto inizia su un fotogramma chiave: togliendo un pezzo, la parte dopo riparte dal fotogramma chiave più vicino prima della fine del pezzo tolto, quindi possono restare alcuni fotogrammi del pezzo tolto (e se dentro il pezzo non c'è un fotogramma chiave non si può togliere: un messaggio lo dice).
 - **Ctrl+E** esporta tutti i tratti uniti in un unico file; se l'elenco è vuoto esporta il solo IN-OUT.
+
+### Più file (progetto)
+
+- **File > Aggiungi file...** (Ctrl+Maiusc+O, anche più file insieme) li aggiunge in fondo all'elenco **File del progetto**, a destra. Vengono analizzati uno alla volta in background. **File > Apri** invece riparte da un progetto nuovo con quel solo file.
+- Un clic su un file lo mostra nell'anteprima con i **suoi** IN, OUT e tratti: ogni file ha il suo elenco di tratti (se è vuoto, si tiene il file intero). L'ordine dell'elenco è l'ordine in cui i file verranno uniti: si cambia **trascinando**. **Canc** (con il fuoco sull'elenco) toglie il file dal progetto.
+- Sotto l'elenco c'è la durata finale di tutto il progetto. **Ctrl+E** unisce tutti i file, uno dopo l'altro, in un unico file nel contenitore del primo.
+- Senza ricodifica si possono unire solo file con gli **stessi codec e parametri** (risoluzione, formato pixel, fotogrammi al secondo, profilo, parametri di codifica; per l'audio frequenza e canali): di solito file dello stesso telefono o della stessa videocamera con le stesse impostazioni. Se qualcosa non coincide l'esportazione viene rifiutata, con un messaggio che dice quale file e cosa è diverso (es. `Clip 3 (nome.mp4): risoluzione 1280x720 invece di 1920x1080`). Contenitori diversi vanno bene, se i codec coincidono.
+- Con un solo file IN-OUT conta come prima; con più file contano solo gli elenchi dei tratti (A, X).
 
 ### Esportazione
 
@@ -92,4 +102,6 @@ Gli eseguibili finiscono in `bin\x64\<Configurazione>\`, insieme alle DLL di Qt 
 - Per provare l'anteprima senza file propri: `EditorTests.exe --gtest_also_run_disabled_tests --gtest_filter=*GeneraVideoDimostrativi*` crea in `%TEMP%\EditorVideoDemo` due video da 10 secondi (uno MPEG-2, che di solito la GPU decodifica, e uno MPEG-4 Part 2, sempre in software) e un file solo audio. L'audio è muto.
 - `EditorVideo.exe --smoke-test` verifica che l'applicazione parta con tutte le DLL; `EditorVideo.exe --smoke-test file.mkv` riproduce anche il file per 2 secondi, controlla che la posizione avanzi col tempo giusto, segna due tratti e li esporta uniti dalla finestra (controllando anche che la finestra di avanzamento si chiuda) (con `EDITORVIDEO_SMOKE_SCREENSHOT=immagine.png` salva anche un'immagine della finestra). Con `EDITORVIDEO_NO_AUDIO=1` si simula un PC senza scheda audio.
 - `EditorVideo.exe --export-test origine destinazione IN OUT [IN OUT ...]` (tempi in secondi) esporta uno o più tratti uniti come l'interfaccia, con ogni IN agganciato al fotogramma chiave, e controlla il file creato (codici di uscita: 0 tutto giusto, 2 errore, 3 controllo non riuscito).
-- A ogni push GitHub Actions compila la soluzione in Release, lancia i test, avvia l'applicazione con `--smoke-test`, prova la riproduzione dei file dimostrativi e l'esportazione di un segmento.
+- `EditorVideo.exe --join-test destinazione file1 file2 [...]` unisce i file interi come l'interfaccia, dopo il controllo di compatibilità, e controlla il file creato (codici di uscita: 0 tutto giusto, 4 file non compatibili, 2 errore, 3 controllo non riuscito).
+- `--smoke-test` con più file prova anche l'unione dall'interfaccia. Con la variabile d'ambiente `QT_QPA_PLATFORM=minimal` le prove girano senza aprire finestre.
+- A ogni push GitHub Actions compila la soluzione in Release, lancia i test, avvia l'applicazione con `--smoke-test`, prova la riproduzione dei file dimostrativi, l'esportazione di uno e più tratti e l'unione di più file (anche il rifiuto di file non compatibili).
