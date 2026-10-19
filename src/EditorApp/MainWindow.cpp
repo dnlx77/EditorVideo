@@ -20,6 +20,8 @@
 #include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QVBoxLayout>
 
+#include <algorithm>
+#include <iterator>
 #include <memory>
 #include <optional>
 
@@ -177,10 +179,14 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
     if (event->type() == QEvent::ShortcutOverride) {
         const auto* key = static_cast<QKeyEvent*>(event);
-        const bool playbackKey = key->key() == Qt::Key_Space || key->key() == Qt::Key_Left
-                              || key->key() == Qt::Key_Right || key->key() == Qt::Key_Home;
-        // Bloccando l'evento senza accettarlo, il tasto va alla scorciatoia del menu Riproduzione.
-        if (playbackKey && key->modifiers() == Qt::NoModifier)
+        static const int playbackKeys[] = {Qt::Key_Space, Qt::Key_Left, Qt::Key_Right, Qt::Key_Home,
+                                           Qt::Key_Comma, Qt::Key_Period, Qt::Key_I, Qt::Key_O};
+        const bool playbackKey = std::find(std::begin(playbackKeys), std::end(playbackKeys), key->key())
+                              != std::end(playbackKeys);
+        const auto modifiers = key->modifiers() & ~Qt::KeypadModifier;
+        // Bloccando l'evento senza accettarlo, il tasto va alla scorciatoia dei menu Riproduzione e Segmento.
+        if (playbackKey && (modifiers == Qt::NoModifier || modifiers == Qt::ControlModifier
+                            || modifiers == Qt::ShiftModifier))
             return true;
     }
     return QMainWindow::eventFilter(watched, event);
@@ -209,6 +215,26 @@ void MainWindow::createMenus()
     forwardAction->setShortcut(QKeySequence(Qt::Key_Right));
     QAction* startAction = playMenu->addAction(QStringLiteral("Vai all'i&nizio"), this, [this] { player_->seekTo(0.0); });
     startAction->setShortcut(QKeySequence(Qt::Key_Home));
+    playMenu->addSeparator();
+    QAction* previousFrame = playMenu->addAction(QStringLiteral("Fotogramma p&recedente"), this,
+                                                 [this] { player_->stepFrame(-1); });
+    previousFrame->setShortcuts({QKeySequence(Qt::Key_Comma), QKeySequence(Qt::CTRL | Qt::Key_Left)});
+    QAction* nextFrame = playMenu->addAction(QStringLiteral("Fotogramma &successivo"), this,
+                                             [this] { player_->stepFrame(+1); });
+    nextFrame->setShortcuts({QKeySequence(Qt::Key_Period), QKeySequence(Qt::CTRL | Qt::Key_Right)});
+
+    QMenu* segmentMenu = menuBar()->addMenu(QStringLiteral("&Segmento"));
+    QAction* inAction = segmentMenu->addAction(QStringLiteral("Segna &IN (inizio)"), this, [this] { player_->markIn(); });
+    inAction->setShortcut(QKeySequence(Qt::Key_I));
+    QAction* outAction = segmentMenu->addAction(QStringLiteral("Segna &OUT (fine)"), this, [this] { player_->markOut(); });
+    outAction->setShortcut(QKeySequence(Qt::Key_O));
+    segmentMenu->addSeparator();
+    QAction* goIn = segmentMenu->addAction(QStringLiteral("Vai a IN"), this, [this] { player_->goToIn(); });
+    goIn->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_I));
+    QAction* goOut = segmentMenu->addAction(QStringLiteral("Vai a OUT"), this, [this] { player_->goToOut(); });
+    goOut->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_O));
+    segmentMenu->addSeparator();
+    segmentMenu->addAction(QStringLiteral("&Cancella IN e OUT"), this, [this] { player_->clearSegment(); });
 
     QMenu* helpMenu = menuBar()->addMenu(QStringLiteral("&Aiuto"));
     helpMenu->addAction(QStringLiteral("&Informazioni su EditorVideo"), this, &MainWindow::showAbout);
@@ -320,6 +346,7 @@ void MainWindow::showInfo(const core::MediaInfo& info)
     } else {
         keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> nessun flusso video"));
     }
+    player_->setKeyframes(info.keyframeTimes);
 
     pages_->setCurrentIndex(1);
     statusBar()->showMessage(QStringLiteral("%1  ·  %2  ·  %3 fotogrammi chiave")

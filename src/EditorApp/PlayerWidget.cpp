@@ -1,5 +1,6 @@
 #include "EditorApp/PlayerWidget.h"
 
+#include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Playback.h"
@@ -102,28 +103,6 @@ private:
     QString message_;
 };
 
-// Barra di posizione: un clic porta subito al punto cliccato (non a scatti di pagina come QSlider normale).
-class SeekSlider : public QSlider
-{
-public:
-    explicit SeekSlider(QWidget* parent = nullptr)
-        : QSlider(Qt::Horizontal, parent)
-    {
-        setFocusPolicy(Qt::NoFocus);
-    }
-
-protected:
-    void mousePressEvent(QMouseEvent* event) override
-    {
-        if (event->button() == Qt::LeftButton && maximum() > minimum()) {
-            const int value = QStyle::sliderValueFromPosition(minimum(), maximum(),
-                                                              static_cast<int>(event->position().x()), width());
-            setValue(value);
-        }
-        QSlider::mousePressEvent(event);  // la maniglia ora è sotto il mouse: si può anche trascinare
-    }
-};
-
 PlayerWidget::PlayerWidget(QWidget* parent)
     : QWidget(parent)
 {
@@ -135,22 +114,28 @@ PlayerWidget::PlayerWidget(QWidget* parent)
     playButton_->setFocusPolicy(Qt::NoFocus);
     connect(playButton_, &QToolButton::clicked, this, [this] { togglePlayPause(); });
 
-    slider_ = new SeekSlider;
-    connect(slider_, &QSlider::sliderMoved, this, [this](int value) { updatePositionLabel(value / 1000.0); });
-    connect(slider_, &QSlider::sliderReleased, this, [this] { seekTo(slider_->value() / 1000.0); });
+    timeline_ = new TimelineWidget;
+    timeline_->onScrub = [this](double seconds) { updatePositionLabel(seconds); };
+    timeline_->onSeek = [this](double seconds) { seekTo(seconds); };
 
     timeLabel_ = new QLabel;
+    segmentLabel_ = new QLabel;
+    segmentLabel_->setTextFormat(Qt::RichText);
+    // Sempre alta due righe (segmento + nota): così l'anteprima non cambia misura quando compare la nota.
+    segmentLabel_->setMinimumHeight(fontMetrics().lineSpacing() * 2 + 4);
     decoderLabel_ = new QLabel;
 
     auto* controls = new QHBoxLayout;
     controls->addWidget(playButton_);
     controls->addWidget(timeLabel_);
-    controls->addWidget(slider_, 1);
+    controls->addSpacing(16);
+    controls->addWidget(segmentLabel_, 1);
     controls->addWidget(decoderLabel_);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(view_, 1);
+    layout->addWidget(timeline_);
     layout->addLayout(controls);
 
     timer_ = new QTimer(this);
@@ -219,8 +204,14 @@ void PlayerWidget::openFile(const QString& path)
         audioNote_ = QStringLiteral("audio non disponibile");
 
     duration_ = std::max({0.0, video_ ? video_->durationSeconds() : 0.0, audio_ ? audio_->durationSeconds() : 0.0});
-    slider_->setRange(0, static_cast<int>(std::lround(duration_ * 1000)));
+    timeline_->setDuration(duration_);
     position_ = 0.0;
+    displayedTime_ = 0.0;
+    frameDuration_ = video_ && video_->frameRate() > 0 ? 1.0 / video_->frameRate() : 0.04;
+    // Per un video i fotogrammi chiave arrivano dall'analisi del file (setKeyframes); senza video non servono.
+    segment_.reset({}, duration_);
+    keyframesKnown_ = video_ == nullptr;
+    updateSegmentUi();
 
     if (video_) {
         const QSize pixels = view_->pixelSize();
@@ -245,7 +236,13 @@ void PlayerWidget::closeFile()
     decoderText_.clear();
     duration_ = 0.0;
     position_ = 0.0;
-    slider_->setRange(0, 0);
+    displayedTime_ = 0.0;
+    timeline_->setDuration(0.0);
+    timeline_->setKeyframes({});
+    segment_.reset({}, 0.0);
+    keyframesKnown_ = false;
+    segmentNote_.clear();
+    updateSegmentUi();
     view_->setMessage(QString());
     updateControls();
     updatePositionLabel(0.0);
@@ -337,6 +334,7 @@ void PlayerWidget::startWorkers(double from)
     wallStart_ = std::chrono::steady_clock::now();
 
     stopWorkers_ = false;
+    decoderAtDisplayed_ = false;  // il thread video porta avanti il decoder
     if (video_)
         videoThread_ = std::thread([this] { videoWorker(); });
     if (audioActive_)
@@ -438,8 +436,10 @@ void PlayerWidget::tick()
         videoDone = videoEnded_ && queue_.empty();
     }
     queueSpace_.notify_one();
-    if (latest)
+    if (latest) {
+        displayedTime_ = latest->time;
         view_->setFrame(std::move(latest));
+    }
 
     position_ = duration_ > 0 ? std::clamp(now, 0.0, duration_) : std::max(0.0, now);
     updatePositionLabel(position_);
@@ -464,8 +464,11 @@ void PlayerWidget::tick()
 void PlayerWidget::showFrameAt(double seconds)
 {
     try {
-        if (auto frame = video_->seek(seconds))
+        if (auto frame = video_->seek(seconds)) {
+            displayedTime_ = frame->time;
             view_->setFrame(std::move(frame));
+        }
+        decoderAtDisplayed_ = true;
     } catch (const std::exception& e) {
         view_->setMessage(QStringLiteral("Errore di decodifica del video.\n%1").arg(QString::fromUtf8(e.what())));
     }
@@ -478,7 +481,7 @@ void PlayerWidget::updateControls()
 {
     const bool media = hasMedia();
     playButton_->setEnabled(media);
-    slider_->setEnabled(media && duration_ > 0);
+    timeline_->setEnabled(media && duration_ > 0);
     playButton_->setIcon(style()->standardIcon(playing_ ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
     playButton_->setToolTip(playing_ ? QStringLiteral("Pausa (Spazio)") : QStringLiteral("Riproduci (Spazio)"));
 
@@ -495,8 +498,141 @@ void PlayerWidget::updateControls()
 void PlayerWidget::updatePositionLabel(double seconds)
 {
     timeLabel_->setText(QStringLiteral("%1 / %2").arg(timeText(seconds), timeText(duration_)));
-    if (!slider_->isSliderDown())
-        slider_->setValue(static_cast<int>(std::lround(seconds * 1000)));
+    timeline_->setPlayhead(seconds);
+}
+
+void PlayerWidget::setKeyframes(const std::vector<double>& keyframes)
+{
+    if (!hasMedia())
+        return;
+    // Arrivano a file già aperto: IN e OUT eventualmente messi nel frattempo si perdono (non dovrebbero esserci,
+    // perché IN si può mettere solo conoscendo i fotogrammi chiave).
+    segment_.reset(keyframes, duration_);
+    keyframesKnown_ = true;
+    timeline_->setKeyframes(keyframes);
+    segmentNote_.clear();
+    updateSegmentUi();
+}
+
+double PlayerWidget::markTime() const
+{
+    // Con il video si segna il fotogramma che si vede, altrimenti la posizione corrente.
+    return video_ ? displayedTime_ : position_;
+}
+
+void PlayerWidget::markIn()
+{
+    if (!hasMedia())
+        return;
+    if (!keyframesKnown_) {
+        segmentNote_ = QStringLiteral("Attendi la fine dell'analisi dei fotogrammi chiave, poi riprova.");
+        updateSegmentUi();
+        return;
+    }
+    if (playing_)
+        pause();
+    const double wanted = markTime();
+    const double snapped = segment_.setIn(wanted);
+    segmentNote_.clear();
+    noteIsOutError_ = false;
+    if (std::abs(snapped - wanted) > 0.0005)
+        segmentNote_ = QStringLiteral("IN spostato da %1 al fotogramma chiave %2: senza ricodifica si può partire "
+                                      "solo da un fotogramma chiave.")
+                           .arg(timeText(wanted), timeText(snapped));
+    updateSegmentUi();
+}
+
+void PlayerWidget::markOut()
+{
+    if (!hasMedia())
+        return;
+    if (playing_)
+        pause();
+    // OUT comprende il fotogramma visibile: il segmento finisce alla fine di quel fotogramma.
+    const double wanted = video_ ? displayedTime_ + frameDuration_ : position_;
+    if (segment_.setOut(wanted)) {
+        // La spiegazione su IN agganciato resta visibile; si toglie solo un eventuale errore su OUT.
+        if (noteIsOutError_)
+            segmentNote_.clear();
+        noteIsOutError_ = false;
+    } else {
+        segmentNote_ = QStringLiteral("OUT deve stare dopo IN (%1).").arg(timeText(segment_.in()));
+        noteIsOutError_ = true;
+    }
+    updateSegmentUi();
+}
+
+void PlayerWidget::clearSegment()
+{
+    segment_.clearIn();
+    segment_.clearOut();
+    segmentNote_.clear();
+    updateSegmentUi();
+}
+
+void PlayerWidget::goToIn()
+{
+    seekTo(segment_.in());
+}
+
+void PlayerWidget::goToOut()
+{
+    // L'ultimo fotogramma compreso nel segmento.
+    seekTo(std::max(segment_.in(), segment_.out() - (video_ ? frameDuration_ : 0.0)));
+}
+
+void PlayerWidget::stepFrame(int direction)
+{
+    if (!hasMedia())
+        return;
+    if (playing_)
+        pause();
+    if (!video_) {
+        // Solo audio: niente fotogrammi, ci si sposta di 1/25 di secondo.
+        seekTo(position_ + direction * frameDuration_);
+        return;
+    }
+    try {
+        if (direction > 0) {
+            // Il decoder deve stare subito dopo il fotogramma visibile: dopo una riproduzione non è così.
+            if (!decoderAtDisplayed_)
+                showFrameAt(displayedTime_);
+            if (auto frame = video_->nextFrame()) {
+                displayedTime_ = frame->time;
+                view_->setFrame(std::move(frame));
+            }
+        } else {
+            showFrameAt(std::max(0.0, displayedTime_ - frameDuration_));
+        }
+    } catch (const std::exception& e) {
+        view_->setMessage(QStringLiteral("Errore di decodifica del video.\n%1").arg(QString::fromUtf8(e.what())));
+    }
+    position_ = displayedTime_;
+    updatePositionLabel(position_);
+}
+
+void PlayerWidget::updateSegmentUi()
+{
+    timeline_->setSegment(segment_.in(), segment_.out(), segment_.hasIn(), segment_.hasOut());
+    if (!hasMedia()) {
+        segmentLabel_->clear();
+        return;
+    }
+    const auto marker = [](bool set, double seconds, const char* color) {
+        return set ? QStringLiteral("<span style='color:%1'><b>%2</b></span>").arg(QLatin1String(color), timeText(seconds))
+                   : QStringLiteral("<i>%1</i>").arg(timeText(seconds));
+    };
+    QString text = QStringLiteral("IN %1 &nbsp; OUT %2 &nbsp; Segmento <b>%3</b>")
+                       .arg(marker(segment_.hasIn(), segment_.in(), "#46be5a"),
+                            marker(segment_.hasOut(), segment_.out(), "#e15046"), timeText(segment_.length()));
+    if (!segmentNote_.isEmpty())
+        text += QStringLiteral("<br><small>%1</small>").arg(segmentNote_.toHtmlEscaped());
+    segmentLabel_->setText(text);
+}
+
+const core::CutSegment& PlayerWidget::segment() const
+{
+    return segment_;
 }
 
 }  // namespace editor::app

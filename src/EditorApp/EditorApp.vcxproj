@@ -49,12 +49,14 @@
     <ClInclude Include="AudioOutput.h" />
     <ClInclude Include="MainWindow.h" />
     <ClInclude Include="PlayerWidget.h" />
+    <ClInclude Include="TimelineWidget.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AudioOutput.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainWindow.cpp" />
     <ClCompile Include="PlayerWidget.cpp" />
+    <ClCompile Include="TimelineWidget.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\EditorCore\EditorCore.vcxproj">
