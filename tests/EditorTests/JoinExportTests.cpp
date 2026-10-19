@@ -3,6 +3,7 @@
 #include "EditorCore/SegmentExport.h"
 #include "EditorCore/SegmentList.h"
 #include "EditorCore/VideoDecoder.h"
+#include "MediaChecks.h"
 #include "SampleMedia.h"
 
 #include <gtest/gtest.h>
@@ -23,6 +24,8 @@ using editor::tests::sampleLuma;
 using editor::tests::SampleSpec;
 using editor::tests::toUtf8;
 using editor::tests::writeSampleFile;
+using editor::tests::expectMonotonicPackets;
+using editor::tests::expectVideoFrames;
 
 namespace {
 
@@ -82,60 +85,6 @@ protected:
     }
 
     static std::string path(const char* name) { return toUtf8(dir_ / name); }
-
-    static double lumaAt(const VideoFrame& frame, int x, int y)
-    {
-        const std::uint8_t* p = frame.pixels.data() + static_cast<std::size_t>(y) * frame.stride + x * 4;
-        return 16.0 + (p[0] + p[1] + p[2]) / 3.0 * 219.0 / 255.0;
-    }
-
-    // Il video del file creato deve essere esattamente la sequenza di fotogrammi attesa, a tempi continui.
-    static void expectVideoFrames(const std::string& file, const std::vector<int>& frames)
-    {
-        VideoDecoder video(file, {.allowHardware = false});
-        auto frame = video.seek(0.0);
-        std::size_t count = 0;
-        while (frame) {
-            if (count < frames.size()) {
-                const int x = frame->width / 2;
-                const int y = frame->height / 2;
-                EXPECT_NEAR(frame->time, count * kFrame, 0.002) << "fotogramma " << count;
-                EXPECT_NEAR(lumaAt(*frame, x, y), sampleLuma(x, y, frames[count]), 2.5)
-                    << "il fotogramma " << count << " dovrebbe essere il " << frames[count] << " dell'originale";
-            }
-            ++count;
-            frame = video.nextFrame();
-        }
-        EXPECT_EQ(count, frames.size());
-    }
-
-    // Su ogni flusso i tempi di decodifica crescono sempre; il primo pacchetto video è un fotogramma chiave.
-    static void expectMonotonicPackets(const std::string& file)
-    {
-        AVFormatContext* fmt = nullptr;
-        ASSERT_GE(avformat_open_input(&fmt, file.c_str(), nullptr, nullptr), 0);
-        ASSERT_GE(avformat_find_stream_info(fmt, nullptr), 0);
-        AVPacket* pkt = av_packet_alloc();
-        std::map<int, std::int64_t> lastDts;
-        bool firstVideo = true;
-        while (av_read_frame(fmt, pkt) >= 0) {
-            const AVStream* st = fmt->streams[pkt->stream_index];
-            if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && firstVideo) {
-                EXPECT_NE(pkt->flags & AV_PKT_FLAG_KEY, 0) << "il primo pacchetto video deve essere un fotogramma chiave";
-                firstVideo = false;
-            }
-            if (pkt->dts != AV_NOPTS_VALUE) {
-                const auto it = lastDts.find(pkt->stream_index);
-                if (it != lastDts.end())
-                    EXPECT_GT(pkt->dts, it->second) << "flusso " << pkt->stream_index << ": DTS non crescente";
-                lastDts[pkt->stream_index] = pkt->dts;
-            }
-            av_packet_unref(pkt);
-        }
-        av_packet_free(&pkt);
-        avformat_close_input(&fmt);
-        EXPECT_FALSE(firstVideo);
-    }
 
     static inline fs::path dir_;
 };

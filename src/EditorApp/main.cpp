@@ -1,6 +1,8 @@
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
+#include "EditorCore/Compatibility.h"
 #include "EditorCore/CutSegment.h"
+#include "EditorCore/Project.h"
 #include "EditorCore/SegmentList.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
@@ -28,6 +30,51 @@ constexpr int kSmokePlayMilliseconds = 2000;
 // --export-test <origine> <destinazione> <IN s> <OUT s> [<IN s> <OUT s> ...]: esporta uno o più tratti come farebbe
 // l'interfaccia (ogni IN agganciato al fotogramma chiave, tratti uniti nell'ordine del tempo) e controlla il file
 // creato. Codice di uscita 0 se è tutto giusto.
+// --join-test <destinazione> <file1> <file2> ...: unisce i file interi come farebbe l'interfaccia (dopo il controllo
+// di compatibilità) e controlla il file creato. Codice di uscita 0 se è tutto giusto, 4 se i file non si possono
+// unire (il motivo viene scritto), 2 per altri errori, 3 se il controllo del risultato non riesce.
+int runJoinTest(const QStringList& args, qsizetype at)
+{
+    namespace core = editor::core;
+    if (at + 3 >= args.size()) {
+        std::printf("Uso: EditorVideo.exe --join-test <destinazione> <file1> <file2> [...]\n");
+        return 1;
+    }
+    const std::string output = args[at + 1].toStdString();
+    try {
+        core::Project project;
+        std::vector<core::MediaSignature> signatures;
+        std::vector<core::MediaInfo> sources;
+        for (qsizetype i = at + 2; i < args.size(); ++i) {
+            const std::string path = args[i].toStdString();
+            sources.push_back(core::probeFile(path));
+            signatures.push_back(core::readMediaSignature(path));
+            project.setAnalysis(project.add(path), sources.back().keyframeTimes, sources.back().durationSeconds);
+        }
+        if (const auto mismatches = core::checkCompatibility(signatures); !mismatches.empty()) {
+            std::printf("Non si possono unire:\n%s\n", core::describeMismatches(mismatches).c_str());
+            return 4;
+        }
+        const core::ExportResult result = core::exportClips(project.exportPlan(), output);
+        const core::MediaInfo joined = core::probeFile(output);
+        std::printf("Uniti %d file: durata attesa %.3f s, ottenuta %.3f s, %d flussi\n", result.clipCount,
+                    project.totalLength(), joined.durationSeconds, result.streamCount);
+
+        const double tolerance = 0.1 + 0.05 * static_cast<double>(result.clipCount);
+        bool ok = std::abs(joined.durationSeconds - project.totalLength()) < tolerance
+               && joined.streams.size() == static_cast<std::size_t>(result.streamCount);
+        for (std::size_t s = 0; ok && s < joined.streams.size() && s < sources.front().streams.size(); ++s)
+            ok = joined.streams[s].codec == sources.front().streams[s].codec;
+        if (joined.keyframeStreamIndex >= 0)
+            ok = ok && !joined.keyframeTimes.empty() && std::abs(joined.keyframeTimes.front()) < 0.001;
+        std::printf("%s\n", ok ? "Controllo del file unito: OK" : "Controllo del file unito: NON RIUSCITO");
+        return ok ? 0 : 3;
+    } catch (const std::exception& e) {
+        std::printf("Errore: %s\n", e.what());
+        return 2;
+    }
+}
+
 int runExportTest(const QStringList& args, qsizetype at)
 {
     namespace core = editor::core;
@@ -103,19 +150,27 @@ int main(int argc, char* argv[])
         std::fflush(stdout);
         return code;
     }
+    if (const qsizetype at = arguments.indexOf(QStringLiteral("--join-test")); at >= 0) {
+        const int code = runJoinTest(arguments, at);
+        std::fflush(stdout);
+        return code;
+    }
 
     editor::app::MainWindow window;
     window.show();
 
-    // "EditorVideo.exe file.mp4" (o un file trascinato sull'icona) apre subito quel file.
-    const QStringList args = QApplication::arguments();
-    QString file;
-    for (qsizetype i = 1; i < args.size(); ++i) {
-        if (!args[i].startsWith(QStringLiteral("--"))) {
-            file = args[i];
-            window.openPath(file);
-            break;
-        }
+    // "EditorVideo.exe file.mp4" (o un file trascinato sull'icona) apre subito quel file; altri file dopo il primo
+    // vengono aggiunti al progetto, da unire.
+    QStringList files;
+    for (qsizetype i = 1; i < arguments.size(); ++i) {
+        if (!arguments[i].startsWith(QStringLiteral("--")))
+            files.append(arguments[i]);
+    }
+    const QString file = files.isEmpty() ? QString() : files.front();
+    if (!files.isEmpty()) {
+        window.openPath(files.front());
+        if (files.size() > 1)
+            window.addFiles(files.mid(1));
     }
 
     if (smokeTest) {
@@ -177,7 +232,18 @@ int main(int argc, char* argv[])
                             ranges.totalLength());
                 std::fflush(stdout);
                 ok = ok && ranges.ranges().size() == 2;
-                const double expectedLength = ranges.totalLength();
+
+                // Con più file si aspetta che siano stati analizzati tutti (servono durata e fotogrammi chiave).
+                QElapsedTimer analysis;
+                analysis.start();
+                while (!window->project().allAnalyzed() && analysis.elapsed() < 20000)
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                const double expectedLength = window->exportLength();
+                if (window->project().clips().size() > 1) {
+                    std::printf("Progetto: %d file, durata finale %.3f s\n",
+                                static_cast<int>(window->project().clips().size()), expectedLength);
+                    std::fflush(stdout);
+                }
 
                 // Esportazione dei tratti come dal menu (senza chiedere dove salvare), con il messaggio finale.
                 const QString target = QDir::temp().filePath(QStringLiteral("EditorVideoProvaEsportazione.")
