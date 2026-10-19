@@ -38,6 +38,8 @@ private:
     void showAbout();
     void showInfo(const core::MediaInfo& info);
     void setBusy(bool busy);
+    void exportSegment();
+    void updateExportAction();
 
     QStackedWidget* pages_ = nullptr;
     QLabel* placeholder_ = nullptr;
@@ -46,9 +48,13 @@ private:
     QTreeWidget* keyframeList_ = nullptr;
     PlayerWidget* player_ = nullptr;
     QAction* openAction_ = nullptr;
+    QAction* exportAction_ = nullptr;
+    QString currentPath_;  // file aperto (percorso nativo)
 
     QThread* probeThread_ = nullptr;
     std::atomic<bool> cancelProbe_{false};
+    QThread* exportThread_ = nullptr;
+    std::atomic<bool> cancelExport_{false};
 };
 
 // Testo con le versioni di Qt e FFmpeg, usato nella barra di stato e in "Informazioni".

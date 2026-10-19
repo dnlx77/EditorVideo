@@ -614,6 +614,8 @@ void PlayerWidget::stepFrame(int direction)
 void PlayerWidget::updateSegmentUi()
 {
     timeline_->setSegment(segment_.in(), segment_.out(), segment_.hasIn(), segment_.hasOut());
+    if (onSegmentChanged)
+        onSegmentChanged();
     if (!hasMedia()) {
         segmentLabel_->clear();
         return;

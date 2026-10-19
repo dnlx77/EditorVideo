@@ -3,10 +3,12 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorCore/LibraryInfo.h"
 #include "EditorCore/MediaProbe.h"
+#include "EditorCore/SegmentExport.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QThread>
+#include <QtCore/QTimer>
 #include <QtGui/QKeyEvent>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QFileDialog>
@@ -14,6 +16,7 @@
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
+#include <QtWidgets/QProgressDialog>
 #include <QtWidgets/QSplitter>
 #include <QtWidgets/QStackedWidget>
 #include <QtWidgets/QStatusBar>
@@ -142,6 +145,7 @@ MainWindow::MainWindow(QWidget* parent)
     });
 
     player_ = new PlayerWidget;
+    player_->onSegmentChanged = [this] { updateExportAction(); };
 
     // Anteprima al centro; a destra informazioni sul file (sopra) e fotogrammi chiave (sotto).
     auto* sidePanel = new QSplitter(Qt::Vertical);
@@ -173,6 +177,102 @@ MainWindow::~MainWindow()
         cancelProbe_ = true;
         probeThread_->wait();
     }
+    // Lo stesso per un'esportazione: viene annullata e il file a metà cancellato.
+    if (exportThread_ != nullptr) {
+        cancelExport_ = true;
+        exportThread_->wait();
+    }
+}
+
+void MainWindow::updateExportAction()
+{
+    if (exportAction_ == nullptr)
+        return;
+    const core::CutSegment& segment = player_->segment();
+    exportAction_->setEnabled(!currentPath_.isEmpty() && segment.hasIn() && segment.hasOut() && exportThread_ == nullptr);
+    exportAction_->setToolTip(exportAction_->isEnabled() ? QString()
+                                                         : QStringLiteral("Segna prima IN e OUT (tasti I e O)"));
+}
+
+void MainWindow::exportSegment()
+{
+    const core::CutSegment segment = player_->segment();
+    if (currentPath_.isEmpty() || !segment.hasIn() || !segment.hasOut() || exportThread_ != nullptr)
+        return;
+
+    // Stesso contenitore dell'originale: si propone "<nome>_taglio.<estensione>" nella stessa cartella.
+    const QFileInfo source(currentPath_);
+    const QString extension = source.suffix();
+    const QString suggested = source.dir().filePath(source.completeBaseName() + QStringLiteral("_taglio.") + extension);
+    QString target = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Esporta segmento"), suggested,
+        QStringLiteral("File %1 (*.%2)").arg(extension.toUpper(), extension));
+    if (target.isEmpty())
+        return;
+    if (QFileInfo(target).suffix().compare(extension, Qt::CaseInsensitive) != 0)
+        target += QLatin1Char('.') + extension;  // senza ricodifica il formato resta quello dell'originale
+    target = QDir::toNativeSeparators(target);
+
+    struct ExportOutcome
+    {
+        std::optional<core::ExportResult> result;
+        QString error;
+        bool cancelled = false;
+    };
+    auto outcome = std::make_shared<ExportOutcome>();
+    auto progress = std::make_shared<std::atomic<double>>(0.0);
+    const std::string inputPath = currentPath_.toStdString();
+    const std::string outputPath = target.toStdString();
+
+    cancelExport_ = false;
+    exportThread_ = QThread::create([=, cancel = &cancelExport_] {
+        try {
+            outcome->result = core::exportSegment(inputPath, outputPath, segment, [=](double fraction) {
+                *progress = fraction;
+                return !cancel->load();
+            });
+        } catch (const core::ExportCancelled&) {
+            outcome->cancelled = true;
+        } catch (const std::exception& e) {
+            outcome->error = QString::fromUtf8(e.what());
+        }
+    });
+    exportThread_->setParent(this);
+
+    auto* dialog = new QProgressDialog(QStringLiteral("Esportazione di %1...").arg(QFileInfo(target).fileName()),
+                                       QStringLiteral("Annulla"), 0, 1000, this);
+    dialog->setWindowTitle(QStringLiteral("Esporta segmento"));
+    dialog->setWindowModality(Qt::WindowModal);
+    dialog->setMinimumDuration(300);  // per i segmenti brevi la finestra non fa in tempo a comparire
+    dialog->setAutoClose(false);
+    dialog->setAutoReset(false);
+    connect(dialog, &QProgressDialog::canceled, this, [this] { cancelExport_ = true; });
+    auto* poll = new QTimer(dialog);
+    connect(poll, &QTimer::timeout, dialog, [dialog, progress] { dialog->setValue(static_cast<int>(*progress * 1000)); });
+    poll->start(100);
+
+    connect(exportThread_, &QThread::finished, this, [this, outcome, dialog, target] {
+        dialog->close();
+        dialog->deleteLater();
+        exportThread_->deleteLater();
+        exportThread_ = nullptr;
+        updateExportAction();
+
+        if (outcome->cancelled) {
+            statusBar()->showMessage(QStringLiteral("Esportazione annullata"), 5000);
+        } else if (!outcome->result) {
+            QMessageBox::warning(this, QStringLiteral("Esportazione non riuscita"), outcome->error);
+        } else {
+            statusBar()->showMessage(QStringLiteral("Segmento esportato in %1").arg(target), 10000);
+            QMessageBox::information(
+                this, QStringLiteral("Esportazione completata"),
+                QStringLiteral("Segmento salvato in:\n%1\n\nDurata: %2\nSenza ricodifica: stessa qualità dell'originale.")
+                    .arg(target, QString::fromStdString(core::formatDuration(outcome->result->durationSeconds))));
+        }
+    });
+
+    updateExportAction();
+    exportThread_->start();
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
@@ -198,6 +298,11 @@ void MainWindow::createMenus()
 
     openAction_ = fileMenu->addAction(QStringLiteral("&Apri..."), this, &MainWindow::openFile);
     openAction_->setShortcut(QKeySequence::Open);
+
+    exportAction_ = fileMenu->addAction(QStringLiteral("&Esporta segmento..."), this, &MainWindow::exportSegment);
+    exportAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+    exportAction_->setStatusTip(QStringLiteral("Salva il segmento fra IN e OUT in un nuovo file, senza ricodifica"));
+    updateExportAction();
 
     fileMenu->addSeparator();
     QAction* exitAction = fileMenu->addAction(QStringLiteral("&Esci"), this, &QWidget::close);
@@ -296,6 +401,7 @@ void MainWindow::openPath(const QString& path)
     infoTree_->clear();
     keyframeList_->clear();
     keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> analisi in corso..."));
+    currentPath_ = nativePath;
     player_->openFile(nativePath);
     pages_->setCurrentIndex(1);
 }
