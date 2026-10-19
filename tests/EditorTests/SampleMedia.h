@@ -18,6 +18,9 @@ struct SampleSpec
     int height = 48;
     bool silentAudio = false;  // audio a zero invece del segnale di prova (per provare l'anteprima senza rumore)
     bool aacAudio = false;     // audio AAC (come nei video dei telefoni) invece di PCM; serve per l'MP4
+    int sampleRate = 48000;
+    int firstIndex = 0;  // il contenuto (luminanza e audio) parte dal fotogramma firstIndex invece che da 0:
+                         // serve a riconoscere i file uniti
 };
 
 // Valore della luminanza (Y) del pixel (x, y) nel fotogramma `index` dei file di prova.

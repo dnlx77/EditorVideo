@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EditorCore/MediaError.h"
+#include "EditorCore/Project.h"
 #include "EditorCore/SegmentList.h"
 
 #include <functional>
@@ -23,6 +24,7 @@ struct ExportResult
     double durationSeconds = 0.0;  // durata del file creato
     int streamCount = 0;           // flussi copiati (video + audio)
     int segmentCount = 0;          // tratti uniti nel file
+    int clipCount = 0;             // file di origine
 };
 
 // Avanzamento da 0 a 1; restituire false per annullare.
@@ -41,6 +43,12 @@ using ExportProgress = std::function<bool(double fraction)>;
 // non resta un file a metà.
 ExportResult exportSegments(const std::string& inputPath, const std::string& outputPath,
                             const std::vector<TimeRange>& ranges, const ExportProgress& progress = {});
+
+// Come sopra, con i tratti di più file uniti uno dopo l'altro (anche di contenitori diversi). I file devono avere
+// gli stessi codec e parametri (vedi checkCompatibility), altrimenti MediaError con l'elenco delle differenze.
+// Il contenitore del file creato si ricava dall'estensione di outputPath (di solito quella del primo file).
+ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath,
+                         const ExportProgress& progress = {});
 
 // Un solo tratto [inSeconds, outSeconds).
 ExportResult exportSegment(const std::string& inputPath, const std::string& outputPath, double inSeconds,

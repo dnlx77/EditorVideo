@@ -16,8 +16,6 @@ namespace editor::tests {
 namespace {
 
 constexpr int kFps = 25;
-constexpr int kSampleRate = 48000;
-constexpr int kSamplesPerFrame = kSampleRate / kFps;
 
 void check(int ret, const char* what)
 {
@@ -75,18 +73,19 @@ public:
         open(video_, codec);
     }
 
-    void addAudio(bool silent, bool aac)
+    void addAudio(bool silent, bool aac, int sampleRate)
     {
         silent_ = silent;
+        rate_ = sampleRate;
         const AVCodec* codec = avcodec_find_encoder(aac ? AV_CODEC_ID_AAC : AV_CODEC_ID_PCM_S16LE);
         audio_.enc = avcodec_alloc_context3(codec);
         audio_.enc->sample_fmt = aac ? AV_SAMPLE_FMT_FLTP : AV_SAMPLE_FMT_S16;
-        audio_.enc->sample_rate = kSampleRate;
+        audio_.enc->sample_rate = rate_;
         if (aac)
             audio_.enc->bit_rate = 128000;
         const AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
         check(av_channel_layout_copy(&audio_.enc->ch_layout, &stereo), "av_channel_layout_copy");
-        audio_.enc->time_base = {1, kSampleRate};
+        audio_.enc->time_base = {1, rate_};
         open(audio_, codec);
     }
 
@@ -98,13 +97,13 @@ public:
 
         // L'audio va in blocchi della misura chiesta dall'encoder (AAC: 1024 campioni), il PCM in blocchi da un
         // fotogramma video; lo si scrive man mano che il video avanza, così i pacchetti restano mescolati.
-        const long long totalSamples = static_cast<long long>(frames) * kSamplesPerFrame;
-        const int chunk = audio_.enc != nullptr && audio_.enc->frame_size > 0 ? audio_.enc->frame_size : kSamplesPerFrame;
+        const long long totalSamples = static_cast<long long>(frames) * samplesPerFrame();
+        const int chunk = audio_.enc != nullptr && audio_.enc->frame_size > 0 ? audio_.enc->frame_size : samplesPerFrame();
         long long written = 0;
         for (int i = 0; i < frames; ++i) {
             if (video_.enc != nullptr)
                 encode(video_, makeVideoFrame(i));
-            const long long until = std::min(totalSamples, static_cast<long long>(i + 1) * kSamplesPerFrame);
+            const long long until = std::min(totalSamples, static_cast<long long>(i + 1) * samplesPerFrame());
             while (audio_.enc != nullptr && written < until) {
                 const int count = static_cast<int>(std::min<long long>(chunk, totalSamples - written));
                 encode(audio_, makeAudioFrame(written, count));
@@ -141,7 +140,7 @@ private:
         check(av_frame_get_buffer(frame_, 0), "av_frame_get_buffer");
         for (int y = 0; y < height; ++y)
             for (int x = 0; x < width; ++x)
-                frame_->data[0][y * frame_->linesize[0] + x] = static_cast<uint8_t>(sampleLuma(x, y, index));
+                frame_->data[0][y * frame_->linesize[0] + x] = static_cast<uint8_t>(sampleLuma(x, y, firstIndex_ + index));
         for (int plane = 1; plane < 3; ++plane)
             for (int y = 0; y < height / 2; ++y)
                 for (int x = 0; x < width / 2; ++x)
@@ -154,12 +153,12 @@ private:
     {
         av_frame_unref(frame_);
         frame_->format = audio_.enc->sample_fmt;
-        frame_->sample_rate = kSampleRate;
+        frame_->sample_rate = rate_;
         frame_->nb_samples = count;
         check(av_channel_layout_copy(&frame_->ch_layout, &audio_.enc->ch_layout), "av_channel_layout_copy");
         check(av_frame_get_buffer(frame_, 0), "av_frame_get_buffer");
         for (int s = 0; s < count; ++s) {
-            const std::int16_t value = silent_ ? 0 : sampleAudio(first + s);
+            const std::int16_t value = silent_ ? 0 : sampleAudio(static_cast<long long>(firstIndex_) * samplesPerFrame() + first + s);
             if (audio_.enc->sample_fmt == AV_SAMPLE_FMT_FLTP) {
                 // AAC: float, un piano per canale
                 reinterpret_cast<float*>(frame_->data[0])[s] = value / 32768.0f;
@@ -193,6 +192,15 @@ private:
     AVPacket* packet_ = nullptr;
     AVFrame* frame_ = nullptr;
     bool silent_ = false;
+    int rate_ = 48000;
+    int firstIndex_ = 0;  // il contenuto parte da questo fotogramma (e dal campione corrispondente)
+
+    int samplesPerFrame() const { return rate_ / kFps; }
+
+public:
+    void setFirstIndex(int index) { firstIndex_ = index; }
+
+private:
     Track video_;
     Track audio_;
 };
@@ -228,8 +236,9 @@ void writeSampleFile(const std::filesystem::path& path, const SampleSpec& spec)
     Writer writer(toUtf8(path));
     if (spec.video)
         writer.addVideo(spec);
+    writer.setFirstIndex(spec.firstIndex);
     if (spec.audio)
-        writer.addAudio(spec.silentAudio, spec.aacAudio);
+        writer.addAudio(spec.silentAudio, spec.aacAudio, spec.sampleRate);
     writer.write(spec.frames);
 }
 
