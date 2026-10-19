@@ -54,6 +54,8 @@ public:
     // Aggiunge un file e ne restituisce l'id. L'analisi arriva dopo con setAnalysis().
     int add(std::string path);
     void setAnalysis(int id, std::vector<double> keyframes, double duration);
+    // Il file si trova in un altro posto (es. ritrovato riaprendo un progetto): l'analisi va rifatta.
+    void setClipPath(int id, std::string path);
     // Toglie il file e tutti i suoi pezzi dalla sequenza.
     void remove(int id);
     void clear();

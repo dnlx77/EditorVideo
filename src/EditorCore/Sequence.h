@@ -36,6 +36,8 @@ public:
     void removeClip(int clipId);  // tutti i pezzi di un file (quando il file esce dal progetto)
     void move(int fragmentId, int toIndex);
     void clear();
+    // Rimette i pezzi così come sono (es. riaprendo un progetto salvato): ognuno riceve un id nuovo.
+    void restore(std::vector<Fragment> fragments);
 
     // Divide il pezzo che si trova al tempo `seconds` della sequenza. La seconda parte deve iniziare su un
     // fotogramma chiave: si divide al fotogramma chiave nello stesso punto o subito prima (nessun fotogramma perso

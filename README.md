@@ -43,7 +43,7 @@ La finestra è divisa così:
 - **a destra**: l'anteprima **Montaggio**, il risultato finale, con i pezzi uno dopo l'altro;
 - **in basso**: la **timeline del montaggio**, con un blocco colorato per ogni pezzo (il colore del file da cui viene), largo quanto dura, e sotto la **corsia audio** con la forma d'onda di ogni pezzo.
 
-**File > Apri...** (Ctrl+O) apre un file in un progetto nuovo; **File > Aggiungi file...** (Ctrl+Maiusc+O, anche più file insieme) ne aggiunge altri. Vengono analizzati uno alla volta in background. Si possono anche passare i file da riga di comando: `EditorVideo.exe "C:\Video\a.mp4" "C:\Video\b.mp4"`.
+**File > Apri file video...** (Ctrl+O) apre un file in un progetto nuovo; **File > Aggiungi file...** (Ctrl+Maiusc+O, anche più file insieme) ne aggiunge altri. Vengono analizzati uno alla volta in background. Si possono anche passare i file da riga di comando: `EditorVideo.exe "C:\Video\a.mp4" "C:\Video\b.mp4"`.
 
 ### Comandi
 
@@ -65,6 +65,8 @@ La finestra è divisa così:
 | Rimetti l'audio nel tratto selezionato | Maiusc+M |
 | Sostituisci l'audio / torna all'audio originale | menu Audio |
 | Esporta il montaggio (o, se è vuoto, il solo IN-OUT) | Ctrl+E |
+| Salva progetto / Salva progetto con nome | Ctrl+S / Ctrl+Maiusc+S |
+| Apri progetto | Ctrl+P |
 
 ### Sorgente: IN e OUT
 
@@ -88,6 +90,14 @@ La finestra è divisa così:
 - **Sostituire l'audio**: **Audio > Sostituisci l'audio...** sceglie un file (MP3, M4A, AAC, WAV... o anche un video, di cui si usa l'audio) che diventa l'audio di tutto il montaggio, al posto di quello originale. Sulla corsia audio compare come un blocco giallo: trascinandone la **maniglia** (la striscia col nome) lo si sposta avanti o indietro rispetto al video. Prima dell'inizio della traccia c'è silenzio; alla fine del montaggio la traccia viene tagliata. I tratti barrati valgono anche per la traccia sostitutiva. **Audio > Usa l'audio originale** torna all'audio dei file.
 - Anche l'audio sostitutivo viene copiato senza ricodifica, quindi deve poter stare nel contenitore del file esportato: per un MP4 vanno bene AAC/M4A e MP3, non un WAV. Se non va bene, un messaggio lo dice subito (con un MKV vanno bene quasi tutti i formati).
 
+### Progetto
+
+- **File > Salva progetto** (Ctrl+S) salva il lavoro in un file `.evproj`: i file usati, i pezzi del montaggio, i tratti senza audio, l'audio sostitutivo con il suo spostamento, IN e OUT della Sorgente e dove erano le anteprime. Il video e l'audio originali non vengono mai toccati: il progetto li indica soltanto. **Salva progetto con nome...** (Ctrl+Maiusc+S) ne crea una copia con un altro nome.
+- **File > Apri progetto...** (Ctrl+P; Ctrl+O resta per aprire un file video) e **File > Progetti recenti** (gli ultimi 5) lo riaprono; anche `EditorVideo.exe montaggio.evproj`.
+- Il progetto ricorda per ogni file sia il percorso completo sia quello relativo alla sua cartella: se si sposta tutta la cartella (progetto e video insieme, anche su un altro disco) i file si ritrovano. Se un file non c'è più, un messaggio elenca quelli mancanti: **Trova...** permette di indicare dove sono ora (gli altri mancanti vengono cercati nella stessa cartella), **Continua senza** toglie i loro pezzi dal montaggio. Se un file è cambiato (dura diversamente da quando è stato salvato il progetto) compare un avviso.
+- Nel titolo della finestra c'è il nome del progetto, con un asterisco se ci sono modifiche non salvate; chiudendo il programma o aprendo un altro progetto viene chiesto se salvarle.
+- Il file è JSON leggibile (UTF-8). I tempi sono numeri interi di "tick" da 1/705 600 000 di secondo, un'unità che divide esattamente le basi dei tempi di video e audio (1/90000, 1/1000, 1/48000, 1/44100, 1001/30000...): riaprendo un progetto ogni tempo torna identico. Un progetto salvato da una versione più recente del programma viene rifiutato con un messaggio, così come un file rovinato.
+
 ### Esportazione
 
 - **File > Esporta...** (Ctrl+E) salva il montaggio in un nuovo file, nel contenitore del primo pezzo: propone `<nome>_montaggio.<estensione>` nella cartella dell'originale. Se il montaggio è vuoto esporta il solo IN-OUT della Sorgente (`<nome>_taglio.<estensione>`).
@@ -110,5 +120,6 @@ La finestra è divisa così:
 - `EditorVideo.exe --join-test destinazione file1 file2 [...]` unisce i file interi come l'interfaccia, dopo il controllo di compatibilità, e controlla il file creato (codici di uscita: 0 tutto giusto, 4 file non compatibili, 2 errore, 3 controllo non riuscito).
 - `EditorVideo.exe --sequence-test destinazione file IN OUT [file IN OUT ...]` costruisce un montaggio con i pezzi in quell'ordine, lo esporta e controlla durata e ordine (all'inizio di ogni pezzo lo stesso fotogramma dell'originale).
 - `EditorVideo.exe --audio-test destinazione file [mute DA A]... [replace audio OFFSET] [omit]` mette il file intero nel montaggio, toglie l'audio dai tratti indicati e/o lo sostituisce, esporta e controlla durata, codec, che l'audio sia continuo (nessun buco nuovo fra un blocco e l'altro) e che nei tratti ci sia silenzio. Codice 4 se l'audio sostitutivo non può stare nel contenitore.
+- `EditorVideo.exe --project-test file [file ...]` prova i progetti con file veri, in una cartella temporanea: salva un montaggio (con audio tolto e sostituito), lo riapre e lo risalva (deve essere identico), sposta la cartella (i file devono ritrovarsi), esporta il progetto riaperto, poi toglie un file (deve risultare mancante) e prova un progetto di versione sconosciuta e uno rovinato (devono essere rifiutati).
 - `--smoke-test` con uno o più file costruisce un montaggio dall'interfaccia, prova l'anteprima Montaggio a cavallo di una giunzione e lo esporta. Con la variabile d'ambiente `QT_QPA_PLATFORM=minimal` le prove girano senza aprire finestre.
 - A ogni push GitHub Actions compila la soluzione in Release, lancia i test, avvia l'applicazione con `--smoke-test`, prova la riproduzione dei file dimostrativi, l'esportazione di uno e più tratti e l'unione di più file (anche il rifiuto di file non compatibili).

@@ -11,8 +11,10 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
+#include <QtCore/QSettings>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
+#include <QtGui/QCloseEvent>
 #include <QtGui/QKeyEvent>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QFileDialog>
@@ -22,6 +24,7 @@
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressDialog>
+#include <QtWidgets/QPushButton>
 #include <QtWidgets/QSplitter>
 #include <QtWidgets/QStackedWidget>
 #include <QtWidgets/QStatusBar>
@@ -30,6 +33,7 @@
 #include <QtWidgets/QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <iterator>
 #include <memory>
@@ -119,6 +123,14 @@ const QString kAudioFilter = QStringLiteral(
 const QString kVideoFilter = QStringLiteral(
     "File video e audio (*.mp4 *.mkv *.mov *.avi *.m4v *.webm *.ts *.mts *.m2ts *.mpg *.wmv *.flv "
     "*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus);;Tutti i file (*.*)");
+
+const QString kProjectFilter = QStringLiteral("Progetto EditorVideo (*.evproj)");
+constexpr int kRecentProjects = 5;
+
+QSettings settings()
+{
+    return QSettings(QSettings::NativeFormat, QSettings::UserScope, QStringLiteral("EditorVideo"), QStringLiteral("EditorVideo"));
+}
 
 QString nativeAbsolute(const QString& path)
 {
@@ -450,6 +462,8 @@ void MainWindow::clearSequence()
 
 void MainWindow::sequenceChanged()
 {
+    if (!loading_)
+        setModified(true);
     refreshTimeline();
     program_->sequenceChanged();
     updateSourceBands();
@@ -865,9 +879,19 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 void MainWindow::createMenus()
 {
     QMenu* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
-    openAction_ = fileMenu->addAction(QStringLiteral("&Apri..."), this, &MainWindow::openFile);
+    openAction_ = fileMenu->addAction(QStringLiteral("&Apri file video..."), this, &MainWindow::openFile);
     openAction_->setShortcut(QKeySequence::Open);
     openAction_->setStatusTip(QStringLiteral("Apre un file in un nuovo progetto"));
+    QAction* openProjectAction = fileMenu->addAction(QStringLiteral("Apri &progetto..."), this, &MainWindow::openProjectDialog);
+    openProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));  // Ctrl+O apre già un file video
+    recentMenu_ = fileMenu->addMenu(QStringLiteral("Progetti &recenti"));
+    connect(recentMenu_, &QMenu::aboutToShow, this, [this] { rebuildRecentMenu(); });
+    QAction* saveAction = fileMenu->addAction(QStringLiteral("&Salva progetto"), this, [this] { saveProject(); });
+    saveAction->setShortcut(QKeySequence::Save);
+    saveAction->setStatusTip(QStringLiteral("Salva file, montaggio e audio in un file .evproj (gli originali non vengono toccati)"));
+    QAction* saveAsAction = fileMenu->addAction(QStringLiteral("Salva progetto &con nome..."), this, [this] { saveProjectAsDialog(); });
+    saveAsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+    fileMenu->addSeparator();
     QAction* addAction = fileMenu->addAction(QStringLiteral("A&ggiungi file..."), this, &MainWindow::addFilesDialog);
     addAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
     addAction->setStatusTip(QStringLiteral("Aggiunge altri file al progetto"));
@@ -963,6 +987,8 @@ void MainWindow::createMenus()
 
 void MainWindow::openFile()
 {
+    if (!maybeSave())
+        return;
     const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Apri file video"), QString(), kVideoFilter);
     if (!path.isEmpty())
         openPath(path);
@@ -976,9 +1002,9 @@ void MainWindow::addFilesDialog()
         addFiles(paths);
 }
 
-void MainWindow::openPath(const QString& path)
+void MainWindow::resetProject()
 {
-    // Nuovo progetto: si ferma un'eventuale analisi in corso e si riparte da zero.
+    // Si ferma un'eventuale analisi in corso e si riparte da zero.
     if (probeThread_ != nullptr) {
         cancelProbe_ = true;
         probeThread_->wait();
@@ -990,9 +1016,21 @@ void MainWindow::openPath(const QString& path)
     timeline_->setAudioSelection(0.0, 0.0);
     currentClipId_ = 0;
     currentPath_.clear();
+    pendingView_.reset();
+    savedDurations_.clear();
+    projectPath_.clear();
     player_->closeFile();
+}
+
+void MainWindow::openPath(const QString& path)
+{
+    // Nuovo progetto con un solo file: finché non si monta niente non c'è niente da salvare.
+    loading_ = true;
+    resetProject();
     sequenceChanged();
     addFiles({path});
+    loading_ = false;
+    setModified(false);
 }
 
 void MainWindow::addFiles(const QStringList& paths)
@@ -1011,6 +1049,8 @@ void MainWindow::addFiles(const QStringList& paths)
         selectClip(first);
     startNextProbe();
     updateExportAction();
+    if (!loading_)
+        setModified(true);
 }
 
 void MainWindow::startNextProbe()
@@ -1062,6 +1102,25 @@ void MainWindow::startNextProbe()
                     showInfo(info);
                     player_->setKeyframes(info.keyframeTimes);
                     updateSourceBands();
+                    // IN e OUT salvati nel progetto: si possono rimettere ora che si conoscono i fotogrammi chiave.
+                    if (pendingView_ && pendingView_->sourceClipId == id) {
+                        if (pendingView_->in && pendingView_->out)
+                            player_->setInOut(*pendingView_->in, *pendingView_->out);
+                        player_->seekTo(pendingView_->sourcePosition);
+                        pendingView_.reset();
+                    }
+                }
+                // Il file è cambiato dall'ultimo salvataggio del progetto?
+                if (const auto saved = savedDurations_.find(id); saved != savedDurations_.end()) {
+                    const double before = saved->second;
+                    savedDurations_.erase(saved);
+                    if (std::abs(before - info.durationSeconds) > 0.05) {
+                        QMessageBox::warning(this, QStringLiteral("File cambiato"),
+                                             QStringLiteral("%1 è cambiato dall'ultimo salvataggio del progetto: ora dura %2 "
+                                                            "invece di %3.\nControlla i pezzi del montaggio che lo usano.")
+                                                 .arg(fileNameOf(project_.find(id)->path), timeText(info.durationSeconds),
+                                                      timeText(before)));
+                    }
                 }
                 refreshClipList();
                 updateExportAction();
@@ -1092,7 +1151,7 @@ void MainWindow::selectClip(int id)
         infoTree_->clear();
         keyframeList_->clear();
         keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> analisi in corso..."));
-        setWindowTitle(QStringLiteral("%1 - EditorVideo").arg(fileNameOf(clip->path)));
+        updateTitle();
     }
     refreshClipList();
     pages_->setCurrentIndex(1);
@@ -1120,7 +1179,7 @@ void MainWindow::removeClip(int id)
         } else {
             infoTree_->clear();
             keyframeList_->clear();
-            setWindowTitle(QStringLiteral("EditorVideo"));
+            updateTitle();
             pages_->setCurrentIndex(0);
         }
     }
@@ -1162,7 +1221,7 @@ void MainWindow::showInfo(const core::MediaInfo& info)
 {
     const QString path = qs(info.path);
     const QString fileName = QFileInfo(path).fileName();
-    setWindowTitle(QStringLiteral("%1 - EditorVideo").arg(fileName));
+    updateTitle();
 
     infoTree_->clear();
 
@@ -1200,6 +1259,260 @@ void MainWindow::showInfo(const core::MediaInfo& info)
     statusBar()->showMessage(QStringLiteral("%1  ·  %2  ·  %3 fotogrammi chiave")
                                  .arg(fileName, qs(core::formatDuration(info.durationSeconds)))
                                  .arg(info.keyframeTimes.size()));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Progetto salvato
+
+void MainWindow::setModified(bool modified)
+{
+    modified_ = modified;
+    updateTitle();
+}
+
+void MainWindow::updateTitle()
+{
+    // "montaggio.evproj* · gita.mp4 - EditorVideo": l'asterisco dice che ci sono modifiche non salvate.
+    QString title = projectPath_.isEmpty() ? QStringLiteral("Nuovo progetto") : QFileInfo(projectPath_).fileName();
+    title += QStringLiteral("[*]");
+    if (!currentPath_.isEmpty())
+        title += QStringLiteral(" · %1").arg(QFileInfo(currentPath_).fileName());
+    setWindowTitle(title + QStringLiteral(" - EditorVideo"));
+    setWindowModified(modified_);
+}
+
+core::ProjectView MainWindow::currentView() const
+{
+    core::ProjectView view;
+    view.sourceClipId = currentClipId_;
+    const core::CutSegment& segment = player_->segment();
+    if (segment.hasIn())
+        view.in = segment.in();
+    if (segment.hasOut())
+        view.out = segment.out();
+    view.sourcePosition = player_->currentPosition();
+    view.programPosition = program_->position();
+    return view;
+}
+
+bool MainWindow::maybeSave()
+{
+    if (!modified_ || project_.empty())
+        return true;
+    QMessageBox box(QMessageBox::Question, QStringLiteral("Modifiche non salvate"),
+                    QStringLiteral("Il progetto %1 ha modifiche non salvate. Vuoi salvarle?")
+                        .arg(projectPath_.isEmpty() ? QString() : QFileInfo(projectPath_).fileName()),
+                    QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
+    box.button(QMessageBox::Save)->setText(QStringLiteral("Salva"));
+    box.button(QMessageBox::Discard)->setText(QStringLiteral("Non salvare"));
+    box.button(QMessageBox::Cancel)->setText(QStringLiteral("Annulla"));
+    box.setDefaultButton(QMessageBox::Save);
+    switch (box.exec()) {
+    case QMessageBox::Save:
+        return saveProject();
+    case QMessageBox::Discard:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+    if (maybeSave())
+        event->accept();
+    else
+        event->ignore();
+}
+
+bool MainWindow::saveProject()
+{
+    if (projectPath_.isEmpty())
+        return saveProjectAsDialog();
+    return saveProjectAs(projectPath_);
+}
+
+bool MainWindow::saveProjectAsDialog()
+{
+    // Si propone la cartella del primo file, con il suo nome.
+    QString suggested = projectPath_;
+    if (suggested.isEmpty() && !project_.empty()) {
+        const QFileInfo first(qs(project_.clips().front().path));
+        suggested = first.dir().filePath(first.completeBaseName() + QStringLiteral(".evproj"));
+    }
+    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Salva progetto"), suggested, kProjectFilter);
+    if (path.isEmpty())
+        return false;
+    if (QFileInfo(path).suffix().compare(QStringLiteral("evproj"), Qt::CaseInsensitive) != 0)
+        path += QStringLiteral(".evproj");
+    return saveProjectAs(path);
+}
+
+bool MainWindow::saveProjectAs(const QString& path, bool remember)
+{
+    const QString native = nativeAbsolute(path);
+    try {
+        core::saveProjectFile(native.toStdString(), project_, currentView());
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, QStringLiteral("Salvataggio non riuscito"), QString::fromUtf8(e.what()));
+        return false;
+    }
+    projectPath_ = native;
+    setModified(false);
+    if (remember)
+        rememberRecent(native);
+    statusBar()->showMessage(QStringLiteral("Progetto salvato in %1").arg(native), 8000);
+    return true;
+}
+
+void MainWindow::openProjectDialog()
+{
+    if (!maybeSave())
+        return;
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Apri progetto"),
+                                                      projectPath_.isEmpty() ? QString() : QFileInfo(projectPath_).path(),
+                                                      kProjectFilter);
+    if (!path.isEmpty())
+        openProject(path);
+}
+
+bool MainWindow::openProject(const QString& path, bool interactive)
+{
+    const QString native = nativeAbsolute(path);
+    core::LoadedProject loaded;
+    try {
+        loaded = core::loadProjectFile(native.toStdString());
+    } catch (const std::exception& e) {
+        if (interactive)
+            QMessageBox::warning(this, QStringLiteral("Impossibile aprire il progetto"), QString::fromUtf8(e.what()));
+        statusBar()->showMessage(QString::fromUtf8(e.what()), 10000);
+        return false;
+    }
+
+    // File che non si trovano più: si possono cercare, oppure si prosegue senza (i loro pezzi vengono tolti).
+    while (!loaded.missing.empty()) {
+        if (!interactive) {
+            core::dropMissing(loaded);
+            break;
+        }
+        QString list;
+        for (const core::MissingFile& m : loaded.missing)
+            list += QStringLiteral("\n• %1%2  (%3)")
+                        .arg(m.clipId == 0 ? QStringLiteral("audio sostitutivo: ") : QString(), qs(m.fileName), qs(m.savedPath));
+        QMessageBox box(QMessageBox::Warning, QStringLiteral("File non trovati"),
+                        QStringLiteral("Questi file del progetto non si trovano più, né dove erano né accanto al progetto:%1\n\n"
+                                       "Puoi cercarli (Trova...) oppure continuare senza: i loro pezzi verranno tolti dal "
+                                       "montaggio.")
+                            .arg(list),
+                        QMessageBox::NoButton, this);
+        QPushButton* find = box.addButton(QStringLiteral("Trova %1...").arg(qs(loaded.missing.front().fileName)),
+                                          QMessageBox::ActionRole);
+        QPushButton* skip = box.addButton(QStringLiteral("Continua senza"), QMessageBox::AcceptRole);
+        box.addButton(QStringLiteral("Annulla"), QMessageBox::RejectRole);
+        box.exec();
+        if (box.clickedButton() == find) {
+            const core::MissingFile missing = loaded.missing.front();
+            const QString found = QFileDialog::getOpenFileName(
+                this, QStringLiteral("Dov'è %1?").arg(qs(missing.fileName)), QFileInfo(native).path(),
+                QStringLiteral("%1 (%1);;Tutti i file (*.*)").arg(qs(missing.fileName)));
+            if (found.isEmpty())
+                continue;
+            core::relocateMissing(loaded, missing, nativeAbsolute(found).toStdString());
+            // Gli altri file mancanti potrebbero essere nella stessa cartella.
+            const QDir folder = QFileInfo(found).dir();
+            for (const core::MissingFile& other : std::vector<core::MissingFile>(loaded.missing)) {
+                const QString candidate = folder.filePath(qs(other.fileName));
+                if (QFileInfo::exists(candidate))
+                    core::relocateMissing(loaded, other, nativeAbsolute(candidate).toStdString());
+            }
+        } else if (box.clickedButton() == skip) {
+            const int removed = core::dropMissing(loaded);
+            if (removed > 0)
+                QMessageBox::information(this, QStringLiteral("Pezzi tolti"),
+                                         QStringLiteral("Tolti dal montaggio %1 pezzi dei file mancanti.").arg(removed));
+            break;
+        } else {
+            return false;
+        }
+    }
+
+    loading_ = true;
+    resetProject();
+    project_ = std::move(loaded.project);
+    projectPath_ = native;
+    savedDurations_ = std::move(loaded.savedDurations);
+    pendingView_ = loaded.view;
+    for (const core::Clip& clip : project_.clips()) {
+        probeQueue_.push_back(clip.id);
+        requestWaveform(clip.path);
+    }
+    if (const auto& replacement = project_.audioReplacement())
+        requestWaveform(replacement->path);
+    sequenceChanged();
+    refreshClipList();
+    const int source = project_.find(loaded.view.sourceClipId) != nullptr ? loaded.view.sourceClipId
+                     : project_.empty()                                   ? 0
+                                                                          : project_.clips().front().id;
+    if (source != 0) {
+        selectClip(source);
+        player_->seekTo(loaded.view.sourcePosition);
+    } else {
+        pages_->setCurrentIndex(project_.empty() ? 0 : 1);
+    }
+    program_->seekTo(loaded.view.programPosition);
+    startNextProbe();
+    loading_ = false;
+    setModified(false);
+    if (interactive)
+        rememberRecent(native);
+    statusBar()->showMessage(QStringLiteral("Progetto %1 aperto: %2 file, %3 pezzi nel montaggio.")
+                                 .arg(QFileInfo(native).fileName())
+                                 .arg(project_.clips().size())
+                                 .arg(project_.sequence().fragments().size()),
+                             8000);
+    return true;
+}
+
+void MainWindow::rememberRecent(const QString& path)
+{
+    QSettings s = settings();
+    QStringList recent = s.value(QStringLiteral("progettiRecenti")).toStringList();
+    recent.removeIf([&](const QString& p) { return p.compare(path, Qt::CaseInsensitive) == 0; });
+    recent.prepend(path);
+    while (recent.size() > kRecentProjects)
+        recent.removeLast();
+    s.setValue(QStringLiteral("progettiRecenti"), recent);
+}
+
+void MainWindow::rebuildRecentMenu()
+{
+    recentMenu_->clear();
+    const QStringList recent = settings().value(QStringLiteral("progettiRecenti")).toStringList();
+    if (recent.isEmpty()) {
+        recentMenu_->addAction(QStringLiteral("(nessuno)"))->setEnabled(false);
+        return;
+    }
+    for (int i = 0; i < recent.size(); ++i) {
+        const QString path = recent[i];
+        QAction* action = recentMenu_->addAction(QStringLiteral("&%1  %2").arg(i + 1).arg(QFileInfo(path).fileName()), this,
+                                                 [this, path] {
+                                                     if (!QFileInfo::exists(path)) {
+                                                         QMessageBox::warning(this, QStringLiteral("Progetto non trovato"),
+                                                                              QStringLiteral("Il progetto %1 non c'è più.").arg(path));
+                                                         QSettings s = settings();
+                                                         QStringList list = s.value(QStringLiteral("progettiRecenti")).toStringList();
+                                                         list.removeAll(path);
+                                                         s.setValue(QStringLiteral("progettiRecenti"), list);
+                                                         return;
+                                                     }
+                                                     if (maybeSave())
+                                                         openProject(path);
+                                                 });
+        action->setStatusTip(path);
+    }
+    recentMenu_->addSeparator();
+    recentMenu_->addAction(QStringLiteral("Svuota l'elenco"), this,
+                           [] { settings().remove(QStringLiteral("progettiRecenti")); });
 }
 
 void MainWindow::showAbout()

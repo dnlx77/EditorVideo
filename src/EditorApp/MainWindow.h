@@ -2,6 +2,7 @@
 
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Project.h"
+#include "EditorCore/ProjectFile.h"
 #include "EditorCore/SegmentExport.h"
 
 #include <QtWidgets/QMainWindow>
@@ -17,6 +18,7 @@
 
 class QAction;
 class QLabel;
+class QMenu;
 class QListWidget;
 class QStackedWidget;
 class QThread;
@@ -69,6 +71,14 @@ public:
     // Forme d'onda ancora da calcolare (0 = tutte pronte).
     int pendingWaveforms() const;
 
+    // Progetto salvato (.evproj). interactive = false: nessuna domanda né messaggio (prove automatiche; i file
+    // mancanti vengono tolti) e il progetto non va nei recenti.
+    bool openProject(const QString& path, bool interactive = true);
+    bool saveProject();                                              // Ctrl+S (chiede dove, la prima volta)
+    bool saveProjectAs(const QString& path, bool remember = true);  // senza chiedere niente
+    QString projectPath() const { return projectPath_; }
+    bool isModified() const { return modified_; }
+
     // Esporta il montaggio, o il solo IN-OUT se la sequenza è vuota (chiede dove salvare).
     void exportSegment();
     // Esportazione verso `target` senza chiedere niente; showResult = false per non mostrare il messaggio finale
@@ -85,6 +95,7 @@ public:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
 
 private:
     void createMenus();
@@ -93,6 +104,16 @@ private:
     void showAbout();
     void showInfo(const core::MediaInfo& info);
     void replaceAudioDialog();
+    void openProjectDialog();
+    bool saveProjectAsDialog();
+    // Modifiche non salvate: chiede se salvarle. false = l'utente ha annullato.
+    bool maybeSave();
+    void setModified(bool modified);
+    void updateTitle();
+    void rememberRecent(const QString& path);
+    void rebuildRecentMenu();
+    core::ProjectView currentView() const;
+    void resetProject();  // ferma le analisi e svuota tutto (prima di aprire un altro progetto)
     void markAudioIn();
     void markAudioOut();
     void updateExportAction();
@@ -138,6 +159,7 @@ private:
     QAction* exportAction_ = nullptr;
     QAction* removeClipAction_ = nullptr;
     QAction* originalAudioAction_ = nullptr;
+    QMenu* recentMenu_ = nullptr;
 
     core::Project project_;
     std::map<int, core::MediaInfo> clipInfo_;  // analisi dei file del progetto, per id
@@ -145,6 +167,13 @@ private:
     QString currentPath_;                      // il suo percorso (nativo)
     bool updatingList_ = false;                // mentre si ricostruisce l'elenco dei file
     bool programActive_ = false;               // Spazio e frecce vanno all'anteprima del montaggio
+
+    // File di progetto
+    QString projectPath_;      // vuoto = mai salvato
+    bool modified_ = false;    // modifiche non salvate
+    bool loading_ = false;     // si sta aprendo un progetto: le modifiche non contano
+    std::optional<core::ProjectView> pendingView_;  // IN e OUT della Sorgente, da rimettere dopo l'analisi
+    std::map<int, double> savedDurations_;          // durata dei file nel progetto salvato (per avvisare se cambia)
 
     std::deque<int> probeQueue_;  // file in attesa di analisi
     int probingClipId_ = 0;

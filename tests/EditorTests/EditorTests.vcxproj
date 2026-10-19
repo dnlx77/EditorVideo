@@ -46,6 +46,7 @@
     <ClCompile Include="MediaProbeTests.cpp" />
     <ClCompile Include="MultiFileJoinTests.cpp" />
     <ClCompile Include="PlaybackTests.cpp" />
+    <ClCompile Include="ProjectFileTests.cpp" />
     <ClCompile Include="ProjectTests.cpp" />
     <ClCompile Include="SampleMedia.cpp" />
     <ClCompile Include="SegmentListTests.cpp" />

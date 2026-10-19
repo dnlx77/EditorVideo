@@ -6,6 +6,7 @@
 #include "EditorCore/H264Params.h"
 #include "EditorCore/CutSegment.h"
 #include "EditorCore/Project.h"
+#include "EditorCore/ProjectFile.h"
 #include "EditorCore/SegmentList.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
@@ -25,8 +26,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
+#include <sstream>
 
 namespace {
 
@@ -307,6 +311,128 @@ int runAudioTest(const QStringList& args, qsizetype at)
     }
 }
 
+// --project-test <file> [<file> ...]: prova il file di progetto con file veri, in una cartella temporanea. Copia i file
+// in una cartella, costruisce un montaggio (con audio tolto e sostituito), lo salva e lo riapre (deve tornare
+// identico), sposta la cartella (i file si devono ritrovare dal percorso relativo) ed esporta il progetto riaperto;
+// poi toglie un file (deve risultare mancante) e prova un progetto di versione sconosciuta e uno rovinato (rifiutati
+// con un messaggio). Codice 0 se è tutto giusto, 3 se un controllo non riesce, 2 per altri errori.
+int runProjectTest(const QStringList& args, qsizetype at)
+{
+    namespace core = editor::core;
+    namespace fs = std::filesystem;
+    if (at + 1 >= args.size()) {
+        std::printf("Uso: EditorVideo.exe --project-test <file> [<file> ...]\n");
+        return 1;
+    }
+    const auto utf8 = [](const fs::path& path) {
+        const auto text = path.u8string();
+        return std::string(text.begin(), text.end());
+    };
+    const auto read = [](const fs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream content;
+        content << in.rdbuf();
+        return content.str();
+    };
+    bool ok = true;
+    const auto check = [&ok](bool condition, const char* what) {
+        std::printf("  %s: %s\n", what, condition ? "OK" : "NON RIUSCITO");
+        ok = ok && condition;
+    };
+    const fs::path base = fs::temp_directory_path() / "EditorVideoProvaProgetto";
+    try {
+        fs::remove_all(base);
+        fs::create_directories(base / "originale" / "video");
+
+        // Montaggio: per ogni file il file intero e poi la sua prima metà; audio tolto in un tratto; il primo file come
+        // audio sostitutivo, spostato di mezzo secondo.
+        core::Project project;
+        for (qsizetype i = at + 1; i < args.size(); ++i) {
+            const fs::path source = fs::path(args[i].toStdWString());
+            const fs::path copy = base / "originale" / "video" / source.filename();
+            fs::copy_file(source, copy, fs::copy_options::overwrite_existing);
+            const core::MediaInfo info = core::probeFile(utf8(copy));
+            const int id = project.add(utf8(copy));
+            project.setAnalysis(id, info.keyframeTimes, info.durationSeconds);
+            project.sequence().insert(-1, id, 0.0, info.durationSeconds, project.snapper());
+            project.sequence().insert(-1, id, 0.0, info.durationSeconds / 2, project.snapper());
+        }
+        const double total = project.sequence().totalLength();
+        project.sequence().muteRange(total * 0.2, total * 0.3);
+        project.setAudioReplacement(core::AudioReplacement{project.clips().front().path, 0.5, project.clips().front().duration});
+        const core::ProjectView view{project.clips().front().id, 0.0, 1.0, 0.5, total / 2};
+
+        const std::string saved = utf8(base / "originale" / "montaggio.evproj");
+        core::saveProjectFile(saved, project, view);
+        std::printf("Progetto salvato: %s (%d file, %d pezzi)\n", saved.c_str(), static_cast<int>(project.clips().size()),
+                    static_cast<int>(project.sequence().fragments().size()));
+
+        // Riaperto e salvato di nuovo (dopo aver rifatto l'analisi): stesso testo.
+        core::LoadedProject loaded = core::loadProjectFile(saved);
+        check(loaded.missing.empty(), "riaperto, nessun file mancante");
+        bool sameDurations = true;
+        for (const core::Clip& clip : loaded.project.clips()) {
+            const core::MediaInfo info = core::probeFile(clip.path);
+            loaded.project.setAnalysis(clip.id, info.keyframeTimes, info.durationSeconds);
+            sameDurations = sameDurations && std::abs(loaded.savedDurations[clip.id] - info.durationSeconds) < 1e-9;
+        }
+        check(sameDurations, "durate dei file uguali a quelle salvate");
+        const std::string again = utf8(base / "originale" / "di_nuovo.evproj");
+        core::saveProjectFile(again, loaded.project, loaded.view);
+        check(read(fs::path(std::u8string(saved.begin(), saved.end()))) == read(fs::path(std::u8string(again.begin(), again.end()))),
+              "salvato di nuovo: identico");
+        check(loaded.project.sequence().mutedRanges().size() == project.sequence().mutedRanges().size(), "tratti senza audio");
+        check(loaded.view.in == view.in && loaded.view.out == view.out, "IN e OUT della Sorgente");
+
+        // Cartella spostata: i file si ritrovano dal percorso relativo, e il progetto riaperto si esporta.
+        fs::rename(base / "originale", base / "spostata");
+        core::LoadedProject moved = core::loadProjectFile(utf8(base / "spostata" / "montaggio.evproj"));
+        bool inside = moved.missing.empty();
+        for (const core::Clip& clip : moved.project.clips()) {
+            inside = inside && clip.path.find("spostata") != std::string::npos && fs::exists(fs::path(std::u8string(clip.path.begin(), clip.path.end())));
+            const core::MediaInfo info = core::probeFile(clip.path);
+            moved.project.setAnalysis(clip.id, info.keyframeTimes, info.durationSeconds);
+        }
+        check(inside, "cartella spostata: file ritrovati dal percorso relativo");
+        const std::string output = utf8(base / ("esportato" + fs::path(std::u8string(moved.project.clips().front().path.begin(), moved.project.clips().front().path.end())).extension().string()));
+        core::exportClips(moved.project.exportPlan(), output, moved.project.audioEdit());
+        const double length = core::probeFile(output).durationSeconds;
+        std::printf("  esportazione del progetto riaperto: %.3f s (attesi %.3f s)\n", length, total);
+        check(std::abs(length - total) < 0.1 + 0.05 * static_cast<double>(moved.project.sequence().fragments().size()),
+              "esportazione del progetto riaperto");
+
+        // Un file tolto: risulta mancante; senza di lui i suoi pezzi vengono tolti.
+        fs::remove(fs::path(std::u8string(moved.project.clips().front().path.begin(), moved.project.clips().front().path.end())));
+        core::LoadedProject missing = core::loadProjectFile(utf8(base / "spostata" / "montaggio.evproj"));
+        std::printf("  file mancanti: %d\n", static_cast<int>(missing.missing.size()));
+        const int dropped = core::dropMissing(missing);
+        check(!missing.project.audioReplacement() && dropped == 2, "file mancante segnalato e tolto con i suoi 2 pezzi");
+
+        // Versione sconosciuta e file rovinato: rifiutati con un messaggio.
+        std::string json = read(base / "spostata" / "montaggio.evproj");
+        const auto refused = [&](const std::string& text, const char* what) {
+            try {
+                core::projectFromJson(utf8(base / "x.evproj"), text);
+                check(false, what);
+            } catch (const core::ProjectFileError& e) {
+                std::printf("  %s -> \"%s\"\n", what, e.what());
+                check(true, what);
+            }
+        };
+        std::string newer = json;
+        newer.replace(newer.find("\"versione\": 1"), 13, "\"versione\": 9");
+        refused(newer, "versione sconosciuta rifiutata");
+        refused(json.substr(0, json.size() / 3), "progetto rovinato rifiutato");
+
+        fs::remove_all(base);
+        std::printf("%s\n", ok ? "Controllo del progetto: OK" : "Controllo del progetto: NON RIUSCITO");
+        return ok ? 0 : 3;
+    } catch (const std::exception& e) {
+        std::printf("Errore: %s\n", e.what());
+        return 2;
+    }
+}
+
 int runExportTest(const QStringList& args, qsizetype at){
     namespace core = editor::core;
     const qsizetype pairs = (args.size() - at - 3) / 2;
@@ -381,6 +507,11 @@ int main(int argc, char* argv[])
         std::fflush(stdout);
         return code;
     }
+    if (const qsizetype at = arguments.indexOf(QStringLiteral("--project-test")); at >= 0) {
+        const int code = runProjectTest(arguments, at);
+        std::fflush(stdout);
+        return code;
+    }
     if (const qsizetype at = arguments.indexOf(QStringLiteral("--audio-test")); at >= 0) {
         const int code = runAudioTest(arguments, at);
         std::fflush(stdout);
@@ -411,6 +542,11 @@ int main(int argc, char* argv[])
     for (qsizetype i = 1; i < arguments.size(); ++i) {
         if (!arguments[i].startsWith(QStringLiteral("--")))
             files.append(arguments[i]);
+    }
+    // Un progetto (.evproj, anche con un doppio clic se è associato a EditorVideo) si apre come progetto.
+    if (files.size() == 1 && files.front().endsWith(QStringLiteral(".evproj"), Qt::CaseInsensitive)) {
+        window.openProject(files.front());
+        files.clear();
     }
     const QString file = files.isEmpty() ? QString() : files.front();
     if (!files.isEmpty()) {
@@ -503,6 +639,24 @@ int main(int argc, char* argv[])
                 waves.start();
                 while (window->pendingWaveforms() > 0 && waves.elapsed() < 20000)
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                // Progetto: salvato e riaperto, con gli stessi pezzi e lo stesso audio tolto (e senza modifiche
+                // in sospeso).
+                {
+                    const QString projectFile = QDir::temp().filePath(QStringLiteral("EditorVideoProvaProgetto.evproj"));
+                    const std::size_t pieces = sequence.fragments().size();
+                    const bool saved = window->saveProjectAs(projectFile, false) && !window->isModified();
+                    const bool reopened = saved && window->openProject(projectFile, false);
+                    const auto& again = window->project().sequence();
+                    const bool same = reopened && again.fragments().size() == pieces && again.mutedRanges().size() == 1
+                                   && !window->isModified();
+                    std::printf("Progetto: salvato %s, riaperto %s, %d pezzi\n", saved ? "sì" : "NO", same ? "uguale" : "DIVERSO",
+                                static_cast<int>(again.fragments().size()));
+                    std::fflush(stdout);
+                    QFile::remove(projectFile);
+                    ok = ok && same;
+                    while (!window->project().allAnalyzed() && analysis.elapsed() < 40000)
+                        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                }
                 std::printf("Audio: %d tratti senza audio (%.3f - %.3f s), forme d'onda %s\n", static_cast<int>(muted.size()),
                             muted.empty() ? 0.0 : muted.front().start, muted.empty() ? 0.0 : muted.front().end,
                             window->pendingWaveforms() == 0 ? "pronte" : "NON pronte");

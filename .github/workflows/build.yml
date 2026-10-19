@@ -156,3 +156,15 @@ jobs:
             Get-Content audio.txt, audio-err.txt
             if ($p.ExitCode -ne $prova.atteso) { throw "audio: codice $($p.ExitCode) invece di $($prova.atteso)" }
           }
+
+      - name: Prova del progetto
+        shell: pwsh
+        run: |
+          # Salva, riapre, sposta la cartella, esporta; file mancante, versione sconosciuta e file rovinato.
+          $p = Start-Process bind\Release\EditorVideo.exe -PassThru `
+                 -ArgumentList '--project-test', "`"$env:TEMP\EditorVideoDemo\demo_mpeg2_gpu.mkv`"" `
+                 -RedirectStandardOutput progetto.txt -RedirectStandardError progetto-err.txt
+          $null = $p.Handle  # necessario per leggere ExitCode
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "prova del progetto bloccata" }
+          Get-Content progetto.txt, progetto-err.txt
+          if ($p.ExitCode -ne 0) { throw "progetto: codice $($p.ExitCode)" }
