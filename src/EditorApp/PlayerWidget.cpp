@@ -2,6 +2,7 @@
 
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/MediaProbe.h"
+#include "EditorCore/Playback.h"
 #include "EditorCore/VideoDecoder.h"
 
 #include <QtCore/QDir>
@@ -212,7 +213,9 @@ void PlayerWidget::openFile(const QString& path)
     }
 
     audioNote_.clear();
-    if (audio_ && !audioOut_.open(audio_->sampleRate(), audio_->channels()))
+    // EDITORVIDEO_NO_AUDIO=1 simula un PC senza scheda audio (per provare quel caso anche dove la scheda c'è).
+    const bool audioDisabled = qEnvironmentVariableIntValue("EDITORVIDEO_NO_AUDIO") != 0;
+    if (audio_ && (audioDisabled || !audioOut_.open(audio_->sampleRate(), audio_->channels())))
         audioNote_ = QStringLiteral("audio non disponibile");
 
     duration_ = std::max({0.0, video_ ? video_->durationSeconds() : 0.0, audio_ ? audio_->durationSeconds() : 0.0});
@@ -441,8 +444,14 @@ void PlayerWidget::tick()
     position_ = duration_ > 0 ? std::clamp(now, 0.0, duration_) : std::max(0.0, now);
     updatePositionLabel(position_);
 
-    const bool audioDone = !audioActive_ || (audioEnded_ && audioOut_.drained());
-    if (videoDone && audioDone) {
+    core::PlaybackState state;
+    state.hasVideo = video_ != nullptr;
+    state.videoFinished = videoDone;
+    state.audioActive = audioActive_;
+    state.audioFinished = audioEnded_ && audioOut_.drained();
+    state.clock = now;
+    state.duration = duration_;
+    if (core::playbackFinished(state)) {
         stopWorkers();
         playing_ = false;
         if (duration_ > 0)
