@@ -49,6 +49,8 @@
     <ClInclude Include="AudioOutput.h" />
     <ClInclude Include="MainWindow.h" />
     <ClInclude Include="PlayerWidget.h" />
+    <ClInclude Include="ProgramMonitor.h" />
+    <ClInclude Include="SequenceTimeline.h" />
     <ClInclude Include="TimelineWidget.h" />
   </ItemGroup>
   <ItemGroup>
@@ -56,6 +58,8 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainWindow.cpp" />
     <ClCompile Include="PlayerWidget.cpp" />
+    <ClCompile Include="ProgramMonitor.cpp" />
+    <ClCompile Include="SequenceTimeline.cpp" />
     <ClCompile Include="TimelineWidget.cpp" />
   </ItemGroup>
   <ItemGroup>

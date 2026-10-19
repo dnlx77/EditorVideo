@@ -125,7 +125,9 @@ PlayerWidget::PlayerWidget(QWidget* parent)
     segmentLabel_->setMinimumHeight(fontMetrics().lineSpacing() * 2 + 4);
     decoderLabel_ = new QLabel;
 
-    auto* controls = new QHBoxLayout;
+    controls_ = new QWidget;
+    auto* controls = new QHBoxLayout(controls_);
+    controls->setContentsMargins(0, 0, 0, 0);
     controls->addWidget(playButton_);
     controls->addWidget(timeLabel_);
     controls->addSpacing(16);
@@ -136,7 +138,7 @@ PlayerWidget::PlayerWidget(QWidget* parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(view_, 1);
     layout->addWidget(timeline_);
-    layout->addLayout(controls);
+    layout->addWidget(controls_);
 
     timer_ = new QTimer(this);
     timer_->setTimerType(Qt::PreciseTimer);
@@ -431,7 +433,8 @@ void PlayerWidget::tick()
     {
         std::lock_guard lock(queueMutex_);
         // Mostriamo l'ultimo fotogramma il cui tempo è già arrivato; quelli in ritardo vengono saltati.
-        while (!queue_.empty() && queue_.front()->time <= now) {
+        while (!queue_.empty() && queue_.front()->time <= now
+               && (windowEnd_ <= 0 || queue_.front()->time < windowEnd_ - 0.001)) {
             latest = std::move(queue_.front());
             queue_.pop_front();
         }
@@ -445,6 +448,20 @@ void PlayerWidget::tick()
 
     position_ = duration_ > 0 ? std::clamp(now, 0.0, duration_) : std::max(0.0, now);
     updatePositionLabel(position_);
+
+    if (windowEnd_ > 0 && now >= windowEnd_ - 0.001) {
+        // Fine del pezzo: ci si ferma qui e lo si dice a chi riproduce la sequenza (dopo, fuori da tick()).
+        stopWorkers();
+        playing_ = false;
+        position_ = windowEnd_;
+        updateControls();
+        updatePositionLabel(position_);
+        QTimer::singleShot(0, this, [this] {
+            if (onWindowEnd)
+                onWindowEnd();
+        });
+        return;
+    }
 
     core::PlaybackState state;
     state.hasVideo = video_ != nullptr;
@@ -460,6 +477,13 @@ void PlayerWidget::tick()
             position_ = duration_;
         updateControls();
         updatePositionLabel(position_);
+        // Un pezzo che arriva fino alla fine del file finisce qui, non al limite della finestra.
+        if (windowEnd_ > 0) {
+            QTimer::singleShot(0, this, [this] {
+                if (onWindowEnd)
+                    onWindowEnd();
+            });
+        }
     }
 }
 
@@ -716,6 +740,44 @@ void PlayerWidget::removeRangeAtPlayhead()
     const double at = markTime();
     segmentNote_ = ranges_.removeAt(at) ? QStringLiteral("Tratto eliminato.")
                                         : QStringLiteral("Sotto il cursore (%1) non c'è nessun tratto.").arg(timeText(at));
+    noteIsOutError_ = false;
+    updateSegmentUi();
+}
+
+void PlayerWidget::startPlayback()
+{
+    play();
+}
+
+void PlayerWidget::stopPlayback()
+{
+    pause();
+}
+
+void PlayerWidget::setPlaybackWindow(double end)
+{
+    windowEnd_ = end;
+}
+
+void PlayerWidget::setChromeVisible(bool visible)
+{
+    timeline_->setVisible(visible);
+    controls_->setVisible(visible);
+}
+
+void PlayerWidget::setInOut(double in, double out)
+{
+    segment_.setIn(in);
+    wantedIn_ = in;
+    segment_.setOut(out);
+    segmentNote_.clear();
+    noteIsOutError_ = false;
+    updateSegmentUi();
+}
+
+void PlayerWidget::showNote(const QString& note)
+{
+    segmentNote_ = note;
     noteIsOutError_ = false;
     updateSegmentUi();
 }

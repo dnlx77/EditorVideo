@@ -3,6 +3,7 @@
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/CutSegment.h"
 #include "EditorCore/FfmpegUtil.h"
+#include "EditorCore/H264Params.h"
 
 #include <algorithm>
 #include <cctype>
@@ -185,8 +186,8 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
         throw MediaError("Non c'è nessun tratto da esportare.");
 
     // Più file: devono avere gli stessi codec e parametri, altrimenti senza ricodifica non si uniscono.
+    std::vector<MediaSignature> signatures;
     if (clips.size() > 1) {
-        std::vector<MediaSignature> signatures;
         for (const ClipRanges& clip : clips)
             signatures.push_back(readMediaSignature(clip.path));
         if (const auto mismatches = checkCompatibility(signatures); !mismatches.empty())
@@ -212,6 +213,27 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
         if (out == nullptr || avcodec_parameters_copy(out->codecpar, par) < 0)
             throw MediaError("Memoria insufficiente per preparare il file di destinazione.");
         out->codecpar->codec_tag = codecTagFor(output->oformat, par);
+        // H.264 da file con livelli diversi: il file unito dichiara il livello più alto (il resto dei parametri
+        // coincide, l'ha verificato checkCompatibility).
+        if (par->codec_id == AV_CODEC_ID_H264 && !signatures.empty()) {
+            const int index = first.streams[i].output;
+            int level = 0;
+            for (const MediaSignature& signature : signatures) {
+                if (index < static_cast<int>(signature.streams.size()))
+                    level = std::max(level, maxH264Level(parseH264Config(signature.streams[index].extradata)));
+            }
+            const std::vector<std::uint8_t> current(par->extradata, par->extradata + par->extradata_size);
+            if (level > maxH264Level(parseH264Config(current))) {
+                const std::vector<std::uint8_t> raised = withH264Level(current, level);
+                av_freep(&out->codecpar->extradata);
+                out->codecpar->extradata = static_cast<std::uint8_t*>(av_mallocz(raised.size() + AV_INPUT_BUFFER_PADDING_SIZE));
+                if (out->codecpar->extradata == nullptr)
+                    throw MediaError("Memoria insufficiente per preparare il file di destinazione.");
+                std::copy(raised.begin(), raised.end(), out->codecpar->extradata);
+                out->codecpar->extradata_size = static_cast<int>(raised.size());
+                out->codecpar->level = level;
+            }
+        }
         out->time_base = in->time_base;
         out->disposition = in->disposition;
         av_dict_copy(&out->metadata, in->metadata, 0);
