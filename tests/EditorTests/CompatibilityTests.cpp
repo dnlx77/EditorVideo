@@ -103,8 +103,9 @@ TEST(Compatibility, DifferentExtradataIsRefused)
     other.streams[1].extradata = {0x12, 0x10};
     const auto result = checkCompatibility({phoneVideo("a.mp4"), other});
     ASSERT_EQ(result.size(), 2u);
-    EXPECT_EQ(result[0].message, "Clip 2 (x.mp4): parametri di codifica video diversi (SPS/PPS)");
-    EXPECT_EQ(result[1].message, "Clip 2 (x.mp4): parametri di codifica audio diversi");
+    // Dati H.264 non leggibili: rifiutati per prudenza; per l'audio un messaggio generico.
+    EXPECT_EQ(result[0].message, "Clip 2 (x.mp4): parametri di codifica video diversi (non leggibili)");
+    EXPECT_EQ(result[1].message, "Clip 2 (x.mp4): impostazioni dell'encoder audio diverse");
 }
 
 TEST(Compatibility, DifferentStreamLayout)

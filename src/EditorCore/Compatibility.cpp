@@ -1,6 +1,7 @@
 #include "EditorCore/Compatibility.h"
 
 #include "EditorCore/FfmpegUtil.h"
+#include "EditorCore/H264Params.h"
 
 extern "C" {
 #include <libavutil/channel_layout.h>
@@ -66,12 +67,20 @@ void compareStream(const StreamSignature& s, const StreamSignature& ref, const s
             add("canali " + channelsText(s) + " invece di " + channelsText(ref));
     }
 
-    // Stessi codec e misure ma parametri di codifica diversi (es. SPS/PPS di H.264): il decoder del file unito
-    // userebbe quelli del primo file anche per gli altri, con immagini rovinate.
-    // Lo si segnala solo se tutto il resto coincide: altrimenti è una conseguenza delle differenze già dette.
-    if (out.size() == before && s.extradata != ref.extradata)
-        add("parametri di codifica " + kind + " diversi"
-            + (s.kind == StreamKind::Video ? std::string(" (SPS/PPS)") : std::string()));
+    // Stessi codec e misure ma parametri di codifica diversi: il decoder del file unito userebbe quelli del primo
+    // file anche per gli altri. Lo si segnala solo se tutto il resto coincide (altrimenti è una conseguenza delle
+    // differenze già dette).
+    if (out.size() != before || s.extradata == ref.extradata)
+        return;
+    if (s.codec == "h264") {
+        // Per H.264 si guarda cosa cambia davvero: livello e informazioni sui tempi non contano, perché i
+        // fotogrammi si decodificano allo stesso modo con i parametri del primo file.
+        for (const std::string& difference : compareH264(parseH264Config(s.extradata), parseH264Config(ref.extradata)))
+            add(difference);
+        return;
+    }
+    add(s.kind == StreamKind::Video ? "impostazioni dell'encoder video diverse"
+                                    : "impostazioni dell'encoder audio diverse");
 }
 
 }  // namespace

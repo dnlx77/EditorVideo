@@ -2,6 +2,7 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorCore/Compatibility.h"
+#include "EditorCore/H264Params.h"
 #include "EditorCore/CutSegment.h"
 #include "EditorCore/Project.h"
 #include "EditorCore/SegmentList.h"
@@ -149,8 +150,43 @@ int runSequenceTest(const QStringList& args, qsizetype at)
     }
 }
 
-int runExportTest(const QStringList& args, qsizetype at)
+// --codec-info <file> [<file> ...]: scrive i parametri dei flussi (per H.264 anche SPS e PPS letti) e, con più file,
+// se si possono unire e perché. Serve a capire un rifiuto di unione.
+int runCodecInfo(const QStringList& args, qsizetype at)
 {
+    namespace core = editor::core;
+    std::vector<core::MediaSignature> signatures;
+    try {
+        for (qsizetype i = at + 1; i < args.size(); ++i) {
+            const core::MediaSignature s = core::readMediaSignature(args[i].toStdString());
+            std::printf("== %s\n", s.fileName.c_str());
+            for (const core::StreamSignature& stream : s.streams) {
+                if (stream.kind == core::StreamKind::Video) {
+                    std::printf("video %s %s %dx%d %s %.3f fps, dati extra %d byte\n", stream.codec.c_str(),
+                                stream.profile.c_str(), stream.width, stream.height, stream.pixelFormat.c_str(),
+                                stream.frameRate, static_cast<int>(stream.extradata.size()));
+                    if (stream.codec == "h264")
+                        std::printf("%s", core::describeH264(core::parseH264Config(stream.extradata)).c_str());
+                } else {
+                    std::printf("audio %s %s %d Hz %s, dati extra %d byte\n", stream.codec.c_str(), stream.profile.c_str(),
+                                stream.sampleRate, stream.channelLayout.c_str(), static_cast<int>(stream.extradata.size()));
+                }
+            }
+            signatures.push_back(s);
+        }
+        if (signatures.size() > 1) {
+            const auto mismatches = core::checkCompatibility(signatures);
+            std::printf("%s\n", mismatches.empty() ? "Si possono unire."
+                                                   : ("Non si possono unire:\n" + core::describeMismatches(mismatches)).c_str());
+        }
+        return 0;
+    } catch (const std::exception& e) {
+        std::printf("Errore: %s\n", e.what());
+        return 2;
+    }
+}
+
+int runExportTest(const QStringList& args, qsizetype at){
     namespace core = editor::core;
     const qsizetype pairs = (args.size() - at - 3) / 2;
     if (at + 4 >= args.size() || (args.size() - at - 3) % 2 != 0) {
@@ -221,6 +257,11 @@ int main(int argc, char* argv[])
     const QStringList arguments = QApplication::arguments();
     if (const qsizetype at = arguments.indexOf(QStringLiteral("--export-test")); at >= 0) {
         const int code = runExportTest(arguments, at);
+        std::fflush(stdout);
+        return code;
+    }
+    if (const qsizetype at = arguments.indexOf(QStringLiteral("--codec-info")); at >= 0) {
+        const int code = runCodecInfo(arguments, at);
         std::fflush(stdout);
         return code;
     }

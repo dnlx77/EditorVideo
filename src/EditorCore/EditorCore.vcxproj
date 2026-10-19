@@ -38,6 +38,7 @@
     <ClInclude Include="Compatibility.h" />
     <ClInclude Include="CutSegment.h" />
     <ClInclude Include="FfmpegUtil.h" />
+    <ClInclude Include="H264Params.h" />
     <ClInclude Include="LibraryInfo.h" />
     <ClInclude Include="MediaError.h" />
     <ClInclude Include="MediaProbe.h" />
@@ -53,6 +54,7 @@
     <ClCompile Include="Compatibility.cpp" />
     <ClCompile Include="CutSegment.cpp" />
     <ClCompile Include="FfmpegUtil.cpp" />
+    <ClCompile Include="H264Params.cpp" />
     <ClCompile Include="LibraryInfo.cpp" />
     <ClCompile Include="MediaProbe.cpp" />
     <ClCompile Include="Playback.cpp" />
