@@ -16,14 +16,21 @@ struct MediaInfo;
 
 namespace editor::app {
 
+class PlayerWidget;
+
 class MainWindow : public QMainWindow
 {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
 
-    // Analizza il file in un thread separato e ne mostra le informazioni.
+    // Apre l'anteprima e analizza il file in un thread separato per mostrarne le informazioni.
     void openPath(const QString& path);
+
+    PlayerWidget* player() const { return player_; }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void createMenus();
@@ -37,6 +44,7 @@ private:
     QTreeWidget* infoTree_ = nullptr;
     QLabel* keyframeTitle_ = nullptr;
     QTreeWidget* keyframeList_ = nullptr;
+    PlayerWidget* player_ = nullptr;
     QAction* openAction_ = nullptr;
 
     QThread* probeThread_ = nullptr;

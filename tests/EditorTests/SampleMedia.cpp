@@ -14,8 +14,6 @@ namespace editor::tests {
 
 namespace {
 
-constexpr int kWidth = 64;
-constexpr int kHeight = 48;
 constexpr int kFps = 25;
 constexpr int kSampleRate = 48000;
 constexpr int kSamplesPerFrame = kSampleRate / kFps;
@@ -57,24 +55,28 @@ public:
         av_frame_free(&frame_);
     }
 
-    void addVideo(int gopSize)
+    void addVideo(const SampleSpec& spec)
     {
-        const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_MPEG4);
+        const AVCodec* codec = avcodec_find_encoder(spec.mpeg2 ? AV_CODEC_ID_MPEG2VIDEO : AV_CODEC_ID_MPEG4);
         video_.enc = avcodec_alloc_context3(codec);
-        video_.enc->width = kWidth;
-        video_.enc->height = kHeight;
+        video_.enc->width = spec.width;
+        video_.enc->height = spec.height;
         video_.enc->pix_fmt = AV_PIX_FMT_YUV420P;
         video_.enc->time_base = {1, kFps};
         video_.enc->framerate = {kFps, 1};
-        video_.enc->gop_size = gopSize;
+        video_.enc->gop_size = spec.gopSize;
         video_.enc->max_b_frames = 0;
+        // Qualità alta e costante: i test confrontano i colori decodificati con quelli originali.
+        video_.enc->flags |= AV_CODEC_FLAG_QSCALE;
+        video_.enc->global_quality = FF_QP2LAMBDA * 2;
         // Niente fotogrammi chiave extra sui cambi di scena: vogliamo esattamente uno ogni gopSize.
         av_opt_set_int(video_.enc, "sc_threshold", 1'000'000'000, AV_OPT_SEARCH_CHILDREN);
         open(video_, codec);
     }
 
-    void addAudio()
+    void addAudio(bool silent)
     {
+        silent_ = silent;
         const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_PCM_S16LE);
         audio_.enc = avcodec_alloc_context3(codec);
         audio_.enc->sample_fmt = AV_SAMPLE_FMT_S16;
@@ -118,17 +120,19 @@ private:
 
     AVFrame* makeVideoFrame(int index)
     {
+        const int width = video_.enc->width;
+        const int height = video_.enc->height;
         av_frame_unref(frame_);
         frame_->format = AV_PIX_FMT_YUV420P;
-        frame_->width = kWidth;
-        frame_->height = kHeight;
+        frame_->width = width;
+        frame_->height = height;
         check(av_frame_get_buffer(frame_, 0), "av_frame_get_buffer");
-        for (int y = 0; y < kHeight; ++y)
-            for (int x = 0; x < kWidth; ++x)
-                frame_->data[0][y * frame_->linesize[0] + x] = static_cast<uint8_t>(x + y + index * 3);
+        for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x)
+                frame_->data[0][y * frame_->linesize[0] + x] = static_cast<uint8_t>(sampleLuma(x, y, index));
         for (int plane = 1; plane < 3; ++plane)
-            for (int y = 0; y < kHeight / 2; ++y)
-                for (int x = 0; x < kWidth / 2; ++x)
+            for (int y = 0; y < height / 2; ++y)
+                for (int x = 0; x < width / 2; ++x)
                     frame_->data[plane][y * frame_->linesize[plane] + x] = 128;
         frame_->pts = index;
         return frame_;
@@ -143,9 +147,13 @@ private:
         check(av_channel_layout_copy(&frame_->ch_layout, &audio_.enc->ch_layout), "av_channel_layout_copy");
         check(av_frame_get_buffer(frame_, 0), "av_frame_get_buffer");
         auto* samples = reinterpret_cast<int16_t*>(frame_->data[0]);
-        for (int s = 0; s < kSamplesPerFrame * 2; ++s)
-            samples[s] = static_cast<int16_t>((s % 100) * 100);
-        frame_->pts = static_cast<int64_t>(index) * kSamplesPerFrame;
+        const long long first = static_cast<long long>(index) * kSamplesPerFrame;
+        for (int s = 0; s < kSamplesPerFrame; ++s) {
+            const std::int16_t value = silent_ ? 0 : sampleAudio(first + s);
+            samples[2 * s] = value;
+            samples[2 * s + 1] = value;
+        }
+        frame_->pts = first;
         return frame_;
     }
 
@@ -167,11 +175,23 @@ private:
     std::string path_;
     AVPacket* packet_ = nullptr;
     AVFrame* frame_ = nullptr;
+    bool silent_ = false;
     Track video_;
     Track audio_;
 };
 
 }  // namespace
+
+int sampleLuma(int x, int y, int index)
+{
+    // Ogni fotogramma è più chiaro del precedente di 5 livelli: dal colore si risale al numero del fotogramma.
+    return 40 + index * 5 + (x + y) / 16;
+}
+
+std::int16_t sampleAudio(long long n)
+{
+    return static_cast<std::int16_t>((n * 7919) % 20000 - 10000);
+}
 
 std::string toUtf8(const std::filesystem::path& path)
 {
@@ -181,16 +201,17 @@ std::string toUtf8(const std::filesystem::path& path)
 
 bool sampleEncodersAvailable()
 {
-    return avcodec_find_encoder(AV_CODEC_ID_MPEG4) != nullptr && avcodec_find_encoder(AV_CODEC_ID_PCM_S16LE) != nullptr;
+    return avcodec_find_encoder(AV_CODEC_ID_MPEG4) != nullptr && avcodec_find_encoder(AV_CODEC_ID_MPEG2VIDEO) != nullptr
+        && avcodec_find_encoder(AV_CODEC_ID_PCM_S16LE) != nullptr;
 }
 
 void writeSampleFile(const std::filesystem::path& path, const SampleSpec& spec)
 {
     Writer writer(toUtf8(path));
     if (spec.video)
-        writer.addVideo(spec.gopSize);
+        writer.addVideo(spec);
     if (spec.audio)
-        writer.addAudio();
+        writer.addAudio(spec.silentAudio);
     writer.write(spec.frames);
 }
 

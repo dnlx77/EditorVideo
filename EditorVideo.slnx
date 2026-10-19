@@ -3,8 +3,8 @@
     <Platform Name="x64" />
   </Configurations>
   <Folder Name="/src/">
-    <Project Path="src/EditorCore/EditorCore.vcxproj" Id="ccc26550-4cfa-448f-a5f7-8f8ca66e24fe" />
     <Project Path="src/EditorApp/EditorApp.vcxproj" Id="d11d0314-5c9a-4ef7-aa4f-a3cecf4297b7" />
+    <Project Path="src/EditorCore/EditorCore.vcxproj" Id="ccc26550-4cfa-448f-a5f7-8f8ca66e24fe" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/EditorTests/EditorTests.vcxproj" Id="78735c0b-5ff6-4ee7-82da-db9e3649dcea" />

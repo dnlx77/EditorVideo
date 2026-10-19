@@ -34,12 +34,21 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="AudioDecoder.h" />
+    <ClInclude Include="FfmpegUtil.h" />
     <ClInclude Include="LibraryInfo.h" />
+    <ClInclude Include="MediaError.h" />
     <ClInclude Include="MediaProbe.h" />
+    <ClInclude Include="Playback.h" />
+    <ClInclude Include="VideoDecoder.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="AudioDecoder.cpp" />
+    <ClCompile Include="FfmpegUtil.cpp" />
     <ClCompile Include="LibraryInfo.cpp" />
     <ClCompile Include="MediaProbe.cpp" />
+    <ClCompile Include="Playback.cpp" />
+    <ClCompile Include="VideoDecoder.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

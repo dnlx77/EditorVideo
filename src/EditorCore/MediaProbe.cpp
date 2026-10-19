@@ -1,8 +1,8 @@
 #include "EditorCore/MediaProbe.h"
 
+#include "EditorCore/FfmpegUtil.h"
+
 extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/pixdesc.h>
 }
@@ -11,36 +11,12 @@ extern "C" {
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <filesystem>
-#include <memory>
 
 namespace editor::core {
 
+using namespace detail;
+
 namespace {
-
-struct FormatContextDeleter
-{
-    void operator()(AVFormatContext* ctx) const { avformat_close_input(&ctx); }
-};
-using FormatContextPtr = std::unique_ptr<AVFormatContext, FormatContextDeleter>;
-
-struct PacketDeleter
-{
-    void operator()(AVPacket* pkt) const { av_packet_free(&pkt); }
-};
-using PacketPtr = std::unique_ptr<AVPacket, PacketDeleter>;
-
-std::string ffmpegError(int code)
-{
-    char buffer[AV_ERROR_MAX_STRING_SIZE] = {};
-    av_strerror(code, buffer, sizeof(buffer));
-    return buffer;
-}
-
-std::filesystem::path pathFromUtf8(const std::string& utf8)
-{
-    return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
-}
 
 bool isCancelled(const std::atomic<bool>* cancel)
 {
@@ -120,17 +96,6 @@ StreamInfo describeStream(const AVFormatContext* fmt, AVStream* st)
     return info;
 }
 
-// Primo flusso video vero (non una copertina): è quello su cui si faranno i tagli.
-int mainVideoStream(const AVFormatContext* fmt)
-{
-    for (unsigned i = 0; i < fmt->nb_streams; ++i) {
-        const AVStream* st = fmt->streams[i];
-        if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && (st->disposition & AV_DISPOSITION_ATTACHED_PIC) == 0)
-            return static_cast<int>(i);
-    }
-    return -1;
-}
-
 std::vector<double> readKeyframes(AVFormatContext* fmt, int streamIndex, const std::atomic<bool>* cancel)
 {
     // Leggiamo solo i pacchetti del flusso video: gli altri flussi vengono scartati dal demuxer.
@@ -139,7 +104,7 @@ std::vector<double> readKeyframes(AVFormatContext* fmt, int streamIndex, const s
 
     const AVStream* st = fmt->streams[streamIndex];
     const double timeBase = av_q2d(st->time_base);
-    const double startOffset = fmt->start_time != AV_NOPTS_VALUE ? fmt->start_time / double(AV_TIME_BASE) : 0.0;
+    const double startOffset = startOffsetSeconds(fmt);
 
     PacketPtr packet(av_packet_alloc());
     if (!packet)
@@ -169,11 +134,6 @@ std::vector<double> readKeyframes(AVFormatContext* fmt, int streamIndex, const s
     return times;
 }
 
-int interruptCallback(void* opaque)
-{
-    return isCancelled(static_cast<const std::atomic<bool>*>(opaque)) ? 1 : 0;
-}
-
 }  // namespace
 
 ProbeCancelled::ProbeCancelled()
@@ -183,47 +143,7 @@ ProbeCancelled::ProbeCancelled()
 
 MediaInfo probeFile(const std::string& utf8Path, const std::atomic<bool>* cancel)
 {
-    std::error_code ec;
-    const std::filesystem::path path = pathFromUtf8(utf8Path);
-    if (!std::filesystem::exists(path, ec))
-        throw ProbeError("Il file non esiste: " + utf8Path);
-    if (!std::filesystem::is_regular_file(path, ec))
-        throw ProbeError("Il percorso non è un file: " + utf8Path);
-
-    AVFormatContext* raw = avformat_alloc_context();
-    if (raw == nullptr)
-        throw ProbeError("Memoria insufficiente per analizzare il file.");
-    if (cancel != nullptr) {
-        raw->interrupt_callback.callback = &interruptCallback;
-        raw->interrupt_callback.opaque = const_cast<std::atomic<bool>*>(cancel);
-    }
-
-    const auto notMedia = [&](int ret) {
-        return ProbeError("Il file non è un video o un audio riconosciuto (" + ffmpegError(ret) + "): " + utf8Path);
-    };
-
-    // FFmpeg su Windows accetta i percorsi in UTF-8, quindi funzionano anche lettere accentate e simili.
-    // In caso di errore avformat_open_input libera il contesto da sola.
-    if (const int ret = avformat_open_input(&raw, utf8Path.c_str(), nullptr, nullptr); ret < 0) {
-        if (ret == AVERROR_EXIT || isCancelled(cancel))
-            throw ProbeCancelled();
-        throw notMedia(ret);
-    }
-    FormatContextPtr fmt(raw);
-
-    // Un file qualsiasi (es. testo) a volte viene "riconosciuto" con punteggio bassissimo
-    // e fallisce solo qui: per l'utente è comunque un file non riconosciuto.
-    if (const int ret = avformat_find_stream_info(fmt.get(), nullptr); ret < 0) {
-        if (ret == AVERROR_EXIT || isCancelled(cancel))
-            throw ProbeCancelled();
-        throw notMedia(ret);
-    }
-
-    const bool hasAudioOrVideo = std::any_of(fmt->streams, fmt->streams + fmt->nb_streams, [](const AVStream* st) {
-        return st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO || st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO;
-    });
-    if (!hasAudioOrVideo)
-        throw ProbeError("Il file non contiene flussi video o audio: " + utf8Path);
+    FormatContextPtr fmt = openInput(utf8Path, cancel);
 
     MediaInfo info;
     info.path = utf8Path;
@@ -236,7 +156,7 @@ MediaInfo probeFile(const std::string& utf8Path, const std::atomic<bool>* cancel
     for (unsigned i = 0; i < fmt->nb_streams; ++i)
         info.streams.push_back(describeStream(fmt.get(), fmt->streams[i]));
 
-    info.keyframeStreamIndex = mainVideoStream(fmt.get());
+    info.keyframeStreamIndex = findMainStream(fmt.get(), AVMEDIA_TYPE_VIDEO);
     if (info.keyframeStreamIndex >= 0)
         info.keyframeTimes = readKeyframes(fmt.get(), info.keyframeStreamIndex, cancel);
 

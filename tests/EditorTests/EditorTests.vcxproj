@@ -34,8 +34,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="DecoderTests.cpp" />
     <ClCompile Include="LibraryInfoTests.cpp" />
     <ClCompile Include="MediaProbeTests.cpp" />
+    <ClCompile Include="PlaybackTests.cpp" />
     <ClCompile Include="SampleMedia.cpp" />
   </ItemGroup>
   <ItemGroup>

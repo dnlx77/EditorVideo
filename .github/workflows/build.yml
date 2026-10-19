@@ -57,3 +57,19 @@ jobs:
           if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "EditorVideo non si è chiuso entro 60 secondi" }
           Get-Content smoke.txt, smoke-err.txt
           if ($p.ExitCode -ne 0) { throw "EditorVideo è uscito con codice $($p.ExitCode)" }
+
+      - name: Prova della riproduzione
+        shell: pwsh
+        run: |
+          # Genera tre file di prova da 10 secondi e li riproduce per 2 secondi ciascuno.
+          # Sul server di solito non ci sono GPU né scheda audio: si verificano anche la decodifica
+          # software e l'orologio senza audio.
+          bin\x64\Release\EditorTests.exe --gtest_also_run_disabled_tests --gtest_filter=*GeneraVideoDimostrativi*
+          foreach ($f in 'demo_mpeg2_gpu.mkv', 'demo_mpeg4_software.mkv', 'demo_solo_audio.wav') {
+            $p = Start-Process bin\x64\Release\EditorVideo.exe -ArgumentList '--smoke-test', "`"$env:TEMP\EditorVideoDemo\$f`"" `
+                   -PassThru -RedirectStandardOutput play.txt -RedirectStandardError play-err.txt
+            $null = $p.Handle  # necessario per leggere ExitCode
+            if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "$f : EditorVideo non si è chiuso entro 60 secondi" }
+            Get-Content play.txt, play-err.txt
+            if ($p.ExitCode -ne 0) { throw "$f : riproduzione non riuscita (codice $($p.ExitCode))" }
+          }
