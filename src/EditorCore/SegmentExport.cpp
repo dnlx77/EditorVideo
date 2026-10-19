@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <limits>
 #include <vector>
@@ -17,8 +18,8 @@ using namespace detail;
 namespace {
 
 constexpr double kEpsilon = 0.001;
-// Dopo OUT si legge ancora un po': in un file i pacchetti dei vari flussi sono mescolati e, con i B-frame,
-// un fotogramma prima di OUT può arrivare dopo uno successivo.
+// Dopo la fine di un tratto si legge ancora un po': in un file i pacchetti dei vari flussi sono mescolati e,
+// con i B-frame, un fotogramma prima della fine può arrivare dopo uno successivo.
 constexpr double kReadPastOut = 1.0;
 
 struct OutputDeleter
@@ -36,10 +37,16 @@ struct StreamCopy
 {
     int output = -1;  // indice del flusso nel file di uscita, -1 = non copiato
     bool video = false;
+    double frameDuration = 0.0;  // video: durata di un fotogramma, se il pacchetto non la dice
+    int pcmBlockAlign = 0;       // audio PCM: byte per campione (tutti i canali); 0 = audio compresso
+    int sampleRate = 0;
+    // Stato per il tratto in corso
     bool started = false;  // video: trovato il fotogramma chiave di partenza
     bool finished = false;
-    std::int64_t offset = 0;  // IN nella base dei tempi del flusso: si sottrae a tutti i tempi
-    std::vector<PacketPtr> pending;  // video oltre OUT tenuto da parte (può servire come riferimento)
+    std::vector<PacketPtr> pending;  // video oltre la fine tenuto da parte (può servire come riferimento)
+
+    // Stato per tutto il file
+    std::int64_t lastDts = std::numeric_limits<std::int64_t>::min();  // nella base dei tempi di uscita
 };
 
 std::string lowercase(std::string text)
@@ -71,6 +78,34 @@ unsigned codecTagFor(const AVOutputFormat* format, const AVCodecParameters* par)
     return 0;
 }
 
+// Taglia un pacchetto PCM alla parte dentro ange (al campione). false se non ne resta niente.
+bool trimPcm(AVPacket* pkt, const StreamCopy& copy, double time, double tb, const TimeRange& range)
+{
+    const int samples = pkt->size / copy.pcmBlockAlign;
+    const double rate = copy.sampleRate;
+    const int first = std::clamp(static_cast<int>(std::ceil((range.start - time) * rate - 1e-6)), 0, samples);
+    const int last = std::clamp(static_cast<int>(std::floor((range.end - time) * rate + 1e-6)), 0, samples);
+    if (last <= first)
+        return false;
+    if (first == 0 && last == samples)
+        return true;
+
+    PacketPtr part(av_packet_alloc());
+    if (!part || av_new_packet(part.get(), (last - first) * copy.pcmBlockAlign) < 0)
+        throw MediaError("Memoria insufficiente per l'esportazione.");
+    std::memcpy(part->data, pkt->data + static_cast<std::ptrdiff_t>(first) * copy.pcmBlockAlign,
+                static_cast<std::size_t>(last - first) * copy.pcmBlockAlign);
+    const auto offset = static_cast<std::int64_t>(std::llround(first / rate / tb));
+    part->pts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts + offset : AV_NOPTS_VALUE;
+    part->dts = pkt->dts != AV_NOPTS_VALUE ? pkt->dts + offset : AV_NOPTS_VALUE;
+    part->duration = std::llround((last - first) / rate / tb);
+    part->flags = pkt->flags;
+    part->stream_index = pkt->stream_index;
+    av_packet_unref(pkt);
+    av_packet_move_ref(pkt, part.get());
+    return true;
+}
+
 }  // namespace
 
 ExportCancelled::ExportCancelled()
@@ -78,11 +113,15 @@ ExportCancelled::ExportCancelled()
 {
 }
 
-ExportResult exportSegment(const std::string& inputPath, const std::string& outputPath, double inSeconds,
-                           double outSeconds, const ExportProgress& progress)
+ExportResult exportSegments(const std::string& inputPath, const std::string& outputPath,
+                            const std::vector<TimeRange>& ranges, const ExportProgress& progress)
 {
-    if (!(outSeconds > inSeconds + kEpsilon))
-        throw MediaError("OUT deve stare dopo IN.");
+    if (ranges.empty())
+        throw MediaError("Non c'è nessun tratto da esportare.");
+    for (const TimeRange& range : ranges) {
+        if (!(range.end > range.start + kEpsilon))
+            throw MediaError("OUT deve stare dopo IN.");
+    }
     if (samePath(inputPath, outputPath))
         throw MediaError("Il file di destinazione deve essere diverso dall'originale.");
 
@@ -123,7 +162,17 @@ ExportResult exportSegment(const std::string& inputPath, const std::string& outp
         StreamCopy& copy = streams[i];
         copy.output = out->index;
         copy.video = video;
-        copy.offset = std::llround((inSeconds + start) / av_q2d(in->time_base));
+        if (video) {
+            const AVRational rate = av_guess_frame_rate(input.get(), in, nullptr);
+            copy.frameDuration = rate.num > 0 && rate.den > 0 ? 1.0 / av_q2d(rate) : 0.0;
+        }
+        // PCM semplice (es. WAV): i pacchetti si possono tagliare al campione esatto.
+        const int bits = av_get_exact_bits_per_sample(par->codec_id);
+        if (audio && bits > 0 && par->codec_id >= AV_CODEC_ID_PCM_S16LE && par->codec_id < AV_CODEC_ID_ADPCM_IMA_QT
+            && par->ch_layout.nb_channels > 0 && par->sample_rate > 0) {
+            copy.pcmBlockAlign = par->ch_layout.nb_channels * bits / 8;
+            copy.sampleRate = par->sample_rate;
+        }
     }
     const int streamCount = static_cast<int>(output->nb_streams);
     if (streamCount == 0)
@@ -144,99 +193,156 @@ ExportResult exportSegment(const std::string& inputPath, const std::string& outp
         if (const int ret = avformat_write_header(output.get(), nullptr); ret < 0)
             throw MediaError("Il formato di destinazione non accetta questi flussi (" + ffmpegError(ret) + ").");
 
-        // Ci si posiziona sul fotogramma chiave in IN (o quello subito prima).
-        if (pacingStream >= 0) {
-            const AVStream* st = input->streams[pacingStream];
-            const auto ts = std::llround((inSeconds + start) / av_q2d(st->time_base));
-            if (av_seek_frame(input.get(), pacingStream, ts, AVSEEK_FLAG_BACKWARD) < 0)
-                av_seek_frame(input.get(), pacingStream, 0, AVSEEK_FLAG_BACKWARD);  // si legge dall'inizio
-        }
-
-        double firstTime = std::numeric_limits<double>::max();
-        double lastEnd = 0.0;
-        const auto write = [&](AVPacket* pkt, StreamCopy& copy, const AVStream* in) {
-            if (pkt->pts != AV_NOPTS_VALUE)
-                pkt->pts -= copy.offset;
-            if (pkt->dts != AV_NOPTS_VALUE)
-                pkt->dts -= copy.offset;
-            const AVStream* out = output->streams[copy.output];
-            av_packet_rescale_ts(pkt, in->time_base, out->time_base);
-            if (pkt->pts != AV_NOPTS_VALUE) {
-                const double t = pkt->pts * av_q2d(out->time_base);
-                firstTime = std::min(firstTime, t);
-                lastEnd = std::max(lastEnd, t + pkt->duration * av_q2d(out->time_base));
-            }
-            pkt->stream_index = copy.output;
-            pkt->pos = -1;
-            if (const int ret = av_interleaved_write_frame(output.get(), pkt); ret < 0)
-                throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
-        };
-
         PacketPtr packet(av_packet_alloc());
         if (!packet)
             throw MediaError("Memoria insufficiente per l'esportazione.");
-        const double length = outSeconds - inSeconds;
-        int remaining = streamCount;
 
-        while (remaining > 0) {
-            const int ret = av_read_frame(input.get(), packet.get());
-            if (ret == AVERROR_EOF)
-                break;
-            if (ret < 0)
-                throw MediaError("Errore durante la lettura del file originale (" + ffmpegError(ret) + ").");
+        double totalLength = 0.0;
+        for (const TimeRange& range : ranges)
+            totalLength += range.length();
+        double doneLength = 0.0;
 
-            StreamCopy& copy = streams[packet->stream_index];
-            const AVStream* in = input->streams[packet->stream_index];
-            const std::int64_t ts = packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts;
-            if (copy.output < 0 || copy.finished || ts == AV_NOPTS_VALUE) {
-                av_packet_unref(packet.get());
-                continue;
-            }
-            const double tb = av_q2d(in->time_base);
-            const double time = ts * tb - start;
-            const double decodeTime = (packet->dts != AV_NOPTS_VALUE ? packet->dts : ts) * tb - start;
+        double outputPosition = 0.0;  // dove inizia, nel file creato, il tratto in corso
+        double firstTime = std::numeric_limits<double>::max();
+        double lastEnd = 0.0;
 
-            if (decodeTime >= outSeconds + kReadPastOut) {
-                // Questo flusso è finito: il video tenuto da parte oltre OUT non serve.
-                copy.finished = true;
-                copy.pending.clear();
-                --remaining;
-                av_packet_unref(packet.get());
-                continue;
-            }
+        for (const TimeRange& range : ranges) {
+            // Tutti i tempi del tratto vengono spostati dello stesso valore, per video e audio:
+            // tempo nel file creato = tempo nell'originale - range.start + outputPosition.
+            const double shiftSeconds = range.start + start - outputPosition;
+            double videoEnd = outputPosition;  // fine dell'ultimo fotogramma scritto di questo tratto
 
-            if (copy.video) {
-                if (!copy.started) {
-                    if ((packet->flags & AV_PKT_FLAG_KEY) == 0 || time < inSeconds - kEpsilon) {
-                        av_packet_unref(packet.get());
-                        continue;
+            const auto write = [&](AVPacket* pkt, StreamCopy& copy, const AVStream* in) {
+                const auto shift = static_cast<std::int64_t>(std::llround(shiftSeconds / av_q2d(in->time_base)));
+                if (pkt->pts != AV_NOPTS_VALUE)
+                    pkt->pts -= shift;
+                if (pkt->dts != AV_NOPTS_VALUE)
+                    pkt->dts -= shift;
+                const AVStream* out = output->streams[copy.output];
+                av_packet_rescale_ts(pkt, in->time_base, out->time_base);
+
+                // I tempi di decodifica devono sempre crescere, anche a cavallo di una giunzione (con i B-frame il
+                // primo fotogramma di un tratto può avere un tempo di decodifica appena prima della fine del tratto
+                // precedente): se serve si sposta avanti di un'unità.
+                if (pkt->dts != AV_NOPTS_VALUE) {
+                    if (copy.lastDts != std::numeric_limits<std::int64_t>::min() && pkt->dts <= copy.lastDts) {
+                        pkt->dts = copy.lastDts + 1;
+                        if (pkt->pts != AV_NOPTS_VALUE && pkt->pts < pkt->dts)
+                            pkt->pts = pkt->dts;
                     }
-                    copy.started = true;
+                    copy.lastDts = pkt->dts;
                 }
-                if (time < inSeconds - kEpsilon) {
-                    // B-frame che precedono il fotogramma chiave (GOP aperto): senza il GOP prima non si decodificano.
+
+                if (pkt->pts != AV_NOPTS_VALUE) {
+                    const double t = pkt->pts * av_q2d(out->time_base);
+                    double duration = pkt->duration * av_q2d(out->time_base);
+                    if (copy.video && duration <= 0)
+                        duration = copy.frameDuration;
+                    firstTime = std::min(firstTime, t);
+                    lastEnd = std::max(lastEnd, t + duration);
+                    if (copy.video)
+                        videoEnd = std::max(videoEnd, t + duration);
+                }
+                pkt->stream_index = copy.output;
+                pkt->pos = -1;
+                if (const int ret = av_interleaved_write_frame(output.get(), pkt); ret < 0)
+                    throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
+            };
+
+            for (StreamCopy& copy : streams) {
+                copy.started = false;
+                copy.finished = copy.output < 0;
+                copy.pending.clear();
+            }
+            int remaining = streamCount;
+
+            // Ci si posiziona sul fotogramma chiave all'inizio del tratto (o quello subito prima).
+            if (pacingStream >= 0) {
+                const AVStream* st = input->streams[pacingStream];
+                const auto ts = std::llround((range.start + start) / av_q2d(st->time_base));
+                if (av_seek_frame(input.get(), pacingStream, ts, AVSEEK_FLAG_BACKWARD) < 0)
+                    av_seek_frame(input.get(), pacingStream, 0, AVSEEK_FLAG_BACKWARD);  // si legge dall'inizio
+            }
+
+            while (remaining > 0) {
+                const int ret = av_read_frame(input.get(), packet.get());
+                if (ret == AVERROR_EOF)
+                    break;
+                if (ret < 0)
+                    throw MediaError("Errore durante la lettura del file originale (" + ffmpegError(ret) + ").");
+
+                StreamCopy& copy = streams[packet->stream_index];
+                const AVStream* in = input->streams[packet->stream_index];
+                const std::int64_t ts = packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts;
+                if (copy.output < 0 || copy.finished || ts == AV_NOPTS_VALUE) {
                     av_packet_unref(packet.get());
                     continue;
                 }
-                if (time >= outSeconds - kEpsilon) {
-                    // Oltre OUT: lo teniamo da parte e lo scriviamo solo se poi arriva un fotogramma prima di OUT
-                    // (che potrebbe usarlo come riferimento).
-                    PacketPtr held(av_packet_alloc());
-                    av_packet_move_ref(held.get(), packet.get());
-                    copy.pending.push_back(std::move(held));
+                const double tb = av_q2d(in->time_base);
+                const double time = ts * tb - start;
+                const double decodeTime = (packet->dts != AV_NOPTS_VALUE ? packet->dts : ts) * tb - start;
+
+                if (decodeTime >= range.end + kReadPastOut) {
+                    // Questo flusso ha finito il tratto: il video tenuto da parte oltre la fine non serve.
+                    copy.finished = true;
+                    copy.pending.clear();
+                    --remaining;
+                    av_packet_unref(packet.get());
                     continue;
                 }
-                for (PacketPtr& held : copy.pending)
-                    write(held.get(), copy, in);
-                copy.pending.clear();
-            } else if (time < inSeconds - kEpsilon || time >= outSeconds - kEpsilon) {
-                av_packet_unref(packet.get());
-                continue;
+
+                if (copy.video) {
+                    if (!copy.started) {
+                        if ((packet->flags & AV_PKT_FLAG_KEY) == 0 || time < range.start - kEpsilon) {
+                            av_packet_unref(packet.get());
+                            continue;
+                        }
+                        copy.started = true;
+                    }
+                    if (time < range.start - kEpsilon) {
+                        // B-frame che precedono il fotogramma chiave (GOP aperto): senza il GOP prima non si decodificano.
+                        av_packet_unref(packet.get());
+                        continue;
+                    }
+                    if (time >= range.end - kEpsilon) {
+                        // Oltre la fine: lo teniamo da parte e lo scriviamo solo se poi arriva un fotogramma prima
+                        // della fine (che potrebbe usarlo come riferimento).
+                        PacketPtr held(av_packet_alloc());
+                        av_packet_move_ref(held.get(), packet.get());
+                        copy.pending.push_back(std::move(held));
+                        continue;
+                    }
+                    for (PacketPtr& held : copy.pending)
+                        write(held.get(), copy, in);
+                    copy.pending.clear();
+                } else if (copy.pcmBlockAlign > 0) {
+                    // Audio PCM: si tiene esattamente la parte del pacchetto dentro il tratto.
+                    if (!trimPcm(packet.get(), copy, time, tb, range)) {
+                        av_packet_unref(packet.get());
+                        continue;
+                    }
+                } else {
+                    // Audio compresso: solo i pacchetti interamente dentro il tratto, così alle giunzioni non si
+                    // sovrappone (al più un pacchetto, ~20 ms, di silenzio a ogni giunzione).
+                    const double end = time + std::max<std::int64_t>(packet->duration, 0) * tb;
+                    if (time < range.start - kEpsilon || end > range.end + kEpsilon) {
+                        av_packet_unref(packet.get());
+                        continue;
+                    }
+                }
+
+                write(packet.get(), copy, in);
+                if (progress) {
+                    const double inRange = std::clamp(time - range.start, 0.0, range.length());
+                    if (!progress(std::clamp((doneLength + inRange) / totalLength, 0.0, 1.0)))
+                        throw ExportCancelled();
+                }
             }
 
-            write(packet.get(), copy, in);
-            if (progress && !progress(std::clamp((time - inSeconds) / length, 0.0, 1.0)))
-                throw ExportCancelled();
+            // Il tratto successivo comincia dove finisce questo: alla sua durata, o dopo l'ultimo fotogramma se
+            // qualche fotogramma di riferimento oltre la fine è stato scritto.
+            outputPosition = std::max(outputPosition + range.length(), videoEnd);
+            doneLength += range.length();
         }
 
         if (const int ret = av_write_trailer(output.get()); ret < 0)
@@ -247,11 +353,18 @@ ExportResult exportSegment(const std::string& inputPath, const std::string& outp
         ExportResult result;
         result.durationSeconds = firstTime == std::numeric_limits<double>::max() ? 0.0 : lastEnd - firstTime;
         result.streamCount = streamCount;
+        result.segmentCount = static_cast<int>(ranges.size());
         return result;
     } catch (...) {
         removePartial();
         throw;
     }
+}
+
+ExportResult exportSegment(const std::string& inputPath, const std::string& outputPath, double inSeconds,
+                           double outSeconds, const ExportProgress& progress)
+{
+    return exportSegments(inputPath, outputPath, {{inSeconds, outSeconds}}, progress);
 }
 
 ExportResult exportSegment(const std::string& inputPath, const std::string& outputPath, const CutSegment& segment,

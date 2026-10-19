@@ -210,6 +210,7 @@ void PlayerWidget::openFile(const QString& path)
     frameDuration_ = video_ && video_->frameRate() > 0 ? 1.0 / video_->frameRate() : 0.04;
     // Per un video i fotogrammi chiave arrivano dall'analisi del file (setKeyframes); senza video non servono.
     segment_.reset({}, duration_);
+    ranges_.reset({}, duration_);
     keyframesKnown_ = video_ == nullptr;
     updateSegmentUi();
 
@@ -240,6 +241,7 @@ void PlayerWidget::closeFile()
     timeline_->setDuration(0.0);
     timeline_->setKeyframes({});
     segment_.reset({}, 0.0);
+    ranges_.reset({}, 0.0);
     keyframesKnown_ = false;
     segmentNote_.clear();
     updateSegmentUi();
@@ -508,6 +510,7 @@ void PlayerWidget::setKeyframes(const std::vector<double>& keyframes)
     // Arrivano a file già aperto: IN e OUT eventualmente messi nel frattempo si perdono (non dovrebbero esserci,
     // perché IN si può mettere solo conoscendo i fotogrammi chiave).
     segment_.reset(keyframes, duration_);
+    ranges_.reset(keyframes, duration_);
     keyframesKnown_ = true;
     timeline_->setKeyframes(keyframes);
     segmentNote_.clear();
@@ -533,11 +536,12 @@ void PlayerWidget::markIn()
         pause();
     const double wanted = markTime();
     const double snapped = segment_.setIn(wanted);
+    wantedIn_ = std::clamp(wanted, 0.0, duration_ > 0 ? duration_ : wanted);
     segmentNote_.clear();
     noteIsOutError_ = false;
     if (std::abs(snapped - wanted) > 0.0005)
         segmentNote_ = QStringLiteral("IN spostato da %1 al fotogramma chiave %2: senza ricodifica si può partire "
-                                      "solo da un fotogramma chiave.")
+                                      "solo da un fotogramma chiave. Per togliere un pezzo (X) vale invece %1.")
                            .arg(timeText(wanted), timeText(snapped));
     updateSegmentUi();
 }
@@ -614,6 +618,7 @@ void PlayerWidget::stepFrame(int direction)
 void PlayerWidget::updateSegmentUi()
 {
     timeline_->setSegment(segment_.in(), segment_.out(), segment_.hasIn(), segment_.hasOut());
+    timeline_->setKeptRanges(ranges_.ranges());
     if (onSegmentChanged)
         onSegmentChanged();
     if (!hasMedia()) {
@@ -627,6 +632,10 @@ void PlayerWidget::updateSegmentUi()
     QString text = QStringLiteral("IN %1 &nbsp; OUT %2 &nbsp; Segmento <b>%3</b>")
                        .arg(marker(segment_.hasIn(), segment_.in(), "#46be5a"),
                             marker(segment_.hasOut(), segment_.out(), "#e15046"), timeText(segment_.length()));
+    if (!ranges_.empty())
+        text += QStringLiteral(" &nbsp;·&nbsp; Tratti: <b>%1</b>, durata finale <b>%2</b>")
+                    .arg(ranges_.ranges().size())
+                    .arg(timeText(ranges_.totalLength()));
     if (!segmentNote_.isEmpty())
         text += QStringLiteral("<br><small>%1</small>").arg(segmentNote_.toHtmlEscaped());
     segmentLabel_->setText(text);
@@ -635,6 +644,88 @@ void PlayerWidget::updateSegmentUi()
 const core::CutSegment& PlayerWidget::segment() const
 {
     return segment_;
+}
+
+void PlayerWidget::addRange()
+{
+    if (!hasMedia())
+        return;
+    if (!segment_.hasIn() || !segment_.hasOut()) {
+        segmentNote_ = QStringLiteral("Segna IN e OUT (tasti I e O), poi aggiungi il tratto con A.");
+        updateSegmentUi();
+        return;
+    }
+    const double in = segment_.in();
+    const double out = segment_.out();
+    if (ranges_.add(in, out)) {
+        segmentNote_ = QStringLiteral("Tratto %1 - %2 aggiunto. Segna il prossimo, oppure esporta con Ctrl+E.")
+                           .arg(timeText(in), timeText(out));
+        // IN e OUT tornano liberi per il tratto successivo.
+        segment_.clearIn();
+        segment_.clearOut();
+    } else {
+        segmentNote_ = QStringLiteral("Tratto vuoto: OUT deve stare dopo IN.");
+    }
+    noteIsOutError_ = false;
+    updateSegmentUi();
+}
+
+void PlayerWidget::cutRange()
+{
+    if (!hasMedia())
+        return;
+    if (!segment_.hasIn() || !segment_.hasOut()) {
+        segmentNote_ = QStringLiteral("Segna con I e O il pezzo da togliere, poi premi X.");
+        updateSegmentUi();
+        return;
+    }
+    // Il pezzo da togliere comincia dove l'utente ha segnato IN (non serve agganciarlo: lì finisce la parte tenuta).
+    const double from = wantedIn_;
+    const double to = segment_.out();
+    const bool wasEmpty = ranges_.empty();
+    switch (ranges_.remove(from, to)) {
+    case core::SegmentList::RemoveResult::Removed:
+        segmentNote_ = QStringLiteral("Tolto il pezzo %1 - %2%3. La parte dopo riparte dal fotogramma chiave più vicino.")
+                           .arg(timeText(from), timeText(to),
+                                wasEmpty ? QStringLiteral(" (partendo dal file intero)") : QString());
+        segment_.clearIn();
+        segment_.clearOut();
+        break;
+    case core::SegmentList::RemoveResult::OutsideKept:
+        segmentNote_ = QStringLiteral("Questo tratto (%1 - %2) è già escluso: è fuori dalle parti verdi.")
+                           .arg(timeText(from), timeText(to));
+        break;
+    case core::SegmentList::RemoveResult::NoKeyframeInside:
+        segmentNote_ = QStringLiteral("Non si può togliere %1 - %2 senza ricodifica: dentro non c'è un fotogramma chiave "
+                                      "da cui far ripartire il video. Allarga il pezzo fino a comprendere una tacca "
+                                      "della linea del tempo.")
+                           .arg(timeText(from), timeText(to));
+        break;
+    case core::SegmentList::RemoveResult::Empty:
+        segmentNote_ = QStringLiteral("Tratto vuoto: OUT deve stare dopo IN.");
+        break;
+    }
+    noteIsOutError_ = false;
+    updateSegmentUi();
+}
+
+void PlayerWidget::removeRangeAtPlayhead()
+{
+    if (!hasMedia())
+        return;
+    const double at = markTime();
+    segmentNote_ = ranges_.removeAt(at) ? QStringLiteral("Tratto eliminato.")
+                                        : QStringLiteral("Sotto il cursore (%1) non c'è nessun tratto.").arg(timeText(at));
+    noteIsOutError_ = false;
+    updateSegmentUi();
+}
+
+void PlayerWidget::clearRanges()
+{
+    ranges_.clear();
+    segmentNote_ = QStringLiteral("Elenco dei tratti svuotato.");
+    noteIsOutError_ = false;
+    updateSegmentUi();
 }
 
 }  // namespace editor::app

@@ -77,14 +77,20 @@ jobs:
       - name: Prova dell'esportazione
         shell: pwsh
         run: |
-          # Taglia un segmento dai file dimostrativi (IN viene agganciato al fotogramma chiave) e controlla il risultato.
+          # Taglia dai file dimostrativi un tratto e poi tre tratti uniti (ogni IN viene agganciato al fotogramma
+          # chiave) e controlla i file creati.
           $demo = "$env:TEMP\EditorVideoDemo"
-          foreach ($t in @(@('demo_mpeg2_gpu.mkv', 'taglio_video.mkv', '2.5', '6.3'), @('demo_solo_audio.wav', 'taglio_audio.wav', '1.2', '3.5'))) {
-            $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru `
-                   -ArgumentList '--export-test', "`"$demo\$($t[0])`"", "`"$demo\$($t[1])`"", $t[2], $t[3] `
+          $prove = @(
+            @('demo_mpeg2_gpu.mkv', 'taglio_video.mkv', '2.5', '6.3'),
+            @('demo_mpeg2_gpu.mkv', 'tratti_video.mkv', '1.2', '2.6', '4.0', '5.5', '8.0', '9.0'),
+            @('demo_solo_audio.wav', 'tratti_audio.wav', '1.2', '3.5', '6', '7')
+          )
+          foreach ($t in $prove) {
+            $argomenti = @('--export-test', "`"$demo\$($t[0])`"", "`"$demo\$($t[1])`"") + $t[2..($t.Count - 1)]
+            $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru -ArgumentList $argomenti `
                    -RedirectStandardOutput export.txt -RedirectStandardError export-err.txt
             $null = $p.Handle  # necessario per leggere ExitCode
-            if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "$($t[0]) : esportazione bloccata" }
+            if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "$($t[1]) : esportazione bloccata" }
             Get-Content export.txt, export-err.txt
-            if ($p.ExitCode -ne 0) { throw "$($t[0]) : esportazione non riuscita (codice $($p.ExitCode))" }
+            if ($p.ExitCode -ne 0) { throw "$($t[1]) : esportazione non riuscita (codice $($p.ExitCode))" }
           }

@@ -1,9 +1,13 @@
 #pragma once
 
+#include "EditorCore/SegmentExport.h"
+
 #include <QtWidgets/QMainWindow>
 
 #include <atomic>
 #include <chrono>
+#include <optional>
+#include <vector>
 
 class QAction;
 class QLabel;
@@ -13,6 +17,7 @@ class QTreeWidget;
 
 namespace editor::core {
 struct MediaInfo;
+struct TimeRange;
 }
 
 namespace editor::app {
@@ -39,6 +44,7 @@ public:
     bool startExport(const QString& target, bool showResult, std::chrono::milliseconds slowDown = {});
     bool isExporting() const { return exportThread_ != nullptr; }
     bool lastExportSucceeded() const { return lastExportOk_; }
+    QString lastExportProblem() const { return lastExportProblem_; }  // "annullata" o il messaggio d'errore
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -50,7 +56,15 @@ private:
     void showInfo(const core::MediaInfo& info);
     void setBusy(bool busy);
     void updateExportAction();
+    std::vector<core::TimeRange> rangesToExport() const;
 
+    struct ExportOutcome
+    {
+        std::optional<core::ExportResult> result;
+        QString error;
+        bool cancelled = false;
+    };
+    void showExportResult(const ExportOutcome& outcome, const QString& target);
     QStackedWidget* pages_ = nullptr;
     QLabel* placeholder_ = nullptr;
     QTreeWidget* infoTree_ = nullptr;
@@ -66,6 +80,7 @@ private:
     QThread* exportThread_ = nullptr;
     std::atomic<bool> cancelExport_{false};
     bool lastExportOk_ = false;
+    QString lastExportProblem_;
 };
 
 // Testo con le versioni di Qt e FFmpeg, usato nella barra di stato e in "Informazioni".

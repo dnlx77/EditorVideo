@@ -13,7 +13,9 @@ namespace {
 
 const QColor kInColor(70, 190, 90);
 const QColor kOutColor(225, 80, 70);
-const QColor kSegmentColor(70, 140, 230, 90);
+const QColor kSegmentColor(70, 140, 230, 150);
+const QColor kKeptColor(60, 175, 95, 120);
+const QColor kRemovedColor(0, 0, 0, 110);
 
 }  // namespace
 
@@ -53,6 +55,12 @@ void TimelineWidget::setSegment(double in, double out, bool hasIn, bool hasOut)
     out_ = out;
     hasIn_ = hasIn;
     hasOut_ = hasOut;
+    update();
+}
+
+void TimelineWidget::setKeptRanges(std::vector<core::TimeRange> ranges)
+{
+    kept_ = std::move(ranges);
     update();
 }
 
@@ -101,11 +109,22 @@ void TimelineWidget::paintEvent(QPaintEvent*)
     if (!enabled)
         return;
 
-    // Segmento IN-OUT
+    // Tratti tenuti: bande verdi; quello che non verrà esportato è scurito.
+    if (!kept_.empty()) {
+        p.setBrush(kRemovedColor);
+        p.drawRect(track);
+        p.setBrush(kKeptColor);
+        for (const core::TimeRange& r : kept_)
+            p.drawRect(QRectF(QPointF(xForTime(r.start), track.top()), QPointF(xForTime(r.end), track.bottom())));
+    }
+
+    // Segmento IN-OUT (solo se almeno uno dei due è segnato)
     const double inX = xForTime(in_);
     const double outX = xForTime(out_);
-    p.setBrush(kSegmentColor);
-    p.drawRect(QRectF(QPointF(inX, track.top()), QPointF(outX, track.bottom())));
+    if (hasIn_ || hasOut_) {
+        p.setBrush(kSegmentColor);
+        p.drawRect(QRectF(QPointF(inX, track.top() + track.height() * 0.5), QPointF(outX, track.bottom())));
+    }
 
     // Fotogrammi chiave: una tacca per pixel al massimo (con migliaia di fotogrammi chiave basta così).
     QColor tick = pal.color(QPalette::Text);

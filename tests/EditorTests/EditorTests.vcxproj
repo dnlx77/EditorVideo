@@ -37,10 +37,12 @@
     <ClCompile Include="CutSegmentTests.cpp" />
     <ClCompile Include="DecoderTests.cpp" />
     <ClCompile Include="ExportTests.cpp" />
+    <ClCompile Include="JoinExportTests.cpp" />
     <ClCompile Include="LibraryInfoTests.cpp" />
     <ClCompile Include="MediaProbeTests.cpp" />
     <ClCompile Include="PlaybackTests.cpp" />
     <ClCompile Include="SampleMedia.cpp" />
+    <ClCompile Include="SegmentListTests.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="SampleMedia.h" />
