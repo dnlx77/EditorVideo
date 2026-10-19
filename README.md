@@ -51,6 +51,7 @@ Gli eseguibili finiscono in `bin\x64\<Configurazione>\`, insieme alle DLL di Qt 
 | Segna IN / OUT | I / O |
 | Vai a IN / OUT | Maiusc+I / Maiusc+O |
 | Cancella IN e OUT | menu Segmento |
+| Esporta il segmento | Ctrl+E (menu File) |
 
 ### Segmento (IN e OUT)
 
@@ -59,6 +60,13 @@ Gli eseguibili finiscono in `bin\x64\<Configurazione>\`, insieme alle DLL di Qt 
 - **OUT** può stare su qualsiasi fotogramma dopo IN e comprende il fotogramma che si vede.
 - Senza IN il segmento parte dall'inizio del file, senza OUT arriva fino alla fine. Se si sposta IN dopo OUT, OUT viene tolto.
 - Si segna sempre il fotogramma visibile: conviene mettere in pausa e avvicinarsi con `,` e `.`.
+
+### Esportazione
+
+- **File > Esporta segmento...** (Ctrl+E), disponibile quando IN e OUT sono segnati, salva il segmento in un nuovo file: propone `<nome>_taglio.<estensione>` nella cartella dell'originale.
+- **Senza ricodifica**: video e audio vengono copiati così come sono (stessi codec, stessa qualità, nessuna perdita) nello stesso contenitore dell'originale (MP4 resta MP4, MKV resta MKV...). Per questo è anche molto veloce.
+- Il video parte dal fotogramma chiave di IN, l'audio insieme a lui; la durata finale è quella mostrata sotto la linea del tempo (con al massimo qualche centesimo di differenza). Si copiano video e audio; sottotitoli e altri flussi per ora no.
+- L'originale non viene mai modificato. Se si annulla o c'è un errore, non resta un file a metà.
 
 - Il video viene decodificato dalla **scheda video (D3D11VA)** quando il codec lo permette (H.264, HEVC, VP9, AV1, MPEG-2... secondo la GPU), altrimenti dal **processore**: il passaggio è automatico, anche se la GPU dà errore a metà. In basso a destra c'è scritto quale si sta usando (`Decodifica: GPU (D3D11VA)` / `Decodifica: software`).
 - L'audio è il riferimento per la sincronizzazione: ogni fotogramma viene mostrato quando l'audio arriva al suo tempo. Se il file non ha audio (o non c'è una scheda audio) si usa l'orologio di sistema.
@@ -70,4 +78,5 @@ Gli eseguibili finiscono in `bin\x64\<Configurazione>\`, insieme alle DLL di Qt 
 - I test generano al volo piccoli video di prova (MKV, MP4, WAV) con FFmpeg nella cartella temporanea: nel repository non ci sono file binari. Con la variabile d'ambiente `EDITORVIDEO_KEEP_SAMPLES=1` i file dei test di analisi restano in `%TEMP%\EditorVideoTests`.
 - Per provare l'anteprima senza file propri: `EditorTests.exe --gtest_also_run_disabled_tests --gtest_filter=*GeneraVideoDimostrativi*` crea in `%TEMP%\EditorVideoDemo` due video da 10 secondi (uno MPEG-2, che di solito la GPU decodifica, e uno MPEG-4 Part 2, sempre in software) e un file solo audio. L'audio è muto.
 - `EditorVideo.exe --smoke-test` verifica che l'applicazione parta con tutte le DLL; `EditorVideo.exe --smoke-test file.mkv` riproduce anche il file per 2 secondi, controlla che la posizione avanzi col tempo giusto e prova a segnare IN e OUT (con `EDITORVIDEO_SMOKE_SCREENSHOT=immagine.png` salva anche un'immagine della finestra). Con `EDITORVIDEO_NO_AUDIO=1` si simula un PC senza scheda audio.
-- A ogni push GitHub Actions compila la soluzione in Release, lancia i test, avvia l'applicazione con `--smoke-test` e prova la riproduzione dei file dimostrativi.
+- `EditorVideo.exe --export-test origine destinazione IN OUT` (tempi in secondi) esporta un segmento come l'interfaccia, con IN agganciato al fotogramma chiave, e controlla il file creato (codici di uscita: 0 tutto giusto, 2 errore, 3 controllo non riuscito).
+- A ogni push GitHub Actions compila la soluzione in Release, lancia i test, avvia l'applicazione con `--smoke-test`, prova la riproduzione dei file dimostrativi e l'esportazione di un segmento.

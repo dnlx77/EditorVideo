@@ -41,6 +41,7 @@
     <ClInclude Include="MediaError.h" />
     <ClInclude Include="MediaProbe.h" />
     <ClInclude Include="Playback.h" />
+    <ClInclude Include="SegmentExport.h" />
     <ClInclude Include="VideoDecoder.h" />
   </ItemGroup>
   <ItemGroup>
@@ -50,6 +51,7 @@
     <ClCompile Include="LibraryInfo.cpp" />
     <ClCompile Include="MediaProbe.cpp" />
     <ClCompile Include="Playback.cpp" />
+    <ClCompile Include="SegmentExport.cpp" />
     <ClCompile Include="VideoDecoder.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

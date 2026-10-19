@@ -9,6 +9,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -62,6 +63,8 @@ public:
     void goToOut();
     void stepFrame(int direction);  // +1 fotogramma successivo, -1 precedente (mette in pausa)
     const core::CutSegment& segment() const;
+
+    std::function<void()> onSegmentChanged;  // IN o OUT cambiati (anche aprendo un altro file)
 
 private:
     void play();
