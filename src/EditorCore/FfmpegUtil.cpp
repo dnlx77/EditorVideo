@@ -9,11 +9,6 @@ namespace editor::core::detail {
 
 namespace {
 
-std::filesystem::path pathFromUtf8(const std::string& utf8)
-{
-    return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
-}
-
 bool isCancelled(const std::atomic<bool>* cancel)
 {
     return cancel != nullptr && cancel->load(std::memory_order_relaxed);
@@ -25,6 +20,11 @@ int interruptCallback(void* opaque)
 }
 
 }  // namespace
+
+std::filesystem::path pathFromUtf8(const std::string& utf8)
+{
+    return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
+}
 
 std::string ffmpegError(int code)
 {

@@ -7,6 +7,7 @@ extern "C" {
 #include <libavutil/opt.h>
 }
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 
@@ -74,13 +75,15 @@ public:
         open(video_, codec);
     }
 
-    void addAudio(bool silent)
+    void addAudio(bool silent, bool aac)
     {
         silent_ = silent;
-        const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_PCM_S16LE);
+        const AVCodec* codec = avcodec_find_encoder(aac ? AV_CODEC_ID_AAC : AV_CODEC_ID_PCM_S16LE);
         audio_.enc = avcodec_alloc_context3(codec);
-        audio_.enc->sample_fmt = AV_SAMPLE_FMT_S16;
+        audio_.enc->sample_fmt = aac ? AV_SAMPLE_FMT_FLTP : AV_SAMPLE_FMT_S16;
         audio_.enc->sample_rate = kSampleRate;
+        if (aac)
+            audio_.enc->bit_rate = 128000;
         const AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
         check(av_channel_layout_copy(&audio_.enc->ch_layout, &stereo), "av_channel_layout_copy");
         audio_.enc->time_base = {1, kSampleRate};
@@ -93,11 +96,20 @@ public:
             check(avio_open(&fmt_->pb, path_.c_str(), AVIO_FLAG_WRITE), "avio_open");
         check(avformat_write_header(fmt_, nullptr), "avformat_write_header");
 
+        // L'audio va in blocchi della misura chiesta dall'encoder (AAC: 1024 campioni), il PCM in blocchi da un
+        // fotogramma video; lo si scrive man mano che il video avanza, così i pacchetti restano mescolati.
+        const long long totalSamples = static_cast<long long>(frames) * kSamplesPerFrame;
+        const int chunk = audio_.enc != nullptr && audio_.enc->frame_size > 0 ? audio_.enc->frame_size : kSamplesPerFrame;
+        long long written = 0;
         for (int i = 0; i < frames; ++i) {
             if (video_.enc != nullptr)
                 encode(video_, makeVideoFrame(i));
-            if (audio_.enc != nullptr)
-                encode(audio_, makeAudioFrame(i));
+            const long long until = std::min(totalSamples, static_cast<long long>(i + 1) * kSamplesPerFrame);
+            while (audio_.enc != nullptr && written < until) {
+                const int count = static_cast<int>(std::min<long long>(chunk, totalSamples - written));
+                encode(audio_, makeAudioFrame(written, count));
+                written += count;
+            }
         }
         if (video_.enc != nullptr)
             encode(video_, nullptr);
@@ -138,20 +150,25 @@ private:
         return frame_;
     }
 
-    AVFrame* makeAudioFrame(int index)
+    AVFrame* makeAudioFrame(long long first, int count)
     {
         av_frame_unref(frame_);
-        frame_->format = AV_SAMPLE_FMT_S16;
+        frame_->format = audio_.enc->sample_fmt;
         frame_->sample_rate = kSampleRate;
-        frame_->nb_samples = kSamplesPerFrame;
+        frame_->nb_samples = count;
         check(av_channel_layout_copy(&frame_->ch_layout, &audio_.enc->ch_layout), "av_channel_layout_copy");
         check(av_frame_get_buffer(frame_, 0), "av_frame_get_buffer");
-        auto* samples = reinterpret_cast<int16_t*>(frame_->data[0]);
-        const long long first = static_cast<long long>(index) * kSamplesPerFrame;
-        for (int s = 0; s < kSamplesPerFrame; ++s) {
+        for (int s = 0; s < count; ++s) {
             const std::int16_t value = silent_ ? 0 : sampleAudio(first + s);
-            samples[2 * s] = value;
-            samples[2 * s + 1] = value;
+            if (audio_.enc->sample_fmt == AV_SAMPLE_FMT_FLTP) {
+                // AAC: float, un piano per canale
+                reinterpret_cast<float*>(frame_->data[0])[s] = value / 32768.0f;
+                reinterpret_cast<float*>(frame_->data[1])[s] = value / 32768.0f;
+            } else {
+                auto* samples = reinterpret_cast<int16_t*>(frame_->data[0]);
+                samples[2 * s] = value;
+                samples[2 * s + 1] = value;
+            }
         }
         frame_->pts = first;
         return frame_;
@@ -184,8 +201,9 @@ private:
 
 int sampleLuma(int x, int y, int index)
 {
-    // Ogni fotogramma è più chiaro del precedente di 5 livelli: dal colore si risale al numero del fotogramma.
-    return 40 + index * 5 + (x + y) / 16;
+    // Ogni fotogramma è più chiaro del precedente di 5 livelli (dal colore si risale al numero del fotogramma);
+    // dopo 36 fotogrammi si ricomincia, per restare fra i valori validi della luminanza.
+    return 40 + (index * 5) % 180 + (x + y) / 16;
 }
 
 std::int16_t sampleAudio(long long n)
@@ -202,7 +220,7 @@ std::string toUtf8(const std::filesystem::path& path)
 bool sampleEncodersAvailable()
 {
     return avcodec_find_encoder(AV_CODEC_ID_MPEG4) != nullptr && avcodec_find_encoder(AV_CODEC_ID_MPEG2VIDEO) != nullptr
-        && avcodec_find_encoder(AV_CODEC_ID_PCM_S16LE) != nullptr;
+        && avcodec_find_encoder(AV_CODEC_ID_PCM_S16LE) != nullptr && avcodec_find_encoder(AV_CODEC_ID_AAC) != nullptr;
 }
 
 void writeSampleFile(const std::filesystem::path& path, const SampleSpec& spec)
@@ -211,7 +229,7 @@ void writeSampleFile(const std::filesystem::path& path, const SampleSpec& spec)
     if (spec.video)
         writer.addVideo(spec);
     if (spec.audio)
-        writer.addAudio(spec.silentAudio);
+        writer.addAudio(spec.silentAudio, spec.aacAudio);
     writer.write(spec.frames);
 }
 
