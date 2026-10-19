@@ -1,11 +1,13 @@
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
+#include "EditorApp/ProgramMonitor.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/CutSegment.h"
 #include "EditorCore/Project.h"
 #include "EditorCore/SegmentList.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
+#include "EditorCore/VideoDecoder.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
@@ -21,6 +23,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <memory>
 
 namespace {
@@ -49,7 +52,9 @@ int runJoinTest(const QStringList& args, qsizetype at)
             const std::string path = args[i].toStdString();
             sources.push_back(core::probeFile(path));
             signatures.push_back(core::readMediaSignature(path));
-            project.setAnalysis(project.add(path), sources.back().keyframeTimes, sources.back().durationSeconds);
+            const int id = project.add(path);
+            project.setAnalysis(id, sources.back().keyframeTimes, sources.back().durationSeconds);
+            project.sequence().insert(-1, id, 0.0, sources.back().durationSeconds, project.snapper());  // file intero
         }
         if (const auto mismatches = core::checkCompatibility(signatures); !mismatches.empty()) {
             std::printf("Non si possono unire:\n%s\n", core::describeMismatches(mismatches).c_str());
@@ -57,17 +62,86 @@ int runJoinTest(const QStringList& args, qsizetype at)
         }
         const core::ExportResult result = core::exportClips(project.exportPlan(), output);
         const core::MediaInfo joined = core::probeFile(output);
-        std::printf("Uniti %d file: durata attesa %.3f s, ottenuta %.3f s, %d flussi\n", result.clipCount,
-                    project.totalLength(), joined.durationSeconds, result.streamCount);
+        const double expected = project.sequence().totalLength();
+        std::printf("Uniti %d file: durata attesa %.3f s, ottenuta %.3f s, %d flussi\n", result.clipCount, expected,
+                    joined.durationSeconds, result.streamCount);
 
         const double tolerance = 0.1 + 0.05 * static_cast<double>(result.clipCount);
-        bool ok = std::abs(joined.durationSeconds - project.totalLength()) < tolerance
+        bool ok = std::abs(joined.durationSeconds - expected) < tolerance
                && joined.streams.size() == static_cast<std::size_t>(result.streamCount);
         for (std::size_t s = 0; ok && s < joined.streams.size() && s < sources.front().streams.size(); ++s)
             ok = joined.streams[s].codec == sources.front().streams[s].codec;
         if (joined.keyframeStreamIndex >= 0)
             ok = ok && !joined.keyframeTimes.empty() && std::abs(joined.keyframeTimes.front()) < 0.001;
         std::printf("%s\n", ok ? "Controllo del file unito: OK" : "Controllo del file unito: NON RIUSCITO");
+        return ok ? 0 : 3;
+    } catch (const std::exception& e) {
+        std::printf("Errore: %s\n", e.what());
+        return 2;
+    }
+}
+
+// Luminosità media di un fotogramma (per riconoscere da quale punto di quale file arriva).
+double meanBrightness(const std::string& file, double seconds)
+{
+    editor::core::VideoDecoder video(file, {.allowHardware = false});
+    const auto frame = video.seek(seconds);
+    if (!frame)
+        return -1.0;
+    double sum = 0.0;
+    for (std::size_t i = 0; i < frame->pixels.size(); i += 4)
+        sum += (frame->pixels[i] + frame->pixels[i + 1] + frame->pixels[i + 2]) / 3.0;
+    return sum / (frame->pixels.size() / 4.0);
+}
+
+// --sequence-test <destinazione> <file> <IN s> <OUT s> [<file> <IN s> <OUT s> ...]: costruisce un montaggio con i pezzi
+// in quell'ordine (lo stesso file può tornare più volte), lo esporta e controlla durata e ordine: all'inizio di ogni
+// pezzo il file creato deve mostrare lo stesso fotogramma del file di origine. Codici come --join-test.
+int runSequenceTest(const QStringList& args, qsizetype at)
+{
+    namespace core = editor::core;
+    if (at + 4 >= args.size() || (args.size() - at - 2) % 3 != 0) {
+        std::printf("Uso: EditorVideo.exe --sequence-test <destinazione> <file> <IN> <OUT> [<file> <IN> <OUT> ...]\n");
+        return 1;
+    }
+    const std::string output = args[at + 1].toStdString();
+    try {
+        core::Project project;
+        std::map<std::string, int> ids;
+        std::vector<core::MediaSignature> signatures;
+        for (qsizetype i = at + 2; i + 2 < args.size(); i += 3) {
+            const std::string path = args[i].toStdString();
+            if (!ids.contains(path)) {
+                const core::MediaInfo info = core::probeFile(path);
+                ids[path] = project.add(path);
+                project.setAnalysis(ids[path], info.keyframeTimes, info.durationSeconds);
+                signatures.push_back(core::readMediaSignature(path));
+            }
+            if (project.sequence().insert(-1, ids[path], args[i + 1].toDouble(), args[i + 2].toDouble(), project.snapper()) == 0)
+                throw core::MediaError("Pezzo vuoto: OUT deve stare dopo IN.");
+        }
+        if (const auto mismatches = core::checkCompatibility(signatures); !mismatches.empty()) {
+            std::printf("Non si possono unire:\n%s\n", core::describeMismatches(mismatches).c_str());
+            return 4;
+        }
+        const core::Sequence& sequence = project.sequence();
+        const core::ExportResult result = core::exportClips(project.exportPlan(), output);
+        const double length = core::probeFile(output).durationSeconds;
+        std::printf("Montaggio di %d pezzi: durata attesa %.3f s, ottenuta %.3f s\n", result.segmentCount,
+                    sequence.totalLength(), length);
+        bool ok = std::abs(length - sequence.totalLength()) < 0.1 + 0.03 * static_cast<double>(result.segmentCount);
+
+        // Ordine: subito dopo l'inizio di ogni pezzo, stesso fotogramma dell'originale.
+        for (std::size_t k = 0; k < sequence.fragments().size(); ++k) {
+            const core::Fragment& f = sequence.fragments()[k];
+            const double inOutput = meanBrightness(output, sequence.startOf(static_cast<int>(k)) + 0.01);
+            const double inSource = meanBrightness(project.find(f.clipId)->path, f.start + 0.01);
+            const bool same = inOutput >= 0 && std::abs(inOutput - inSource) < 3.0;
+            std::printf("  pezzo %d (%.3f - %.3f s): luminosità %.1f, originale %.1f%s\n", static_cast<int>(k) + 1,
+                        f.start, f.end, inOutput, inSource, same ? "" : "  <-- DIVERSO");
+            ok = ok && same;
+        }
+        std::printf("%s\n", ok ? "Controllo del montaggio: OK" : "Controllo del montaggio: NON RIUSCITO");
         return ok ? 0 : 3;
     } catch (const std::exception& e) {
         std::printf("Errore: %s\n", e.what());
@@ -150,6 +224,11 @@ int main(int argc, char* argv[])
         std::fflush(stdout);
         return code;
     }
+    if (const qsizetype at = arguments.indexOf(QStringLiteral("--sequence-test")); at >= 0) {
+        const int code = runSequenceTest(arguments, at);
+        std::fflush(stdout);
+        return code;
+    }
     if (const qsizetype at = arguments.indexOf(QStringLiteral("--join-test")); at >= 0) {
         const int code = runJoinTest(arguments, at);
         std::fflush(stdout);
@@ -219,31 +298,58 @@ int main(int argc, char* argv[])
                     app.exit(success ? 0 : 2);
                 };
 
-                // Due tratti nell'elenco: quello appena segnato e uno all'inizio del file.
-                player->addRange();
+                // Montaggio: il pezzo appena segnato, poi uno all'inizio dello stesso file (A), poi gli altri file
+                // interi.
+                window->addToSequence();
                 player->seekTo(0.0);
                 player->markIn();
                 for (int i = 0; i < 3; ++i)
                     player->stepFrame(+1);
                 player->markOut();
-                player->addRange();
-                const editor::core::SegmentList& ranges = player->ranges();
-                std::printf("Tratti: %d, durata finale %.3f s\n", static_cast<int>(ranges.ranges().size()),
-                            ranges.totalLength());
-                std::fflush(stdout);
-                ok = ok && ranges.ranges().size() == 2;
+                window->addToSequence();
 
                 // Con più file si aspetta che siano stati analizzati tutti (servono durata e fotogrammi chiave).
                 QElapsedTimer analysis;
                 analysis.start();
                 while (!window->project().allAnalyzed() && analysis.elapsed() < 20000)
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-                const double expectedLength = window->exportLength();
-                if (window->project().clips().size() > 1) {
-                    std::printf("Progetto: %d file, durata finale %.3f s\n",
-                                static_cast<int>(window->project().clips().size()), expectedLength);
-                    std::fflush(stdout);
+                const int firstClip = window->currentClipId();
+                for (const editor::core::Clip& clip : window->project().clips()) {
+                    if (clip.id != firstClip) {
+                        window->selectClip(clip.id);
+                        window->addToSequence();  // senza IN e OUT: il file intero
+                    }
                 }
+                const editor::core::Sequence& sequence = window->project().sequence();
+                const std::size_t expectedPieces = 2 + window->project().clips().size() - 1;
+                std::printf("Montaggio: %d pezzi, durata %.3f s\n", static_cast<int>(sequence.fragments().size()),
+                            sequence.totalLength());
+                std::fflush(stdout);
+                ok = ok && sequence.fragments().size() == expectedPieces;
+
+                // Anteprima del montaggio: da poco prima della prima giunzione, 1 s di riproduzione deve passare al
+                // pezzo successivo e avanzare col tempo giusto.
+                if (sequence.fragments().size() >= 2) {
+                    auto* program = window->programMonitor();
+                    const double join = sequence.startOf(1);
+                    const double from = std::max(0.0, join - 0.3);
+                    program->seekTo(from);
+                    program->togglePlayPause();
+                    QElapsedTimer playing;
+                    playing.start();
+                    while (playing.elapsed() < 1000)
+                        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    const double reached = program->position();
+                    const int piece = program->currentIndex();
+                    if (program->isPlaying())
+                        program->togglePlayPause();
+                    const bool crossed = piece >= 1 && reached > join && reached < from + 1.6;
+                    std::printf("Anteprima del montaggio: da %.3f s a %.3f s, pezzo %d (giunzione a %.3f s)%s\n", from,
+                                reached, piece + 1, join, crossed ? "" : "  <-- NON RIUSCITA");
+                    std::fflush(stdout);
+                    ok = ok && crossed;
+                }
+                const double expectedLength = window->exportLength();
 
                 // Esportazione dei tratti come dal menu (senza chiedere dove salvare), con il messaggio finale.
                 const QString target = QDir::temp().filePath(QStringLiteral("EditorVideoProvaEsportazione.")

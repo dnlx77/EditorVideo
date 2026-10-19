@@ -16,7 +16,6 @@
 class QAction;
 class QLabel;
 class QListWidget;
-class QListWidgetItem;
 class QStackedWidget;
 class QThread;
 class QTreeWidget;
@@ -24,7 +23,11 @@ class QTreeWidget;
 namespace editor::app {
 
 class PlayerWidget;
+class ProgramMonitor;
+class SequenceTimeline;
 
+// Finestra principale: a sinistra i file del progetto; al centro l'anteprima del file scelto (Sorgente, dove si
+// segnano IN e OUT) e quella del montaggio; in basso la sequenza dei pezzi.
 class MainWindow : public QMainWindow
 {
 public:
@@ -33,14 +36,24 @@ public:
 
     // Nuovo progetto con questo solo file (File > Apri).
     void openPath(const QString& path);
-    // Aggiunge file in fondo al progetto (File > Aggiungi file). Vengono analizzati uno alla volta in background.
+    // Aggiunge file al progetto (File > Aggiungi file). Vengono analizzati uno alla volta in background.
     void addFiles(const QStringList& paths);
 
-    PlayerWidget* player() const { return player_; }
+    PlayerWidget* player() const { return player_; }  // anteprima di partenza (Sorgente)
+    ProgramMonitor* programMonitor() const { return program_; }
     QString currentFile() const { return currentPath_; }
     const core::Project& project() const { return project_; }
+    int currentClipId() const { return currentClipId_; }
 
-    // Esporta il segmento IN-OUT, i tratti o tutti i file del progetto uniti (chiede dove salvare).
+    // Sequenza: comandi del menu Montaggio (usati anche dalle prove automatiche).
+    void addToSequence();        // A: IN-OUT della Sorgente (o il file intero) dopo il pezzo selezionato o in fondo
+    void cutFromSequence();      // X: toglie IN-OUT della Sorgente dai pezzi di quel file
+    void splitAtPlayhead();      // S: divide il pezzo sotto il cursore del montaggio
+    void deleteSelection();      // Canc: il file (se il fuoco è sull'elenco dei file) o il pezzo selezionato
+    void clearSequence();
+    void selectClip(int id);
+
+    // Esporta il montaggio, o il solo IN-OUT se la sequenza è vuota (chiede dove salvare).
     void exportSegment();
     // Esportazione verso `target` senza chiedere niente; showResult = false per non mostrare il messaggio finale
     // (prove automatiche). false se non si può partire (niente da esportare, analisi o esportazione in corso).
@@ -65,14 +78,19 @@ private:
     void showInfo(const core::MediaInfo& info);
     void updateExportAction();
 
-    // Progetto
-    void selectClip(int id);
+    // Progetto e sequenza
     void removeClip(int id);
-    void storeCurrentRanges();
     void refreshClipList();
-    void syncOrderFromList();
+    void sequenceChanged();
+    void updateSourceBands();
     void startNextProbe();
     int selectedClipId() const;
+    void setProgramActive(bool active);
+
+    // Comandi di riproduzione: vanno all'anteprima usata per ultima.
+    void togglePlay();
+    void seekRelative(double seconds);
+    void seekStart();
 
     struct ExportOutcome
     {
@@ -85,21 +103,24 @@ private:
     QStackedWidget* pages_ = nullptr;
     QLabel* placeholder_ = nullptr;
     QListWidget* clipList_ = nullptr;
-    QLabel* projectLabel_ = nullptr;
     QTreeWidget* infoTree_ = nullptr;
     QLabel* keyframeTitle_ = nullptr;
     QTreeWidget* keyframeList_ = nullptr;
+    QLabel* sourceTitle_ = nullptr;
     PlayerWidget* player_ = nullptr;
+    ProgramMonitor* program_ = nullptr;
+    SequenceTimeline* timeline_ = nullptr;
+    QLabel* sequenceLabel_ = nullptr;
     QAction* openAction_ = nullptr;
     QAction* exportAction_ = nullptr;
     QAction* removeClipAction_ = nullptr;
 
     core::Project project_;
     std::map<int, core::MediaInfo> clipInfo_;  // analisi dei file del progetto, per id
-    int currentClipId_ = 0;                    // file mostrato nell'anteprima (0 = nessuno)
+    int currentClipId_ = 0;                    // file mostrato nella Sorgente (0 = nessuno)
     QString currentPath_;                      // il suo percorso (nativo)
-    bool loadingClip_ = false;                 // mentre si carica un file nell'anteprima: non salvare i tratti
     bool updatingList_ = false;                // mentre si ricostruisce l'elenco dei file
+    bool programActive_ = false;               // Spazio e frecce vanno all'anteprima del montaggio
 
     std::deque<int> probeQueue_;  // file in attesa di analisi
     int probingClipId_ = 0;

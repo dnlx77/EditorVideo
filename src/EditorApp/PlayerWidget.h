@@ -47,6 +47,22 @@ public:
     bool hasMedia() const;
 
     void togglePlayPause();
+    void startPlayback();
+    void stopPlayback();
+
+    // Riproduce solo fino a `end` (secondi del file), poi si ferma e chiama onWindowEnd: serve all'anteprima della
+    // sequenza, che passa al pezzo successivo. end <= 0 = nessun limite.
+    void setPlaybackWindow(double end);
+    std::function<void()> onWindowEnd;
+
+    // Nasconde la linea del tempo e i comandi (l'anteprima della sequenza ha i suoi).
+    void setChromeVisible(bool visible);
+    // Imposta IN e OUT (es. per riprendere un pezzo della sequenza) e una nota sotto la linea del tempo.
+    void setInOut(double in, double out);
+    void showNote(const QString& note);
+    // IN come l'ha segnato l'utente, prima dell'aggancio al fotogramma chiave (serve per togliere un pezzo).
+    double wantedIn() const { return wantedIn_; }
+
     void seekTo(double seconds);
     void seekRelative(double deltaSeconds);
 
@@ -96,6 +112,7 @@ private:
     TimelineWidget* timeline_ = nullptr;
     QLabel* timeLabel_ = nullptr;
     QLabel* segmentLabel_ = nullptr;
+    QWidget* controls_ = nullptr;
     QLabel* decoderLabel_ = nullptr;
     QTimer* timer_ = nullptr;
     QTimer* resizeRefresh_ = nullptr;
@@ -112,6 +129,7 @@ private:
     double frameDuration_ = 0.04;
     bool decoderAtDisplayed_ = false; // il decoder è subito dopo il fotogramma visibile
     bool playing_ = false;
+    double windowEnd_ = 0.0;  // vedi setPlaybackWindow()
 
     core::CutSegment segment_;
     core::SegmentList ranges_;

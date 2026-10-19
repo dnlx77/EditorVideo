@@ -36,56 +36,51 @@ Gli eseguibili finiscono in `bin\x64\<Configurazione>\`, insieme alle DLL di Qt 
 
 ## Uso
 
-- **File > Apri...** (Ctrl+O) apre un file video o audio. Al centro c'è l'anteprima; a destra formato del contenitore, durata, flussi (codec, risoluzione, fotogrammi al secondo, canali, bitrate...) e l'elenco dei fotogrammi chiave, cioè i punti in cui si potrà tagliare senza ricodifica. Un clic su un fotogramma chiave porta l'anteprima in quel punto.
-- Si può anche passare il file da riga di comando o trascinarlo sull'icona di `EditorVideo.exe`: `EditorVideo.exe "C:\Video\vacanze.mp4"`. Con più file, quelli dopo il primo vengono aggiunti al progetto.
+La finestra è divisa così:
 
-### Anteprima
+- **a sinistra**: i **file del progetto** (ognuno col suo colore), e sotto le informazioni sul file scelto e i suoi fotogrammi chiave;
+- **al centro**: l'anteprima **Sorgente**, cioè il file scelto, dove si segnano IN e OUT;
+- **a destra**: l'anteprima **Montaggio**, il risultato finale, con i pezzi uno dopo l'altro;
+- **in basso**: la **timeline del montaggio**, con un blocco colorato per ogni pezzo (il colore del file da cui viene), largo quanto dura.
+
+**File > Apri...** (Ctrl+O) apre un file in un progetto nuovo; **File > Aggiungi file...** (Ctrl+Maiusc+O, anche più file insieme) ne aggiunge altri. Vengono analizzati uno alla volta in background. Si possono anche passare i file da riga di comando: `EditorVideo.exe "C:\Video\a.mp4" "C:\Video\b.mp4"`.
+
+### Comandi
 
 | Comando | Tasto |
 |---|---|
-| Riproduci / Pausa | Spazio (o il pulsante ▶) |
+| Riproduci / Pausa (l'anteprima usata per ultima, segnata con ▶ se è la Sorgente) | Spazio |
 | Indietro / avanti di 5 secondi | ← / → |
-| Fotogramma precedente / successivo | `,` / `.` (oppure Ctrl+← / Ctrl+→) |
 | Torna all'inizio | Home |
-| Vai a un punto | clic o trascinamento sulla linea del tempo |
-| Segna IN / OUT | I / O |
+| Fotogramma precedente / successivo (Sorgente) | `,` / `.` (oppure Ctrl+← / Ctrl+→) |
+| Segna IN / OUT (Sorgente) | I / O |
 | Vai a IN / OUT | Maiusc+I / Maiusc+O |
 | Cancella IN e OUT | menu Segmento |
-| Aggiungi il tratto IN-OUT all'elenco | A (menu Modifica) |
-| Taglia via il tratto IN-OUT | X |
-| Elimina il tratto sotto il cursore | Canc |
-| Svuota l'elenco dei tratti | menu Modifica |
-| Aggiungi altri file al progetto | Ctrl+Maiusc+O (menu File) |
-| Togli un file dal progetto | Canc sull'elenco dei file, o menu File |
-| Esporta (file uniti, elenco dei tratti, o il solo IN-OUT) | Ctrl+E (menu File) |
+| **Aggiungi IN-OUT al montaggio** (senza IN e OUT: il file intero) | A |
+| Togli IN-OUT dal montaggio | X |
+| Dividi il pezzo sotto il cursore del montaggio | S |
+| Elimina il pezzo selezionato (o il file, se il fuoco è sull'elenco dei file) | Canc |
+| Svuota il montaggio | menu Montaggio |
+| Esporta il montaggio (o, se è vuoto, il solo IN-OUT) | Ctrl+E |
 
-### Segmento (IN e OUT)
+### Sorgente: IN e OUT
 
-- Sulla linea del tempo le tacche sono i fotogrammi chiave; il segmento fra IN (verde) e OUT (rosso) è evidenziato, e sotto c'è la sua durata.
+- Sulla linea del tempo le tacche sono i fotogrammi chiave; il segmento fra IN (verde) e OUT (rosso) è evidenziato, e sotto c'è la sua durata. In verde chiaro le parti del file già usate nel montaggio.
 - **IN** si aggancia da solo al fotogramma chiave nello stesso punto o subito prima: senza ricodifica un video può iniziare solo da lì. Se IN viene spostato, sotto la durata compare da dove a dove.
 - **OUT** può stare su qualsiasi fotogramma dopo IN e comprende il fotogramma che si vede.
-- Senza IN il segmento parte dall'inizio del file, senza OUT arriva fino alla fine. Se si sposta IN dopo OUT, OUT viene tolto.
 - Si segna sempre il fotogramma visibile: conviene mettere in pausa e avvicinarsi con `,` e `.`.
 
-### Più tratti (menu Modifica)
+### Montaggio
 
-- Si possono tenere più pezzi dello stesso file: segna IN e OUT e premi **A** per aggiungere il tratto all'elenco; IN e OUT si liberano per il tratto successivo. Sulla linea del tempo i tratti tenuti sono in verde e il resto è scurito; sotto c'è il numero di tratti e la durata finale.
-- Oppure al contrario: segna IN e OUT del pezzo da togliere (es. la pubblicità) e premi **X**. Se l'elenco è vuoto si parte dal file intero.
-- I tratti sono sempre in ordine di tempo; quelli che si toccano o si sovrappongono vengono uniti. **Canc** elimina il tratto sotto il cursore.
-- Come per IN, ogni tratto inizia su un fotogramma chiave: togliendo un pezzo, la parte dopo riparte dal fotogramma chiave più vicino prima della fine del pezzo tolto, quindi possono restare alcuni fotogrammi del pezzo tolto (e se dentro il pezzo non c'è un fotogramma chiave non si può togliere: un messaggio lo dice).
-- **Ctrl+E** esporta tutti i tratti uniti in un unico file; se l'elenco è vuoto esporta il solo IN-OUT.
-
-### Più file (progetto)
-
-- **File > Aggiungi file...** (Ctrl+Maiusc+O, anche più file insieme) li aggiunge in fondo all'elenco **File del progetto**, a destra. Vengono analizzati uno alla volta in background. **File > Apri** invece riparte da un progetto nuovo con quel solo file.
-- Un clic su un file lo mostra nell'anteprima con i **suoi** IN, OUT e tratti: ogni file ha il suo elenco di tratti (se è vuoto, si tiene il file intero). L'ordine dell'elenco è l'ordine in cui i file verranno uniti: si cambia **trascinando**. **Canc** (con il fuoco sull'elenco) toglie il file dal progetto.
-- Sotto l'elenco c'è la durata finale di tutto il progetto. **Ctrl+E** unisce tutti i file, uno dopo l'altro, in un unico file nel contenitore del primo.
+- Scegli un file, segna I e O nella Sorgente e premi **A**: il pezzo va nella timeline del montaggio, dopo il pezzo selezionato (o in fondo). IN e OUT si liberano per il pezzo successivo. Lo stesso file si può usare più volte, in qualsiasi ordine.
+- Nella timeline: **clic** per spostare lì l'anteprima Montaggio, **trascina** un blocco per cambiarne il posto, **doppio clic** per riaprirlo nella Sorgente con i suoi IN e OUT, **Canc** per toglierlo, **S** per dividerlo al cursore.
+- **S** divide al fotogramma chiave più vicino prima del cursore (la seconda parte deve iniziare da un fotogramma chiave): non si perde né si ripete nessun fotogramma.
+- **X** toglie dal montaggio il pezzo fra IN e OUT segnati nella Sorgente (es. la pubblicità), da tutti i pezzi di quel file che lo contengono. La parte dopo riparte dal fotogramma chiave più vicino prima della fine del pezzo tolto, quindi può restare qualche fotogramma; se dentro non c'è un fotogramma chiave, o il pezzo non è nel montaggio, un messaggio lo dice.
+- L'anteprima Montaggio passa da un pezzo all'altro aprendo il file giusto: a ogni passaggio può esserci una brevissima pausa (solo nell'anteprima, il file esportato no).
 - Senza ricodifica si possono unire solo file con gli **stessi codec e parametri** (risoluzione, formato pixel, fotogrammi al secondo, profilo, parametri di codifica; per l'audio frequenza e canali): di solito file dello stesso telefono o della stessa videocamera con le stesse impostazioni. Se qualcosa non coincide l'esportazione viene rifiutata, con un messaggio che dice quale file e cosa è diverso (es. `Clip 3 (nome.mp4): risoluzione 1280x720 invece di 1920x1080`). Contenitori diversi vanno bene, se i codec coincidono.
-- Con un solo file IN-OUT conta come prima; con più file contano solo gli elenchi dei tratti (A, X).
-
 ### Esportazione
 
-- **File > Esporta segmento...** (Ctrl+E), disponibile quando IN e OUT sono segnati, salva il segmento in un nuovo file: propone `<nome>_taglio.<estensione>` nella cartella dell'originale.
+- **File > Esporta...** (Ctrl+E) salva il montaggio in un nuovo file, nel contenitore del primo pezzo: propone `<nome>_montaggio.<estensione>` nella cartella dell'originale. Se il montaggio è vuoto esporta il solo IN-OUT della Sorgente (`<nome>_taglio.<estensione>`).
 - **Senza ricodifica**: video e audio vengono copiati così come sono (stessi codec, stessa qualità, nessuna perdita) nello stesso contenitore dell'originale (MP4 resta MP4, MKV resta MKV...). Per questo è anche molto veloce.
 - Il video parte dal fotogramma chiave di IN, l'audio insieme a lui; la durata finale è quella mostrata sotto la linea del tempo (con al massimo qualche centesimo di differenza). Si copiano video e audio; sottotitoli e altri flussi per ora no.
 - Con più tratti, nel file creato si susseguono senza buchi: a ogni giunzione video e audio ripartono insieme. L'audio PCM (es. WAV) viene tagliato al campione esatto; l'audio compresso (AAC, MP3...) a pacchetti, quindi a ogni giunzione può mancare al massimo un pacchetto (circa 20 ms).
@@ -103,5 +98,6 @@ Gli eseguibili finiscono in `bin\x64\<Configurazione>\`, insieme alle DLL di Qt 
 - `EditorVideo.exe --smoke-test` verifica che l'applicazione parta con tutte le DLL; `EditorVideo.exe --smoke-test file.mkv` riproduce anche il file per 2 secondi, controlla che la posizione avanzi col tempo giusto, segna due tratti e li esporta uniti dalla finestra (controllando anche che la finestra di avanzamento si chiuda) (con `EDITORVIDEO_SMOKE_SCREENSHOT=immagine.png` salva anche un'immagine della finestra). Con `EDITORVIDEO_NO_AUDIO=1` si simula un PC senza scheda audio.
 - `EditorVideo.exe --export-test origine destinazione IN OUT [IN OUT ...]` (tempi in secondi) esporta uno o più tratti uniti come l'interfaccia, con ogni IN agganciato al fotogramma chiave, e controlla il file creato (codici di uscita: 0 tutto giusto, 2 errore, 3 controllo non riuscito).
 - `EditorVideo.exe --join-test destinazione file1 file2 [...]` unisce i file interi come l'interfaccia, dopo il controllo di compatibilità, e controlla il file creato (codici di uscita: 0 tutto giusto, 4 file non compatibili, 2 errore, 3 controllo non riuscito).
-- `--smoke-test` con più file prova anche l'unione dall'interfaccia. Con la variabile d'ambiente `QT_QPA_PLATFORM=minimal` le prove girano senza aprire finestre.
+- `EditorVideo.exe --sequence-test destinazione file IN OUT [file IN OUT ...]` costruisce un montaggio con i pezzi in quell'ordine, lo esporta e controlla durata e ordine (all'inizio di ogni pezzo lo stesso fotogramma dell'originale).
+- `--smoke-test` con uno o più file costruisce un montaggio dall'interfaccia, prova l'anteprima Montaggio a cavallo di una giunzione e lo esporta. Con la variabile d'ambiente `QT_QPA_PLATFORM=minimal` le prove girano senza aprire finestre.
 - A ogni push GitHub Actions compila la soluzione in Release, lancia i test, avvia l'applicazione con `--smoke-test`, prova la riproduzione dei file dimostrativi, l'esportazione di uno e più tratti e l'unione di più file (anche il rifiuto di file non compatibili).

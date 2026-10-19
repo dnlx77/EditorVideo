@@ -1,0 +1,208 @@
+#include "EditorApp/ProgramMonitor.h"
+
+#include "EditorApp/PlayerWidget.h"
+#include "EditorCore/MediaProbe.h"
+#include "EditorCore/Project.h"
+
+#include <QtCore/QFileInfo>
+#include <QtCore/QTimer>
+#include <QtGui/QMouseEvent>
+#include <QtWidgets/QHBoxLayout>
+#include <QtWidgets/QLabel>
+#include <QtWidgets/QStyle>
+#include <QtWidgets/QToolButton>
+#include <QtWidgets/QVBoxLayout>
+
+#include <algorithm>
+
+namespace editor::app {
+
+namespace {
+
+QString timeText(double seconds)
+{
+    return QString::fromStdString(core::formatDuration(seconds));
+}
+
+}  // namespace
+
+ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
+    : QWidget(parent)
+    , project_(project)
+{
+    player_ = new PlayerWidget;
+    player_->setChromeVisible(false);
+    player_->onWindowEnd = [this] { fragmentEnded(); };
+
+    playButton_ = new QToolButton;
+    playButton_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+    playButton_->setToolTip(QStringLiteral("Riproduci il montaggio"));
+    playButton_->setFocusPolicy(Qt::NoFocus);
+    connect(playButton_, &QToolButton::clicked, this, [this] {
+        if (onActivated)
+            onActivated();
+        togglePlayPause();
+    });
+    timeLabel_ = new QLabel;
+    fragmentLabel_ = new QLabel;
+
+    auto* controls = new QHBoxLayout;
+    controls->addWidget(playButton_);
+    controls->addWidget(timeLabel_);
+    controls->addSpacing(12);
+    controls->addWidget(fragmentLabel_, 1);
+
+    auto* title = new QLabel(QStringLiteral("<b>Montaggio</b> (il risultato)"));
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(title);
+    layout->addWidget(player_, 1);
+    layout->addLayout(controls);
+
+    poll_ = new QTimer(this);
+    poll_->setInterval(40);
+    connect(poll_, &QTimer::timeout, this, [this] { updatePosition(); });
+
+    updateLabels();
+}
+
+void ProgramMonitor::mousePressEvent(QMouseEvent* event)
+{
+    if (onActivated)
+        onActivated();
+    QWidget::mousePressEvent(event);
+}
+
+void ProgramMonitor::load(int index, double offset)
+{
+    const auto& fragments = project_.sequence().fragments();
+    if (index < 0 || index >= static_cast<int>(fragments.size())) {
+        index_ = -1;
+        return;
+    }
+    const core::Fragment& f = fragments[index];
+    const core::Clip* clip = project_.find(f.clipId);
+    if (clip == nullptr)
+        return;
+    if (f.clipId != loadedClipId_) {
+        player_->openFile(QString::fromStdString(clip->path));
+        loadedClipId_ = f.clipId;
+    }
+    index_ = index;
+    player_->setPlaybackWindow(f.end);
+    player_->seekTo(f.start + std::clamp(offset, 0.0, f.length()));
+}
+
+void ProgramMonitor::seekTo(double seconds)
+{
+    const core::Sequence& sequence = project_.sequence();
+    if (sequence.empty())
+        return;
+    const double t = std::clamp(seconds, 0.0, sequence.totalLength());
+    int index = sequence.indexAt(t);
+    if (index < 0)
+        index = static_cast<int>(sequence.fragments().size()) - 1;  // alla fine: ultimo pezzo
+    const bool wasPlaying = playing_;
+    if (wasPlaying)
+        player_->stopPlayback();
+    load(index, t - sequence.startOf(index));
+    if (wasPlaying)
+        player_->startPlayback();
+    updatePosition();
+}
+
+void ProgramMonitor::seekRelative(double deltaSeconds)
+{
+    seekTo(position_ + deltaSeconds);
+}
+
+void ProgramMonitor::togglePlayPause()
+{
+    const core::Sequence& sequence = project_.sequence();
+    if (sequence.empty())
+        return;
+    if (playing_) {
+        player_->stopPlayback();
+        playing_ = false;
+        poll_->stop();
+        updatePosition();
+        return;
+    }
+    if (position_ >= sequence.totalLength() - 0.05)
+        seekTo(0.0);  // alla fine: si ricomincia
+    else if (index_ < 0)
+        seekTo(position_);
+    playing_ = true;
+    player_->startPlayback();
+    poll_->start();
+    updateLabels();
+}
+
+void ProgramMonitor::fragmentEnded()
+{
+    if (!playing_)
+        return;
+    const int next = index_ + 1;
+    if (next < static_cast<int>(project_.sequence().fragments().size())) {
+        load(next, 0.0);
+        player_->startPlayback();
+    } else {
+        playing_ = false;  // fine del montaggio
+        poll_->stop();
+    }
+    updatePosition();
+}
+
+void ProgramMonitor::sequenceChanged()
+{
+    const core::Sequence& sequence = project_.sequence();
+    if (playing_) {
+        player_->stopPlayback();
+        playing_ = false;
+        poll_->stop();
+    }
+    if (loadedClipId_ != 0 && project_.find(loadedClipId_) == nullptr)
+        loadedClipId_ = 0;
+    if (sequence.empty()) {
+        index_ = -1;
+        position_ = 0.0;
+        loadedClipId_ = 0;
+        player_->closeFile();
+        updatePosition();
+        return;
+    }
+    seekTo(std::min(position_, sequence.totalLength()));
+}
+
+void ProgramMonitor::updatePosition()
+{
+    const core::Sequence& sequence = project_.sequence();
+    if (index_ >= 0 && index_ < static_cast<int>(sequence.fragments().size())) {
+        const core::Fragment& f = sequence.fragments()[index_];
+        position_ = sequence.startOf(index_) + std::clamp(player_->currentPosition() - f.start, 0.0, f.length());
+    }
+    updateLabels();
+    if (onPositionChanged)
+        onPositionChanged(position_);
+}
+
+void ProgramMonitor::updateLabels()
+{
+    const core::Sequence& sequence = project_.sequence();
+    playButton_->setEnabled(!sequence.empty());
+    playButton_->setIcon(style()->standardIcon(playing_ ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+    timeLabel_->setText(QStringLiteral("%1 / %2").arg(timeText(position_), timeText(sequence.totalLength())));
+    if (index_ < 0 || index_ >= static_cast<int>(sequence.fragments().size())) {
+        fragmentLabel_->setText(sequence.empty() ? QStringLiteral("Sequenza vuota") : QString());
+        return;
+    }
+    const core::Fragment& f = sequence.fragments()[index_];
+    const core::Clip* clip = project_.find(f.clipId);
+    fragmentLabel_->setText(QStringLiteral("Pezzo %1 di %2: %3 (%4 - %5)")
+                                .arg(index_ + 1)
+                                .arg(sequence.fragments().size())
+                                .arg(clip ? QFileInfo(QString::fromStdString(clip->path)).fileName() : QString(),
+                                     timeText(f.start), timeText(f.end)));
+}
+
+}  // namespace editor::app
