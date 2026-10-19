@@ -29,9 +29,18 @@ public:
 
     // Tiene [in, out). false (e nessuna modifica) se dopo l'aggancio di `in` il tratto è vuoto.
     bool add(double in, double out);
+    // Esito di remove(): se non è Removed l'elenco non cambia.
+    enum class RemoveResult
+    {
+        Removed,
+        Empty,             // [in, out) vuoto o al contrario
+        OutsideKept,       // [in, out) non tocca nessun tratto tenuto: è già escluso
+        NoKeyframeInside,  // tocca un tratto, ma dentro non c'è un fotogramma chiave da cui far ripartire il resto
+    };
+
     // Toglie [in, out) da quello che si tiene. Con l'elenco vuoto si parte dal file intero, così "togli la
-    // pubblicità" funziona subito. false se non cambia niente (es. nessun fotogramma chiave dentro [in, out]).
-    bool remove(double in, double out);
+    // pubblicità" funziona subito.
+    RemoveResult remove(double in, double out);
     // Elimina il tratto che contiene `seconds`; false se lì non c'è nessun tratto.
     bool removeAt(double seconds);
     void clear();

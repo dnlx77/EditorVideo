@@ -60,16 +60,24 @@ bool SegmentList::add(double in, double out)
     return true;
 }
 
-bool SegmentList::remove(double in, double out)
+SegmentList::RemoveResult SegmentList::remove(double in, double out)
 {
     const double cutStart = clampToFile(in);
     const double cutEnd = clampToFile(out);
     if (cutEnd <= cutStart + kEpsilon)
-        return false;
+        return RemoveResult::Empty;
 
     const std::vector<TimeRange> before = ranges_;
     if (ranges_.empty())
         ranges_.push_back({snapToKeyframe(0.0), duration_});
+
+    const bool touchesKept = std::any_of(ranges_.begin(), ranges_.end(), [&](const TimeRange& r) {
+        return r.end > cutStart + kEpsilon && r.start < cutEnd - kEpsilon;
+    });
+    if (!touchesKept) {
+        ranges_ = before;
+        return RemoveResult::OutsideKept;
+    }
 
     std::vector<TimeRange> result;
     for (const TimeRange& r : ranges_) {
@@ -88,10 +96,10 @@ bool SegmentList::remove(double in, double out)
 
     if (ranges_ == before || (before.empty() && ranges_.size() == 1 && ranges_.front().start <= snapToKeyframe(0.0) + kEpsilon
                               && ranges_.front().end >= duration_ - kEpsilon)) {
-        ranges_ = before;  // niente di fatto (es. nessun fotogramma chiave dentro il pezzo da togliere)
-        return false;
+        ranges_ = before;  // niente di fatto: la parte dopo ripartirebbe da prima del pezzo da togliere
+        return RemoveResult::NoKeyframeInside;
     }
-    return true;
+    return RemoveResult::Removed;
 }
 
 bool SegmentList::removeAt(double seconds)

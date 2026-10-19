@@ -541,7 +541,7 @@ void PlayerWidget::markIn()
     noteIsOutError_ = false;
     if (std::abs(snapped - wanted) > 0.0005)
         segmentNote_ = QStringLiteral("IN spostato da %1 al fotogramma chiave %2: senza ricodifica si può partire "
-                                      "solo da un fotogramma chiave.")
+                                      "solo da un fotogramma chiave. Per togliere un pezzo (X) vale invece %1.")
                            .arg(timeText(wanted), timeText(snapped));
     updateSegmentUi();
 }
@@ -683,16 +683,27 @@ void PlayerWidget::cutRange()
     const double from = wantedIn_;
     const double to = segment_.out();
     const bool wasEmpty = ranges_.empty();
-    if (ranges_.remove(from, to)) {
+    switch (ranges_.remove(from, to)) {
+    case core::SegmentList::RemoveResult::Removed:
         segmentNote_ = QStringLiteral("Tolto il pezzo %1 - %2%3. La parte dopo riparte dal fotogramma chiave più vicino.")
                            .arg(timeText(from), timeText(to),
                                 wasEmpty ? QStringLiteral(" (partendo dal file intero)") : QString());
         segment_.clearIn();
         segment_.clearOut();
-    } else {
-        segmentNote_ = QStringLiteral("Niente da togliere: dentro %1 - %2 non c'è un fotogramma chiave da cui ripartire, "
-                                      "oppure lì non c'è nessun tratto.")
+        break;
+    case core::SegmentList::RemoveResult::OutsideKept:
+        segmentNote_ = QStringLiteral("Questo tratto (%1 - %2) è già escluso: è fuori dalle parti verdi.")
                            .arg(timeText(from), timeText(to));
+        break;
+    case core::SegmentList::RemoveResult::NoKeyframeInside:
+        segmentNote_ = QStringLiteral("Non si può togliere %1 - %2 senza ricodifica: dentro non c'è un fotogramma chiave "
+                                      "da cui far ripartire il video. Allarga il pezzo fino a comprendere una tacca "
+                                      "della linea del tempo.")
+                           .arg(timeText(from), timeText(to));
+        break;
+    case core::SegmentList::RemoveResult::Empty:
+        segmentNote_ = QStringLiteral("Tratto vuoto: OUT deve stare dopo IN.");
+        break;
     }
     noteIsOutError_ = false;
     updateSegmentUi();

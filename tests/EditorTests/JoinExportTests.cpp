@@ -220,7 +220,7 @@ TEST_F(JoinExportTest, CuttingAwayMiddlePart)
     const MediaInfo info = probeFile(source);
     SegmentList list;
     list.reset(info.keyframeTimes, info.durationSeconds);
-    ASSERT_TRUE(list.remove(1.5, 3.0));
+    ASSERT_EQ(list.remove(1.5, 3.0), SegmentList::RemoveResult::Removed);
     ASSERT_EQ(list.ranges().size(), 2u);
 
     const std::string exported = path("senza_pubblicita.mkv");
