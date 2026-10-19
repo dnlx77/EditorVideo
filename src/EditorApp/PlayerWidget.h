@@ -86,6 +86,9 @@ public:
     void goToIn();
     void goToOut();
     void stepFrame(int direction);  // +1 fotogramma successivo, -1 precedente (mette in pausa)
+    void stepToKeyframe(int direction);  // fotogramma chiave successivo (+1) o precedente (-1)
+    void seekToEnd();                    // ultimo fotogramma
+    double frameDuration() const { return frameDuration_; }
     const core::CutSegment& segment() const;
 
     // Elenco dei tratti da tenere, esportati uno dopo l'altro in un unico file.

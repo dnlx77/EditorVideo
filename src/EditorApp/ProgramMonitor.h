@@ -29,6 +29,10 @@ public:
     void seekTo(double seconds);  // tempo della sequenza
     void seekRelative(double deltaSeconds);
     void togglePlayPause();
+    void setPlaying(bool playing);  // L riproduce, K mette in pausa
+    void stepFrame(int direction);  // un fotogramma avanti (+1) o indietro (-1), in pausa
+    void stepToCut(int direction);  // inizio del pezzo successivo (+1) o di questo / del precedente (-1)
+    void seekToEnd();
     bool isPlaying() const { return playing_; }
     double position() const { return position_; }
     int currentIndex() const { return index_; }  // pezzo mostrato (-1 = sequenza vuota)

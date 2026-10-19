@@ -146,6 +146,60 @@ void ProgramMonitor::togglePlayPause()
     updateLabels();
 }
 
+void ProgramMonitor::setPlaying(bool playing)
+{
+    if (playing != playing_)
+        togglePlayPause();
+}
+
+void ProgramMonitor::stepFrame(int direction)
+{
+    if (project_.sequence().empty())
+        return;
+    setPlaying(false);
+    // Un fotogramma del file mostrato; a cavallo di una giunzione seekTo() passa al pezzo giusto.
+    seekTo(position_ + direction * player_->frameDuration() + 0.0005);
+}
+
+void ProgramMonitor::stepToCut(int direction)
+{
+    const core::Sequence& sequence = project_.sequence();
+    if (sequence.empty())
+        return;
+    setPlaying(false);
+    const int count = static_cast<int>(sequence.fragments().size());
+    double target = position_;
+    if (direction > 0) {
+        target = sequence.totalLength();
+        for (int i = 1; i < count; ++i) {
+            if (sequence.startOf(i) > position_ + 0.001) {
+                target = sequence.startOf(i);
+                break;
+            }
+        }
+        if (target >= sequence.totalLength())
+            return seekToEnd();
+    } else {
+        target = 0.0;
+        for (int i = count - 1; i >= 0; --i) {
+            if (sequence.startOf(i) < position_ - 0.001) {
+                target = sequence.startOf(i);
+                break;
+            }
+        }
+    }
+    seekTo(target);
+}
+
+void ProgramMonitor::seekToEnd()
+{
+    const core::Sequence& sequence = project_.sequence();
+    if (sequence.empty())
+        return;
+    setPlaying(false);
+    seekTo(std::max(0.0, sequence.totalLength() - player_->frameDuration()));
+}
+
 void ProgramMonitor::fragmentEnded()
 {
     if (!playing_)

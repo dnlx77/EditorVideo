@@ -708,6 +708,40 @@ void PlayerWidget::stepFrame(int direction)
     updatePositionLabel(position_);
 }
 
+void PlayerWidget::stepToKeyframe(int direction)
+{
+    if (!hasMedia())
+        return;
+    const std::vector<double>& keyframes = segment_.keyframes();
+    if (keyframes.empty())
+        return;
+    if (playing_)
+        pause();
+    const double at = markTime();
+    double target = at;
+    if (direction > 0) {
+        const auto next = std::upper_bound(keyframes.begin(), keyframes.end(), at + 0.001);
+        if (next == keyframes.end())
+            return;
+        target = *next;
+    } else {
+        const auto next = std::lower_bound(keyframes.begin(), keyframes.end(), at - 0.001);
+        if (next == keyframes.begin())
+            return;
+        target = *std::prev(next);
+    }
+    seekTo(target);
+}
+
+void PlayerWidget::seekToEnd()
+{
+    if (!hasMedia())
+        return;
+    if (playing_)
+        pause();
+    seekTo(std::max(0.0, duration_ - (video_ ? frameDuration_ : 0.0)));
+}
+
 void PlayerWidget::updateSegmentUi()
 {
     timeline_->setSegment(segment_.in(), segment_.out(), segment_.hasIn(), segment_.hasOut());

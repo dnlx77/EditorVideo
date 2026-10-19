@@ -10,6 +10,7 @@
 #include "EditorCore/SegmentList.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
+#include "EditorCore/Thumbnails.h"
 #include "EditorCore/VideoDecoder.h"
 
 #include <QtCore/QDir>
@@ -433,6 +434,48 @@ int runProjectTest(const QStringList& args, qsizetype at)
     }
 }
 
+// --thumbnail-test <file> [...]: estrae una miniatura per ogni fotogramma chiave (al massimo 20 per file), come la
+// timeline del montaggio, con la GPU se c'è, e scrive quanto ci vuole. Codice 0 se per ogni file con video tutte le
+// miniature sono uscite, della misura giusta; 3 altrimenti; 2 per altri errori.
+int runThumbnailTest(const QStringList& args, qsizetype at)
+{
+    namespace core = editor::core;
+    bool ok = true;
+    try {
+        core::ThumbnailExtractor extractor(192, 108, true);
+        for (qsizetype i = at + 1; i < args.size(); ++i) {
+            const std::string path = args[i].toStdString();
+            const core::MediaInfo info = core::probeFile(path);
+            std::vector<double> times = info.keyframeTimes;
+            if (times.size() > 20)
+                times.resize(20);
+            QElapsedTimer timer;
+            timer.start();
+            int made = 0;
+            int width = 0;
+            int height = 0;
+            for (double t : times) {
+                if (const auto frame = extractor.extract(path, t)) {
+                    ++made;
+                    width = frame->width;
+                    height = frame->height;
+                }
+            }
+            const double ms = timer.nsecsElapsed() / 1e6;
+            std::printf("%s: %d miniature su %d (%dx%d), %.1f ms ciascuna, decodifica %s\n",
+                        QFileInfo(args[i]).fileName().toUtf8().constData(), made, static_cast<int>(times.size()), width,
+                        height, times.empty() ? 0.0 : ms / times.size(), extractor.decoderDescription().c_str());
+            if (info.keyframeStreamIndex >= 0)
+                ok = ok && made == static_cast<int>(times.size()) && width > 0 && width <= 192 && height <= 108;
+        }
+        std::printf("%s\n", ok ? "Controllo delle miniature: OK" : "Controllo delle miniature: NON RIUSCITO");
+        return ok ? 0 : 3;
+    } catch (const std::exception& e) {
+        std::printf("Errore: %s\n", e.what());
+        return 2;
+    }
+}
+
 int runExportTest(const QStringList& args, qsizetype at){
     namespace core = editor::core;
     const qsizetype pairs = (args.size() - at - 3) / 2;
@@ -504,6 +547,11 @@ int main(int argc, char* argv[])
     const QStringList arguments = QApplication::arguments();
     if (const qsizetype at = arguments.indexOf(QStringLiteral("--export-test")); at >= 0) {
         const int code = runExportTest(arguments, at);
+        std::fflush(stdout);
+        return code;
+    }
+    if (const qsizetype at = arguments.indexOf(QStringLiteral("--thumbnail-test")); at >= 0) {
+        const int code = runThumbnailTest(arguments, at);
         std::fflush(stdout);
         return code;
     }
@@ -639,6 +687,30 @@ int main(int argc, char* argv[])
                 waves.start();
                 while (window->pendingWaveforms() > 0 && waves.elapsed() < 20000)
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                // Annulla e Ripeti: il silenzio appena messo sparisce e torna; l'asterisco segue.
+                {
+                    const QString label = window->undoText();
+                    const bool undone = window->undo() && sequence.mutedRanges().empty();
+                    const bool redone = window->redo() && sequence.mutedRanges().size() == 1;
+                    std::printf("Annulla / Ripeti: \"%s\" %s, ripetuto %s\n", qPrintable(label.mid(1)),
+                                undone ? "annullato" : "NON annullato", redone ? "sì" : "NO");
+                    std::fflush(stdout);
+                    ok = ok && undone && redone && label.contains(QStringLiteral("Togli audio"));
+                }
+
+                // Miniature della timeline: si disegna la finestra (che le chiede) e si aspetta che siano pronte.
+                {
+                    window->grab();
+                    QElapsedTimer thumbs;
+                    thumbs.start();
+                    while (window->pendingThumbnails() > 0 && thumbs.elapsed() < 20000)
+                        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                    const bool hasVideo = window->player()->statusText().contains(QStringLiteral("Decodifica"));
+                    std::printf("Miniature: %d pronte, %d in attesa\n", window->readyThumbnails(), window->pendingThumbnails());
+                    std::fflush(stdout);
+                    ok = ok && window->pendingThumbnails() == 0 && (!hasVideo || window->readyThumbnails() > 0);
+                }
+
                 // Progetto: salvato e riaperto, con gli stessi pezzi e lo stesso audio tolto (e senza modifiche
                 // in sospeso).
                 {

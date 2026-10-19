@@ -1,10 +1,13 @@
 #pragma once
 
+#include "EditorCore/EditHistory.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Project.h"
 #include "EditorCore/ProjectFile.h"
 #include "EditorCore/SegmentExport.h"
 
+#include <QtCore/QHash>
+#include <QtGui/QImage>
 #include <QtWidgets/QMainWindow>
 
 #include <atomic>
@@ -79,6 +82,14 @@ public:
     QString projectPath() const { return projectPath_; }
     bool isModified() const { return modified_; }
 
+    // Annulla / Ripeti (menu Modifica): tutte le modifiche a file, montaggio e audio.
+    bool undo();
+    bool redo();
+    QString undoText() const;  // es. "Annulla Dividi pezzo"
+    // Miniature della timeline ancora da preparare, e quante sono pronte.
+    int pendingThumbnails() const;
+    int readyThumbnails() const;
+
     // Esporta il montaggio, o il solo IN-OUT se la sequenza è vuota (chiede dove salvare).
     void exportSegment();
     // Esportazione verso `target` senza chiedere niente; showResult = false per non mostrare il messaggio finale
@@ -102,6 +113,7 @@ private:
     void openFile();
     void addFilesDialog();
     void showAbout();
+    void showShortcuts();
     void showInfo(const core::MediaInfo& info);
     void replaceAudioDialog();
     void openProjectDialog();
@@ -114,12 +126,24 @@ private:
     void rebuildRecentMenu();
     core::ProjectView currentView() const;
     void resetProject();  // ferma le analisi e svuota tutto (prima di aprire un altro progetto)
+    // Dopo una modifica fatta dall'utente: `before` è lo stato di prima, da ritrovare con Annulla.
+    void recordEdit(const QString& label, const core::Project& before);
+    void updateUndoActions();
+    void afterHistoryChange(const QString& message);
+    // Comandi di spostamento: vanno all'anteprima attiva.
+    void stepFrame(int direction);
+    void stepToMark(int direction);  // Sorgente: fotogramma chiave; Montaggio: inizio dei pezzi
+    void seekEnd();
+    void setPlaying(bool playing);
+    // Miniature
+    QImage thumbnailFor(int clipId, double sourceTime);
+    void startNextThumbnails();
     void markAudioIn();
     void markAudioOut();
     void updateExportAction();
 
     // Progetto e sequenza
-    void removeClip(int id);
+    void removeClip(int id, const QString& undoLabel = {});  // undoLabel vuoto: non si annulla (es. file illeggibile)
     void refreshClipList();
     void sequenceChanged();
     void refreshTimeline();
@@ -160,6 +184,8 @@ private:
     QAction* removeClipAction_ = nullptr;
     QAction* originalAudioAction_ = nullptr;
     QMenu* recentMenu_ = nullptr;
+    QAction* undoAction_ = nullptr;
+    QAction* redoAction_ = nullptr;
 
     core::Project project_;
     std::map<int, core::MediaInfo> clipInfo_;  // analisi dei file del progetto, per id
@@ -167,6 +193,21 @@ private:
     QString currentPath_;                      // il suo percorso (nativo)
     bool updatingList_ = false;                // mentre si ricostruisce l'elenco dei file
     bool programActive_ = false;               // Spazio e frecce vanno all'anteprima del montaggio
+
+    core::EditHistory history_;
+
+    // Miniature della timeline: per "percorso|millisecondi" (immagine vuota = il file non ha video).
+    struct ThumbnailRequest
+    {
+        QString key;
+        std::string path;
+        double seconds = 0.0;
+    };
+    QHash<QString, QImage> thumbnails_;
+    std::deque<ThumbnailRequest> thumbnailQueue_;
+    QHash<QString, bool> thumbnailPending_;
+    QThread* thumbnailThread_ = nullptr;
+    std::atomic<bool> cancelThumbnails_{false};
 
     // File di progetto
     QString projectPath_;      // vuoto = mai salvato
