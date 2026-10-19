@@ -10,7 +10,9 @@
 #include <chrono>
 #include <deque>
 #include <map>
+#include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 class QAction;
@@ -19,6 +21,10 @@ class QListWidget;
 class QStackedWidget;
 class QThread;
 class QTreeWidget;
+
+namespace editor::core {
+struct Waveform;
+}
 
 namespace editor::app {
 
@@ -53,6 +59,16 @@ public:
     void clearSequence();
     void selectClip(int id);
 
+    // Audio della sequenza: comandi del menu Audio (usati anche dalle prove automatiche).
+    void setAudioSelection(double from, double to);  // tratto (tempi della sequenza) su cui agiscono M e Maiusc+M
+    void muteSelection();    // M: niente audio nel tratto selezionato
+    void unmuteSelection();  // Maiusc+M: l'audio torna nel tratto selezionato
+    // La traccia audio di tutta la sequenza diventa questo file. false, con un messaggio, se non si può usare.
+    bool replaceAudio(const QString& path, bool showProblems = true);
+    void restoreOriginalAudio();
+    // Forme d'onda ancora da calcolare (0 = tutte pronte).
+    int pendingWaveforms() const;
+
     // Esporta il montaggio, o il solo IN-OUT se la sequenza è vuota (chiede dove salvare).
     void exportSegment();
     // Esportazione verso `target` senza chiedere niente; showResult = false per non mostrare il messaggio finale
@@ -76,13 +92,20 @@ private:
     void addFilesDialog();
     void showAbout();
     void showInfo(const core::MediaInfo& info);
+    void replaceAudioDialog();
+    void markAudioIn();
+    void markAudioOut();
     void updateExportAction();
 
     // Progetto e sequenza
     void removeClip(int id);
     void refreshClipList();
     void sequenceChanged();
+    void refreshTimeline();
     void updateSourceBands();
+    void requestWaveform(const std::string& path);
+    void startNextWaveform();
+    std::shared_ptr<const core::Waveform> waveformFor(const std::string& path) const;
     void startNextProbe();
     int selectedClipId() const;
     void setProgramActive(bool active);
@@ -114,6 +137,7 @@ private:
     QAction* openAction_ = nullptr;
     QAction* exportAction_ = nullptr;
     QAction* removeClipAction_ = nullptr;
+    QAction* originalAudioAction_ = nullptr;
 
     core::Project project_;
     std::map<int, core::MediaInfo> clipInfo_;  // analisi dei file del progetto, per id
@@ -126,6 +150,13 @@ private:
     int probingClipId_ = 0;
     QThread* probeThread_ = nullptr;
     std::atomic<bool> cancelProbe_{false};
+
+    // Forme d'onda dei file (per percorso), calcolate una alla volta in background e tenute da parte.
+    std::map<std::string, std::shared_ptr<const core::Waveform>> waveforms_;
+    std::deque<std::string> waveQueue_;
+    std::string waveformPath_;  // in calcolo
+    QThread* waveThread_ = nullptr;
+    std::atomic<bool> cancelWave_{false};
 
     QThread* exportThread_ = nullptr;
     std::atomic<bool> cancelExport_{false};

@@ -134,3 +134,25 @@ jobs:
             Get-Content montaggio.txt, montaggio-err.txt
             if ($p.ExitCode -ne $prova.atteso) { throw "montaggio: codice $($p.ExitCode) invece di $($prova.atteso)" }
           }
+
+      - name: Prova dell'audio
+        shell: pwsh
+        run: |
+          # Audio tolto da due tratti (silenzio al posto dei campioni) e audio sostituito da un file solo audio
+          # spostato di mezzo secondo; un WAV in un MP4 viene rifiutato (codice 4).
+          $demo = "$env:TEMP\EditorVideoDemo"
+          $v = "`"$demo\demo_mpeg2_gpu.mkv`""
+          $a = "`"$demo\demo_solo_audio.wav`""
+          $prove = @(
+            @{ atteso = 0; argomenti = @("`"$demo\audio_muto.mkv`"", $v, 'mute', '2', '3.5', 'mute', '6', '7') },
+            @{ atteso = 0; argomenti = @("`"$demo\audio_sostituito.mkv`"", $v, 'replace', $a, '0.5', 'mute', '4', '5') },
+            @{ atteso = 4; argomenti = @("`"$demo\audio_rifiutato.mp4`"", $v, 'replace', $a, '0') }
+          )
+          foreach ($prova in $prove) {
+            $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru -ArgumentList (@('--audio-test') + $prova.argomenti) `
+                   -RedirectStandardOutput audio.txt -RedirectStandardError audio-err.txt
+            $null = $p.Handle  # necessario per leggere ExitCode
+            if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "prova dell'audio bloccata" }
+            Get-Content audio.txt, audio-err.txt
+            if ($p.ExitCode -ne $prova.atteso) { throw "audio: codice $($p.ExitCode) invece di $($prova.atteso)" }
+          }

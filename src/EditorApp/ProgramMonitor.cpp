@@ -89,6 +89,14 @@ void ProgramMonitor::load(int index, double offset)
         loadedClipId_ = f.clipId;
     }
     index_ = index;
+    // Audio del pezzo: i suoi tratti silenziati e, se c'è, la traccia sostitutiva (al tempo t del file si sente
+    // il punto della traccia che cade lì nella sequenza).
+    player_->setAudioMutes(f.muted);
+    if (const auto& replacement = project_.audioReplacement())
+        player_->setExternalAudio(QString::fromStdString(replacement->path),
+                                  project_.sequence().startOf(index) - f.start - replacement->offset);
+    else
+        player_->setExternalAudio(QString(), 0.0);
     player_->setPlaybackWindow(f.end);
     player_->seekTo(f.start + std::clamp(offset, 0.0, f.length()));
 }

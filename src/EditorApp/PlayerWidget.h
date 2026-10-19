@@ -63,6 +63,13 @@ public:
     // IN come l'ha segnato l'utente, prima dell'aggancio al fotogramma chiave (serve per togliere un pezzo).
     double wantedIn() const { return wantedIn_; }
 
+    // Audio dell'anteprima del montaggio (da chiamare a riproduzione ferma):
+    // tratti senza audio, nei tempi del file aperto (lì si sente silenzio)...
+    void setAudioMutes(std::vector<core::TimeRange> ranges);
+    // ...e un altro file al posto dell'audio del file: al tempo t del file si sente il tempo t + delta di `path`
+    // (silenzio dove `path` non arriva). path vuoto = l'audio del file.
+    void setExternalAudio(const QString& path, double delta);
+
     void seekTo(double seconds);
     void seekRelative(double deltaSeconds);
 
@@ -94,6 +101,7 @@ public:
 private:
     void play();
     void pause();
+    void openAudio();  // l'audio da riprodurre: quello del file o quello esterno
     void startWorkers(double from);
     void stopWorkers();
     void videoWorker();
@@ -120,6 +128,13 @@ private:
     std::unique_ptr<core::VideoDecoder> video_;
     std::unique_ptr<core::AudioDecoder> audio_;
     AudioOutput audioOut_;
+    QString path_;                   // file aperto
+    double ownAudioDuration_ = 0.0;  // durata dell'audio del file (anche quando suona quello esterno)
+    bool ownAudio_ = false;          // il file ha un audio
+    std::vector<core::TimeRange> audioMutes_;
+    QString externalAudio_;
+    double externalDelta_ = 0.0;
+    bool externalActive_ = false;    // audio_ è quello esterno
     QString audioNote_;    // es. "audio non disponibile"
     QString decoderText_;  // "Decodifica: GPU (D3D11VA)" / "Decodifica: software"
 
@@ -148,6 +163,9 @@ private:
     bool videoEnded_ = true;               // protetto da queueMutex_
     std::atomic<bool> audioEnded_{true};
     std::atomic<double> audioStart_{0.0};  // tempo del primo campione mandato alla scheda audio
+    double audioFrom_ = 0.0;   // da dove parte la riproduzione (per il silenzio prima dell'audio esterno)
+    double audioDelta_ = 0.0;  // tempo nell'audio = tempo del file + audioDelta_
+    std::vector<core::TimeRange> workerMutes_;  // copia di audioMutes_ per il thread audio
 
     // Orologio: audio se c'è, altrimenti tempo reale.
     bool audioActive_ = false;

@@ -48,6 +48,7 @@
     <ClInclude Include="SegmentList.h" />
     <ClInclude Include="Sequence.h" />
     <ClInclude Include="VideoDecoder.h" />
+    <ClInclude Include="Waveform.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AudioDecoder.cpp" />
@@ -63,6 +64,7 @@
     <ClCompile Include="SegmentList.cpp" />
     <ClCompile Include="Sequence.cpp" />
     <ClCompile Include="VideoDecoder.cpp" />
+    <ClCompile Include="Waveform.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

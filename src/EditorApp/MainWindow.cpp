@@ -3,9 +3,11 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/SequenceTimeline.h"
+#include "EditorCore/AudioDecoder.h"
 #include "EditorCore/LibraryInfo.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
+#include "EditorCore/Waveform.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
@@ -109,6 +111,10 @@ struct ProbeOutcome
     QString error;
     bool cancelled = false;
 };
+
+const QString kAudioFilter = QStringLiteral(
+    "File audio (*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus *.wma *.ac3 *.mka);;"
+    "Audio di un video (*.mp4 *.mkv *.mov *.avi *.webm);;Tutti i file (*.*)");
 
 const QString kVideoFilter = QStringLiteral(
     "File video e audio (*.mp4 *.mkv *.mov *.avi *.m4v *.webm *.ts *.mts *.m2ts *.mpg *.wmv *.flv "
@@ -237,6 +243,20 @@ MainWindow::MainWindow(QWidget* parent)
         player_->setInOut(fragment.start, fragment.end);
         player_->seekTo(fragment.start);
     };
+    timeline_->onAudioSelection = [this](double from, double to) {
+        setProgramActive(true);
+        if (to > from)
+            statusBar()->showMessage(QStringLiteral("Tratto audio %1 - %2: M toglie l'audio, Maiusc+M lo rimette.")
+                                         .arg(timeText(from), timeText(to)),
+                                     8000);
+    };
+    timeline_->onReplacementMoved = [this](double offset) {
+        project_.setAudioOffset(offset);
+        statusBar()->showMessage(offset >= 0 ? QStringLiteral("L'audio sostitutivo ora parte a %1 della sequenza.").arg(timeText(offset))
+                                             : QStringLiteral("L'audio sostitutivo ora parte dal suo punto %1.").arg(timeText(-offset)),
+                                 8000);
+        sequenceChanged();
+    };
     sequenceLabel_ = new QLabel;
     auto* sequencePanel = new QWidget;
     auto* sequenceLayout = new QVBoxLayout(sequencePanel);
@@ -273,6 +293,10 @@ MainWindow::~MainWindow()
     if (probeThread_ != nullptr) {
         cancelProbe_ = true;
         probeThread_->wait();
+    }
+    if (waveThread_ != nullptr) {
+        cancelWave_ = true;
+        waveThread_->wait();
     }
     // Lo stesso per un'esportazione: viene annullata e il file a metà cancellato.
     if (exportThread_ != nullptr) {
@@ -426,22 +450,220 @@ void MainWindow::clearSequence()
 
 void MainWindow::sequenceChanged()
 {
-    const core::Sequence& sequence = project_.sequence();
-    std::vector<SequenceTimeline::Block> blocks;
-    for (const core::Fragment& f : sequence.fragments()) {
-        const core::Clip* clip = project_.find(f.clipId);
-        blocks.push_back({f.id, project_.indexOf(f.clipId), clip ? fileNameOf(clip->path) : QString(), f.length()});
-    }
-    timeline_->setBlocks(std::move(blocks));
-    sequenceLabel_->setText(sequence.empty()
-                                ? QStringLiteral("<b>Montaggio</b>: vuoto")
-                                : QStringLiteral("<b>Montaggio</b>: %1 pezzi  ·  durata <b>%2</b>")
-                                      .arg(sequence.fragments().size())
-                                      .arg(timeText(sequence.totalLength())));
+    refreshTimeline();
     program_->sequenceChanged();
     updateSourceBands();
     refreshClipList();
     updateExportAction();
+}
+
+void MainWindow::refreshTimeline()
+{
+    const core::Sequence& sequence = project_.sequence();
+    std::vector<SequenceTimeline::Block> blocks;
+    for (const core::Fragment& f : sequence.fragments()) {
+        const core::Clip* clip = project_.find(f.clipId);
+        blocks.push_back({f.id, project_.indexOf(f.clipId), clip ? fileNameOf(clip->path) : QString(), f.length(), f.start,
+                          clip ? waveformFor(clip->path) : nullptr});
+    }
+    timeline_->setBlocks(std::move(blocks));
+    const std::vector<core::TimeRange> muted = sequence.mutedRanges();
+    timeline_->setMuted(muted);
+    const auto& replacement = project_.audioReplacement();
+    if (replacement) {
+        timeline_->setReplacement(SequenceTimeline::Replacement{fileNameOf(replacement->path), replacement->offset,
+                                                                replacement->duration, waveformFor(replacement->path)});
+    } else {
+        timeline_->setReplacement(std::nullopt);
+    }
+    if (timeline_->hasAudioSelection() && timeline_->audioSelectionFrom() >= sequence.totalLength())
+        timeline_->setAudioSelection(0.0, 0.0);
+    if (originalAudioAction_ != nullptr)
+        originalAudioAction_->setEnabled(replacement.has_value());
+
+    QString text = sequence.empty() ? QStringLiteral("<b>Montaggio</b>: vuoto")
+                                    : QStringLiteral("<b>Montaggio</b>: %1 pezzi  ·  durata <b>%2</b>")
+                                          .arg(sequence.fragments().size())
+                                          .arg(timeText(sequence.totalLength()));
+    if (replacement)
+        text += QStringLiteral("  ·  audio: <b>%1</b> (al posto dell'originale)").arg(fileNameOf(replacement->path).toHtmlEscaped());
+    if (!muted.empty())
+        text += QStringLiteral("  ·  %1 tratti senza audio").arg(muted.size());
+    sequenceLabel_->setText(text);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Audio
+
+void MainWindow::setAudioSelection(double from, double to)
+{
+    const double total = project_.sequence().totalLength();
+    timeline_->setAudioSelection(std::clamp(from, 0.0, total), std::clamp(to, 0.0, total));
+}
+
+void MainWindow::markAudioIn()
+{
+    // Con il Montaggio attivo I e O segnano il tratto audio: da qui fino a OUT (o alla fine).
+    const double at = program_->position();
+    const double to = timeline_->hasAudioSelection() && timeline_->audioSelectionTo() > at + 0.001
+                        ? timeline_->audioSelectionTo()
+                        : project_.sequence().totalLength();
+    setAudioSelection(at, to);
+    statusBar()->showMessage(QStringLiteral("Tratto audio %1 - %2: segna la fine con O, poi M toglie l'audio.")
+                                 .arg(timeText(at), timeText(to)),
+                             8000);
+}
+
+void MainWindow::markAudioOut()
+{
+    const double at = program_->position();
+    const double from = timeline_->hasAudioSelection() && timeline_->audioSelectionFrom() < at - 0.001
+                          ? timeline_->audioSelectionFrom()
+                          : 0.0;
+    setAudioSelection(from, at);
+    statusBar()->showMessage(QStringLiteral("Tratto audio %1 - %2: M toglie l'audio, Maiusc+M lo rimette.")
+                                 .arg(timeText(from), timeText(at)),
+                             8000);
+}
+
+void MainWindow::muteSelection()
+{
+    if (!timeline_->hasAudioSelection()) {
+        statusBar()->showMessage(QStringLiteral("Seleziona un tratto trascinando sulla corsia audio (o segna I e O con il "
+                                                "Montaggio attivo), poi premi M."),
+                                 8000);
+        return;
+    }
+    const double from = timeline_->audioSelectionFrom();
+    const double to = timeline_->audioSelectionTo();
+    if (!project_.sequence().muteRange(from, to)) {
+        statusBar()->showMessage(QStringLiteral("In questo tratto l'audio è già tolto."), 5000);
+        return;
+    }
+    timeline_->setAudioSelection(0.0, 0.0);
+    statusBar()->showMessage(QStringLiteral("Audio tolto da %1 a %2: lì si sentirà silenzio.").arg(timeText(from), timeText(to)),
+                             8000);
+    sequenceChanged();
+}
+
+void MainWindow::unmuteSelection()
+{
+    if (!timeline_->hasAudioSelection()) {
+        statusBar()->showMessage(QStringLiteral("Seleziona sulla corsia audio il tratto in cui rimettere l'audio, poi "
+                                                "premi Maiusc+M."),
+                                 8000);
+        return;
+    }
+    const double from = timeline_->audioSelectionFrom();
+    const double to = timeline_->audioSelectionTo();
+    if (!project_.sequence().unmuteRange(from, to)) {
+        statusBar()->showMessage(QStringLiteral("In questo tratto l'audio c'è già."), 5000);
+        return;
+    }
+    timeline_->setAudioSelection(0.0, 0.0);
+    statusBar()->showMessage(QStringLiteral("Audio rimesso da %1 a %2.").arg(timeText(from), timeText(to)), 8000);
+    sequenceChanged();
+}
+
+void MainWindow::replaceAudioDialog()
+{
+    const QString path =
+        QFileDialog::getOpenFileName(this, QStringLiteral("Audio al posto di quello originale"), QString(), kAudioFilter);
+    if (!path.isEmpty())
+        replaceAudio(path);
+}
+
+bool MainWindow::replaceAudio(const QString& path, bool showProblems)
+{
+    const std::string utf8 = nativeAbsolute(path).toStdString();
+    const auto refuse = [&](const QString& problem) {
+        if (showProblems)
+            QMessageBox::warning(this, QStringLiteral("Audio non utilizzabile"), problem);
+        statusBar()->showMessage(problem, 10000);
+        return false;
+    };
+    // Il file esportato ha il contenitore del primo file del montaggio (o di quello nella Sorgente): l'audio deve
+    // poterci stare senza ricodifica.
+    std::string container;
+    if (!project_.sequence().empty()) {
+        if (const core::Clip* clip = project_.find(project_.sequence().fragments().front().clipId))
+            container = clip->path;
+    } else if (const core::Clip* clip = project_.find(currentClipId_)) {
+        container = clip->path;
+    }
+    if (!container.empty()) {
+        if (const std::string problem = core::replacementAudioProblem(utf8, container); !problem.empty())
+            return refuse(qs(problem));
+    }
+    double duration = 0.0;
+    try {
+        const core::AudioDecoder decoder(utf8);
+        duration = std::max(0.0, decoder.durationSeconds());
+    } catch (const std::exception& e) {
+        return refuse(QString::fromUtf8(e.what()));
+    }
+    project_.setAudioReplacement(core::AudioReplacement{utf8, 0.0, duration});
+    requestWaveform(utf8);
+    statusBar()->showMessage(QStringLiteral("L'audio del montaggio ora è %1 (l'audio originale è escluso). Trascina la "
+                                            "sua maniglia sulla corsia audio per spostarlo.")
+                                 .arg(fileNameOf(utf8)),
+                             10000);
+    sequenceChanged();
+    return true;
+}
+
+void MainWindow::restoreOriginalAudio()
+{
+    if (!project_.audioReplacement())
+        return;
+    project_.setAudioReplacement(std::nullopt);
+    statusBar()->showMessage(QStringLiteral("Il montaggio usa di nuovo l'audio originale dei file."), 8000);
+    sequenceChanged();
+}
+
+std::shared_ptr<const core::Waveform> MainWindow::waveformFor(const std::string& path) const
+{
+    const auto it = waveforms_.find(path);
+    return it != waveforms_.end() ? it->second : nullptr;
+}
+
+int MainWindow::pendingWaveforms() const
+{
+    return static_cast<int>(waveQueue_.size()) + (waveThread_ != nullptr ? 1 : 0);
+}
+
+void MainWindow::requestWaveform(const std::string& path)
+{
+    if (waveforms_.contains(path) || path == waveformPath_
+        || std::find(waveQueue_.begin(), waveQueue_.end(), path) != waveQueue_.end())
+        return;
+    waveQueue_.push_back(path);
+    startNextWaveform();
+}
+
+void MainWindow::startNextWaveform()
+{
+    if (waveThread_ != nullptr || waveQueue_.empty())
+        return;
+    waveformPath_ = waveQueue_.front();
+    waveQueue_.pop_front();
+    auto result = std::make_shared<core::Waveform>();
+    cancelWave_ = false;
+    waveThread_ = QThread::create([path = waveformPath_, result, cancel = &cancelWave_] {
+        *result = core::computeWaveform(path, cancel);
+    });
+    waveThread_->setParent(this);
+    connect(waveThread_, &QThread::finished, this, [this, result] {
+        waveThread_->deleteLater();
+        waveThread_ = nullptr;
+        if (!cancelWave_)
+            waveforms_[waveformPath_] = result;
+        waveformPath_.clear();
+        refreshTimeline();
+        startNextWaveform();
+    });
+    // Bassa priorità: l'anteprima e l'analisi dei file vengono prima.
+    waveThread_->start(QThread::LowPriority);
 }
 
 void MainWindow::updateSourceBands()
@@ -524,6 +746,8 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     const std::vector<core::ClipRanges> plan = exportPlan();
     if (plan.empty() || exportThread_ != nullptr)
         return false;
+    // L'audio modificato vale per il montaggio; il taglio veloce (sequenza vuota) copia l'audio così com'è.
+    const core::AudioEdit audio = project_.sequence().empty() ? core::AudioEdit{} : project_.audioEdit();
 
     auto outcome = std::make_shared<ExportOutcome>();
     auto progress = std::make_shared<std::atomic<double>>(0.0);
@@ -533,7 +757,7 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     exportThread_ = QThread::create([=, cancel = &cancelExport_] {
         const auto started = std::chrono::steady_clock::now();
         try {
-            outcome->result = core::exportClips(plan, outputPath, [=](double fraction) {
+            outcome->result = core::exportClips(plan, outputPath, audio, [=](double fraction) {
                 *progress = fraction;
                 // Rallentamento solo per le prove, e solo all'inizio: quanto basta perché compaia la finestra.
                 if (slowDown.count() > 0 && std::chrono::steady_clock::now() - started < std::chrono::milliseconds(1500))
@@ -625,7 +849,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         const auto* key = static_cast<QKeyEvent*>(event);
         static const int commandKeys[] = {Qt::Key_Space, Qt::Key_Left, Qt::Key_Right, Qt::Key_Home, Qt::Key_Comma,
                                           Qt::Key_Period, Qt::Key_I, Qt::Key_O, Qt::Key_A, Qt::Key_X, Qt::Key_S,
-                                          Qt::Key_Delete};
+                                          Qt::Key_M, Qt::Key_Delete};
         const bool commandKey = std::find(std::begin(commandKeys), std::end(commandKeys), key->key())
                              != std::end(commandKeys);
         const auto modifiers = key->modifiers() & ~Qt::KeypadModifier;
@@ -678,10 +902,23 @@ void MainWindow::createMenus()
     nextFrame->setShortcuts({QKeySequence(Qt::Key_Period), QKeySequence(Qt::CTRL | Qt::Key_Right)});
 
     QMenu* segmentMenu = menuBar()->addMenu(QStringLiteral("&Segmento"));
-    QAction* inAction = segmentMenu->addAction(QStringLiteral("Segna &IN (inizio)"), this, [this] { player_->markIn(); });
+    // Con il Montaggio attivo, I e O segnano il tratto della corsia audio.
+    QAction* inAction = segmentMenu->addAction(QStringLiteral("Segna &IN (inizio)"), this, [this] {
+        if (programActive_)
+            markAudioIn();
+        else
+            player_->markIn();
+    });
     inAction->setShortcut(QKeySequence(Qt::Key_I));
-    QAction* outAction = segmentMenu->addAction(QStringLiteral("Segna &OUT (fine)"), this, [this] { player_->markOut(); });
+    inAction->setStatusTip(QStringLiteral("Nella Sorgente: inizio del pezzo. Nel Montaggio: inizio del tratto audio."));
+    QAction* outAction = segmentMenu->addAction(QStringLiteral("Segna &OUT (fine)"), this, [this] {
+        if (programActive_)
+            markAudioOut();
+        else
+            player_->markOut();
+    });
     outAction->setShortcut(QKeySequence(Qt::Key_O));
+    outAction->setStatusTip(QStringLiteral("Nella Sorgente: fine del pezzo. Nel Montaggio: fine del tratto audio."));
     segmentMenu->addSeparator();
     QAction* goIn = segmentMenu->addAction(QStringLiteral("Vai a IN"), this, [this] { player_->goToIn(); });
     goIn->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_I));
@@ -702,6 +939,19 @@ void MainWindow::createMenus()
     remove->setShortcut(QKeySequence(QKeySequence::Delete));
     editMenu->addSeparator();
     editMenu->addAction(QStringLiteral("&Svuota il montaggio"), this, [this] { clearSequence(); });
+
+    QMenu* audioMenu = menuBar()->addMenu(QStringLiteral("A&udio"));
+    QAction* mute = audioMenu->addAction(QStringLiteral("&Togli l'audio dal tratto selezionato"), this, [this] { muteSelection(); });
+    mute->setShortcut(QKeySequence(Qt::Key_M));
+    mute->setStatusTip(QStringLiteral("Il tratto si seleziona trascinando sulla corsia audio, o con I e O nel Montaggio"));
+    QAction* unmute = audioMenu->addAction(QStringLiteral("&Rimetti l'audio nel tratto selezionato"), this,
+                                           [this] { unmuteSelection(); });
+    unmute->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_M));
+    audioMenu->addSeparator();
+    QAction* replace = audioMenu->addAction(QStringLiteral("&Sostituisci l'audio..."), this, &MainWindow::replaceAudioDialog);
+    replace->setStatusTip(QStringLiteral("Un file audio (es. MP3 o M4A) al posto dell'audio originale di tutto il montaggio"));
+    originalAudioAction_ = audioMenu->addAction(QStringLiteral("Usa l'audio &originale"), this, [this] { restoreOriginalAudio(); });
+    originalAudioAction_->setEnabled(false);
 
     QMenu* helpMenu = menuBar()->addMenu(QStringLiteral("&Aiuto"));
     helpMenu->addAction(QStringLiteral("&Informazioni su EditorVideo"), this, &MainWindow::showAbout);
@@ -736,6 +986,8 @@ void MainWindow::openPath(const QString& path)
     probeQueue_.clear();
     project_.clear();
     clipInfo_.clear();
+    waveQueue_.clear();  // le forme d'onda già calcolate restano: servono se si riapre lo stesso file
+    timeline_->setAudioSelection(0.0, 0.0);
     currentClipId_ = 0;
     currentPath_.clear();
     player_->closeFile();
@@ -747,10 +999,12 @@ void MainWindow::addFiles(const QStringList& paths)
 {
     int first = 0;
     for (const QString& path : paths) {
-        const int id = project_.add(nativeAbsolute(path).toStdString());
+        const std::string utf8 = nativeAbsolute(path).toStdString();
+        const int id = project_.add(utf8);
         if (first == 0)
             first = id;
         probeQueue_.push_back(id);
+        requestWaveform(utf8);
     }
     refreshClipList();
     if (currentClipId_ == 0 && first != 0)

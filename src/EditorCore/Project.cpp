@@ -49,6 +49,7 @@ void Project::clear()
 {
     clips_.clear();
     sequence_.clear();
+    replacement_.reset();
 }
 
 const Clip* Project::find(int id) const
@@ -93,6 +94,22 @@ std::vector<ClipRanges> Project::exportPlan() const
         previousClip = f.clipId;
     }
     return plan;
+}
+
+void Project::setAudioReplacement(std::optional<AudioReplacement> replacement)
+{
+    replacement_ = std::move(replacement);
+}
+
+void Project::setAudioOffset(double offset)
+{
+    if (replacement_)
+        replacement_->offset = offset;
+}
+
+AudioEdit Project::audioEdit() const
+{
+    return {sequence_.mutedRanges(), replacement_};
 }
 
 }  // namespace editor::core

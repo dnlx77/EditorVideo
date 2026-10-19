@@ -1,6 +1,7 @@
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
+#include "EditorCore/AudioDecoder.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/H264Params.h"
 #include "EditorCore/CutSegment.h"
@@ -186,6 +187,126 @@ int runCodecInfo(const QStringList& args, qsizetype at)
     }
 }
 
+// --audio-test <destinazione> <file> [mute <da s> <a s>]... [replace <audio> <offset s>] [omit]: mette il file intero nel
+// montaggio, toglie l'audio dai tratti indicati e/o lo sostituisce, esporta e controlla il file creato: durata,
+// codec, audio continuo (nessun buco fra un blocco e l'altro) e silenzio nei tratti. "omit" toglie i pacchetti invece
+// di metterci il silenzio (per confronto). Codici come --join-test (4 = audio sostitutivo non utilizzabile).
+// Il buco più lungo fra due blocchi audio decodificati di seguito (alcuni registratori ne lasciano già qualcuno).
+double longestAudioGap(const std::string& file)
+{
+    editor::core::AudioDecoder audio(file);
+    double previousEnd = -1.0;
+    double longest = 0.0;
+    while (auto chunk = audio.next()) {
+        if (previousEnd >= 0)
+            longest = std::max(longest, chunk->time - previousEnd);
+        previousEnd = chunk->time + chunk->samples.size() / static_cast<double>(audio.channels()) / audio.sampleRate();
+    }
+    return longest;
+}
+
+int runAudioTest(const QStringList& args, qsizetype at)
+{
+    namespace core = editor::core;
+    if (at + 2 >= args.size()) {
+        std::printf("Uso: EditorVideo.exe --audio-test <destinazione> <file> [mute <da> <a>]... [replace <audio> <offset>] [omit]\n");
+        return 1;
+    }
+    const std::string output = args[at + 1].toStdString();
+    const std::string input = args[at + 2].toStdString();
+    try {
+        core::Project project;
+        const core::MediaInfo info = core::probeFile(input);
+        const int id = project.add(input);
+        project.setAnalysis(id, info.keyframeTimes, info.durationSeconds);
+        project.sequence().insert(-1, id, 0.0, info.durationSeconds, project.snapper());
+        core::MuteMethod method = core::MuteMethod::Silence;
+        for (qsizetype i = at + 3; i < args.size(); ++i) {
+            if (args[i] == QStringLiteral("mute") && i + 2 < args.size()) {
+                project.sequence().muteRange(args[i + 1].toDouble(), args[i + 2].toDouble());
+                i += 2;
+            } else if (args[i] == QStringLiteral("replace") && i + 2 < args.size()) {
+                const std::string audio = args[i + 1].toStdString();
+                if (const std::string problem = core::replacementAudioProblem(audio, output); !problem.empty()) {
+                    std::printf("Audio sostitutivo non utilizzabile: %s\n", problem.c_str());
+                    return 4;
+                }
+                project.setAudioReplacement(core::AudioReplacement{audio, args[i + 2].toDouble(), core::AudioDecoder(audio).durationSeconds()});
+                i += 2;
+            } else if (args[i] == QStringLiteral("omit")) {
+                method = core::MuteMethod::Omit;
+            }
+        }
+        const core::AudioEdit edit = project.audioEdit();
+        const core::ExportResult result = core::exportClips(project.exportPlan(), output, edit, {}, method);
+        const core::MediaInfo exported = core::probeFile(output);
+        const double expected = project.sequence().totalLength();
+        std::printf("Esportato: durata attesa %.3f s, ottenuta %.3f s; audio: %d pacchetti col silenzio, %d tolti\n",
+                    expected, exported.durationSeconds, result.silencedPackets, result.droppedPackets);
+        bool ok = std::abs(exported.durationSeconds - expected) < 0.1;
+
+        // Audio del file creato: codec, continuità e livello dentro e fuori dai tratti silenziati.
+        std::string audioCodec;
+        for (const core::StreamInfo& stream : exported.streams) {
+            if (stream.kind == core::StreamKind::Audio && audioCodec.empty())
+                audioCodec = stream.codec;
+        }
+        if (edit.replacement) {
+            const core::MediaInfo source = core::probeFile(edit.replacement->path);
+            for (const core::StreamInfo& stream : source.streams) {
+                if (stream.kind == core::StreamKind::Audio) {
+                    std::printf("Audio sostitutivo: %s, nel file creato: %s\n", stream.codec.c_str(), audioCodec.c_str());
+                    ok = ok && stream.codec == audioCodec;
+                    break;
+                }
+            }
+        }
+        if (!audioCodec.empty()) {
+            core::AudioDecoder audio(output);
+            const int channels = audio.channels();
+            const double rate = audio.sampleRate();
+            double previousEnd = -1.0;
+            double longestGap = 0.0;
+            double mutedPeak = 0.0;
+            double otherPeak = 0.0;
+            constexpr double kMargin = 0.05;  // ai bordi di un tratto un blocco AAC può essere a metà
+            while (auto chunk = audio.next()) {
+                const std::size_t frames = chunk->samples.size() / channels;
+                if (previousEnd >= 0)
+                    longestGap = std::max(longestGap, chunk->time - previousEnd);
+                previousEnd = chunk->time + frames / rate;
+                for (std::size_t n = 0; n < frames; ++n) {
+                    const double t = chunk->time + n / rate;
+                    const double level = std::abs(chunk->samples[n * channels]) / 32768.0;
+                    bool inside = false;
+                    bool near = false;
+                    for (const core::TimeRange& m : edit.muted) {
+                        inside = inside || (t >= m.start + kMargin && t < m.end - kMargin);
+                        near = near || (t >= m.start - kMargin && t < m.end + kMargin);
+                    }
+                    if (inside)
+                        mutedPeak = std::max(mutedPeak, level);
+                    else if (!near)
+                        otherPeak = std::max(otherPeak, level);
+                }
+            }
+            // I buchi già presenti nell'audio di partenza restano (si copia senza ricodificare): non devono essercene
+            // di nuovi.
+            const double sourceGap = longestAudioGap(edit.replacement ? edit.replacement->path : input);
+            std::printf("Audio %s: buco più lungo fra due blocchi %.1f ms (nell'audio di partenza %.1f ms); picco nei "
+                        "tratti senza audio %.4f, altrove %.4f\n",
+                        audioCodec.c_str(), longestGap * 1000, sourceGap * 1000, mutedPeak, otherPeak);
+            ok = ok && (method == core::MuteMethod::Omit || longestGap < std::max(0.03, sourceGap + 0.005))
+              && mutedPeak < 0.005;
+        }
+        std::printf("%s\n", ok ? "Controllo dell'audio: OK" : "Controllo dell'audio: NON RIUSCITO");
+        return ok ? 0 : 3;
+    } catch (const std::exception& e) {
+        std::printf("Errore: %s\n", e.what());
+        return 2;
+    }
+}
+
 int runExportTest(const QStringList& args, qsizetype at){
     namespace core = editor::core;
     const qsizetype pairs = (args.size() - at - 3) / 2;
@@ -257,6 +378,11 @@ int main(int argc, char* argv[])
     const QStringList arguments = QApplication::arguments();
     if (const qsizetype at = arguments.indexOf(QStringLiteral("--export-test")); at >= 0) {
         const int code = runExportTest(arguments, at);
+        std::fflush(stdout);
+        return code;
+    }
+    if (const qsizetype at = arguments.indexOf(QStringLiteral("--audio-test")); at >= 0) {
+        const int code = runAudioTest(arguments, at);
         std::fflush(stdout);
         return code;
     }
@@ -367,6 +493,21 @@ int main(int argc, char* argv[])
                             sequence.totalLength());
                 std::fflush(stdout);
                 ok = ok && sequence.fragments().size() == expectedPieces;
+
+                // Audio: un tratto silenziato a cavallo della prima giunzione (M), poi le forme d'onda pronte.
+                const double muteFrom = std::max(0.0, sequence.startOf(1) - 0.1);
+                window->setAudioSelection(muteFrom, muteFrom + 0.2);
+                window->muteSelection();
+                const auto muted = sequence.mutedRanges();
+                QElapsedTimer waves;
+                waves.start();
+                while (window->pendingWaveforms() > 0 && waves.elapsed() < 20000)
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                std::printf("Audio: %d tratti senza audio (%.3f - %.3f s), forme d'onda %s\n", static_cast<int>(muted.size()),
+                            muted.empty() ? 0.0 : muted.front().start, muted.empty() ? 0.0 : muted.front().end,
+                            window->pendingWaveforms() == 0 ? "pronte" : "NON pronte");
+                std::fflush(stdout);
+                ok = ok && muted.size() == 1 && window->pendingWaveforms() == 0;
 
                 // Anteprima del montaggio: da poco prima della prima giunzione, 1 s di riproduzione deve passare al
                 // pezzo successivo e avanzare col tempo giusto.
