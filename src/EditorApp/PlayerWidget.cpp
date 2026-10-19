@@ -173,7 +173,7 @@ PlayerWidget::~PlayerWidget()
 
 bool PlayerWidget::hasMedia() const
 {
-    return video_ != nullptr || audio_ != nullptr;
+    return video_ != nullptr || ownAudio_;
 }
 
 void PlayerWidget::openFile(const QString& path)
@@ -187,25 +187,24 @@ void PlayerWidget::openFile(const QString& path)
     } catch (const std::exception& e) {
         videoError = QString::fromUtf8(e.what());
     }
+    path_ = path;
     try {
-        audio_ = std::make_unique<core::AudioDecoder>(utf8Path);
+        const core::AudioDecoder own(utf8Path);
+        ownAudioDuration_ = std::max(0.0, own.durationSeconds());
+        ownAudio_ = true;
     } catch (const std::exception&) {
         // File senza audio: si riproduce solo il video.
     }
 
     if (!hasMedia()) {
+        path_.clear();
         view_->setMessage(QStringLiteral("Anteprima non disponibile.\n%1").arg(videoError));
         updateControls();
         return;
     }
+    openAudio();
 
-    audioNote_.clear();
-    // EDITORVIDEO_NO_AUDIO=1 simula un PC senza scheda audio (per provare quel caso anche dove la scheda c'è).
-    const bool audioDisabled = qEnvironmentVariableIntValue("EDITORVIDEO_NO_AUDIO") != 0;
-    if (audio_ && (audioDisabled || !audioOut_.open(audio_->sampleRate(), audio_->channels())))
-        audioNote_ = QStringLiteral("audio non disponibile");
-
-    duration_ = std::max({0.0, video_ ? video_->durationSeconds() : 0.0, audio_ ? audio_->durationSeconds() : 0.0});
+    duration_ = std::max({0.0, video_ ? video_->durationSeconds() : 0.0, ownAudioDuration_});
     timeline_->setDuration(duration_);
     position_ = 0.0;
     displayedTime_ = 0.0;
@@ -229,6 +228,50 @@ void PlayerWidget::openFile(const QString& path)
     updatePositionLabel(0.0);
 }
 
+void PlayerWidget::openAudio()
+{
+    audio_.reset();
+    audioOut_.close();
+    externalActive_ = false;
+    audioNote_.clear();
+    if (path_.isEmpty() || (externalAudio_.isEmpty() && !ownAudio_))
+        return;
+    const QString source = externalAudio_.isEmpty() ? path_ : externalAudio_;
+    try {
+        audio_ = std::make_unique<core::AudioDecoder>(QDir::toNativeSeparators(source).toStdString());
+        externalActive_ = !externalAudio_.isEmpty();
+    } catch (const std::exception&) {
+        audioNote_ = QStringLiteral("audio non leggibile");
+        return;
+    }
+    // EDITORVIDEO_NO_AUDIO=1 simula un PC senza scheda audio (per provare quel caso anche dove la scheda c'è).
+    const bool audioDisabled = qEnvironmentVariableIntValue("EDITORVIDEO_NO_AUDIO") != 0;
+    if (audioDisabled || !audioOut_.open(audio_->sampleRate(), audio_->channels()))
+        audioNote_ = QStringLiteral("audio non disponibile");
+}
+
+void PlayerWidget::setAudioMutes(std::vector<core::TimeRange> ranges)
+{
+    audioMutes_ = std::move(ranges);
+}
+
+void PlayerWidget::setExternalAudio(const QString& path, double delta)
+{
+    externalDelta_ = delta;
+    if (path == externalAudio_)
+        return;
+    externalAudio_ = path;
+    if (path_.isEmpty())
+        return;
+    const bool wasPlaying = playing_;
+    if (wasPlaying)
+        pause();
+    openAudio();
+    updateControls();
+    if (wasPlaying)
+        play();
+}
+
 void PlayerWidget::closeFile()
 {
     stopWorkers();
@@ -236,6 +279,9 @@ void PlayerWidget::closeFile()
     video_.reset();
     audio_.reset();
     audioOut_.close();
+    path_.clear();
+    ownAudio_ = false;
+    ownAudioDuration_ = 0.0;
     decoderText_.clear();
     duration_ = 0.0;
     position_ = 0.0;
@@ -328,8 +374,11 @@ void PlayerWidget::startWorkers(double from)
 
     audioActive_ = audio_ != nullptr && audioOut_.isOpen();
     audioEnded_ = !audioActive_;
+    audioDelta_ = externalActive_ ? externalDelta_ : 0.0;
+    audioFrom_ = from;
+    workerMutes_ = audioMutes_;
     if (audioActive_) {
-        audio_->seek(from);
+        audio_->seek(from + audioDelta_);
         audioOut_.reset();
         audioStart_ = from;
     }
@@ -390,13 +439,33 @@ void PlayerWidget::audioWorker()
 {
     try {
         bool first = true;
+        const int channels = audio_->channels();
+        const double rate = audio_->sampleRate();
         while (!stopWorkers_) {
             auto chunk = audio_->next();
             if (!chunk)
                 break;
+            const double time = chunk->time - audioDelta_;  // nei tempi del file
             if (first) {
-                audioStart_ = chunk->time;
                 first = false;
+                audioStart_ = time;
+                // L'audio esterno può cominciare più avanti: fino a lì silenzio, così l'orologio parte dal punto giusto.
+                const double gap = std::round((time - audioFrom_) * rate);
+                if (gap > 0 && gap < rate * 3600) {
+                    const std::vector<std::int16_t> silence(static_cast<std::size_t>(gap) * channels, 0);
+                    audioStart_ = audioFrom_;
+                    if (!audioOut_.write(silence.data(), silence.size(), stopWorkers_))
+                        break;
+                }
+            }
+            // Tratti senza audio: silenzio al posto dei campioni.
+            const auto frames = static_cast<double>(chunk->samples.size() / channels);
+            for (const core::TimeRange& m : workerMutes_) {
+                const double from = std::clamp(std::ceil((m.start - time) * rate), 0.0, frames);
+                const double to = std::clamp(std::ceil((m.end - time) * rate), 0.0, frames);
+                if (to > from)
+                    std::fill(chunk->samples.begin() + static_cast<std::ptrdiff_t>(from) * channels,
+                              chunk->samples.begin() + static_cast<std::ptrdiff_t>(to) * channels, std::int16_t{0});
             }
             if (!audioOut_.write(chunk->samples.data(), chunk->samples.size(), stopWorkers_))
                 break;
@@ -514,7 +583,7 @@ void PlayerWidget::updateControls()
     QString decoder;
     if (video_)
         decoder = decoderText_;  // aggiornato da showFrameAt()
-    else if (audio_)
+    else if (ownAudio_)
         decoder = QStringLiteral("Solo audio");
     if (!audioNote_.isEmpty() && media)
         decoder += QStringLiteral("  ·  %1").arg(audioNote_);

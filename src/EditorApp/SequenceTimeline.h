@@ -1,15 +1,26 @@
 #pragma once
 
+#include "EditorCore/SegmentList.h"
+
 #include <QtWidgets/QWidget>
 
 #include <functional>
+#include <memory>
+#include <optional>
 #include <vector>
+
+namespace editor::core {
+struct Waveform;
+}
 
 namespace editor::app {
 
-// Linea del tempo del montaggio: un blocco colorato per ogni pezzo della sequenza (un colore per file), largo quanto
-// dura, con il nome del file. Clic = seleziona e sposta l'anteprima del montaggio lì; trascinamento = cambia l'ordine;
-// doppio clic = riapre il pezzo nell'anteprima di partenza.
+// Linea del tempo del montaggio, su due corsie.
+// Video: un blocco colorato per ogni pezzo della sequenza (un colore per file), largo quanto dura, con il nome del
+// file. Clic = seleziona e sposta l'anteprima del montaggio lì; trascinamento = cambia l'ordine; doppio clic = riapre
+// il pezzo nell'anteprima di partenza.
+// Audio: la forma d'onda di ogni pezzo (o della traccia sostitutiva), i tratti senza audio barrati e il tratto
+// selezionato. Trascinando si seleziona un tratto; la traccia sostitutiva si sposta trascinando la sua maniglia.
 class SequenceTimeline : public QWidget
 {
 public:
@@ -19,6 +30,17 @@ public:
         int colorIndex = 0;  // di solito la posizione del file nel progetto
         QString label;       // es. "vacanze.mp4"
         double length = 0.0;
+        double sourceStart = 0.0;  // inizio del pezzo nel file (per la forma d'onda)
+        std::shared_ptr<const core::Waveform> waveform;  // nullptr = in calcolo
+    };
+
+    // La traccia audio sostitutiva, nella sequenza.
+    struct Replacement
+    {
+        QString label;
+        double offset = 0.0;  // dove inizia (negativo = l'inizio è prima della sequenza)
+        double duration = 0.0;
+        std::shared_ptr<const core::Waveform> waveform;  // nullptr = in calcolo
     };
 
     explicit SequenceTimeline(QWidget* parent = nullptr);
@@ -28,10 +50,20 @@ public:
     void setSelected(int fragmentId);
     int selected() const { return selected_; }
 
+    void setMuted(std::vector<core::TimeRange> ranges);  // tempi della sequenza
+    void setReplacement(std::optional<Replacement> replacement);
+    // Tratto selezionato sulla corsia audio (tempi della sequenza); to <= from = nessuno.
+    void setAudioSelection(double from, double to);
+    bool hasAudioSelection() const { return selectionTo_ > selectionFrom_; }
+    double audioSelectionFrom() const { return selectionFrom_; }
+    double audioSelectionTo() const { return selectionTo_; }
+
     std::function<void(double)> onSeek;               // clic: tempo della sequenza
     std::function<void(int)> onSelect;                // pezzo selezionato
     std::function<void(int fragmentId, int toIndex)> onMove;  // trascinamento
     std::function<void(int)> onActivate;              // doppio clic
+    std::function<void(double from, double to)> onAudioSelection;  // tratto selezionato (vuoto = tolto)
+    std::function<void(double offset)> onReplacementMoved;         // traccia sostitutiva spostata
 
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
@@ -44,20 +76,32 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private:
-    QRectF area() const;
+    QRectF videoLane() const;
+    QRectF audioLane() const;
+    QRectF replacementHandle() const;  // maniglia della traccia sostitutiva (vuoto se non c'è)
     double total() const;
     double xForTime(double seconds) const;
     double timeForX(double x) const;
     int blockAt(double x) const;     // indice del blocco sotto x, -1 se nessuno
     int dropIndexAt(double x) const;  // dove finirebbe il blocco trascinato
+    void paintAudio(QPainter& p);
 
     std::vector<Block> blocks_;
+    std::vector<core::TimeRange> muted_;
+    std::optional<Replacement> replacement_;
     double playhead_ = 0.0;
     int selected_ = 0;
     int dragIndex_ = -1;      // blocco che si sta trascinando
     double pressX_ = 0.0;
     bool dragging_ = false;
     double dragX_ = 0.0;
+
+    double selectionFrom_ = 0.0;
+    double selectionTo_ = 0.0;
+    bool selecting_ = false;     // si sta trascinando una selezione sulla corsia audio
+    double selectionAnchor_ = 0.0;
+    bool movingReplacement_ = false;
+    double replacementStart_ = 0.0;  // offset all'inizio del trascinamento
 };
 
 // Colore del blocco per un file (si ripetono dopo una decina di file).

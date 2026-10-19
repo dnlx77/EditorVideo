@@ -73,16 +73,16 @@ public:
         open(video_, codec);
     }
 
-    void addAudio(bool silent, bool aac, int sampleRate)
+    void addAudio(bool silent, bool aac, bool mp2, int sampleRate)
     {
         silent_ = silent;
         rate_ = sampleRate;
-        const AVCodec* codec = avcodec_find_encoder(aac ? AV_CODEC_ID_AAC : AV_CODEC_ID_PCM_S16LE);
+        const AVCodec* codec = avcodec_find_encoder(aac ? AV_CODEC_ID_AAC : mp2 ? AV_CODEC_ID_MP2 : AV_CODEC_ID_PCM_S16LE);
         audio_.enc = avcodec_alloc_context3(codec);
         audio_.enc->sample_fmt = aac ? AV_SAMPLE_FMT_FLTP : AV_SAMPLE_FMT_S16;
         audio_.enc->sample_rate = rate_;
-        if (aac)
-            audio_.enc->bit_rate = 128000;
+        if (aac || mp2)
+            audio_.enc->bit_rate = mp2 ? 192000 : 128000;
         const AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
         check(av_channel_layout_copy(&audio_.enc->ch_layout, &stereo), "av_channel_layout_copy");
         audio_.enc->time_base = {1, rate_};
@@ -228,7 +228,8 @@ std::string toUtf8(const std::filesystem::path& path)
 bool sampleEncodersAvailable()
 {
     return avcodec_find_encoder(AV_CODEC_ID_MPEG4) != nullptr && avcodec_find_encoder(AV_CODEC_ID_MPEG2VIDEO) != nullptr
-        && avcodec_find_encoder(AV_CODEC_ID_PCM_S16LE) != nullptr && avcodec_find_encoder(AV_CODEC_ID_AAC) != nullptr;
+        && avcodec_find_encoder(AV_CODEC_ID_PCM_S16LE) != nullptr && avcodec_find_encoder(AV_CODEC_ID_AAC) != nullptr
+        && avcodec_find_encoder(AV_CODEC_ID_MP2) != nullptr;
 }
 
 void writeSampleFile(const std::filesystem::path& path, const SampleSpec& spec)
@@ -238,7 +239,7 @@ void writeSampleFile(const std::filesystem::path& path, const SampleSpec& spec)
         writer.addVideo(spec);
     writer.setFirstIndex(spec.firstIndex);
     if (spec.audio)
-        writer.addAudio(spec.silentAudio, spec.aacAudio, spec.sampleRate);
+        writer.addAudio(spec.silentAudio, spec.aacAudio, spec.mp2Audio, spec.sampleRate);
     writer.write(spec.frames);
 }
 

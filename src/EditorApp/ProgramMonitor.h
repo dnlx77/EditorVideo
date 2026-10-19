@@ -23,7 +23,8 @@ class ProgramMonitor : public QWidget
 public:
     explicit ProgramMonitor(const core::Project& project, QWidget* parent = nullptr);
 
-    // Da chiamare dopo ogni modifica della sequenza o dei file del progetto.
+    // Da chiamare dopo ogni modifica della sequenza, dei file del progetto o dell'audio (tratti silenziati, traccia
+    // sostitutiva).
     void sequenceChanged();
     void seekTo(double seconds);  // tempo della sequenza
     void seekRelative(double deltaSeconds);

@@ -41,7 +41,7 @@ La finestra è divisa così:
 - **a sinistra**: i **file del progetto** (ognuno col suo colore), e sotto le informazioni sul file scelto e i suoi fotogrammi chiave;
 - **al centro**: l'anteprima **Sorgente**, cioè il file scelto, dove si segnano IN e OUT;
 - **a destra**: l'anteprima **Montaggio**, il risultato finale, con i pezzi uno dopo l'altro;
-- **in basso**: la **timeline del montaggio**, con un blocco colorato per ogni pezzo (il colore del file da cui viene), largo quanto dura.
+- **in basso**: la **timeline del montaggio**, con un blocco colorato per ogni pezzo (il colore del file da cui viene), largo quanto dura, e sotto la **corsia audio** con la forma d'onda di ogni pezzo.
 
 **File > Apri...** (Ctrl+O) apre un file in un progetto nuovo; **File > Aggiungi file...** (Ctrl+Maiusc+O, anche più file insieme) ne aggiunge altri. Vengono analizzati uno alla volta in background. Si possono anche passare i file da riga di comando: `EditorVideo.exe "C:\Video\a.mp4" "C:\Video\b.mp4"`.
 
@@ -53,7 +53,7 @@ La finestra è divisa così:
 | Indietro / avanti di 5 secondi | ← / → |
 | Torna all'inizio | Home |
 | Fotogramma precedente / successivo (Sorgente) | `,` / `.` (oppure Ctrl+← / Ctrl+→) |
-| Segna IN / OUT (Sorgente) | I / O |
+| Segna IN / OUT (Sorgente; con il Montaggio attivo: inizio e fine del tratto audio) | I / O |
 | Vai a IN / OUT | Maiusc+I / Maiusc+O |
 | Cancella IN e OUT | menu Segmento |
 | **Aggiungi IN-OUT al montaggio** (senza IN e OUT: il file intero) | A |
@@ -61,6 +61,9 @@ La finestra è divisa così:
 | Dividi il pezzo sotto il cursore del montaggio | S |
 | Elimina il pezzo selezionato (o il file, se il fuoco è sull'elenco dei file) | Canc |
 | Svuota il montaggio | menu Montaggio |
+| Togli l'audio dal tratto selezionato | M |
+| Rimetti l'audio nel tratto selezionato | Maiusc+M |
+| Sostituisci l'audio / torna all'audio originale | menu Audio |
 | Esporta il montaggio (o, se è vuoto, il solo IN-OUT) | Ctrl+E |
 
 ### Sorgente: IN e OUT
@@ -78,6 +81,13 @@ La finestra è divisa così:
 - **X** toglie dal montaggio il pezzo fra IN e OUT segnati nella Sorgente (es. la pubblicità), da tutti i pezzi di quel file che lo contengono. La parte dopo riparte dal fotogramma chiave più vicino prima della fine del pezzo tolto, quindi può restare qualche fotogramma; se dentro non c'è un fotogramma chiave, o il pezzo non è nel montaggio, un messaggio lo dice.
 - L'anteprima Montaggio passa da un pezzo all'altro aprendo il file giusto: a ogni passaggio può esserci una brevissima pausa (solo nell'anteprima, il file esportato no).
 - Senza ricodifica si possono unire solo file con gli **stessi codec e parametri** (risoluzione, formato pixel, fotogrammi al secondo, profilo, parametri di codifica; per l'audio frequenza e canali): di solito file dello stesso telefono o della stessa videocamera con le stesse impostazioni. Se qualcosa non coincide l'esportazione viene rifiutata, con un messaggio che dice quale file e cosa è diverso (es. `Clip 3 (nome.mp4): risoluzione 1280x720 invece di 1920x1080`). Contenitori diversi vanno bene, se i codec coincidono.
+### Audio
+
+- Sotto i pezzi, la **corsia audio** mostra la forma d'onda di ognuno (calcolata in background la prima volta che si aggiunge un file; finché non è pronta c'è scritto "forma d'onda...").
+- **Togliere l'audio da un tratto**: si seleziona il tratto **trascinando sulla corsia audio** (oppure, con il Montaggio attivo, con **I** e **O** alla posizione del cursore) e si preme **M**. Il tratto diventa barrato in rosso: lì l'anteprima Montaggio e il file esportato sono in silenzio, il video resta com'è. **Maiusc+M** rimette l'audio nel tratto selezionato. Il silenzio appartiene al pezzo: se il pezzo viene spostato, lo segue.
+- **Sostituire l'audio**: **Audio > Sostituisci l'audio...** sceglie un file (MP3, M4A, AAC, WAV... o anche un video, di cui si usa l'audio) che diventa l'audio di tutto il montaggio, al posto di quello originale. Sulla corsia audio compare come un blocco giallo: trascinandone la **maniglia** (la striscia col nome) lo si sposta avanti o indietro rispetto al video. Prima dell'inizio della traccia c'è silenzio; alla fine del montaggio la traccia viene tagliata. I tratti barrati valgono anche per la traccia sostitutiva. **Audio > Usa l'audio originale** torna all'audio dei file.
+- Anche l'audio sostitutivo viene copiato senza ricodifica, quindi deve poter stare nel contenitore del file esportato: per un MP4 vanno bene AAC/M4A e MP3, non un WAV. Se non va bene, un messaggio lo dice subito (con un MKV vanno bene quasi tutti i formati).
+
 ### Esportazione
 
 - **File > Esporta...** (Ctrl+E) salva il montaggio in un nuovo file, nel contenitore del primo pezzo: propone `<nome>_montaggio.<estensione>` nella cartella dell'originale. Se il montaggio è vuoto esporta il solo IN-OUT della Sorgente (`<nome>_taglio.<estensione>`).
@@ -99,5 +109,6 @@ La finestra è divisa così:
 - `EditorVideo.exe --export-test origine destinazione IN OUT [IN OUT ...]` (tempi in secondi) esporta uno o più tratti uniti come l'interfaccia, con ogni IN agganciato al fotogramma chiave, e controlla il file creato (codici di uscita: 0 tutto giusto, 2 errore, 3 controllo non riuscito).
 - `EditorVideo.exe --join-test destinazione file1 file2 [...]` unisce i file interi come l'interfaccia, dopo il controllo di compatibilità, e controlla il file creato (codici di uscita: 0 tutto giusto, 4 file non compatibili, 2 errore, 3 controllo non riuscito).
 - `EditorVideo.exe --sequence-test destinazione file IN OUT [file IN OUT ...]` costruisce un montaggio con i pezzi in quell'ordine, lo esporta e controlla durata e ordine (all'inizio di ogni pezzo lo stesso fotogramma dell'originale).
+- `EditorVideo.exe --audio-test destinazione file [mute DA A]... [replace audio OFFSET] [omit]` mette il file intero nel montaggio, toglie l'audio dai tratti indicati e/o lo sostituisce, esporta e controlla durata, codec, che l'audio sia continuo (nessun buco nuovo fra un blocco e l'altro) e che nei tratti ci sia silenzio. Codice 4 se l'audio sostitutivo non può stare nel contenitore.
 - `--smoke-test` con uno o più file costruisce un montaggio dall'interfaccia, prova l'anteprima Montaggio a cavallo di una giunzione e lo esporta. Con la variabile d'ambiente `QT_QPA_PLATFORM=minimal` le prove girano senza aprire finestre.
 - A ogni push GitHub Actions compila la soluzione in Release, lancia i test, avvia l'applicazione con `--smoke-test`, prova la riproduzione dei file dimostrativi, l'esportazione di uno e più tratti e l'unione di più file (anche il rifiuto di file non compatibili).

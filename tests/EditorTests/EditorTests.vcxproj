@@ -34,6 +34,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="AudioEditTests.cpp" />
     <ClCompile Include="CompatibilityTests.cpp" />
     <ClCompile Include="CutSegmentTests.cpp" />
     <ClCompile Include="DecoderTests.cpp" />

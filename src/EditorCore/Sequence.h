@@ -14,6 +14,9 @@ struct Fragment
     int clipId = 0;  // file di origine (vedi Project)
     double start = 0.0;  // nel file di origine; sempre su un fotogramma chiave
     double end = 0.0;
+    // Tratti in cui l'audio è tolto (silenzio), nei tempi del file di origine: in ordine, senza sovrapposizioni,
+    // dentro [start, end). Stanno nel pezzo, così lo seguono se viene spostato.
+    std::vector<TimeRange> muted;
 
     double length() const { return end - start; }
 };
@@ -41,6 +44,13 @@ public:
 
     // Toglie [from, to) del file `clipId` dai pezzi che lo contengono (come "taglia via" dello step 5).
     SegmentList::RemoveResult removeSourceRange(int clipId, double from, double to, const SnapFunction& snap);
+
+    // Audio: toglie (silenzio) o rimette l'audio in [from, to) della sequenza, nei pezzi che lo attraversano.
+    // Restituiscono true se qualcosa è cambiato.
+    bool muteRange(double from, double to);
+    bool unmuteRange(double from, double to);
+    // Tutti i tratti senza audio, nei tempi della sequenza, in ordine e uniti se si toccano.
+    std::vector<TimeRange> mutedRanges() const;
 
     const std::vector<Fragment>& fragments() const { return fragments_; }
     bool empty() const { return fragments_.empty(); }
