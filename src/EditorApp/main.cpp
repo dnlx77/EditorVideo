@@ -4,14 +4,21 @@
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
 
+#include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
+#include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtGui/QGuiApplication>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QMessageBox>
+#include <QtWidgets/QProgressDialog>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 
 namespace {
 
@@ -139,13 +146,67 @@ int main(int argc, char* argv[])
                 ok = ok && segment.hasIn() && segment.hasOut() && inOnKeyframe && segment.in() <= position + 0.1
                   && segment.length() > 0;
 
-                // Con EDITORVIDEO_SMOKE_SCREENSHOT=percorso.png salva anche un'immagine della finestra.
-                const QString screenshot = qEnvironmentVariable("EDITORVIDEO_SMOKE_SCREENSHOT");
-                if (!screenshot.isEmpty()) {
-                    QCoreApplication::processEvents();  // applica i cambi di layout ancora in sospeso
-                    window->grab().save(screenshot);
+                const auto finish = [&app, window](bool success) {
+                    // Con EDITORVIDEO_SMOKE_SCREENSHOT=percorso.png salva anche un'immagine della finestra.
+                    const QString screenshot = qEnvironmentVariable("EDITORVIDEO_SMOKE_SCREENSHOT");
+                    if (!screenshot.isEmpty()) {
+                        QCoreApplication::processEvents();  // applica i cambi di layout ancora in sospeso
+                        window->grab().save(screenshot);
+                    }
+                    app.exit(success ? 0 : 2);
+                };
+
+                // Esportazione del segmento come dal menu (senza chiedere dove salvare), con il messaggio finale.
+                const QString target = QDir::temp().filePath(QStringLiteral("EditorVideoProvaEsportazione.")
+                                                              + QFileInfo(window->currentFile()).suffix());
+                QFile::remove(target);
+                // Rallentata apposta, perché la finestra di avanzamento faccia in tempo a comparire, come con un file grande.
+                if (!window->startExport(QDir::toNativeSeparators(target), true, std::chrono::milliseconds(25))) {
+                    std::printf("Esportazione: non partita\n");
+                    finish(false);
+                    return;
                 }
-                app.exit(ok ? 0 : 2);
+                // Quando compare il messaggio finale si aspetta ancora un po' (più del ritardo con cui compare la
+                // finestra di avanzamento) e si controlla che nessuna finestra di avanzamento sia rimasta aperta.
+                auto* poll = new QTimer(&app);
+                auto messageSeen = std::make_shared<QElapsedTimer>();
+                auto waiting = std::make_shared<QElapsedTimer>();
+                waiting->start();
+                QObject::connect(poll, &QTimer::timeout, &app, [=] {
+                    auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                    if (box == nullptr) {
+                        if (waiting->elapsed() < 15000)
+                            return;
+                        // Il messaggio finale non è mai arrivato in primo piano: di solito perché la finestra di
+                        // avanzamento è rimasta aperta sopra.
+                        poll->stop();
+                        const QWidget* modal = QApplication::activeModalWidget();
+                        std::printf("Esportazione: messaggio finale mai in primo piano (finestra attiva: %s)\n",
+                                    modal != nullptr ? qPrintable(modal->windowTitle()) : "nessuna");
+                        std::fflush(stdout);
+                        if (auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()))
+                            dialog->reject();
+                        finish(false);
+                        return;
+                    }
+                    if (!messageSeen->isValid())
+                        messageSeen->start();
+                    if (messageSeen->elapsed() < 700)
+                        return;
+                    poll->stop();
+                    const auto dialogs = window->findChildren<QProgressDialog*>();
+                    const auto stuck = std::count_if(dialogs.begin(), dialogs.end(),
+                                                     [](QProgressDialog* d) { return d->isVisible(); });
+                    const bool exported = window->lastExportSucceeded() && QFileInfo::exists(target);
+                    std::printf("Esportazione: %s (\"%s\"), finestre di avanzamento rimaste aperte: %d\n",
+                                exported ? "riuscita" : "NON riuscita", qPrintable(box->windowTitle()),
+                                static_cast<int>(stuck));
+                    std::fflush(stdout);
+                    box->accept();
+                    QFile::remove(target);
+                    finish(ok && exported && stuck == 0);
+                });
+                poll->start(50);
             });
         }
     }

@@ -27,6 +27,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <thread>
 
 namespace editor::app {
 
@@ -211,7 +212,14 @@ void MainWindow::exportSegment()
         return;
     if (QFileInfo(target).suffix().compare(extension, Qt::CaseInsensitive) != 0)
         target += QLatin1Char('.') + extension;  // senza ricodifica il formato resta quello dell'originale
-    target = QDir::toNativeSeparators(target);
+    startExport(QDir::toNativeSeparators(target), true);
+}
+
+bool MainWindow::startExport(const QString& target, bool showResult, std::chrono::milliseconds slowDown)
+{
+    const core::CutSegment segment = player_->segment();
+    if (currentPath_.isEmpty() || !segment.hasIn() || !segment.hasOut() || exportThread_ != nullptr)
+        return false;
 
     struct ExportOutcome
     {
@@ -229,6 +237,8 @@ void MainWindow::exportSegment()
         try {
             outcome->result = core::exportSegment(inputPath, outputPath, segment, [=](double fraction) {
                 *progress = fraction;
+                if (slowDown.count() > 0)
+                    std::this_thread::sleep_for(slowDown);
                 return !cancel->load();
             });
         } catch (const core::ExportCancelled&) {
@@ -251,13 +261,19 @@ void MainWindow::exportSegment()
     connect(poll, &QTimer::timeout, dialog, [dialog, progress] { dialog->setValue(static_cast<int>(*progress * 1000)); });
     poll->start(100);
 
-    connect(exportThread_, &QThread::finished, this, [this, outcome, dialog, target] {
-        dialog->close();
-        dialog->deleteLater();
+    connect(exportThread_, &QThread::finished, this, [this, outcome, dialog, target, showResult] {
+        // La finestra di avanzamento va eliminata subito, non solo chiusa: se l'esportazione è durata meno di
+        // minimumDuration non era ancora comparsa, e il suo timer interno l'avrebbe mostrata dopo, sopra al
+        // messaggio finale e ferma al 100%. Eliminandola si fermano anche quel timer e il nostro.
+        QObject::disconnect(dialog, nullptr, this, nullptr);  // la chiusura emetterebbe canceled()
+        delete dialog;
         exportThread_->deleteLater();
         exportThread_ = nullptr;
         updateExportAction();
+        lastExportOk_ = outcome->result.has_value();
 
+        if (!showResult)
+            return;
         if (outcome->cancelled) {
             statusBar()->showMessage(QStringLiteral("Esportazione annullata"), 5000);
         } else if (!outcome->result) {
@@ -273,6 +289,7 @@ void MainWindow::exportSegment()
 
     updateExportAction();
     exportThread_->start();
+    return true;
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
