@@ -104,6 +104,13 @@ void Sequence::clear()
     fragments_.clear();
 }
 
+void Sequence::restore(std::vector<Fragment> fragments)
+{
+    fragments_ = std::move(fragments);
+    for (Fragment& f : fragments_)
+        f.id = nextId_++;
+}
+
 int Sequence::split(double seconds, const SnapFunction& snap)
 {
     const int index = indexAt(seconds);

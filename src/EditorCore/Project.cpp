@@ -39,6 +39,18 @@ void Project::setAnalysis(int id, std::vector<double> keyframes, double duration
     clip.analyzed = true;
 }
 
+void Project::setClipPath(int id, std::string path)
+{
+    const int index = indexOf(id);
+    if (index < 0)
+        return;
+    Clip& clip = clips_[index];
+    clip.path = std::move(path);
+    clip.analyzed = false;
+    clip.keyframes.clear();
+    clip.duration = 0.0;
+}
+
 void Project::remove(int id)
 {
     std::erase_if(clips_, [id](const Clip& c) { return c.id == id; });

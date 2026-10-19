@@ -39,11 +39,13 @@
     <ClInclude Include="CutSegment.h" />
     <ClInclude Include="FfmpegUtil.h" />
     <ClInclude Include="H264Params.h" />
+    <ClInclude Include="Json.h" />
     <ClInclude Include="LibraryInfo.h" />
     <ClInclude Include="MediaError.h" />
     <ClInclude Include="MediaProbe.h" />
     <ClInclude Include="Playback.h" />
     <ClInclude Include="Project.h" />
+    <ClInclude Include="ProjectFile.h" />
     <ClInclude Include="SegmentExport.h" />
     <ClInclude Include="SegmentList.h" />
     <ClInclude Include="Sequence.h" />
@@ -56,10 +58,12 @@
     <ClCompile Include="CutSegment.cpp" />
     <ClCompile Include="FfmpegUtil.cpp" />
     <ClCompile Include="H264Params.cpp" />
+    <ClCompile Include="Json.cpp" />
     <ClCompile Include="LibraryInfo.cpp" />
     <ClCompile Include="MediaProbe.cpp" />
     <ClCompile Include="Playback.cpp" />
     <ClCompile Include="Project.cpp" />
+    <ClCompile Include="ProjectFile.cpp" />
     <ClCompile Include="SegmentExport.cpp" />
     <ClCompile Include="SegmentList.cpp" />
     <ClCompile Include="Sequence.cpp" />
