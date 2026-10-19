@@ -2,6 +2,7 @@
 
 #include "EditorApp/AudioOutput.h"
 #include "EditorCore/CutSegment.h"
+#include "EditorCore/SegmentList.h"
 
 #include <QtWidgets/QWidget>
 
@@ -64,7 +65,14 @@ public:
     void stepFrame(int direction);  // +1 fotogramma successivo, -1 precedente (mette in pausa)
     const core::CutSegment& segment() const;
 
-    std::function<void()> onSegmentChanged;  // IN o OUT cambiati (anche aprendo un altro file)
+    // Elenco dei tratti da tenere, esportati uno dopo l'altro in un unico file.
+    void addRange();               // aggiunge IN-OUT
+    void cutRange();               // toglie IN-OUT (con l'elenco vuoto si parte dal file intero)
+    void removeRangeAtPlayhead();  // elimina il tratto sotto il cursore
+    void clearRanges();
+    const core::SegmentList& ranges() const { return ranges_; }
+
+    std::function<void()> onSegmentChanged;  // IN, OUT o elenco dei tratti cambiati (anche aprendo un altro file)
 
 private:
     void play();
@@ -105,6 +113,8 @@ private:
     bool playing_ = false;
 
     core::CutSegment segment_;
+    core::SegmentList ranges_;
+    double wantedIn_ = 0.0;  // IN come l'ha segnato l'utente, prima dell'aggancio (serve per togliere un tratto)
     bool keyframesKnown_ = false;
     QString segmentNote_;  // spiegazione dell'ultima operazione su IN/OUT (es. IN agganciato)
     bool noteIsOutError_ = false;

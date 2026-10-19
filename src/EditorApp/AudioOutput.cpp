@@ -35,6 +35,8 @@ struct AudioOutput::Impl
     std::size_t fill = 0;  // byte già scritti nel blocco corrente
     int rate = 0;
     int channels = 0;
+    // Campioni per canale mandati alla scheda audio dall'ultimo reset: la posizione non può superarli.
+    std::atomic<long long> submittedFrames{0};
 
     bool isFree(Buffer& buffer)
     {
@@ -55,6 +57,7 @@ struct AudioOutput::Impl
         waveOutPrepareHeader(device, &buffer.header, sizeof(WAVEHDR));
         buffer.submitted = true;
         waveOutWrite(device, &buffer.header, sizeof(WAVEHDR));
+        submittedFrames += static_cast<long long>(fill / (channels * 2));
         current = (current + 1) % kBufferCount;
         fill = 0;
     }
@@ -174,9 +177,16 @@ long long AudioOutput::playedFrames() const
     time.wType = TIME_SAMPLES;
     if (waveOutGetPosition(d.device, &time, sizeof(time)) != MMSYSERR_NOERROR)
         return 0;
-    if (time.wType == TIME_BYTES)
-        return time.u.cb / (d.channels * 2);
-    return time.u.sample;
+    long long frames = 0;
+    if (time.wType == TIME_SAMPLES)
+        frames = time.u.sample;
+    else if (time.wType == TIME_BYTES)
+        frames = time.u.cb / (d.channels * 2);
+    else
+        return 0;  // il driver non sa dire la posizione in campioni o byte
+    // Alcuni driver, subito dopo un reset, riportano per un attimo una posizione vecchia: non si può aver suonato
+    // più di quanto è stato mandato.
+    return std::min(frames, d.submittedFrames.load());
 }
 
 bool AudioOutput::drained() const
@@ -195,6 +205,7 @@ void AudioOutput::reset()
     if (d.device == nullptr)
         return;
     waveOutReset(d.device);  // segna tutti i blocchi come suonati e azzera la posizione
+    d.submittedFrames = 0;
     for (Buffer& buffer : d.buffers)
         d.isFree(buffer);
     d.current = 0;

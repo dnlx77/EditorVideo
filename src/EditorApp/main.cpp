@@ -1,6 +1,7 @@
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorCore/CutSegment.h"
+#include "EditorCore/SegmentList.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
 
@@ -24,34 +25,41 @@ namespace {
 
 constexpr int kSmokePlayMilliseconds = 2000;
 
-// --export-test <origine> <destinazione> <IN s> <OUT s>: esporta un segmento come farebbe l'interfaccia
-// (IN agganciato al fotogramma chiave) e controlla il file creato. Codice di uscita 0 se è tutto giusto.
+// --export-test <origine> <destinazione> <IN s> <OUT s> [<IN s> <OUT s> ...]: esporta uno o più tratti come farebbe
+// l'interfaccia (ogni IN agganciato al fotogramma chiave, tratti uniti nell'ordine del tempo) e controlla il file
+// creato. Codice di uscita 0 se è tutto giusto.
 int runExportTest(const QStringList& args, qsizetype at)
 {
     namespace core = editor::core;
-    if (at + 4 >= args.size()) {
-        std::printf("Uso: EditorVideo.exe --export-test <origine> <destinazione> <IN secondi> <OUT secondi>\n");
+    const qsizetype pairs = (args.size() - at - 3) / 2;
+    if (at + 4 >= args.size() || (args.size() - at - 3) % 2 != 0) {
+        std::printf("Uso: EditorVideo.exe --export-test <origine> <destinazione> <IN s> <OUT s> [<IN s> <OUT s> ...]\n");
         return 1;
     }
     const std::string input = args[at + 1].toStdString();
     const std::string output = args[at + 2].toStdString();
     try {
         const core::MediaInfo source = core::probeFile(input);
-        core::CutSegment segment;
-        segment.reset(source.keyframeTimes, source.durationSeconds);
-        const double wantedIn = args[at + 3].toDouble();
-        const double in = segment.setIn(wantedIn);
-        if (!segment.setOut(args[at + 4].toDouble()))
-            throw core::MediaError("OUT deve stare dopo IN.");
+        core::SegmentList list;
+        list.reset(source.keyframeTimes, source.durationSeconds);
+        for (qsizetype i = 0; i < pairs; ++i) {
+            const double in = args[at + 3 + 2 * i].toDouble();
+            const double out = args[at + 4 + 2 * i].toDouble();
+            if (!list.add(in, out))
+                throw core::MediaError("OUT deve stare dopo IN.");
+        }
+        for (const core::TimeRange& r : list.ranges())
+            std::printf("Tratto: %.3f - %.3f s\n", r.start, r.end);
 
-        const core::ExportResult result = core::exportSegment(input, output, segment);
+        const core::ExportResult result = core::exportSegments(input, output, list.ranges());
         const core::MediaInfo exported = core::probeFile(output);
-        std::printf("Esportato: IN %.3f s%s, OUT %.3f s, durata attesa %.3f s, ottenuta %.3f s, %d flussi\n", in,
-                    std::abs(in - wantedIn) > 0.0005 ? " (agganciato al fotogramma chiave)" : "", segment.out(),
-                    segment.length(), exported.durationSeconds, result.streamCount);
+        std::printf("Esportato: %d tratti, durata attesa %.3f s, ottenuta %.3f s, %d flussi\n", result.segmentCount,
+                    list.totalLength(), exported.durationSeconds, result.streamCount);
 
+        // Tolleranza: un paio di fotogrammi per giunzione.
+        const double tolerance = 0.1 + 0.05 * static_cast<double>(list.ranges().size() - 1);
         bool ok = exported.streams.size() == static_cast<std::size_t>(result.streamCount)
-               && std::abs(exported.durationSeconds - segment.length()) < 0.1;
+               && std::abs(exported.durationSeconds - list.totalLength()) < tolerance;
         // Stessi codec dell'originale, nello stesso ordine (video e audio).
         std::size_t next = 0;
         for (const core::StreamInfo& stream : source.streams) {
@@ -156,7 +164,22 @@ int main(int argc, char* argv[])
                     app.exit(success ? 0 : 2);
                 };
 
-                // Esportazione del segmento come dal menu (senza chiedere dove salvare), con il messaggio finale.
+                // Due tratti nell'elenco: quello appena segnato e uno all'inizio del file.
+                player->addRange();
+                player->seekTo(0.0);
+                player->markIn();
+                for (int i = 0; i < 3; ++i)
+                    player->stepFrame(+1);
+                player->markOut();
+                player->addRange();
+                const editor::core::SegmentList& ranges = player->ranges();
+                std::printf("Tratti: %d, durata finale %.3f s\n", static_cast<int>(ranges.ranges().size()),
+                            ranges.totalLength());
+                std::fflush(stdout);
+                ok = ok && ranges.ranges().size() == 2;
+                const double expectedLength = ranges.totalLength();
+
+                // Esportazione dei tratti come dal menu (senza chiedere dove salvare), con il messaggio finale.
                 const QString target = QDir::temp().filePath(QStringLiteral("EditorVideoProvaEsportazione.")
                                                               + QFileInfo(window->currentFile()).suffix());
                 QFile::remove(target);
@@ -181,8 +204,16 @@ int main(int argc, char* argv[])
                         // avanzamento è rimasta aperta sopra.
                         poll->stop();
                         const QWidget* modal = QApplication::activeModalWidget();
-                        std::printf("Esportazione: messaggio finale mai in primo piano (finestra attiva: %s)\n",
-                                    modal != nullptr ? qPrintable(modal->windowTitle()) : "nessuna");
+                        std::printf("Esportazione: messaggio finale mai in primo piano (finestra attiva: %s, "
+                                    "esportazione %s, riuscita: %s)\n",
+                                    modal != nullptr ? qPrintable(modal->windowTitle()) : "nessuna",
+                                    window->isExporting() ? "ancora in corso" : "finita",
+                                    window->lastExportSucceeded() ? "sì" : qPrintable(QStringLiteral("no: ") + window->lastExportProblem()));
+                        for (QWidget* w : QApplication::topLevelWidgets()) {
+                            if (w->isVisible())
+                                std::printf("  finestra visibile: \"%s\" (%s)\n", qPrintable(w->windowTitle()),
+                                            w->metaObject()->className());
+                        }
                         std::fflush(stdout);
                         if (auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()))
                             dialog->reject();
@@ -197,7 +228,12 @@ int main(int argc, char* argv[])
                     const auto dialogs = window->findChildren<QProgressDialog*>();
                     const auto stuck = std::count_if(dialogs.begin(), dialogs.end(),
                                                      [](QProgressDialog* d) { return d->isVisible(); });
-                    const bool exported = window->lastExportSucceeded() && QFileInfo::exists(target);
+                    bool exported = window->lastExportSucceeded() && QFileInfo::exists(target);
+                    if (exported) {
+                        const double length = editor::core::probeFile(target.toStdString()).durationSeconds;
+                        std::printf("File esportato: %.3f s (attesi %.3f s)\n", length, expectedLength);
+                        exported = std::abs(length - expectedLength) < 0.15;
+                    }
                     std::printf("Esportazione: %s (\"%s\"), finestre di avanzamento rimaste aperte: %d\n",
                                 exported ? "riuscita" : "NON riuscita", qPrintable(box->windowTitle()),
                                 static_cast<int>(stuck));

@@ -24,13 +24,13 @@
 #include <QtWidgets/QVBoxLayout>
 
 #include <algorithm>
+#include <cstdio>
 #include <iterator>
 #include <memory>
 #include <optional>
 #include <thread>
 
 namespace editor::app {
-
 namespace {
 
 QString qs(const std::string& utf8)
@@ -185,20 +185,33 @@ MainWindow::~MainWindow()
     }
 }
 
+std::vector<core::TimeRange> MainWindow::rangesToExport() const
+{
+    // L'elenco dei tratti, se c'è; altrimenti il solo IN-OUT (come allo step 4).
+    if (!player_->ranges().empty())
+        return player_->ranges().ranges();
+    const core::CutSegment& segment = player_->segment();
+    if (segment.hasIn() && segment.hasOut())
+        return {{segment.in(), segment.out()}};
+    return {};
+}
+
 void MainWindow::updateExportAction()
 {
     if (exportAction_ == nullptr)
         return;
-    const core::CutSegment& segment = player_->segment();
-    exportAction_->setEnabled(!currentPath_.isEmpty() && segment.hasIn() && segment.hasOut() && exportThread_ == nullptr);
-    exportAction_->setToolTip(exportAction_->isEnabled() ? QString()
-                                                         : QStringLiteral("Segna prima IN e OUT (tasti I e O)"));
+    const auto ranges = rangesToExport();
+    exportAction_->setEnabled(!currentPath_.isEmpty() && !ranges.empty() && exportThread_ == nullptr);
+    exportAction_->setText(ranges.size() > 1 ? QStringLiteral("&Esporta %1 tratti uniti...").arg(ranges.size())
+                                             : QStringLiteral("&Esporta segmento..."));
+    exportAction_->setToolTip(exportAction_->isEnabled()
+                                  ? QString()
+                                  : QStringLiteral("Segna IN e OUT (tasti I e O) o aggiungi dei tratti (tasto A)"));
 }
 
 void MainWindow::exportSegment()
 {
-    const core::CutSegment segment = player_->segment();
-    if (currentPath_.isEmpty() || !segment.hasIn() || !segment.hasOut() || exportThread_ != nullptr)
+    if (currentPath_.isEmpty() || rangesToExport().empty() || exportThread_ != nullptr)
         return;
 
     // Stesso contenitore dell'originale: si propone "<nome>_taglio.<estensione>" nella stessa cartella.
@@ -217,16 +230,10 @@ void MainWindow::exportSegment()
 
 bool MainWindow::startExport(const QString& target, bool showResult, std::chrono::milliseconds slowDown)
 {
-    const core::CutSegment segment = player_->segment();
-    if (currentPath_.isEmpty() || !segment.hasIn() || !segment.hasOut() || exportThread_ != nullptr)
+    const std::vector<core::TimeRange> ranges = rangesToExport();
+    if (currentPath_.isEmpty() || ranges.empty() || exportThread_ != nullptr)
         return false;
 
-    struct ExportOutcome
-    {
-        std::optional<core::ExportResult> result;
-        QString error;
-        bool cancelled = false;
-    };
     auto outcome = std::make_shared<ExportOutcome>();
     auto progress = std::make_shared<std::atomic<double>>(0.0);
     const std::string inputPath = currentPath_.toStdString();
@@ -235,7 +242,7 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     cancelExport_ = false;
     exportThread_ = QThread::create([=, cancel = &cancelExport_] {
         try {
-            outcome->result = core::exportSegment(inputPath, outputPath, segment, [=](double fraction) {
+            outcome->result = core::exportSegments(inputPath, outputPath, ranges, [=](double fraction) {
                 *progress = fraction;
                 if (slowDown.count() > 0)
                     std::this_thread::sleep_for(slowDown);
@@ -261,29 +268,25 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     connect(poll, &QTimer::timeout, dialog, [dialog, progress] { dialog->setValue(static_cast<int>(*progress * 1000)); });
     poll->start(100);
 
-    connect(exportThread_, &QThread::finished, this, [this, outcome, dialog, target, showResult] {
-        // La finestra di avanzamento va eliminata subito, non solo chiusa: se l'esportazione è durata meno di
-        // minimumDuration non era ancora comparsa, e il suo timer interno l'avrebbe mostrata dopo, sopra al
-        // messaggio finale e ferma al 100%. Eliminandola si fermano anche quel timer e il nostro.
-        QObject::disconnect(dialog, nullptr, this, nullptr);  // la chiusura emetterebbe canceled()
-        delete dialog;
+    connect(exportThread_, &QThread::finished, this, [this, outcome, dialog, poll, target, showResult] {
+        // Attenzione: questo codice può essere eseguito DENTRO dialog->setValue() (che, con la finestra modale,
+        // elabora gli eventi in attesa), quindi la finestra non si può eliminare qui. La si spegne del tutto:
+        // fermi il nostro timer e quello interno che la mostra dopo minimumDuration (reset), nascosta, ed
+        // eliminata più tardi. Altrimenti restava sopra al messaggio finale, ferma al 100%.
+        poll->stop();
+        QObject::disconnect(dialog, nullptr, this, nullptr);  // hide/reset non devono risultare un "Annulla"
+        dialog->reset();
+        dialog->hide();
+        dialog->deleteLater();
         exportThread_->deleteLater();
         exportThread_ = nullptr;
         updateExportAction();
         lastExportOk_ = outcome->result.has_value();
+        lastExportProblem_ = outcome->cancelled ? QStringLiteral("annullata") : outcome->error;
 
-        if (!showResult)
-            return;
-        if (outcome->cancelled) {
-            statusBar()->showMessage(QStringLiteral("Esportazione annullata"), 5000);
-        } else if (!outcome->result) {
-            QMessageBox::warning(this, QStringLiteral("Esportazione non riuscita"), outcome->error);
-        } else {
-            statusBar()->showMessage(QStringLiteral("Segmento esportato in %1").arg(target), 10000);
-            QMessageBox::information(
-                this, QStringLiteral("Esportazione completata"),
-                QStringLiteral("Segmento salvato in:\n%1\n\nDurata: %2\nSenza ricodifica: stessa qualità dell'originale.")
-                    .arg(target, QString::fromStdString(core::formatDuration(outcome->result->durationSeconds))));
+        if (showResult) {
+            // Il messaggio si mostra dal ciclo principale degli eventi, non da dentro setValue().
+            QTimer::singleShot(0, this, [this, outcome, target] { showExportResult(*outcome, target); });
         }
     });
 
@@ -292,12 +295,33 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     return true;
 }
 
+void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& target)
+{
+    if (outcome.cancelled) {
+        statusBar()->showMessage(QStringLiteral("Esportazione annullata"), 5000);
+        return;
+    }
+    if (!outcome.result) {
+        QMessageBox::warning(this, QStringLiteral("Esportazione non riuscita"), outcome.error);
+        return;
+    }
+    statusBar()->showMessage(QStringLiteral("Segmento esportato in %1").arg(target), 10000);
+    const int count = outcome.result->segmentCount;
+    QMessageBox::information(
+        this, QStringLiteral("Esportazione completata"),
+        QStringLiteral("%1 salvat%2 in:\n%3\n\nDurata: %4\nSenza ricodifica: stessa qualità dell'originale.")
+            .arg(count > 1 ? QStringLiteral("%1 tratti uniti").arg(count) : QStringLiteral("Segmento"),
+                 count > 1 ? QStringLiteral("i") : QStringLiteral("o"), target,
+                 QString::fromStdString(core::formatDuration(outcome.result->durationSeconds))));
+}
+
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
     if (event->type() == QEvent::ShortcutOverride) {
         const auto* key = static_cast<QKeyEvent*>(event);
         static const int playbackKeys[] = {Qt::Key_Space, Qt::Key_Left, Qt::Key_Right, Qt::Key_Home,
-                                           Qt::Key_Comma, Qt::Key_Period, Qt::Key_I, Qt::Key_O};
+                                           Qt::Key_Comma, Qt::Key_Period, Qt::Key_I, Qt::Key_O,
+                                           Qt::Key_A, Qt::Key_X, Qt::Key_Delete};
         const bool playbackKey = std::find(std::begin(playbackKeys), std::end(playbackKeys), key->key())
                               != std::end(playbackKeys);
         const auto modifiers = key->modifiers() & ~Qt::KeypadModifier;
@@ -358,6 +382,17 @@ void MainWindow::createMenus()
     segmentMenu->addSeparator();
     segmentMenu->addAction(QStringLiteral("&Cancella IN e OUT"), this, [this] { player_->clearSegment(); });
 
+    // Più tratti dello stesso file, esportati uniti (Ctrl+E).
+    QMenu* editMenu = menuBar()->addMenu(QStringLiteral("&Modifica"));
+    QAction* addRange = editMenu->addAction(QStringLiteral("&Aggiungi tratto (IN-OUT)"), this, [this] { player_->addRange(); });
+    addRange->setShortcut(QKeySequence(Qt::Key_A));
+    QAction* cutRange = editMenu->addAction(QStringLiteral("&Taglia via tratto (IN-OUT)"), this, [this] { player_->cutRange(); });
+    cutRange->setShortcut(QKeySequence(Qt::Key_X));
+    QAction* deleteRange = editMenu->addAction(QStringLiteral("&Elimina tratto sotto il cursore"), this,
+                                               [this] { player_->removeRangeAtPlayhead(); });
+    deleteRange->setShortcut(QKeySequence(QKeySequence::Delete));
+    editMenu->addSeparator();
+    editMenu->addAction(QStringLiteral("&Svuota elenco tratti"), this, [this] { player_->clearRanges(); });
     QMenu* helpMenu = menuBar()->addMenu(QStringLiteral("&Aiuto"));
     helpMenu->addAction(QStringLiteral("&Informazioni su EditorVideo"), this, &MainWindow::showAbout);
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "EditorCore/SegmentList.h"
+
 #include <QtWidgets/QWidget>
 
 #include <functional>
@@ -18,6 +20,8 @@ public:
     void setKeyframes(std::vector<double> keyframes);
     // Segmento evidenziato; hasIn/hasOut dicono se disegnare i marcatori IN e OUT.
     void setSegment(double in, double out, bool hasIn, bool hasOut);
+    // Tratti tenuti (bande verdi); il resto della linea del tempo viene scurito. Vuoto = niente bande.
+    void setKeptRanges(std::vector<core::TimeRange> ranges);
     void setPlayhead(double seconds);  // ignorato mentre l'utente sta trascinando
     bool isDragging() const { return dragging_; }
 
@@ -44,6 +48,7 @@ private:
     double out_ = 0.0;
     bool hasIn_ = false;
     bool hasOut_ = false;
+    std::vector<core::TimeRange> kept_;
     double playhead_ = 0.0;
     bool dragging_ = false;
 };
