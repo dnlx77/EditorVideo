@@ -6,72 +6,62 @@ using namespace editor::core;
 
 namespace {
 
-TEST(Project, ClipsKeepTheirOrderAndIds)
+TEST(Project, ClipsAndAnalysis)
 {
     Project project;
     const int a = project.add("a.mp4");
     const int b = project.add("b.mp4");
-    const int c = project.add("c.mp4");
     EXPECT_NE(a, b);
-    ASSERT_EQ(project.clips().size(), 3u);
-    EXPECT_EQ(project.indexOf(c), 2);
-
-    project.move(c, 0);  // c in testa
-    EXPECT_EQ(project.clips()[0].path, "c.mp4");
-    EXPECT_EQ(project.clips()[1].path, "a.mp4");
-    project.move(c, 99);  // oltre la fine: in fondo
-    EXPECT_EQ(project.clips()[2].path, "c.mp4");
-
-    project.remove(a);
-    ASSERT_EQ(project.clips().size(), 2u);
-    EXPECT_EQ(project.indexOf(a), -1);
-    EXPECT_EQ(project.find(b)->path, "b.mp4");
-}
-
-TEST(Project, ClipWithoutSegmentsExportsWholeFile)
-{
-    Project project;
-    const int id = project.add("a.mp4");
-    EXPECT_TRUE(project.exportPlan().empty());  // non ancora analizzato
     EXPECT_FALSE(project.allAnalyzed());
-
-    project.setAnalysis(id, {0.0, 2.0, 4.0}, 6.0);
+    project.setAnalysis(a, {2.0, 0.0}, 6.0);  // anche fuori ordine
+    project.setAnalysis(b, {}, 3.0);
     EXPECT_TRUE(project.allAnalyzed());
-    const auto plan = project.exportPlan();
-    ASSERT_EQ(plan.size(), 1u);
-    EXPECT_EQ(plan[0].path, "a.mp4");
-    EXPECT_EQ(plan[0].ranges, (std::vector<TimeRange>{{0.0, 6.0}}));
-    EXPECT_DOUBLE_EQ(project.totalLength(), 6.0);
+    EXPECT_DOUBLE_EQ(project.find(a)->snapToKeyframe(1.5), 0.0);
+    EXPECT_DOUBLE_EQ(project.find(a)->snapToKeyframe(2.0), 2.0);
+    EXPECT_DOUBLE_EQ(project.find(b)->snapToKeyframe(1.5), 1.5);  // senza fotogrammi chiave non si aggancia
+    EXPECT_EQ(project.indexOf(b), 1);
 }
 
-TEST(Project, PlanFollowsClipOrderAndSegments)
+TEST(Project, ExportPlanFollowsTheSequence)
 {
     Project project;
     const int a = project.add("a.mp4");
     const int b = project.add("b.mp4");
-    project.setAnalysis(a, {0.0, 2.0}, 4.0);
+    project.setAnalysis(a, {0.0, 2.0, 4.0}, 6.0);
     project.setAnalysis(b, {0.0, 1.0, 2.0}, 3.0);
-    project.find(b)->segments.add(1.0, 1.5);
-    project.find(b)->segments.add(2.0, 3.0);
+    EXPECT_TRUE(project.exportPlan().empty());
 
-    auto plan = project.exportPlan();
-    ASSERT_EQ(plan.size(), 2u);
-    EXPECT_EQ(plan[0].ranges, (std::vector<TimeRange>{{0.0, 4.0}}));
-    EXPECT_EQ(plan[1].ranges, (std::vector<TimeRange>{{1.0, 1.5}, {2.0, 3.0}}));
-    EXPECT_DOUBLE_EQ(project.totalLength(), 5.5);
+    Sequence& s = project.sequence();
+    s.insert(-1, b, 1.5, 2.5, project.snapper());  // -> 1.0 .. 2.5
+    s.insert(-1, a, 4.0, 6.0, project.snapper());
+    s.insert(-1, a, 0.5, 1.0, project.snapper());  // -> 0.0 .. 1.0, stesso file del precedente: stesso blocco
+    s.insert(-1, b, 0.0, 1.0, project.snapper());
 
-    project.move(b, 0);
-    plan = project.exportPlan();
+    const auto plan = project.exportPlan();
+    ASSERT_EQ(plan.size(), 3u);
     EXPECT_EQ(plan[0].path, "b.mp4");
+    EXPECT_EQ(plan[0].ranges, (std::vector<TimeRange>{{1.0, 2.5}}));
     EXPECT_EQ(plan[1].path, "a.mp4");
+    EXPECT_EQ(plan[1].ranges, (std::vector<TimeRange>{{4.0, 6.0}, {0.0, 1.0}}));
+    EXPECT_EQ(plan[2].path, "b.mp4");
+    EXPECT_DOUBLE_EQ(s.totalLength(), 5.5);
 }
 
-TEST(Project, WholeFileStartsFromFirstKeyframe)
+TEST(Project, RemovingClipRemovesItsPieces)
 {
     Project project;
-    const int id = project.add("a.mp4");
-    project.setAnalysis(id, {0.5, 2.5}, 4.0);
-    EXPECT_EQ(project.exportPlan()[0].ranges, (std::vector<TimeRange>{{0.5, 4.0}}));
+    const int a = project.add("a.mp4");
+    const int b = project.add("b.mp4");
+    project.setAnalysis(a, {0.0}, 6.0);
+    project.setAnalysis(b, {0.0}, 3.0);
+    project.sequence().insert(-1, a, 0.0, 1.0, project.snapper());
+    project.sequence().insert(-1, b, 0.0, 1.0, project.snapper());
+    project.remove(a);
+    ASSERT_EQ(project.sequence().fragments().size(), 1u);
+    EXPECT_EQ(project.sequence().fragments()[0].clipId, b);
+    EXPECT_EQ(project.find(a), nullptr);
+    project.clear();
+    EXPECT_TRUE(project.sequence().empty());
 }
 
 }  // namespace

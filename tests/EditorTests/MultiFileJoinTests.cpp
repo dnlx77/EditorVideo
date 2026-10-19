@@ -175,8 +175,9 @@ TEST_F(MultiFileJoinTest, ThreeMp4FilesWithAac)
     EXPECT_LE(audio.totalSeconds, 6.0 + 3 * 0.0214);
 }
 
-TEST_F(MultiFileJoinTest, ReorderingChangesOutputOrder)
+TEST_F(MultiFileJoinTest, SequenceOutOfOrderWithRepeatedFile)
 {
+    // Il montaggio: 4 pezzi da 3 file, in ordine sparso e con un file usato due volte, poi un pezzo spostato.
     Project project;
     std::vector<int> ids;
     for (const char* name : kNames) {
@@ -185,13 +186,20 @@ TEST_F(MultiFileJoinTest, ReorderingChangesOutputOrder)
         ids.push_back(project.add(file));
         project.setAnalysis(ids.back(), info.keyframeTimes, info.durationSeconds);
     }
-    project.move(ids[2], 0);  // c, a, b
-    project.find(ids[1])->segments.add(1.0, 2.0);  // di b solo il secondo secondo
+    Sequence& s = project.sequence();
+    const auto snap = project.snapper();
+    s.insert(-1, ids[2], 1.3, 2.0, snap);              // c 1,0 .. 2,0 (agganciato)
+    const int b = s.insert(-1, ids[1], 0.0, 0.4, snap);  // b 0 .. 0,4
+    s.insert(-1, ids[0], 1.0, 1.6, snap);              // a 1,0 .. 1,6
+    s.insert(-1, ids[2], 0.0, 0.8, snap);              // c di nuovo, 0 .. 0,8
+    s.move(b, 3);                                      // b in fondo
 
-    const std::string out = path("riordinato.mkv");
+    const std::string out = path("montaggio.mkv");
     exportClips(project.exportPlan(), out);
-    EXPECT_NEAR(probeFile(out).durationSeconds, project.totalLength(), 2 * kFrame);
-    expectVideoFrames(out, concat({framesOf(200, 0, 2), framesOf(0, 0, 2), framesOf(100, 1, 2)}));
+    EXPECT_NEAR(probeFile(out).durationSeconds, s.totalLength(), 2 * kFrame);
+    expectVideoFrames(out, concat({framesOf(200, 1.0, 2.0), framesOf(0, 1.0, 1.6), framesOf(200, 0.0, 0.8),
+                                   framesOf(100, 0.0, 0.4)}));
+    expectMonotonicPackets(out);
 }
 
 TEST_F(MultiFileJoinTest, DifferentResolutionIsRefused)

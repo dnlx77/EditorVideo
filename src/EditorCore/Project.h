@@ -1,23 +1,23 @@
 #pragma once
 
-#include "EditorCore/SegmentList.h"
+#include "EditorCore/Sequence.h"
 
 #include <string>
 #include <vector>
 
 namespace editor::core {
 
-// Un file del progetto con i suoi tratti da tenere.
+// Un file di partenza del progetto.
 struct Clip
 {
-    int id = 0;          // identificativo stabile (non cambia riordinando)
+    int id = 0;          // identificativo stabile
     std::string path;    // UTF-8
     bool analyzed = false;  // fotogrammi chiave e durata noti
-    SegmentList segments;   // vuoto = tutto il file
+    std::vector<double> keyframes;
+    double duration = 0.0;
 
-    // Tratti che finiranno nel file esportato: quelli dell'elenco, oppure il file intero.
-    std::vector<TimeRange> exportRanges() const;
-    double outputLength() const;
+    // Fotogramma chiave nello stesso punto o subito prima (prima del primo: il primo; senza: `seconds`).
+    double snapToKeyframe(double seconds) const;
 };
 
 // Tratti di un file da esportare, uno dopo l'altro.
@@ -27,32 +27,34 @@ struct ClipRanges
     std::vector<TimeRange> ranges;
 };
 
-// Progetto: elenco ordinato di file da unire, ognuno con i suoi tratti.
+// Progetto: i file di partenza e la sequenza (il montaggio) fatta con pezzi di quei file.
 class Project
 {
 public:
-    // Aggiunge un file in fondo e ne restituisce l'id. L'analisi arriva dopo con setAnalysis().
+    // Aggiunge un file e ne restituisce l'id. L'analisi arriva dopo con setAnalysis().
     int add(std::string path);
-    // Fotogrammi chiave e durata del file: azzera i suoi tratti.
     void setAnalysis(int id, std::vector<double> keyframes, double duration);
+    // Toglie il file e tutti i suoi pezzi dalla sequenza.
     void remove(int id);
-    // Sposta il file in posizione `to` (0 = primo).
-    void move(int id, int to);
     void clear();
 
     const std::vector<Clip>& clips() const { return clips_; }
-    Clip* find(int id);
     const Clip* find(int id) const;
     int indexOf(int id) const;  // -1 se non c'è
     bool empty() const { return clips_.empty(); }
     bool allAnalyzed() const;
 
-    // Tutti i tratti di tutti i file, nell'ordine in cui verranno uniti (i file senza tratti non ne hanno).
+    Sequence& sequence() { return sequence_; }
+    const Sequence& sequence() const { return sequence_; }
+    // Aggancio ai fotogrammi chiave dei file del progetto, per le operazioni sulla sequenza.
+    Sequence::SnapFunction snapper() const;
+
+    // La sequenza come elenco di file e tratti da esportare (pezzi consecutivi dello stesso file insieme).
     std::vector<ClipRanges> exportPlan() const;
-    double totalLength() const;
 
 private:
     std::vector<Clip> clips_;
+    Sequence sequence_;
     int nextId_ = 1;
 };
 

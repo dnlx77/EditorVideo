@@ -4,27 +4,18 @@
 
 namespace editor::core {
 
-std::vector<TimeRange> Clip::exportRanges() const
-{
-    if (!analyzed)
-        return {};
-    if (!segments.empty())
-        return segments.ranges();
-    if (segments.duration() <= 0)
-        return {};
-    // Il file intero, dal primo fotogramma chiave.
-    const double start = segments.snapToKeyframe(0.0);
-    if (start >= segments.duration())
-        return {};
-    return {{start, segments.duration()}};
-}
+namespace {
 
-double Clip::outputLength() const
+constexpr double kEpsilon = 0.001;
+
+}  // namespace
+
+double Clip::snapToKeyframe(double seconds) const
 {
-    double total = 0.0;
-    for (const TimeRange& r : exportRanges())
-        total += r.length();
-    return total;
+    if (keyframes.empty())
+        return seconds;
+    const auto next = std::upper_bound(keyframes.begin(), keyframes.end(), seconds + kEpsilon);
+    return next == keyframes.begin() ? keyframes.front() : *std::prev(next);
 }
 
 int Project::add(std::string path)
@@ -38,42 +29,32 @@ int Project::add(std::string path)
 
 void Project::setAnalysis(int id, std::vector<double> keyframes, double duration)
 {
-    if (Clip* clip = find(id)) {
-        clip->segments.reset(std::move(keyframes), duration);
-        clip->analyzed = true;
-    }
+    const int index = indexOf(id);
+    if (index < 0)
+        return;
+    Clip& clip = clips_[index];
+    clip.keyframes = std::move(keyframes);
+    std::sort(clip.keyframes.begin(), clip.keyframes.end());
+    clip.duration = std::max(0.0, duration);
+    clip.analyzed = true;
 }
 
 void Project::remove(int id)
 {
     std::erase_if(clips_, [id](const Clip& c) { return c.id == id; });
-}
-
-void Project::move(int id, int to)
-{
-    const int from = indexOf(id);
-    if (from < 0)
-        return;
-    to = std::clamp(to, 0, static_cast<int>(clips_.size()) - 1);
-    Clip clip = std::move(clips_[from]);
-    clips_.erase(clips_.begin() + from);
-    clips_.insert(clips_.begin() + to, std::move(clip));
+    sequence_.removeClip(id);
 }
 
 void Project::clear()
 {
     clips_.clear();
-}
-
-Clip* Project::find(int id)
-{
-    const auto it = std::find_if(clips_.begin(), clips_.end(), [id](const Clip& c) { return c.id == id; });
-    return it == clips_.end() ? nullptr : &*it;
+    sequence_.clear();
 }
 
 const Clip* Project::find(int id) const
 {
-    return const_cast<Project*>(this)->find(id);
+    const int index = indexOf(id);
+    return index < 0 ? nullptr : &clips_[index];
 }
 
 int Project::indexOf(int id) const
@@ -90,23 +71,28 @@ bool Project::allAnalyzed() const
     return std::all_of(clips_.begin(), clips_.end(), [](const Clip& c) { return c.analyzed; });
 }
 
+Sequence::SnapFunction Project::snapper() const
+{
+    return [this](int clipId, double seconds) {
+        const Clip* clip = find(clipId);
+        return clip != nullptr ? clip->snapToKeyframe(seconds) : seconds;
+    };
+}
+
 std::vector<ClipRanges> Project::exportPlan() const
 {
     std::vector<ClipRanges> plan;
-    for (const Clip& clip : clips_) {
-        std::vector<TimeRange> ranges = clip.exportRanges();
-        if (!ranges.empty())
-            plan.push_back({clip.path, std::move(ranges)});
+    int previousClip = 0;
+    for (const Fragment& f : sequence_.fragments()) {
+        const Clip* clip = find(f.clipId);
+        if (clip == nullptr)
+            continue;
+        if (plan.empty() || f.clipId != previousClip)
+            plan.push_back({clip->path, {}});
+        plan.back().ranges.push_back({f.start, f.end});
+        previousClip = f.clipId;
     }
     return plan;
-}
-
-double Project::totalLength() const
-{
-    double total = 0.0;
-    for (const Clip& clip : clips_)
-        total += clip.outputLength();
-    return total;
 }
 
 }  // namespace editor::core

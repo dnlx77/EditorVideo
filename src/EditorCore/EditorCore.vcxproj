@@ -45,6 +45,7 @@
     <ClInclude Include="Project.h" />
     <ClInclude Include="SegmentExport.h" />
     <ClInclude Include="SegmentList.h" />
+    <ClInclude Include="Sequence.h" />
     <ClInclude Include="VideoDecoder.h" />
   </ItemGroup>
   <ItemGroup>
@@ -58,6 +59,7 @@
     <ClCompile Include="Project.cpp" />
     <ClCompile Include="SegmentExport.cpp" />
     <ClCompile Include="SegmentList.cpp" />
+    <ClCompile Include="Sequence.cpp" />
     <ClCompile Include="VideoDecoder.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
