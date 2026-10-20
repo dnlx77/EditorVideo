@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -516,8 +517,13 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
     // traccia sostitutiva l'audio dei file non si copia, quindi conta solo il video.
     std::vector<MediaSignature> signatures;
     if (clips.size() > 1) {
+        // Lo stesso file può tornare più volte (montaggio A, B, A, B): lo si legge una volta sola.
+        std::map<std::string, MediaSignature> read;
         for (const ClipRanges& clip : clips) {
-            signatures.push_back(readMediaSignature(clip.path));
+            auto known = read.find(clip.path);
+            if (known == read.end())
+                known = read.emplace(clip.path, readMediaSignature(clip.path)).first;
+            signatures.push_back(known->second);
             if (replaced)
                 std::erase_if(signatures.back().streams, [](const StreamSignature& s) { return s.kind == StreamKind::Audio; });
         }
