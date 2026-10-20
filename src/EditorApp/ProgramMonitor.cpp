@@ -159,11 +159,18 @@ void ProgramMonitor::stepToCut(int direction)
     setPlaying(false);
     const int count = static_cast<int>(sequence.fragments().size());
     double target = position_;
+    // Inizio di ogni pezzo, sommando le durate una volta sola (come startOf, nello stesso ordine).
+    std::vector<double> starts(static_cast<std::size_t>(count));
+    double start = 0.0;
+    for (int i = 0; i < count; ++i) {
+        starts[static_cast<std::size_t>(i)] = start;
+        start += sequence.fragments()[static_cast<std::size_t>(i)].length();
+    }
     if (direction > 0) {
         target = sequence.totalLength();
         for (int i = 1; i < count; ++i) {
-            if (sequence.startOf(i) > position_ + 0.001) {
-                target = sequence.startOf(i);
+            if (starts[static_cast<std::size_t>(i)] > position_ + 0.001) {
+                target = starts[static_cast<std::size_t>(i)];
                 break;
             }
         }
@@ -172,8 +179,8 @@ void ProgramMonitor::stepToCut(int direction)
     } else {
         target = 0.0;
         for (int i = count - 1; i >= 0; --i) {
-            if (sequence.startOf(i) < position_ - 0.001) {
-                target = sequence.startOf(i);
+            if (starts[static_cast<std::size_t>(i)] < position_ - 0.001) {
+                target = starts[static_cast<std::size_t>(i)];
                 break;
             }
         }

@@ -1296,6 +1296,8 @@ void MainWindow::startNextProbe()
                     }
                 }
                 refreshClipList();
+                // Le miniature di un file si chiedono solo dopo l'analisi: la timeline deve ridisegnare i suoi blocchi.
+                timeline_->thumbnailsChanged();
                 updateExportAction();
             }
         }
@@ -1771,7 +1773,7 @@ void MainWindow::startNextThumbnails()
                 thumbnails_.insert((*batch)[i].key, (*results)[i]);
             thumbnailPending_.remove((*batch)[i].key);
         }
-        timeline_->update();
+        timeline_->thumbnailsChanged();
         startNextThumbnails();
     });
     // Bassa priorità: l'anteprima e l'analisi dei file vengono prima.

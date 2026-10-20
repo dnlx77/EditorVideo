@@ -1,6 +1,7 @@
 #include "EditorApp/TimelineWidget.h"
 
 #include <QtGui/QMouseEvent>
+#include <QtGui/QResizeEvent>
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
 
@@ -40,13 +41,13 @@ QSize TimelineWidget::minimumSizeHint() const
 void TimelineWidget::setDuration(double seconds)
 {
     duration_ = std::max(0.0, seconds);
-    update();
+    invalidate();
 }
 
 void TimelineWidget::setKeyframes(std::vector<double> keyframes)
 {
     keyframes_ = std::move(keyframes);
-    update();
+    invalidate();
 }
 
 void TimelineWidget::setSegment(double in, double out, bool hasIn, bool hasOut)
@@ -55,21 +56,55 @@ void TimelineWidget::setSegment(double in, double out, bool hasIn, bool hasOut)
     out_ = out;
     hasIn_ = hasIn;
     hasOut_ = hasOut;
-    update();
+    invalidate();
 }
 
 void TimelineWidget::setKeptRanges(std::vector<core::TimeRange> ranges)
 {
     kept_ = std::move(ranges);
-    update();
+    invalidate();
 }
 
 void TimelineWidget::setPlayhead(double seconds)
 {
     if (dragging_ || std::abs(seconds - playhead_) < 1e-6)
         return;
+    movePlayhead(seconds);
+}
+
+void TimelineWidget::movePlayhead(double seconds)
+{
+    update(cursorRect(playhead_));
     playhead_ = seconds;
+    update(cursorRect(playhead_));
+}
+
+QRect TimelineWidget::cursorRect(double seconds) const
+{
+    // Linea larga 2 e triangolino largo 10, con l'antialiasing: qualche pixel in più per lato.
+    const double x = xForTime(seconds);
+    return QRectF(x - 8, 0, 16, height()).toAlignedRect();
+}
+
+void TimelineWidget::invalidate()
+{
+    cacheValid_ = false;
     update();
+}
+
+void TimelineWidget::resizeEvent(QResizeEvent* event)
+{
+    cacheValid_ = false;
+    QWidget::resizeEvent(event);
+}
+
+void TimelineWidget::changeEvent(QEvent* event)
+{
+    // Colori, carattere e stato abilitato entrano nella parte disegnata una volta sola.
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::FontChange
+        || event->type() == QEvent::EnabledChange || event->type() == QEvent::StyleChange)
+        invalidate();
+    QWidget::changeEvent(event);
 }
 
 QRectF TimelineWidget::trackRect() const
@@ -96,7 +131,27 @@ double TimelineWidget::timeForX(double x) const
 
 void TimelineWidget::paintEvent(QPaintEvent*)
 {
+    const qreal ratio = devicePixelRatioF();
+    const QSize pixels = (QSizeF(size()) * ratio).toSize();
+    if (!cacheValid_ || cache_.size() != pixels || cache_.devicePixelRatio() != ratio) {
+        cache_ = QPixmap(pixels);
+        cache_.setDevicePixelRatio(ratio);
+        cache_.fill(Qt::transparent);
+        QPainter cp(&cache_);
+        // Come un QPainter sul widget: carattere (con i punti calcolati per lo schermo del widget) e penna.
+        cp.setFont(QFont(font(), this));
+        cp.setPen(palette().color(foregroundRole()));
+        paintStatic(cp);
+        cacheValid_ = true;
+    }
     QPainter p(this);
+    p.drawPixmap(0, 0, cache_);
+    if (isEnabled() && duration_ > 0)
+        paintCursor(p);
+}
+
+void TimelineWidget::paintStatic(QPainter& p)
+{
     p.setRenderHint(QPainter::Antialiasing);
     const QRectF track = trackRect();
     const QPalette pal = palette();
@@ -156,8 +211,14 @@ void TimelineWidget::paintEvent(QPaintEvent*)
         marker(inX, kInColor, QStringLiteral("IN"), false);
     if (hasOut_)
         marker(outX, kOutColor, QStringLiteral("OUT"), true);
+}
 
+void TimelineWidget::paintCursor(QPainter& p)
+{
     // Cursore di riproduzione: linea con un triangolino in alto
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF track = trackRect();
+    const QPalette pal = palette();
     const double x = xForTime(playhead_);
     const QColor head = pal.color(QPalette::Text);
     p.setPen(QPen(head, 2));
@@ -177,8 +238,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* event)
     if (event->button() != Qt::LeftButton || duration_ <= 0 || !isEnabled())
         return;
     dragging_ = true;
-    playhead_ = timeForX(event->position().x());
-    update();
+    movePlayhead(timeForX(event->position().x()));
     if (onScrub)
         onScrub(playhead_);
 }
@@ -187,8 +247,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* event)
 {
     if (!dragging_)
         return;
-    playhead_ = timeForX(event->position().x());
-    update();
+    movePlayhead(timeForX(event->position().x()));
     if (onScrub)
         onScrub(playhead_);
 }
@@ -198,8 +257,7 @@ void TimelineWidget::mouseReleaseEvent(QMouseEvent* event)
     if (!dragging_ || event->button() != Qt::LeftButton)
         return;
     dragging_ = false;
-    playhead_ = timeForX(event->position().x());
-    update();
+    movePlayhead(timeForX(event->position().x()));
     if (onSeek)
         onSeek(playhead_);
 }

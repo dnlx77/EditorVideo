@@ -4,6 +4,7 @@
 #include "EditorCore/Waveform.h"
 
 #include <QtGui/QMouseEvent>
+#include <QtGui/QResizeEvent>
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
 
@@ -70,43 +71,80 @@ QSize SequenceTimeline::minimumSizeHint() const
 void SequenceTimeline::setBlocks(std::vector<Block> blocks)
 {
     blocks_ = std::move(blocks);
+    total_ = 0.0;
+    for (const Block& b : blocks_)
+        total_ += b.length;
     if (std::none_of(blocks_.begin(), blocks_.end(), [this](const Block& b) { return b.fragmentId == selected_; }))
         selected_ = 0;
-    update();
+    invalidate();
 }
 
 void SequenceTimeline::setPlayhead(double seconds)
 {
     if (std::abs(seconds - playhead_) < 1e-6)
         return;
+    update(cursorRect(playhead_));
     playhead_ = seconds;
+    update(cursorRect(playhead_));
+}
+
+QRect SequenceTimeline::cursorRect(double seconds) const
+{
+    // Linea larga 2 e triangolino largo 10, con l'antialiasing: qualche pixel in più per lato.
+    const double x = xForTime(seconds);
+    return QRectF(x - 8, 0, 16, height()).toAlignedRect();
+}
+
+void SequenceTimeline::thumbnailsChanged()
+{
+    invalidate();
+}
+
+void SequenceTimeline::invalidate()
+{
+    cacheValid_ = false;
     update();
+}
+
+void SequenceTimeline::resizeEvent(QResizeEvent* event)
+{
+    cacheValid_ = false;
+    QWidget::resizeEvent(event);
+}
+
+void SequenceTimeline::changeEvent(QEvent* event)
+{
+    // Colori e carattere entrano nella parte disegnata una volta sola.
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::FontChange
+        || event->type() == QEvent::EnabledChange || event->type() == QEvent::StyleChange)
+        invalidate();
+    QWidget::changeEvent(event);
 }
 
 void SequenceTimeline::setSelected(int fragmentId)
 {
     selected_ = fragmentId;
-    update();
+    invalidate();
 }
 
 void SequenceTimeline::setMuted(std::vector<core::TimeRange> ranges)
 {
     muted_ = std::move(ranges);
-    update();
+    invalidate();
 }
 
 void SequenceTimeline::setReplacement(std::optional<Replacement> replacement)
 {
     if (!movingReplacement_)
         replacement_ = std::move(replacement);
-    update();
+    invalidate();
 }
 
 void SequenceTimeline::setAudioSelection(double from, double to)
 {
     selectionFrom_ = from;
     selectionTo_ = std::max(from, to);
-    update();
+    invalidate();
 }
 
 QRectF SequenceTimeline::videoLane() const
@@ -142,14 +180,6 @@ QRectF SequenceTimeline::replacementHandle() const
     if (right <= left)
         return {};
     return QRectF(QPointF(left, lane.top()), QPointF(right, lane.top() + kHandleHeight));
-}
-
-double SequenceTimeline::total() const
-{
-    double sum = 0.0;
-    for (const Block& b : blocks_)
-        sum += b.length;
-    return sum;
 }
 
 double SequenceTimeline::xForTime(double seconds) const
@@ -194,7 +224,44 @@ int SequenceTimeline::dropIndexAt(double x) const
 
 void SequenceTimeline::paintEvent(QPaintEvent*)
 {
+    const qreal ratio = devicePixelRatioF();
+    const QSize pixels = (QSizeF(size()) * ratio).toSize();
+    if (!cacheValid_ || cache_.size() != pixels || cache_.devicePixelRatio() != ratio) {
+        cache_ = QPixmap(pixels);
+        cache_.setDevicePixelRatio(ratio);
+        cache_.fill(Qt::transparent);
+        QPainter cp(&cache_);
+        // Come un QPainter sul widget: carattere (con i punti calcolati per lo schermo del widget) e penna.
+        cp.setFont(QFont(font(), this));
+        cp.setPen(palette().color(foregroundRole()));
+        paintStatic(cp);
+        cacheValid_ = true;
+    }
     QPainter p(this);
+    p.drawPixmap(0, 0, cache_);
+    if (blocks_.empty())
+        return;
+
+    // Cursore, su tutte e due le corsie
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF a = videoLane();
+    const QRectF audio = audioLane();
+    const double x = xForTime(playhead_);
+    const QColor head = palette().color(QPalette::Text);
+    p.setPen(QPen(head, 2));
+    p.drawLine(QPointF(x, a.top()), QPointF(x, audio.bottom() + 3));
+    QPainterPath triangle;
+    triangle.moveTo(x - 5, a.top() - 7);
+    triangle.lineTo(x + 5, a.top() - 7);
+    triangle.lineTo(x, a.top() - 1);
+    triangle.closeSubpath();
+    p.setPen(Qt::NoPen);
+    p.setBrush(head);
+    p.drawPath(triangle);
+}
+
+void SequenceTimeline::paintStatic(QPainter& p)
+{
     p.setRenderHint(QPainter::Antialiasing);
     const QRectF a = videoLane();
     const QRectF audio = audioLane();
@@ -284,20 +351,6 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
         p.setPen(QPen(pal.color(QPalette::Highlight), 3));
         p.drawLine(QPointF(x, a.top() - 4), QPointF(x, a.bottom() + 4));
     }
-
-    // Cursore, su tutte e due le corsie
-    const double x = xForTime(playhead_);
-    const QColor head = pal.color(QPalette::Text);
-    p.setPen(QPen(head, 2));
-    p.drawLine(QPointF(x, a.top()), QPointF(x, audio.bottom() + 3));
-    QPainterPath triangle;
-    triangle.moveTo(x - 5, a.top() - 7);
-    triangle.lineTo(x + 5, a.top() - 7);
-    triangle.lineTo(x, a.top() - 1);
-    triangle.closeSubpath();
-    p.setPen(Qt::NoPen);
-    p.setBrush(head);
-    p.drawPath(triangle);
 }
 
 void SequenceTimeline::paintAudio(QPainter& p)
@@ -424,7 +477,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
             onSelect(selected_);
     }
     playhead_ = t;
-    update();
+    invalidate();
     if (onSeek)
         onSeek(playhead_);
 }
@@ -440,7 +493,7 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
     if (movingReplacement_) {
         const double perPixel = total() / std::max(1.0, videoLane().width());
         replacement_->offset = replacementStart_ + (x - pressX_) * perPixel;
-        update();
+        invalidate();
         return;
     }
     if (selecting_) {
@@ -454,7 +507,7 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
     if (!dragging_ && std::abs(dragX_ - pressX_) > 8)
         dragging_ = true;
     if (dragging_)
-        update();
+        invalidate();
 }
 
 void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
@@ -484,7 +537,7 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
         const int fragment = blocks_[dragIndex_].fragmentId;
         dragging_ = false;
         dragIndex_ = -1;
-        update();
+        invalidate();
         if (onMove)
             onMove(fragment, std::min(to, static_cast<int>(blocks_.size()) - 1));
         return;

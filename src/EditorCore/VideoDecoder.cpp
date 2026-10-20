@@ -11,7 +11,11 @@ extern "C" {
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <utility>
+#include <vector>
 
 namespace editor::core {
 
@@ -48,6 +52,59 @@ AVPixelFormat d3d11PixelFormat(const AVCodec* codec)
     }
 }
 
+// Fotogrammi già allocati, da riusare: alla risoluzione di un video ogni fotogramma è grande (8 MB in 1080p).
+// Un fotogramma torna qui solo quando nessuno lo usa più (l'ultimo shared_ptr, anche nel thread dell'interfaccia),
+// quindi il riuso non tocca mai un'immagine ancora in coda o sullo schermo.
+class FramePool : public std::enable_shared_from_this<FramePool>
+{
+public:
+    static constexpr std::size_t kKept = 4;  // fotogrammi liberi tenuti da parte, gli altri si liberano
+
+    std::shared_ptr<VideoFrame> acquire()
+    {
+        std::unique_ptr<VideoFrame> frame;
+        {
+            std::lock_guard lock(mutex_);
+            if (!free_.empty()) {
+                frame = std::move(free_.back());
+                free_.pop_back();
+            }
+        }
+        if (!frame)
+            frame = std::make_unique<VideoFrame>();
+        // Il fotogramma torna al pool se c'è ancora (il decoder può essere già stato chiuso).
+        return std::shared_ptr<VideoFrame>(frame.release(), [pool = weak_from_this()](VideoFrame* f) {
+            std::unique_ptr<VideoFrame> owned(f);
+            if (const auto alive = pool.lock())
+                alive->release(std::move(owned));
+        });
+    }
+
+private:
+    void release(std::unique_ptr<VideoFrame> frame)
+    {
+        std::lock_guard lock(mutex_);
+        if (free_.size() < kKept)
+            free_.push_back(std::move(frame));
+    }
+
+    std::mutex mutex_;
+    std::vector<std::unique_ptr<VideoFrame>> free_;
+};
+
+// Parametri con cui è stata impostata la conversione dei colori: se non cambiano non si reimposta.
+struct ColorSetup
+{
+    int sourceWidth = 0;
+    int sourceHeight = 0;
+    int sourceFormat = -1;
+    int width = 0;
+    int height = 0;
+    bool bt709 = false;
+    int fullRange = 0;
+    bool operator==(const ColorSetup&) const = default;
+};
+
 }  // namespace
 
 // Il file aperto (fmt, stream, index, codec, timeBase, startOffset) viene da OpenedStream.
@@ -64,6 +121,8 @@ struct VideoDecoder::Impl : OpenedStream
     FramePtr previous{av_frame_alloc()};
     FramePtr transferred{av_frame_alloc()};
     std::unique_ptr<SwsContext, SwsDeleter> sws;
+    std::optional<ColorSetup> colorSetup;  // vuoto = da impostare (contesto nuovo)
+    std::shared_ptr<FramePool> pool = std::make_shared<FramePool>();
 
     double fps = 0.0;
     double displayWidth = 0.0;  // larghezza con il rapporto d'aspetto dei pixel applicato
@@ -220,18 +279,26 @@ struct VideoDecoder::Impl : OpenedStream
         sws.reset(sws_getCachedContext(sws.release(), source->width, source->height,
                                        static_cast<AVPixelFormat>(source->format), outWidth, outHeight,
                                        AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr));
-        if (!sws)
+        if (!sws) {
+            colorSetup.reset();
             throw MediaError("Conversione dei colori non supportata per questo video.");
+        }
 
         // Colori corretti: BT.709 per l'HD (anche quando il file non lo dichiara), BT.601 altrimenti.
         const bool bt709 = f->colorspace == AVCOL_SPC_BT709
                         || (f->colorspace == AVCOL_SPC_UNSPECIFIED && source->height >= 720);
-        const int* coefficients = sws_getCoefficients(bt709 ? SWS_CS_ITU709 : SWS_CS_DEFAULT);
         const int fullRange = f->color_range == AVCOL_RANGE_JPEG ? 1 : 0;
-        sws_setColorspaceDetails(sws.get(), coefficients, fullRange, sws_getCoefficients(SWS_CS_DEFAULT), 1, 0,
-                                 1 << 16, 1 << 16);
+        // Si imposta solo con un contesto nuovo (cambiano dimensioni o formato) o colori diversi dal fotogramma prima.
+        const ColorSetup setup{source->width, source->height, source->format, outWidth, outHeight, bt709, fullRange};
+        if (colorSetup != setup) {
+            const int* coefficients = sws_getCoefficients(bt709 ? SWS_CS_ITU709 : SWS_CS_DEFAULT);
+            sws_setColorspaceDetails(sws.get(), coefficients, fullRange, sws_getCoefficients(SWS_CS_DEFAULT), 1, 0,
+                                     1 << 16, 1 << 16);
+            colorSetup = setup;
+        }
 
-        auto out = std::make_shared<VideoFrame>();
+        // Ogni byte del fotogramma viene riscritto da sws_scale (righe di outWidth * 4 byte, senza margine).
+        std::shared_ptr<VideoFrame> out = pool->acquire();
         out->time = frameTime(f);
         out->width = outWidth;
         out->height = outHeight;
@@ -282,6 +349,7 @@ struct VideoDecoder::Impl : OpenedStream
     {
         hardwareAllowed = false;
         sws.reset();
+        colorSetup.reset();
         openCodec();
     }
 };

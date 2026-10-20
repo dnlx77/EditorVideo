@@ -3,6 +3,7 @@
 #include "EditorCore/SegmentList.h"
 
 #include <QtGui/QImage>
+#include <QtGui/QPixmap>
 #include <QtWidgets/QWidget>
 
 #include <functional>
@@ -69,23 +70,32 @@ public:
     // Miniatura del file `clipId` al tempo `sourceTime` (nei tempi del file); un'immagine vuota se non è ancora
     // pronta (chi la fornisce la prepara in background e poi chiede di ridisegnare).
     std::function<QImage(int clipId, double sourceTime)> thumbnailFor;
+    // Da chiamare quando thumbnailFor ha nuove miniature pronte: si ridisegnano i blocchi.
+    void thumbnailsChanged();
 
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void changeEvent(QEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private:
+    // Tutto tranne il cursore (blocchi, miniature, forme d'onda, tratti) si disegna in cache_ e si rifà solo quando
+    // cambia; a ogni ridisegno si copia cache_ e sopra si disegna il cursore.
+    void invalidate();
+    void paintStatic(QPainter& p);
+    QRect cursorRect(double seconds) const;
     QRectF videoLane() const;
     QRectF audioLane() const;
     std::vector<QRectF> blockRects(const QRectF& lane) const;  // il riquadro di ogni blocco nella corsia
     QRectF replacementHandle() const;  // maniglia della traccia sostitutiva (vuoto se non c'è)
-    double total() const;
+    double total() const { return total_; }
     double xForTime(double seconds) const;
     double timeForX(double x) const;
     int blockAt(double x) const;     // indice del blocco sotto x, -1 se nessuno
@@ -93,6 +103,7 @@ private:
     void paintAudio(QPainter& p);
 
     std::vector<Block> blocks_;
+    double total_ = 0.0;  // durata della sequenza: somma dei blocchi, calcolata in setBlocks
     std::vector<core::TimeRange> muted_;
     std::optional<Replacement> replacement_;
     double playhead_ = 0.0;
@@ -108,6 +119,9 @@ private:
     double selectionAnchor_ = 0.0;
     bool movingReplacement_ = false;
     double replacementStart_ = 0.0;  // offset all'inizio del trascinamento
+
+    QPixmap cache_;
+    bool cacheValid_ = false;
 };
 
 // Colore del blocco per un file (si ripetono dopo una decina di file).
