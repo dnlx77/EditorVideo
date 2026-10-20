@@ -552,10 +552,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
         replacement.stream = findMainStream(replacement.ctx.get(), AVMEDIA_TYPE_AUDIO);
         if (replacement.stream < 0)
             throw MediaError("Il file " + fileNameOf(audio.replacement->path) + " non contiene audio.");
-        for (unsigned i = 0; i < replacement.ctx->nb_streams; ++i) {
-            if (static_cast<int>(i) != replacement.stream)
-                replacement.ctx->streams[i]->discard = AVDISCARD_ALL;
-        }
+        keepOnlyStream(replacement.ctx.get(), replacement.stream);
         replacement.start = startOffsetSeconds(replacement.ctx.get());
         replacement.offset = audio.replacement->offset;
         const AVStream* in = replacement.ctx->streams[replacement.stream];

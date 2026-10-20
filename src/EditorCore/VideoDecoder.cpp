@@ -50,12 +50,9 @@ AVPixelFormat d3d11PixelFormat(const AVCodec* codec)
 
 }  // namespace
 
-struct VideoDecoder::Impl
+// Il file aperto (fmt, stream, index, codec, timeBase, startOffset) viene da OpenedStream.
+struct VideoDecoder::Impl : OpenedStream
 {
-    FormatContextPtr fmt;
-    int streamIndex = -1;
-    AVStream* stream = nullptr;
-    const AVCodec* codec = nullptr;
     CodecContextPtr ctx;
     BufferRefPtr hwDevice;
     AVPixelFormat hwPixelFormat = AV_PIX_FMT_NONE;
@@ -68,8 +65,6 @@ struct VideoDecoder::Impl
     FramePtr transferred{av_frame_alloc()};
     std::unique_ptr<SwsContext, SwsDeleter> sws;
 
-    double timeBase = 0.0;
-    double startOffset = 0.0;
     double fps = 0.0;
     double displayWidth = 0.0;  // larghezza con il rapporto d'aspetto dei pixel applicato
     double displayHeight = 0.0;
@@ -170,7 +165,7 @@ struct VideoDecoder::Impl
                 avcodec_send_packet(ctx.get(), nullptr);  // svuota il decoder
                 continue;
             }
-            if (packet->stream_index != streamIndex) {
+            if (packet->stream_index != index) {
                 av_packet_unref(packet.get());
                 continue;
             }
@@ -253,9 +248,7 @@ struct VideoDecoder::Impl
     std::shared_ptr<VideoFrame> seekImpl(double seconds)
     {
         const double target = std::max(0.0, seconds);
-        const auto ts = static_cast<std::int64_t>(std::llround((target + startOffset) / timeBase));
-        if (av_seek_frame(fmt.get(), streamIndex, ts, AVSEEK_FLAG_BACKWARD) < 0)
-            avformat_seek_file(fmt.get(), streamIndex, INT64_MIN, ts, ts, 0);
+        seekStream(fmt.get(), index, target, startOffset);
         avcodec_flush_buffers(ctx.get());
         demuxerAtEnd = false;
         av_frame_unref(previous.get());
@@ -306,22 +299,9 @@ VideoDecoder::VideoDecoder(const std::string& utf8Path, const Options& options)
     if (!d.packet || !d.frame || !d.previous || !d.transferred)
         throw MediaError("Memoria insufficiente per il decoder video.");
 
-    d.fmt = openInput(utf8Path);
-    d.streamIndex = findMainStream(d.fmt.get(), AVMEDIA_TYPE_VIDEO);
-    if (d.streamIndex < 0)
-        throw MediaError("Il file non contiene un flusso video: " + utf8Path);
-    d.stream = d.fmt->streams[d.streamIndex];
-    for (unsigned i = 0; i < d.fmt->nb_streams; ++i)
-        d.fmt->streams[i]->discard = static_cast<int>(i) == d.streamIndex ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
-
-    d.codec = avcodec_find_decoder(d.stream->codecpar->codec_id);
-    if (d.codec == nullptr)
-        throw MediaError("Nessun decoder disponibile per il codec video "
-                         + std::string(avcodec_get_name(d.stream->codecpar->codec_id)) + ".");
+    static_cast<OpenedStream&>(d) = openMainStream(utf8Path, AVMEDIA_TYPE_VIDEO);
     d.hwPixelFormat = d3d11PixelFormat(d.codec);
 
-    d.timeBase = av_q2d(d.stream->time_base);
-    d.startOffset = startOffsetSeconds(d.fmt.get());
     const AVRational rate = av_guess_frame_rate(d.fmt.get(), d.stream, nullptr);
     d.fps = rate.num > 0 && rate.den > 0 ? av_q2d(rate) : 0.0;
 
@@ -353,12 +333,7 @@ std::string VideoDecoder::decoderDescription() const
 
 double VideoDecoder::durationSeconds() const
 {
-    const AVFormatContext* fmt = impl_->fmt.get();
-    if (fmt->duration != AV_NOPTS_VALUE)
-        return fmt->duration / double(AV_TIME_BASE);
-    if (impl_->stream->duration != AV_NOPTS_VALUE)
-        return impl_->stream->duration * impl_->timeBase;
-    return -1.0;
+    return durationOf(impl_->fmt.get(), impl_->stream);
 }
 
 double VideoDecoder::frameRate() const

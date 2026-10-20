@@ -53,6 +53,31 @@ double startOffsetSeconds(const AVFormatContext* fmt);
 // Primo flusso del tipo richiesto, escluse le copertine (immagini allegate). -1 se non c'è.
 int findMainStream(const AVFormatContext* fmt, AVMediaType type);
 
+// Il demuxer legge solo i pacchetti del flusso `index`: gli altri vengono scartati.
+void keepOnlyStream(AVFormatContext* fmt, int index);
+
+// File aperto per decodificarne il flusso principale di un tipo (video o audio).
+struct OpenedStream
+{
+    FormatContextPtr fmt;
+    AVStream* stream = nullptr;
+    int index = -1;
+    const AVCodec* codec = nullptr;  // decoder del flusso
+    double timeBase = 0.0;           // secondi per unità di tempo del flusso
+    double startOffset = 0.0;        // vedi startOffsetSeconds
+};
+
+// Apre il file (percorso UTF-8), sceglie il flusso principale del tipo (vedi findMainStream), scarta gli altri e
+// trova il decoder. Lancia MediaError (messaggio in italiano) se il flusso o il decoder non ci sono.
+OpenedStream openMainStream(const std::string& utf8Path, AVMediaType type);
+
+// Porta il demuxer al pacchetto chiave del flusso `index` in `seconds` (tempo mostrato, senza startOffset) o
+// subito prima; se non si può, al primo possibile da lì in poi. Il decoder va svuotato a parte.
+void seekStream(AVFormatContext* fmt, int index, double seconds, double startOffset);
+
+// Durata in secondi: quella del file, altrimenti quella del flusso; -1 se sconosciuta.
+double durationOf(const AVFormatContext* fmt, const AVStream* stream);
+
 // Disposizione dei canali in testo, es. "stereo", "5.1(side)". Alcuni contenitori (es. PCM in Matroska) non la
 // salvano: in quel caso si usa quella standard per quel numero di canali ("stereo" invece di "2 channels").
 std::string describeChannelLayout(const AVCodecParameters* par);

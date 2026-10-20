@@ -59,8 +59,7 @@ StreamInfo describeStream(const AVFormatContext* fmt, AVStream* st)
 std::vector<double> readKeyframes(AVFormatContext* fmt, int streamIndex, const std::atomic<bool>* cancel)
 {
     // Leggiamo solo i pacchetti del flusso video: gli altri flussi vengono scartati dal demuxer.
-    for (unsigned i = 0; i < fmt->nb_streams; ++i)
-        fmt->streams[i]->discard = static_cast<int>(i) == streamIndex ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+    keepOnlyStream(fmt, streamIndex);
 
     const AVStream* st = fmt->streams[streamIndex];
     const double timeBase = av_q2d(st->time_base);
