@@ -97,7 +97,9 @@ public:
     std::function<void()> onSegmentChanged;  // IN, OUT o elenco dei tratti cambiati (anche aprendo un altro file)
 
 private:
-    void openAudio();  // l'audio da riprodurre: quello del file o quello esterno
+    // L'audio da riprodurre: quello del file o quello esterno. `own` = decoder dell'audio del file già aperto (si usa
+    // se non c'è un audio esterno, invece di riaprire il file).
+    void openAudio(std::unique_ptr<core::AudioDecoder> own = nullptr);
     void startWorkers(double from);
     void stopWorkers();
     void videoWorker();

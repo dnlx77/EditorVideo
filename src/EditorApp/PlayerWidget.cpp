@@ -186,9 +186,10 @@ void PlayerWidget::openFile(const QString& path)
         videoError = QString::fromUtf8(e.what());
     }
     path_ = path;
+    std::unique_ptr<core::AudioDecoder> own;
     try {
-        const core::AudioDecoder own(utf8Path);
-        ownAudioDuration_ = std::max(0.0, own.durationSeconds());
+        own = std::make_unique<core::AudioDecoder>(utf8Path);
+        ownAudioDuration_ = std::max(0.0, own->durationSeconds());
         ownAudio_ = true;
     } catch (const std::exception&) {
         // File senza audio: si riproduce solo il video.
@@ -200,7 +201,7 @@ void PlayerWidget::openFile(const QString& path)
         updateControls();
         return;
     }
-    openAudio();
+    openAudio(std::move(own));  // nessun thread è ancora partito: il decoder passa al thread dell'audio solo con play()
 
     duration_ = std::max({0.0, video_ ? video_->durationSeconds() : 0.0, ownAudioDuration_});
     timeline_->setDuration(duration_);
@@ -226,7 +227,7 @@ void PlayerWidget::openFile(const QString& path)
     updatePositionLabel(0.0);
 }
 
-void PlayerWidget::openAudio()
+void PlayerWidget::openAudio(std::unique_ptr<core::AudioDecoder> own)
 {
     audio_.reset();
     audioOut_.close();
@@ -236,7 +237,10 @@ void PlayerWidget::openAudio()
         return;
     const QString source = externalAudio_.isEmpty() ? path_ : externalAudio_;
     try {
-        audio_ = std::make_unique<core::AudioDecoder>(QDir::toNativeSeparators(source).toStdString());
+        if (externalAudio_.isEmpty() && own)
+            audio_ = std::move(own);
+        else
+            audio_ = std::make_unique<core::AudioDecoder>(QDir::toNativeSeparators(source).toStdString());
         externalActive_ = !externalAudio_.isEmpty();
     } catch (const std::exception&) {
         audioNote_ = QStringLiteral("audio non leggibile");
