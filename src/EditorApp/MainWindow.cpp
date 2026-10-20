@@ -122,8 +122,17 @@ const QString kVideoFilter = QStringLiteral(
     "File video e audio (*.mp4 *.mkv *.mov *.avi *.m4v *.webm *.ts *.mts *.m2ts *.mpg *.wmv *.flv "
     "*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus);;Tutti i file (*.*)");
 
-const QString kProjectFilter = QStringLiteral("Progetto EditorVideo (*.evproj)");
+const QString kProjectExtension = QString::fromLatin1(core::kProjectExtension);  // ".evproj"
+const QString kProjectFilter = QStringLiteral("Progetto EditorVideo (*%1)").arg(kProjectExtension);
 constexpr int kRecentProjects = 5;
+const QString kRecentProjectsKey = QStringLiteral("progettiRecenti");  // impostazione con i progetti recenti
+
+// Titolo della Sorgente; con il triangolo quando l'anteprima attiva è il Montaggio (vedi setProgramActive).
+QString sourceTitle(bool sourceActive)
+{
+    return (sourceActive ? QStringLiteral("<b>Sorgente</b>") : QStringLiteral("<b>▶ Sorgente</b>"))
+         + QStringLiteral(" (segna I e O, poi A per metterlo nel montaggio)");
+}
 
 QSettings settings()
 {
@@ -205,7 +214,7 @@ MainWindow::MainWindow(QWidget* parent)
     player_ = new PlayerWidget;
     player_->onSegmentChanged = [this] { updateExportAction(); };
     player_->installEventFilter(this);  // un clic sulla Sorgente la rende l'anteprima attiva
-    sourceTitle_ = new QLabel(QStringLiteral("<b>Sorgente</b> (segna I e O, poi A per metterlo nel montaggio)"));
+    sourceTitle_ = new QLabel(sourceTitle(true));
     auto* sourcePanel = new QWidget;
     auto* sourceLayout = new QVBoxLayout(sourcePanel);
     sourceLayout->setContentsMargins(0, 0, 0, 0);
@@ -326,8 +335,7 @@ void MainWindow::setProgramActive(bool active)
 {
     programActive_ = active;
     // Il titolo dice a quale anteprima vanno Spazio e frecce.
-    sourceTitle_->setText(active ? QStringLiteral("<b>Sorgente</b> (segna I e O, poi A per metterlo nel montaggio)")
-                                 : QStringLiteral("<b>▶ Sorgente</b> (segna I e O, poi A per metterlo nel montaggio)"));
+    sourceTitle_->setText(sourceTitle(active));
 }
 
 void MainWindow::togglePlay()
@@ -1027,7 +1035,8 @@ void MainWindow::createMenus()
     connect(recentMenu_, &QMenu::aboutToShow, this, [this] { rebuildRecentMenu(); });
     QAction* saveAction = fileMenu->addAction(QStringLiteral("&Salva progetto"), this, [this] { saveProject(); });
     saveAction->setShortcut(QKeySequence::Save);
-    saveAction->setStatusTip(QStringLiteral("Salva file, montaggio e audio in un file .evproj (gli originali non vengono toccati)"));
+    saveAction->setStatusTip(QStringLiteral("Salva file, montaggio e audio in un file %1 (gli originali non vengono toccati)")
+                                 .arg(kProjectExtension));
     QAction* saveAsAction = fileMenu->addAction(QStringLiteral("Salva progetto &con nome..."), this, [this] { saveProjectAsDialog(); });
     saveAsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
     fileMenu->addSeparator();
@@ -1522,13 +1531,13 @@ bool MainWindow::saveProjectAsDialog()
     QString suggested = projectPath_;
     if (suggested.isEmpty() && !project_.empty()) {
         const QFileInfo first(qs(project_.clips().front().path));
-        suggested = first.dir().filePath(first.completeBaseName() + QStringLiteral(".evproj"));
+        suggested = first.dir().filePath(first.completeBaseName() + kProjectExtension);
     }
     QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Salva progetto"), suggested, kProjectFilter);
     if (path.isEmpty())
         return false;
-    if (QFileInfo(path).suffix().compare(QStringLiteral("evproj"), Qt::CaseInsensitive) != 0)
-        path += QStringLiteral(".evproj");
+    if (QFileInfo(path).suffix().compare(kProjectExtension.mid(1), Qt::CaseInsensitive) != 0)
+        path += kProjectExtension;
     return saveProjectAs(path);
 }
 
@@ -1662,18 +1671,18 @@ bool MainWindow::openProject(const QString& path, bool interactive)
 void MainWindow::rememberRecent(const QString& path)
 {
     QSettings s = settings();
-    QStringList recent = s.value(QStringLiteral("progettiRecenti")).toStringList();
+    QStringList recent = s.value(kRecentProjectsKey).toStringList();
     recent.removeIf([&](const QString& p) { return p.compare(path, Qt::CaseInsensitive) == 0; });
     recent.prepend(path);
     while (recent.size() > kRecentProjects)
         recent.removeLast();
-    s.setValue(QStringLiteral("progettiRecenti"), recent);
+    s.setValue(kRecentProjectsKey, recent);
 }
 
 void MainWindow::rebuildRecentMenu()
 {
     recentMenu_->clear();
-    const QStringList recent = settings().value(QStringLiteral("progettiRecenti")).toStringList();
+    const QStringList recent = settings().value(kRecentProjectsKey).toStringList();
     if (recent.isEmpty()) {
         recentMenu_->addAction(QStringLiteral("(nessuno)"))->setEnabled(false);
         return;
@@ -1686,9 +1695,9 @@ void MainWindow::rebuildRecentMenu()
                                                          QMessageBox::warning(this, QStringLiteral("Progetto non trovato"),
                                                                               QStringLiteral("Il progetto %1 non c'è più.").arg(path));
                                                          QSettings s = settings();
-                                                         QStringList list = s.value(QStringLiteral("progettiRecenti")).toStringList();
+                                                         QStringList list = s.value(kRecentProjectsKey).toStringList();
                                                          list.removeAll(path);
-                                                         s.setValue(QStringLiteral("progettiRecenti"), list);
+                                                         s.setValue(kRecentProjectsKey, list);
                                                          return;
                                                      }
                                                      if (maybeSave())
@@ -1698,7 +1707,7 @@ void MainWindow::rebuildRecentMenu()
     }
     recentMenu_->addSeparator();
     recentMenu_->addAction(QStringLiteral("Svuota l'elenco"), this,
-                           [] { settings().remove(QStringLiteral("progettiRecenti")); });
+                           [] { settings().remove(kRecentProjectsKey); });
 }
 
 // ---------------------------------------------------------------------------------------------------------------

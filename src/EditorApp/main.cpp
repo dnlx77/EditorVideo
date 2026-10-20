@@ -326,6 +326,7 @@ int runProjectTest(const QStringList& args, qsizetype at)
         std::printf("Uso: EditorVideo.exe --project-test <file> [<file> ...]\n");
         return 1;
     }
+    const auto projectFileName = [](const std::string& name) { return name + core::kProjectExtension; };
     const auto read = [](const fs::path& path) {
         std::ifstream in(path, std::ios::binary);
         std::ostringstream content;
@@ -360,7 +361,7 @@ int runProjectTest(const QStringList& args, qsizetype at)
         project.setAudioReplacement(core::AudioReplacement{project.clips().front().path, 0.5, project.clips().front().duration});
         const core::ProjectView view{project.clips().front().id, 0.0, 1.0, 0.5, total / 2};
 
-        const std::string saved = core::utf8FromPath(base / "originale" / "montaggio.evproj");
+        const std::string saved = core::utf8FromPath(base / "originale" / projectFileName("montaggio"));
         core::saveProjectFile(saved, project, view);
         std::printf("Progetto salvato: %s (%d file, %d pezzi)\n", saved.c_str(), static_cast<int>(project.clips().size()),
                     static_cast<int>(project.sequence().fragments().size()));
@@ -375,7 +376,7 @@ int runProjectTest(const QStringList& args, qsizetype at)
             sameDurations = sameDurations && std::abs(loaded.savedDurations[clip.id] - info.durationSeconds) < 1e-9;
         }
         check(sameDurations, "durate dei file uguali a quelle salvate");
-        const std::string again = core::utf8FromPath(base / "originale" / "di_nuovo.evproj");
+        const std::string again = core::utf8FromPath(base / "originale" / projectFileName("di_nuovo"));
         core::saveProjectFile(again, loaded.project, loaded.view);
         check(read(core::pathFromUtf8(saved)) == read(core::pathFromUtf8(again)),
               "salvato di nuovo: identico");
@@ -384,7 +385,8 @@ int runProjectTest(const QStringList& args, qsizetype at)
 
         // Cartella spostata: i file si ritrovano dal percorso relativo, e il progetto riaperto si esporta.
         fs::rename(base / "originale", base / "spostata");
-        core::LoadedProject moved = core::loadProjectFile(core::utf8FromPath(base / "spostata" / "montaggio.evproj"));
+        core::LoadedProject moved =
+            core::loadProjectFile(core::utf8FromPath(base / "spostata" / projectFileName("montaggio")));
         bool inside = moved.missing.empty();
         for (const core::Clip& clip : moved.project.clips()) {
             inside = inside && clip.path.find("spostata") != std::string::npos
@@ -403,16 +405,17 @@ int runProjectTest(const QStringList& args, qsizetype at)
 
         // Un file tolto: risulta mancante; senza di lui i suoi pezzi vengono tolti.
         fs::remove(core::pathFromUtf8(moved.project.clips().front().path));
-        core::LoadedProject missing = core::loadProjectFile(core::utf8FromPath(base / "spostata" / "montaggio.evproj"));
+        core::LoadedProject missing =
+            core::loadProjectFile(core::utf8FromPath(base / "spostata" / projectFileName("montaggio")));
         std::printf("  file mancanti: %d\n", static_cast<int>(missing.missing.size()));
         const int dropped = core::dropMissing(missing);
         check(!missing.project.audioReplacement() && dropped == 2, "file mancante segnalato e tolto con i suoi 2 pezzi");
 
         // Versione sconosciuta e file rovinato: rifiutati con un messaggio.
-        std::string json = read(base / "spostata" / "montaggio.evproj");
+        std::string json = read(base / "spostata" / projectFileName("montaggio"));
         const auto refused = [&](const std::string& text, const char* what) {
             try {
-                core::projectFromJson(core::utf8FromPath(base / "x.evproj"), text);
+                core::projectFromJson(core::utf8FromPath(base / projectFileName("x")), text);
                 check(false, what);
             } catch (const core::ProjectFileError& e) {
                 std::printf("  %s -> \"%s\"\n", what, e.what());
@@ -591,7 +594,8 @@ int main(int argc, char* argv[])
             files.append(arguments[i]);
     }
     // Un progetto (.evproj, anche con un doppio clic se è associato a EditorVideo) si apre come progetto.
-    if (files.size() == 1 && files.front().endsWith(QStringLiteral(".evproj"), Qt::CaseInsensitive)) {
+    if (files.size() == 1
+        && files.front().endsWith(QString::fromLatin1(editor::core::kProjectExtension), Qt::CaseInsensitive)) {
         window.openProject(files.front());
         files.clear();
     }
@@ -713,7 +717,8 @@ int main(int argc, char* argv[])
                 // Progetto: salvato e riaperto, con gli stessi pezzi e lo stesso audio tolto (e senza modifiche
                 // in sospeso).
                 {
-                    const QString projectFile = QDir::temp().filePath(QStringLiteral("EditorVideoProvaProgetto.evproj"));
+                    const QString projectFile =
+                        QDir::temp().filePath(QStringLiteral("EditorVideoProvaProgetto") + editor::core::kProjectExtension);
                     const std::size_t pieces = sequence.fragments().size();
                     const bool saved = window->saveProjectAs(projectFile, false) && !window->isModified();
                     const bool reopened = saved && window->openProject(projectFile, false);
