@@ -2,7 +2,7 @@
 
 #include "EditorApp/AudioOutput.h"
 #include "EditorCore/CutSegment.h"
-#include "EditorCore/SegmentList.h"
+#include "EditorCore/TimeUtil.h"
 
 #include <QtCore/QElapsedTimer>
 #include <QtWidgets/QWidget>
@@ -93,9 +93,9 @@ public:
     double frameDuration() const { return frameDuration_; }
     const core::CutSegment& segment() const;
 
-    // Elenco dei tratti da tenere, esportati uno dopo l'altro in un unico file.
-    // Riprende un elenco salvato (es. tornando su un file del progetto). Va chiamato dopo setKeyframes().
-    void setRanges(const core::SegmentList& ranges);
+    // Tratti del file che sono nel montaggio (bande verdi), in ordine e già uniti. Va chiamato dopo setKeyframes(),
+    // che li toglie.
+    void setRanges(std::vector<core::TimeRange> ranges);
     std::function<void()> onSegmentChanged;  // IN, OUT o elenco dei tratti cambiati (anche aprendo un altro file)
 
 private:
@@ -151,7 +151,7 @@ private:
     double windowEnd_ = 0.0;  // vedi setPlaybackWindow()
 
     core::CutSegment segment_;
-    core::SegmentList ranges_;
+    std::vector<core::TimeRange> ranges_;  // vedi setRanges()
     double wantedIn_ = 0.0;  // IN come l'ha segnato l'utente, prima dell'aggancio (serve per togliere un tratto)
     bool keyframesKnown_ = false;
     QString segmentNote_;  // spiegazione dell'ultima operazione su IN/OUT (es. IN agganciato)

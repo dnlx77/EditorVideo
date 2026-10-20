@@ -117,7 +117,7 @@ TEST(AudioMute, CuttingAPieceTakesItsRangesAway)
     s.insert(-1, 2, 0.0, 4.0, snap);
     s.muteRange(0.5, 1.5);
     s.muteRange(2.5, 3.5);
-    ASSERT_EQ(s.removeSourceRange(2, 1.2, 3.0, snap), SegmentList::RemoveResult::Removed);
+    ASSERT_EQ(s.removeSourceRange(2, 1.2, 3.0, snap), Sequence::RemoveResult::Removed);
     // Restano 0 .. 1,2 e 3 .. 4, con il silenzio 0,5 .. 1,2 e 3 .. 3,5 (che nella sequenza parte da 1,2).
     ASSERT_EQ(s.fragments().size(), 2u);
     expectRanges(s.fragments()[0].muted, {{0.5, 1.2}});

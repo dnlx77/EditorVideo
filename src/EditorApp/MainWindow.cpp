@@ -9,6 +9,7 @@
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
 #include "EditorCore/Thumbnails.h"
+#include "EditorCore/TimeUtil.h"
 #include "EditorCore/Waveform.h"
 
 #include <QtCore/QDir>
@@ -448,21 +449,21 @@ void MainWindow::cutFromSequence()
     QString note;
     bool removed = false;
     switch (project_.sequence().removeSourceRange(clip->id, from, to, project_.snapper())) {
-    case core::SegmentList::RemoveResult::Removed:
+    case core::Sequence::RemoveResult::Removed:
         note = QStringLiteral("Tolto %1 - %2 dal montaggio. La parte dopo riparte dal fotogramma chiave più vicino.")
                    .arg(timeText(from), timeText(to));
         player_->clearSegment();
         removed = true;
         break;
-    case core::SegmentList::RemoveResult::OutsideKept:
+    case core::Sequence::RemoveResult::OutsideKept:
         note = QStringLiteral("Questo tratto (%1 - %2) non è nel montaggio.").arg(timeText(from), timeText(to));
         break;
-    case core::SegmentList::RemoveResult::NoKeyframeInside:
+    case core::Sequence::RemoveResult::NoKeyframeInside:
         note = QStringLiteral("Non si può togliere %1 - %2 senza ricodifica: dentro non c'è un fotogramma chiave da "
                               "cui far ripartire il video. Allarga il pezzo fino a comprendere una tacca.")
                    .arg(timeText(from), timeText(to));
         break;
-    case core::SegmentList::RemoveResult::Empty:
+    case core::Sequence::RemoveResult::Empty:
         note = QStringLiteral("Tratto vuoto: OUT deve stare dopo IN.");
         break;
     }
@@ -818,13 +819,17 @@ void MainWindow::updateSourceBands()
     const core::Clip* clip = project_.find(currentClipId_);
     if (clip == nullptr || !clip->analyzed)
         return;
-    core::SegmentList used;
-    used.reset(clip->keyframes, clip->duration);
+    // Ogni pezzo riportato dentro il file e con l'inizio sul fotogramma chiave (come nel montaggio), poi uniti.
+    std::vector<core::TimeRange> used;
     for (const core::Fragment& f : project_.sequence().fragments()) {
-        if (f.clipId == clip->id)
-            used.add(f.start, f.end);
+        if (f.clipId != clip->id)
+            continue;
+        const double start = core::clampTo(f.start, clip->duration);
+        const double end = core::clampTo(f.end, clip->duration);
+        if (end > start + core::kTimeEpsilon)
+            used.push_back({clip->snapToKeyframe(start), end});
     }
-    player_->setRanges(used);
+    player_->setRanges(core::mergeRanges(std::move(used)));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

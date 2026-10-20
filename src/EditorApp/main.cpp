@@ -7,7 +7,6 @@
 #include "EditorCore/CutSegment.h"
 #include "EditorCore/Project.h"
 #include "EditorCore/ProjectFile.h"
-#include "EditorCore/SegmentList.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/SegmentExport.h"
@@ -490,27 +489,30 @@ int runExportTest(const QStringList& args, qsizetype at){
     const std::string input = args[at + 1].toStdString();
     const std::string output = args[at + 2].toStdString();
     try {
+        // Un montaggio con i tratti del file, nell'ordine dato: ogni IN si aggancia al fotogramma chiave.
         const core::MediaInfo source = core::probeFile(input);
-        core::SegmentList list;
-        list.reset(source.keyframeTimes, source.durationSeconds);
+        core::Project project;
+        const int id = project.add(input);
+        project.setAnalysis(id, source.keyframeTimes, source.durationSeconds);
+        core::Sequence& sequence = project.sequence();
         for (qsizetype i = 0; i < pairs; ++i) {
-            const double in = args[at + 3 + 2 * i].toDouble();
-            const double out = args[at + 4 + 2 * i].toDouble();
-            if (!list.add(in, out))
+            const double in = core::clampTo(args[at + 3 + 2 * i].toDouble(), source.durationSeconds);
+            const double out = core::clampTo(args[at + 4 + 2 * i].toDouble(), source.durationSeconds);
+            if (sequence.insert(-1, id, in, out, project.snapper()) == 0)
                 throw core::MediaError("OUT deve stare dopo IN.");
         }
-        for (const core::TimeRange& r : list.ranges())
-            std::printf("Tratto: %.3f - %.3f s\n", r.start, r.end);
+        for (const core::Fragment& f : sequence.fragments())
+            std::printf("Tratto: %.3f - %.3f s\n", f.start, f.end);
 
-        const core::ExportResult result = core::exportSegments(input, output, list.ranges());
+        const core::ExportResult result = core::exportClips(project.exportPlan(), output, core::AudioEdit{});
         const core::MediaInfo exported = core::probeFile(output);
         std::printf("Esportato: %d tratti, durata attesa %.3f s, ottenuta %.3f s, %d flussi\n", result.segmentCount,
-                    list.totalLength(), exported.durationSeconds, result.streamCount);
+                    sequence.totalLength(), exported.durationSeconds, result.streamCount);
 
         // Tolleranza: un paio di fotogrammi per giunzione.
-        const double tolerance = 0.1 + 0.05 * static_cast<double>(list.ranges().size() - 1);
+        const double tolerance = 0.1 + 0.05 * static_cast<double>(sequence.fragments().size() - 1);
         bool ok = exported.streams.size() == static_cast<std::size_t>(result.streamCount)
-               && std::abs(exported.durationSeconds - list.totalLength()) < tolerance;
+               && std::abs(exported.durationSeconds - sequence.totalLength()) < tolerance;
         // Stessi codec dell'originale, nello stesso ordine (video e audio).
         std::size_t next = 0;
         for (const core::StreamInfo& stream : source.streams) {

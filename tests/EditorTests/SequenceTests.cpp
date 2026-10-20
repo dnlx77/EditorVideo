@@ -144,7 +144,7 @@ TEST(Sequence, RemoveSourceRangeFromPieces)
     s.insert(-1, 1, 0.0, 10.0, snap);
     s.insert(-1, 2, 0.0, 3.0, snap);
     s.insert(-1, 1, 0.0, 10.0, snap);  // lo stesso file due volte: il pezzo tolto sparisce da entrambi
-    EXPECT_EQ(s.removeSourceRange(1, 3.0, 6.0, snap), SegmentList::RemoveResult::Removed);
+    EXPECT_EQ(s.removeSourceRange(1, 3.0, 6.0, snap), Sequence::RemoveResult::Removed);
     expectPieces(s, {{1, 0.0, 3.0}, {1, 6.0, 10.0}, {2, 0.0, 3.0}, {1, 0.0, 3.0}, {1, 6.0, 10.0}});
 }
 
@@ -152,10 +152,10 @@ TEST(Sequence, RemoveSourceRangeReasons)
 {
     Sequence s;
     s.insert(-1, 1, 0.0, 4.0, snap);
-    EXPECT_EQ(s.removeSourceRange(1, 2.0, 2.0, snap), SegmentList::RemoveResult::Empty);
-    EXPECT_EQ(s.removeSourceRange(1, 6.0, 8.0, snap), SegmentList::RemoveResult::OutsideKept);  // fuori dai pezzi
-    EXPECT_EQ(s.removeSourceRange(2, 0.0, 1.0, snap), SegmentList::RemoveResult::OutsideKept);  // file non usato
-    EXPECT_EQ(s.removeSourceRange(1, 2.5, 3.5, snap), SegmentList::RemoveResult::NoKeyframeInside);
+    EXPECT_EQ(s.removeSourceRange(1, 2.0, 2.0, snap), Sequence::RemoveResult::Empty);
+    EXPECT_EQ(s.removeSourceRange(1, 6.0, 8.0, snap), Sequence::RemoveResult::OutsideKept);  // fuori dai pezzi
+    EXPECT_EQ(s.removeSourceRange(2, 0.0, 1.0, snap), Sequence::RemoveResult::OutsideKept);  // file non usato
+    EXPECT_EQ(s.removeSourceRange(1, 2.5, 3.5, snap), Sequence::RemoveResult::NoKeyframeInside);
     expectPieces(s, {{1, 0.0, 4.0}});
 }
 

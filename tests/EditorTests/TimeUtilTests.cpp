@@ -19,6 +19,21 @@ TEST(TimeUtil, SnapBeforeFirstKeyframeOrWithoutKeyframes)
     EXPECT_DOUBLE_EQ(snapToKeyframe({}, 1.234), 1.234);
 }
 
+TEST(TimeUtil, MergeRangesSortsAndMerges)
+{
+    // In ordine qualunque: si ordinano; sovrapposti o che si toccano (anche entro la tolleranza): uno solo.
+    const std::vector<TimeRange> merged =
+        mergeRanges({{8.0, 9.0}, {2.5, 4.5}, {0.0, 1.0}, {2.0, 3.0}, {4.5005, 6.0}, {3.0, 3.5}});
+    EXPECT_EQ(merged, (std::vector<TimeRange>{{0.0, 1.0}, {2.0, 6.0}, {8.0, 9.0}}));
+}
+
+TEST(TimeUtil, MergeRangesDropsEmptyAndInverted)
+{
+    EXPECT_TRUE(mergeRanges({{5.0, 5.0}, {5.0, 3.0}, {4.0, 4.0005}}).empty());
+    EXPECT_EQ(mergeRanges({{1.0, 1.0}, {2.0, 3.0}}), (std::vector<TimeRange>{{2.0, 3.0}}));
+    EXPECT_TRUE(mergeRanges({}).empty());
+}
+
 TEST(TimeUtil, ClampsIntoFile)
 {
     EXPECT_DOUBLE_EQ(clampTo(-1.0, 10.0), 0.0);
