@@ -13,6 +13,11 @@ jobs:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\..\vcpkg-cache
       # In CI compiliamo solo Release: il triplet "release" evita di costruire anche le librerie Debug.
       VCPKG_TRIPLET: x64-windows-release
+      # Commit di vcpkg (script e strumento) usato dalla CI. È fisso perché gli hash dei pacchetti dipendono anche da
+      # vcpkg stesso: con l'ultima versione a ogni esecuzione la cache non serviva più e Qt e FFmpeg si ricompilavano
+      # ogni volta. Le versioni dei pacchetti restano quelle di "builtin-baseline" in vcpkg.json. Deve essere almeno
+      # 8995e218 (2026-10-06): prima vcpkg.targets perdeva /p:VcpkgTriplet e l'installazione falliva.
+      VCPKG_COMMIT: 469a0504e4a6ebf6173d1c0f51a7fa34c382fd43
     steps:
       - uses: actions/checkout@v4
 
@@ -20,16 +25,29 @@ jobs:
         shell: pwsh
         run: |
           git clone https://github.com/microsoft/vcpkg "$env:VCPKG_ROOT"
+          git -C "$env:VCPKG_ROOT" checkout --quiet $env:VCPKG_COMMIT
           & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
           New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
 
       - name: Ripristina la cache di vcpkg
-        id: cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-${{ env.VCPKG_TRIPLET }}-
+          # Una chiave nuova a ogni esecuzione (una cache non si può sovrascrivere): si riparte dalla più recente con
+          # lo stesso commit di vcpkg e, se sono stati compilati pacchetti nuovi, se ne salva una aggiornata.
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-
+            vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-
+
+      - name: Contenuto della cache
+        id: before
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem "$env:VCPKG_DEFAULT_BINARY_CACHE" -Recurse -File)
+          $mb = [math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB)
+          Write-Output "Cache di vcpkg ripristinata: $($files.Count) pacchetti, $mb MB"
+          "count=$($files.Count)" >> $env:GITHUB_OUTPUT
 
       - uses: microsoft/setup-msbuild@v2
 
@@ -37,26 +55,31 @@ jobs:
         shell: pwsh
         run: msbuild EditorVideo.slnx /m /nologo /p:Configuration=Release /p:Platform=x64 /p:VcpkgTriplet=$env:VCPKG_TRIPLET
 
+      - name: Pacchetti nuovi nella cache
+        id: after
+        if: always()
+        shell: pwsh
+        run: |
+          $count = @(Get-ChildItem "$env:VCPKG_DEFAULT_BINARY_CACHE" -Recurse -File).Count
+          Write-Output "Pacchetti nella cache: $count (prima della compilazione: ${{ steps.before.outputs.count }})"
+          "changed=$(if ($count -ne [int]'${{ steps.before.outputs.count }}') { 'si' } else { 'no' })" >> $env:GITHUB_OUTPUT
+
       - name: Salva la cache di vcpkg
-        if: always() && steps.cache.outputs.cache-hit != 'true'
+        if: always() && steps.after.outputs.changed == 'si'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}
 
       - name: Test
         shell: pwsh
         run: bin\x64\Release\EditorTests.exe
 
+      # Le prove che seguono avviano EditorVideo.exe con ci\run-editorvideo.ps1: aspetta la fine, mostra l'output e
+      # controlla il codice di uscita.
       - name: Avvio dell'applicazione
         shell: pwsh
-        run: |
-          $p = Start-Process bin\x64\Release\EditorVideo.exe -ArgumentList '--smoke-test' -PassThru `
-                 -RedirectStandardOutput smoke.txt -RedirectStandardError smoke-err.txt
-          $null = $p.Handle  # necessario per leggere ExitCode
-          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "EditorVideo non si è chiuso entro 60 secondi" }
-          Get-Content smoke.txt, smoke-err.txt
-          if ($p.ExitCode -ne 0) { throw "EditorVideo è uscito con codice $($p.ExitCode)" }
+        run: '& ci\run-editorvideo.ps1 -Name avvio -Arguments ''--smoke-test'''
 
       - name: Prova della riproduzione
         shell: pwsh
@@ -66,12 +89,7 @@ jobs:
           # software e l'orologio senza audio.
           bin\x64\Release\EditorTests.exe --gtest_also_run_disabled_tests --gtest_filter=*GeneraVideoDimostrativi*
           foreach ($f in 'demo_mpeg2_gpu.mkv', 'demo_mpeg4_software.mkv', 'demo_solo_audio.wav') {
-            $p = Start-Process bin\x64\Release\EditorVideo.exe -ArgumentList '--smoke-test', "`"$env:TEMP\EditorVideoDemo\$f`"" `
-                   -PassThru -RedirectStandardOutput play.txt -RedirectStandardError play-err.txt
-            $null = $p.Handle  # necessario per leggere ExitCode
-            if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "$f : EditorVideo non si è chiuso entro 60 secondi" }
-            Get-Content play.txt, play-err.txt
-            if ($p.ExitCode -ne 0) { throw "$f : riproduzione non riuscita (codice $($p.ExitCode))" }
+            & ci\run-editorvideo.ps1 -Name $f -Arguments '--smoke-test', "`"$env:TEMP\EditorVideoDemo\$f`""
           }
 
       - name: Prova dell'esportazione
@@ -87,12 +105,7 @@ jobs:
           )
           foreach ($t in $prove) {
             $argomenti = @('--export-test', "`"$demo\$($t[0])`"", "`"$demo\$($t[1])`"") + $t[2..($t.Count - 1)]
-            $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru -ArgumentList $argomenti `
-                   -RedirectStandardOutput export.txt -RedirectStandardError export-err.txt
-            $null = $p.Handle  # necessario per leggere ExitCode
-            if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "$($t[1]) : esportazione bloccata" }
-            Get-Content export.txt, export-err.txt
-            if ($p.ExitCode -ne 0) { throw "$($t[1]) : esportazione non riuscita (codice $($p.ExitCode))" }
+            & ci\run-editorvideo.ps1 -Name "esportazione $($t[1])" -Arguments $argomenti
           }
 
       - name: Prova dell'unione di più file
@@ -106,12 +119,7 @@ jobs:
           )
           foreach ($prova in $prove) {
             $argomenti = @('--join-test', "`"$demo\unione.mkv`"") + ($prova.file | ForEach-Object { "`"$demo\$_`"" })
-            $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru -ArgumentList $argomenti `
-                   -RedirectStandardOutput join.txt -RedirectStandardError join-err.txt
-            $null = $p.Handle  # necessario per leggere ExitCode
-            if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "unione bloccata" }
-            Get-Content join.txt, join-err.txt
-            if ($p.ExitCode -ne $prova.atteso) { throw "unione di $($prova.file -join ' + '): codice $($p.ExitCode) invece di $($prova.atteso)" }
+            & ci\run-editorvideo.ps1 -Name "unione di $($prova.file -join ' + ')" -Arguments $argomenti -Expected $prova.atteso
           }
 
       - name: Prova del montaggio
@@ -127,12 +135,7 @@ jobs:
           )
           foreach ($prova in $prove) {
             $argomenti = @('--sequence-test', "`"$demo\montaggio.mkv`"") + $prova.pezzi
-            $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru -ArgumentList $argomenti `
-                   -RedirectStandardOutput montaggio.txt -RedirectStandardError montaggio-err.txt
-            $null = $p.Handle  # necessario per leggere ExitCode
-            if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "montaggio bloccato" }
-            Get-Content montaggio.txt, montaggio-err.txt
-            if ($p.ExitCode -ne $prova.atteso) { throw "montaggio: codice $($p.ExitCode) invece di $($prova.atteso)" }
+            & ci\run-editorvideo.ps1 -Name montaggio -Arguments $argomenti -Expected $prova.atteso
           }
 
       - name: Prova dell'audio
@@ -149,35 +152,18 @@ jobs:
             @{ atteso = 4; argomenti = @("`"$demo\audio_rifiutato.mp4`"", $v, 'replace', $a, '0') }
           )
           foreach ($prova in $prove) {
-            $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru -ArgumentList (@('--audio-test') + $prova.argomenti) `
-                   -RedirectStandardOutput audio.txt -RedirectStandardError audio-err.txt
-            $null = $p.Handle  # necessario per leggere ExitCode
-            if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "prova dell'audio bloccata" }
-            Get-Content audio.txt, audio-err.txt
-            if ($p.ExitCode -ne $prova.atteso) { throw "audio: codice $($p.ExitCode) invece di $($prova.atteso)" }
+            & ci\run-editorvideo.ps1 -Name audio -Arguments (@('--audio-test') + $prova.argomenti) -Expected $prova.atteso
           }
 
       - name: Prova del progetto
         shell: pwsh
         run: |
           # Salva, riapre, sposta la cartella, esporta; file mancante, versione sconosciuta e file rovinato.
-          $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru `
-                 -ArgumentList '--project-test', "`"$env:TEMP\EditorVideoDemo\demo_mpeg2_gpu.mkv`"" `
-                 -RedirectStandardOutput progetto.txt -RedirectStandardError progetto-err.txt
-          $null = $p.Handle  # necessario per leggere ExitCode
-          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "prova del progetto bloccata" }
-          Get-Content progetto.txt, progetto-err.txt
-          if ($p.ExitCode -ne 0) { throw "progetto: codice $($p.ExitCode)" }
+          & ci\run-editorvideo.ps1 -Name progetto -Arguments '--project-test', "`"$env:TEMP\EditorVideoDemo\demo_mpeg2_gpu.mkv`""
 
       - name: Prova delle miniature
         shell: pwsh
         run: |
           # Una miniatura per fotogramma chiave dai file dimostrativi (il file solo audio non ne ha).
           $demo = "$env:TEMP\EditorVideoDemo"
-          $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru `
-                 -ArgumentList '--thumbnail-test', "`"$demo\demo_mpeg2_gpu.mkv`"", "`"$demo\demo_mpeg4_software.mkv`"", "`"$demo\demo_solo_audio.wav`"" `
-                 -RedirectStandardOutput miniature.txt -RedirectStandardError miniature-err.txt
-          $null = $p.Handle  # necessario per leggere ExitCode
-          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "prova delle miniature bloccata" }
-          Get-Content miniature.txt, miniature-err.txt
-          if ($p.ExitCode -ne 0) { throw "miniature: codice $($p.ExitCode)" }
+          & ci\run-editorvideo.ps1 -Name miniature -Arguments '--thumbnail-test', "`"$demo\demo_mpeg2_gpu.mkv`"", "`"$demo\demo_mpeg4_software.mkv`"", "`"$demo\demo_solo_audio.wav`""
