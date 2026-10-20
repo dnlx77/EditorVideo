@@ -6,6 +6,10 @@
 #include <algorithm>
 #include <filesystem>
 
+extern "C" {
+#include <libavutil/channel_layout.h>
+}
+
 namespace editor::core::detail {
 
 bool isCancelled(const std::atomic<bool>* cancel)
@@ -89,6 +93,21 @@ int findMainStream(const AVFormatContext* fmt, AVMediaType type)
             return static_cast<int>(i);
     }
     return -1;
+}
+
+std::string describeChannelLayout(const AVCodecParameters* par)
+{
+    AVChannelLayout layout = {};
+    if (par->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
+        av_channel_layout_default(&layout, par->ch_layout.nb_channels);
+    else
+        av_channel_layout_copy(&layout, &par->ch_layout);
+    char text[128] = {};
+    std::string result;
+    if (av_channel_layout_describe(&layout, text, sizeof(text)) > 0)
+        result = text;
+    av_channel_layout_uninit(&layout);
+    return result;
 }
 
 }  // namespace editor::core::detail
