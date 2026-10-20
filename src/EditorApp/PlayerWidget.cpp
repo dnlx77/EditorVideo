@@ -450,9 +450,18 @@ void PlayerWidget::audioWorker()
                 // L'audio esterno può cominciare più avanti: fino a lì silenzio, così l'orologio parte dal punto giusto.
                 const double gap = std::round((time - audioFrom_) * rate);
                 if (gap > 0 && gap < rate * 3600) {
-                    const std::vector<std::int16_t> silence(static_cast<std::size_t>(gap) * channels, 0);
                     audioStart_ = audioFrom_;
-                    if (!audioOut_.write(silence.data(), silence.size(), stopWorkers_))
+                    // A blocchi di ~100 ms, sempre lo stesso: anche un'attesa lunga non occupa memoria. write()
+                    // restituisce false se bisogna fermarsi.
+                    const auto block = static_cast<std::size_t>(std::max(1.0, std::round(rate / 10)));
+                    const std::vector<std::int16_t> silence(block * channels, 0);
+                    bool written = true;
+                    for (auto left = static_cast<std::size_t>(gap); written && left > 0;) {
+                        const std::size_t frames = std::min(left, block);
+                        written = audioOut_.write(silence.data(), frames * channels, stopWorkers_);
+                        left -= frames;
+                    }
+                    if (!written)
                         break;
                 }
             }
