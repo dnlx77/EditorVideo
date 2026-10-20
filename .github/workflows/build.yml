@@ -161,10 +161,23 @@ jobs:
         shell: pwsh
         run: |
           # Salva, riapre, sposta la cartella, esporta; file mancante, versione sconosciuta e file rovinato.
-          $p = Start-Process bind\Release\EditorVideo.exe -PassThru `
+          $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru `
                  -ArgumentList '--project-test', "`"$env:TEMP\EditorVideoDemo\demo_mpeg2_gpu.mkv`"" `
                  -RedirectStandardOutput progetto.txt -RedirectStandardError progetto-err.txt
           $null = $p.Handle  # necessario per leggere ExitCode
           if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "prova del progetto bloccata" }
           Get-Content progetto.txt, progetto-err.txt
           if ($p.ExitCode -ne 0) { throw "progetto: codice $($p.ExitCode)" }
+
+      - name: Prova delle miniature
+        shell: pwsh
+        run: |
+          # Una miniatura per fotogramma chiave dai file dimostrativi (il file solo audio non ne ha).
+          $demo = "$env:TEMP\EditorVideoDemo"
+          $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru `
+                 -ArgumentList '--thumbnail-test', "`"$demo\demo_mpeg2_gpu.mkv`"", "`"$demo\demo_mpeg4_software.mkv`"", "`"$demo\demo_solo_audio.wav`"" `
+                 -RedirectStandardOutput miniature.txt -RedirectStandardError miniature-err.txt
+          $null = $p.Handle  # necessario per leggere ExitCode
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "prova delle miniature bloccata" }
+          Get-Content miniature.txt, miniature-err.txt
+          if ($p.ExitCode -ne 0) { throw "miniature: codice $($p.ExitCode)" }

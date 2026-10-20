@@ -37,6 +37,7 @@
     <ClInclude Include="AudioDecoder.h" />
     <ClInclude Include="Compatibility.h" />
     <ClInclude Include="CutSegment.h" />
+    <ClInclude Include="EditHistory.h" />
     <ClInclude Include="FfmpegUtil.h" />
     <ClInclude Include="H264Params.h" />
     <ClInclude Include="Json.h" />
@@ -49,6 +50,7 @@
     <ClInclude Include="SegmentExport.h" />
     <ClInclude Include="SegmentList.h" />
     <ClInclude Include="Sequence.h" />
+    <ClInclude Include="Thumbnails.h" />
     <ClInclude Include="VideoDecoder.h" />
     <ClInclude Include="Waveform.h" />
   </ItemGroup>
@@ -56,6 +58,7 @@
     <ClCompile Include="AudioDecoder.cpp" />
     <ClCompile Include="Compatibility.cpp" />
     <ClCompile Include="CutSegment.cpp" />
+    <ClCompile Include="EditHistory.cpp" />
     <ClCompile Include="FfmpegUtil.cpp" />
     <ClCompile Include="H264Params.cpp" />
     <ClCompile Include="Json.cpp" />
@@ -67,6 +70,7 @@
     <ClCompile Include="SegmentExport.cpp" />
     <ClCompile Include="SegmentList.cpp" />
     <ClCompile Include="Sequence.cpp" />
+    <ClCompile Include="Thumbnails.cpp" />
     <ClCompile Include="VideoDecoder.cpp" />
     <ClCompile Include="Waveform.cpp" />
   </ItemGroup>

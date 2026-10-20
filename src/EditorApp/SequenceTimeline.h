@@ -2,6 +2,7 @@
 
 #include "EditorCore/SegmentList.h"
 
+#include <QtGui/QImage>
 #include <QtWidgets/QWidget>
 
 #include <functional>
@@ -30,7 +31,8 @@ public:
         int colorIndex = 0;  // di solito la posizione del file nel progetto
         QString label;       // es. "vacanze.mp4"
         double length = 0.0;
-        double sourceStart = 0.0;  // inizio del pezzo nel file (per la forma d'onda)
+        double sourceStart = 0.0;  // inizio del pezzo nel file (per la forma d'onda e le miniature)
+        int clipId = 0;            // file di origine (per le miniature)
         std::shared_ptr<const core::Waveform> waveform;  // nullptr = in calcolo
     };
 
@@ -64,6 +66,9 @@ public:
     std::function<void(int)> onActivate;              // doppio clic
     std::function<void(double from, double to)> onAudioSelection;  // tratto selezionato (vuoto = tolto)
     std::function<void(double offset)> onReplacementMoved;         // traccia sostitutiva spostata
+    // Miniatura del file `clipId` al tempo `sourceTime` (nei tempi del file); un'immagine vuota se non è ancora
+    // pronta (chi la fornisce la prepara in background e poi chiede di ridisegnare).
+    std::function<QImage(int clipId, double sourceTime)> thumbnailFor;
 
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;

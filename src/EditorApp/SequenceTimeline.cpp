@@ -15,7 +15,7 @@ namespace editor::app {
 namespace {
 
 constexpr double kTop = 16;          // spazio per il triangolo del cursore
-constexpr double kVideoHeight = 44;
+constexpr double kVideoHeight = 54;
 constexpr double kLaneGap = 4;
 constexpr double kHandleHeight = 14;  // maniglia della traccia sostitutiva
 
@@ -59,12 +59,12 @@ SequenceTimeline::SequenceTimeline(QWidget* parent)
 
 QSize SequenceTimeline::sizeHint() const
 {
-    return {800, 130};
+    return {800, 142};
 }
 
 QSize SequenceTimeline::minimumSizeHint() const
 {
-    return {200, 110};
+    return {200, 122};
 }
 
 void SequenceTimeline::setBlocks(std::vector<Block> blocks)
@@ -213,10 +213,46 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
         QColor color = blockColor(b.colorIndex);
         if (dragging_ && static_cast<int>(i) == dragIndex_)
             color.setAlpha(110);
-        p.setPen(b.fragmentId == selected_ ? QPen(pal.color(QPalette::Highlight), 3) : QPen(color.darker(140), 1));
+        p.setPen(Qt::NoPen);
         p.setBrush(color);
         p.drawRoundedRect(r, 3, 3);
-        if (r.width() > 30) {
+
+        // Miniature: una all'inizio del pezzo e altre a distanza regolare se il blocco è largo.
+        bool thumbnails = false;
+        if (thumbnailFor && r.width() > 24) {
+            const double slot = r.height() * 16.0 / 9.0;
+            const int count = std::max(1, static_cast<int>(r.width() / slot));
+            p.save();
+            QPainterPath clip;
+            clip.addRoundedRect(r, 3, 3);
+            p.setClipPath(clip);
+            for (int k = 0; k < count; ++k) {
+                const QImage image = thumbnailFor(b.clipId, b.sourceStart + k * b.length / count);
+                if (image.isNull())
+                    continue;
+                const QSizeF size = QSizeF(image.size()).scaled(QSizeF(slot, r.height()), Qt::KeepAspectRatioByExpanding);
+                const QRectF target(QPointF(r.left() + k * slot, r.top()), size);
+                p.drawImage(target, image);
+                thumbnails = true;
+            }
+            if (dragging_ && static_cast<int>(i) == dragIndex_)
+                p.fillRect(r, QColor(255, 255, 255, 140));
+            p.restore();
+        }
+        p.setPen(b.fragmentId == selected_ ? QPen(pal.color(QPalette::Highlight), 3) : QPen(color.darker(140), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(r, 3, 3);
+        if (thumbnails && r.width() > 30) {
+            // Sopra le miniature: nome e durata su una striscia scura, nel colore del file.
+            const QRectF band(QPointF(r.left() + 1, r.bottom() - p.fontMetrics().height() - 3), QPointF(r.right() - 1, r.bottom() - 1));
+            p.fillRect(band, QColor(0, 0, 0, 150));
+            p.fillRect(QRectF(band.topLeft(), QSizeF(4, band.height())), color);
+            p.setPen(Qt::white);
+            const QString text = QStringLiteral("%1  %2").arg(
+                b.label, QString::fromStdString(core::formatDuration(b.length)).mid(3));
+            p.drawText(band.adjusted(7, 0, -3, 0), Qt::AlignLeft | Qt::AlignVCenter,
+                       p.fontMetrics().elidedText(text, Qt::ElideRight, static_cast<int>(band.width() - 10)));
+        } else if (r.width() > 30) {
             p.setPen(Qt::white);
             const QString text = QStringLiteral("%1\n%2").arg(
                 b.label, QString::fromStdString(core::formatDuration(b.length)).mid(3));  // mm:ss.mmm

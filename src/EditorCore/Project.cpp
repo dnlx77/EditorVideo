@@ -119,6 +119,23 @@ void Project::setAudioOffset(double offset)
         replacement_->offset = offset;
 }
 
+void Project::restoreEdits(const Project& snapshot)
+{
+    std::vector<Clip> clips = snapshot.clips_;
+    for (Clip& clip : clips) {
+        const Clip* now = find(clip.id);
+        if (now != nullptr && now->analyzed && now->path == clip.path) {
+            clip.keyframes = now->keyframes;
+            clip.duration = now->duration;
+            clip.analyzed = true;
+        }
+    }
+    clips_ = std::move(clips);
+    sequence_ = snapshot.sequence_;
+    replacement_ = snapshot.replacement_;
+    nextId_ = std::max(nextId_, snapshot.nextId_);  // un file aggiunto dopo non riprende l'id di uno tolto
+}
+
 AudioEdit Project::audioEdit() const
 {
     return {sequence_.mutedRanges(), replacement_};

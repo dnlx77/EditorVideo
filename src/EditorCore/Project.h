@@ -81,6 +81,10 @@ public:
     // Tratti silenziati e traccia sostitutiva, per l'esportazione.
     AudioEdit audioEdit() const;
 
+    // Torna allo stato di `snapshot` (Annulla / Ripeti): file, sequenza e audio. L'analisi dei file già fatta qui
+    // (fotogrammi chiave e durata) resta, anche se nell'istantanea il file non era ancora analizzato.
+    void restoreEdits(const Project& snapshot);
+
 private:
     std::vector<Clip> clips_;
     std::optional<AudioReplacement> replacement_;
