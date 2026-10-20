@@ -71,6 +71,9 @@ QSize SequenceTimeline::minimumSizeHint() const
 void SequenceTimeline::setBlocks(std::vector<Block> blocks)
 {
     blocks_ = std::move(blocks);
+    total_ = 0.0;
+    for (const Block& b : blocks_)
+        total_ += b.length;
     if (std::none_of(blocks_.begin(), blocks_.end(), [this](const Block& b) { return b.fragmentId == selected_; }))
         selected_ = 0;
     invalidate();
@@ -177,14 +180,6 @@ QRectF SequenceTimeline::replacementHandle() const
     if (right <= left)
         return {};
     return QRectF(QPointF(left, lane.top()), QPointF(right, lane.top() + kHandleHeight));
-}
-
-double SequenceTimeline::total() const
-{
-    double sum = 0.0;
-    for (const Block& b : blocks_)
-        sum += b.length;
-    return sum;
 }
 
 double SequenceTimeline::xForTime(double seconds) const

@@ -95,7 +95,7 @@ private:
     QRectF audioLane() const;
     std::vector<QRectF> blockRects(const QRectF& lane) const;  // il riquadro di ogni blocco nella corsia
     QRectF replacementHandle() const;  // maniglia della traccia sostitutiva (vuoto se non c'è)
-    double total() const;
+    double total() const { return total_; }
     double xForTime(double seconds) const;
     double timeForX(double x) const;
     int blockAt(double x) const;     // indice del blocco sotto x, -1 se nessuno
@@ -103,6 +103,7 @@ private:
     void paintAudio(QPainter& p);
 
     std::vector<Block> blocks_;
+    double total_ = 0.0;  // durata della sequenza: somma dei blocchi, calcolata in setBlocks
     std::vector<core::TimeRange> muted_;
     std::optional<Replacement> replacement_;
     double playhead_ = 0.0;

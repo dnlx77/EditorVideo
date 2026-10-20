@@ -140,9 +140,11 @@ int runSequenceTest(const QStringList& args, qsizetype at)
         bool ok = std::abs(length - sequence.totalLength()) < 0.1 + 0.03 * static_cast<double>(result.segmentCount);
 
         // Ordine: subito dopo l'inizio di ogni pezzo, stesso fotogramma dell'originale.
+        double start = 0.0;  // inizio del pezzo nel montaggio
         for (std::size_t k = 0; k < sequence.fragments().size(); ++k) {
             const core::Fragment& f = sequence.fragments()[k];
-            const double inOutput = meanBrightness(output, sequence.startOf(static_cast<int>(k)) + 0.01);
+            const double inOutput = meanBrightness(output, start + 0.01);
+            start += f.length();
             const double inSource = meanBrightness(project.find(f.clipId)->path, f.start + 0.01);
             const bool same = inOutput >= 0 && std::abs(inOutput - inSource) < 3.0;
             std::printf("  pezzo %d (%.3f - %.3f s): luminosità %.1f, originale %.1f%s\n", static_cast<int>(k) + 1,
