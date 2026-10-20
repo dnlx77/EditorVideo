@@ -1,15 +1,10 @@
 #include "EditorCore/CutSegment.h"
 
+#include "EditorCore/TimeUtil.h"
+
 #include <algorithm>
 
 namespace editor::core {
-
-namespace {
-
-// Tolleranza sui confronti fra tempi: i tempi dei fotogrammi arrivano da calcoli in virgola mobile.
-constexpr double kEpsilon = 0.001;
-
-}  // namespace
 
 void CutSegment::reset(std::vector<double> keyframes, double duration)
 {
@@ -24,23 +19,19 @@ void CutSegment::reset(std::vector<double> keyframes, double duration)
 
 double CutSegment::clampToFile(double seconds) const
 {
-    return duration_ > 0 ? std::clamp(seconds, 0.0, duration_) : std::max(0.0, seconds);
+    return clampTo(seconds, duration_);
 }
 
 double CutSegment::snapToKeyframe(double seconds) const
 {
-    if (keyframes_.empty())
-        return seconds;
-    // Primo fotogramma chiave strettamente dopo `seconds` (con tolleranza): quello prima è il nostro.
-    const auto next = std::upper_bound(keyframes_.begin(), keyframes_.end(), seconds + kEpsilon);
-    return next == keyframes_.begin() ? keyframes_.front() : *std::prev(next);
+    return core::snapToKeyframe(keyframes_, seconds);
 }
 
 double CutSegment::setIn(double seconds)
 {
     in_ = snapToKeyframe(clampToFile(seconds));
     hasIn_ = true;
-    if (hasOut_ && out_ <= in_ + kEpsilon)
+    if (hasOut_ && out_ <= in_ + kTimeEpsilon)
         hasOut_ = false;
     return in_;
 }
@@ -48,7 +39,7 @@ double CutSegment::setIn(double seconds)
 bool CutSegment::setOut(double seconds)
 {
     const double out = clampToFile(seconds);
-    if (out <= in() + kEpsilon)
+    if (out <= in() + kTimeEpsilon)
         return false;
     out_ = out;
     hasOut_ = true;

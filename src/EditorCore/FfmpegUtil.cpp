@@ -1,18 +1,25 @@
 #include "EditorCore/FfmpegUtil.h"
 
 #include "EditorCore/MediaProbe.h"
+#include "EditorCore/PathUtil.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
 
-namespace editor::core::detail {
+extern "C" {
+#include <libavutil/channel_layout.h>
+}
 
-namespace {
+namespace editor::core::detail {
 
 bool isCancelled(const std::atomic<bool>* cancel)
 {
     return cancel != nullptr && cancel->load(std::memory_order_relaxed);
 }
+
+namespace {
 
 int interruptCallback(void* opaque)
 {
@@ -20,11 +27,6 @@ int interruptCallback(void* opaque)
 }
 
 }  // namespace
-
-std::filesystem::path pathFromUtf8(const std::string& utf8)
-{
-    return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
-}
 
 std::string ffmpegError(int code)
 {
@@ -93,6 +95,64 @@ int findMainStream(const AVFormatContext* fmt, AVMediaType type)
             return static_cast<int>(i);
     }
     return -1;
+}
+
+void keepOnlyStream(AVFormatContext* fmt, int index)
+{
+    for (unsigned i = 0; i < fmt->nb_streams; ++i)
+        fmt->streams[i]->discard = static_cast<int>(i) == index ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+}
+
+OpenedStream openMainStream(const std::string& utf8Path, AVMediaType type)
+{
+    const std::string kind = type == AVMEDIA_TYPE_VIDEO ? "video" : "audio";
+    OpenedStream opened;
+    opened.fmt = openInput(utf8Path);
+    opened.index = findMainStream(opened.fmt.get(), type);
+    if (opened.index < 0)
+        throw MediaError("Il file non contiene un flusso " + kind + ": " + utf8Path);
+    opened.stream = opened.fmt->streams[opened.index];
+    keepOnlyStream(opened.fmt.get(), opened.index);
+
+    opened.codec = avcodec_find_decoder(opened.stream->codecpar->codec_id);
+    if (opened.codec == nullptr)
+        throw MediaError("Nessun decoder disponibile per il codec " + kind + " "
+                         + std::string(avcodec_get_name(opened.stream->codecpar->codec_id)) + ".");
+    opened.timeBase = av_q2d(opened.stream->time_base);
+    opened.startOffset = startOffsetSeconds(opened.fmt.get());
+    return opened;
+}
+
+void seekStream(AVFormatContext* fmt, int index, double seconds, double startOffset)
+{
+    const double timeBase = av_q2d(fmt->streams[index]->time_base);
+    const auto ts = static_cast<std::int64_t>(std::llround((seconds + startOffset) / timeBase));
+    if (av_seek_frame(fmt, index, ts, AVSEEK_FLAG_BACKWARD) < 0)
+        avformat_seek_file(fmt, index, INT64_MIN, ts, ts, 0);
+}
+
+double durationOf(const AVFormatContext* fmt, const AVStream* stream)
+{
+    if (fmt->duration != AV_NOPTS_VALUE)
+        return fmt->duration / double(AV_TIME_BASE);
+    if (stream->duration != AV_NOPTS_VALUE)
+        return stream->duration * av_q2d(stream->time_base);
+    return -1.0;
+}
+
+std::string describeChannelLayout(const AVCodecParameters* par)
+{
+    AVChannelLayout layout = {};
+    if (par->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
+        av_channel_layout_default(&layout, par->ch_layout.nb_channels);
+    else
+        av_channel_layout_copy(&layout, &par->ch_layout);
+    char text[128] = {};
+    std::string result;
+    if (av_channel_layout_describe(&layout, text, sizeof(text)) > 0)
+        result = text;
+    av_channel_layout_uninit(&layout);
+    return result;
 }
 
 }  // namespace editor::core::detail

@@ -2,11 +2,6 @@
 
 #include "EditorCore/FfmpegUtil.h"
 
-extern "C" {
-#include <libavutil/channel_layout.h>
-#include <libavutil/pixdesc.h>
-}
-
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -17,11 +12,6 @@ namespace editor::core {
 using namespace detail;
 
 namespace {
-
-bool isCancelled(const std::atomic<bool>* cancel)
-{
-    return cancel != nullptr && cancel->load(std::memory_order_relaxed);
-}
 
 std::string dictValue(const AVDictionary* dict, const char* key, int flags = 0)
 {
@@ -46,11 +36,9 @@ StreamInfo describeStream(const AVFormatContext* fmt, AVStream* st)
     StreamInfo info;
     info.index = st->index;
     info.kind = kindOf(par->codec_type);
-    info.codec = avcodec_get_name(par->codec_id);
+    readStreamFormat(fmt, st, info);
     if (const AVCodecDescriptor* desc = avcodec_descriptor_get(par->codec_id); desc != nullptr && desc->long_name)
         info.codecLongName = desc->long_name;
-    if (const char* profile = avcodec_profile_name(par->codec_id, par->profile))
-        info.profile = profile;
     info.language = dictValue(st->metadata, "language");
 
     info.bitRate = par->bit_rate;
@@ -63,44 +51,15 @@ StreamInfo describeStream(const AVFormatContext* fmt, AVStream* st)
     if (st->duration != AV_NOPTS_VALUE)
         info.durationSeconds = st->duration * av_q2d(st->time_base);
 
-    switch (info.kind) {
-    case StreamKind::Video: {
-        info.width = par->width;
-        info.height = par->height;
+    if (info.kind == StreamKind::Video)
         info.attachedPicture = (st->disposition & AV_DISPOSITION_ATTACHED_PIC) != 0;
-        const AVRational rate = av_guess_frame_rate(const_cast<AVFormatContext*>(fmt), st, nullptr);
-        info.frameRate = rate.num > 0 && rate.den > 0 ? av_q2d(rate) : 0.0;
-        if (const char* name = av_get_pix_fmt_name(static_cast<AVPixelFormat>(par->format)))
-            info.pixelFormat = name;
-        break;
-    }
-    case StreamKind::Audio: {
-        info.sampleRate = par->sample_rate;
-        info.channels = par->ch_layout.nb_channels;
-        // Alcuni contenitori (es. PCM in Matroska) non salvano la disposizione dei canali:
-        // in quel caso mostriamo quella standard per quel numero di canali ("stereo" invece di "2 channels").
-        AVChannelLayout layout = {};
-        if (par->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
-            av_channel_layout_default(&layout, par->ch_layout.nb_channels);
-        else
-            av_channel_layout_copy(&layout, &par->ch_layout);
-        char text[128] = {};
-        if (av_channel_layout_describe(&layout, text, sizeof(text)) > 0)
-            info.channelLayout = text;
-        av_channel_layout_uninit(&layout);
-        break;
-    }
-    default:
-        break;
-    }
     return info;
 }
 
 std::vector<double> readKeyframes(AVFormatContext* fmt, int streamIndex, const std::atomic<bool>* cancel)
 {
     // Leggiamo solo i pacchetti del flusso video: gli altri flussi vengono scartati dal demuxer.
-    for (unsigned i = 0; i < fmt->nb_streams; ++i)
-        fmt->streams[i]->discard = static_cast<int>(i) == streamIndex ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+    keepOnlyStream(fmt, streamIndex);
 
     const AVStream* st = fmt->streams[streamIndex];
     const double timeBase = av_q2d(st->time_base);

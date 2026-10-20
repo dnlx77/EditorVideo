@@ -2,11 +2,7 @@
 
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/H264Params.h"
-
-extern "C" {
-#include <libavutil/channel_layout.h>
-#include <libavutil/pixdesc.h>
-}
+#include "EditorCore/PathUtil.h"
 
 #include <cmath>
 #include <cstdio>
@@ -90,8 +86,7 @@ MediaSignature readMediaSignature(const std::string& utf8Path)
     FormatContextPtr fmt = openInput(utf8Path);
     MediaSignature signature;
     signature.path = utf8Path;
-    const auto name = pathFromUtf8(utf8Path).filename().u8string();
-    signature.fileName.assign(name.begin(), name.end());
+    signature.fileName = fileNameOf(utf8Path);
 
     for (unsigned i = 0; i < fmt->nb_streams; ++i) {
         const AVStream* st = fmt->streams[i];
@@ -103,31 +98,9 @@ MediaSignature readMediaSignature(const std::string& utf8Path)
 
         StreamSignature s;
         s.kind = video ? StreamKind::Video : StreamKind::Audio;
-        s.codec = avcodec_get_name(par->codec_id);
-        if (const char* profile = avcodec_profile_name(par->codec_id, par->profile))
-            s.profile = profile;
+        readStreamFormat(fmt.get(), st, s);
         if (par->extradata != nullptr && par->extradata_size > 0)
             s.extradata.assign(par->extradata, par->extradata + par->extradata_size);
-        if (video) {
-            s.width = par->width;
-            s.height = par->height;
-            if (const char* pix = av_get_pix_fmt_name(static_cast<AVPixelFormat>(par->format)))
-                s.pixelFormat = pix;
-            const AVRational rate = av_guess_frame_rate(fmt.get(), const_cast<AVStream*>(st), nullptr);
-            s.frameRate = rate.num > 0 && rate.den > 0 ? av_q2d(rate) : 0.0;
-        } else {
-            s.sampleRate = par->sample_rate;
-            s.channels = par->ch_layout.nb_channels;
-            AVChannelLayout layout = {};
-            if (par->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
-                av_channel_layout_default(&layout, par->ch_layout.nb_channels);
-            else
-                av_channel_layout_copy(&layout, &par->ch_layout);
-            char text[128] = {};
-            if (av_channel_layout_describe(&layout, text, sizeof(text)) > 0)
-                s.channelLayout = text;
-            av_channel_layout_uninit(&layout);
-        }
         signature.streams.push_back(std::move(s));
     }
     return signature;

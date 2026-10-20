@@ -1,22 +1,22 @@
 #include "EditorCore/Sequence.h"
 
+#include "EditorCore/TimeUtil.h"
+
 #include <algorithm>
 
 namespace editor::core {
 
 namespace {
 
-constexpr double kEpsilon = 0.001;
-
 // Aggiunge [from, to) a un elenco di intervalli in ordine, unendo quelli che si toccano.
 void addRange(std::vector<TimeRange>& ranges, double from, double to)
 {
-    if (to <= from + kEpsilon)
+    if (to <= from + kTimeEpsilon)
         return;
     std::vector<TimeRange> result;
     TimeRange added{from, to};
     for (const TimeRange& r : ranges) {
-        if (r.end < added.start - kEpsilon || r.start > added.end + kEpsilon) {
+        if (r.end < added.start - kTimeEpsilon || r.start > added.end + kTimeEpsilon) {
             result.push_back(r);
             continue;
         }
@@ -32,13 +32,13 @@ void subtractRange(std::vector<TimeRange>& ranges, double from, double to)
 {
     std::vector<TimeRange> result;
     for (const TimeRange& r : ranges) {
-        if (r.end <= from + kEpsilon || r.start >= to - kEpsilon) {
+        if (r.end <= from + kTimeEpsilon || r.start >= to - kTimeEpsilon) {
             result.push_back(r);
             continue;
         }
-        if (r.start < from - kEpsilon)
+        if (r.start < from - kTimeEpsilon)
             result.push_back({r.start, from});
-        if (r.end > to + kEpsilon)
+        if (r.end > to + kTimeEpsilon)
             result.push_back({to, r.end});
     }
     ranges = std::move(result);
@@ -51,7 +51,7 @@ std::vector<TimeRange> clipRanges(const std::vector<TimeRange>& ranges, double f
     for (const TimeRange& r : ranges) {
         const double start = std::max(r.start, from);
         const double end = std::min(r.end, to);
-        if (end > start + kEpsilon)
+        if (end > start + kTimeEpsilon)
             result.push_back({start, end});
     }
     return result;
@@ -62,10 +62,10 @@ std::vector<TimeRange> clipRanges(const std::vector<TimeRange>& ranges, double f
 int Sequence::insert(int index, int clipId, double start, double end, const SnapFunction& snap)
 {
     // Un pezzo vuoto o al contrario si rifiuta prima dell'aggancio, che altrimenti lo allungherebbe all'indietro.
-    if (end <= start + kEpsilon)
+    if (end <= start + kTimeEpsilon)
         return 0;
     const double snapped = snap(clipId, std::max(0.0, start));
-    if (end <= snapped + kEpsilon)
+    if (end <= snapped + kTimeEpsilon)
         return 0;
     Fragment fragment{nextId_++, clipId, snapped, end};
     const auto at = index < 0 || index > static_cast<int>(fragments_.size()) ? fragments_.end()
@@ -119,7 +119,7 @@ int Sequence::split(double seconds, const SnapFunction& snap)
     Fragment& f = fragments_[index];
     const double source = f.start + (seconds - startOf(index));
     const double cut = snap(f.clipId, source);
-    if (cut <= f.start + kEpsilon || cut >= f.end - kEpsilon)
+    if (cut <= f.start + kTimeEpsilon || cut >= f.end - kTimeEpsilon)
         return 0;  // nessun fotogramma chiave dentro il pezzo prima del cursore
     Fragment second{nextId_++, f.clipId, cut, f.end, clipRanges(f.muted, cut, f.end)};
     f.end = cut;
@@ -130,23 +130,23 @@ int Sequence::split(double seconds, const SnapFunction& snap)
 
 SegmentList::RemoveResult Sequence::removeSourceRange(int clipId, double from, double to, const SnapFunction& snap)
 {
-    if (to <= from + kEpsilon)
+    if (to <= from + kTimeEpsilon)
         return SegmentList::RemoveResult::Empty;
 
     bool touched = false;
     std::vector<Fragment> result;
     for (const Fragment& f : fragments_) {
-        if (f.clipId != clipId || f.end <= from + kEpsilon || f.start >= to - kEpsilon) {
+        if (f.clipId != clipId || f.end <= from + kTimeEpsilon || f.start >= to - kTimeEpsilon) {
             result.push_back(f);
             continue;
         }
         touched = true;
-        if (f.start < from - kEpsilon)
+        if (f.start < from - kTimeEpsilon)
             result.push_back({f.id, f.clipId, f.start, from, clipRanges(f.muted, f.start, from)});
         // La parte dopo il pezzo tolto deve ripartire da un fotogramma chiave.
         const double restart = std::max(f.start, snap(clipId, to));
-        if (f.end > to + kEpsilon && f.end > restart + kEpsilon) {
-            const bool firstPartKept = f.start < from - kEpsilon;
+        if (f.end > to + kTimeEpsilon && f.end > restart + kTimeEpsilon) {
+            const bool firstPartKept = f.start < from - kTimeEpsilon;
             result.push_back({firstPartKept ? nextId_++ : f.id, f.clipId, restart, f.end, clipRanges(f.muted, restart, f.end)});
         }
     }
@@ -160,7 +160,7 @@ SegmentList::RemoveResult Sequence::removeSourceRange(int clipId, double from, d
         before += f.length();
     for (const Fragment& f : result)
         after += f.length();
-    if (after >= before - kEpsilon)
+    if (after >= before - kTimeEpsilon)
         return SegmentList::RemoveResult::NoKeyframeInside;
 
     fragments_ = std::move(result);
@@ -169,7 +169,7 @@ SegmentList::RemoveResult Sequence::removeSourceRange(int clipId, double from, d
 
 bool Sequence::muteRange(double from, double to)
 {
-    if (to <= from + kEpsilon)
+    if (to <= from + kTimeEpsilon)
         return false;
     bool changed = false;
     double start = 0.0;
@@ -177,7 +177,7 @@ bool Sequence::muteRange(double from, double to)
         const double end = start + f.length();
         const double a = std::max(from, start);
         const double b = std::min(to, end);
-        if (b > a + kEpsilon) {
+        if (b > a + kTimeEpsilon) {
             const auto before = f.muted;
             addRange(f.muted, f.start + (a - start), f.start + (b - start));
             changed = changed || f.muted != before;
@@ -189,7 +189,7 @@ bool Sequence::muteRange(double from, double to)
 
 bool Sequence::unmuteRange(double from, double to)
 {
-    if (to <= from + kEpsilon)
+    if (to <= from + kTimeEpsilon)
         return false;
     bool changed = false;
     double start = 0.0;
@@ -197,7 +197,7 @@ bool Sequence::unmuteRange(double from, double to)
         const double end = start + f.length();
         const double a = std::max(from, start);
         const double b = std::min(to, end);
-        if (b > a + kEpsilon) {
+        if (b > a + kTimeEpsilon) {
             const auto before = f.muted;
             subtractRange(f.muted, f.start + (a - start), f.start + (b - start));
             changed = changed || f.muted != before;
@@ -255,7 +255,7 @@ int Sequence::indexAt(double seconds) const
     double start = 0.0;
     for (std::size_t i = 0; i < fragments_.size(); ++i) {
         const double end = start + fragments_[i].length();
-        if (seconds >= start - kEpsilon && seconds < end - kEpsilon)
+        if (seconds >= start - kTimeEpsilon && seconds < end - kTimeEpsilon)
             return static_cast<int>(i);
         start = end;
     }

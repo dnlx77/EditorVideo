@@ -23,12 +23,9 @@ struct SwrDeleter
 
 }  // namespace
 
-struct AudioDecoder::Impl
+// Il file aperto (fmt, stream, index, codec, timeBase, startOffset) viene da OpenedStream.
+struct AudioDecoder::Impl : OpenedStream
 {
-    FormatContextPtr fmt;
-    int streamIndex = -1;
-    AVStream* stream = nullptr;
-    const AVCodec* codec = nullptr;
     CodecContextPtr ctx;
     std::unique_ptr<SwrContext, SwrDeleter> swr;
     PacketPtr packet{av_packet_alloc()};
@@ -41,8 +38,6 @@ struct AudioDecoder::Impl
 
     int outRate = 0;
     int outChannels = 0;
-    double timeBase = 0.0;
-    double startOffset = 0.0;
     bool demuxerAtEnd = false;
     double nextTime = 0.0;            // tempo atteso del prossimo campione, se il pacchetto non ha timestamp
     std::optional<double> trimUntil;  // dopo un seek: scarta i campioni prima di questo tempo
@@ -72,7 +67,7 @@ struct AudioDecoder::Impl
                 avcodec_send_packet(ctx.get(), nullptr);
                 continue;
             }
-            if (packet->stream_index == streamIndex)
+            if (packet->stream_index == index)
                 avcodec_send_packet(ctx.get(), packet.get());
             av_packet_unref(packet.get());
         }
@@ -118,18 +113,7 @@ AudioDecoder::AudioDecoder(const std::string& utf8Path)
     if (!d.packet || !d.frame)
         throw MediaError("Memoria insufficiente per il decoder audio.");
 
-    d.fmt = openInput(utf8Path);
-    d.streamIndex = findMainStream(d.fmt.get(), AVMEDIA_TYPE_AUDIO);
-    if (d.streamIndex < 0)
-        throw MediaError("Il file non contiene un flusso audio: " + utf8Path);
-    d.stream = d.fmt->streams[d.streamIndex];
-    for (unsigned i = 0; i < d.fmt->nb_streams; ++i)
-        d.fmt->streams[i]->discard = static_cast<int>(i) == d.streamIndex ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
-
-    d.codec = avcodec_find_decoder(d.stream->codecpar->codec_id);
-    if (d.codec == nullptr)
-        throw MediaError("Nessun decoder disponibile per il codec audio "
-                         + std::string(avcodec_get_name(d.stream->codecpar->codec_id)) + ".");
+    static_cast<OpenedStream&>(d) = openMainStream(utf8Path, AVMEDIA_TYPE_AUDIO);
     d.ctx.reset(avcodec_alloc_context3(d.codec));
     if (!d.ctx || avcodec_parameters_to_context(d.ctx.get(), d.stream->codecpar) < 0)
         throw MediaError("Parametri del flusso audio non validi.");
@@ -142,8 +126,6 @@ AudioDecoder::AudioDecoder(const std::string& utf8Path)
         throw MediaError("Parametri del flusso audio sconosciuti: " + utf8Path);
     d.outRate = d.ctx->sample_rate;
     d.outChannels = std::min(2, d.ctx->ch_layout.nb_channels);
-    d.timeBase = av_q2d(d.stream->time_base);
-    d.startOffset = startOffsetSeconds(d.fmt.get());
 }
 
 AudioDecoder::~AudioDecoder() = default;
@@ -160,21 +142,14 @@ int AudioDecoder::channels() const
 
 double AudioDecoder::durationSeconds() const
 {
-    const AVFormatContext* fmt = impl_->fmt.get();
-    if (fmt->duration != AV_NOPTS_VALUE)
-        return fmt->duration / double(AV_TIME_BASE);
-    if (impl_->stream->duration != AV_NOPTS_VALUE)
-        return impl_->stream->duration * impl_->timeBase;
-    return -1.0;
+    return durationOf(impl_->fmt.get(), impl_->stream);
 }
 
 void AudioDecoder::seek(double seconds)
 {
     Impl& d = *impl_;
     const double target = std::max(0.0, seconds);
-    const auto ts = static_cast<std::int64_t>(std::llround((target + d.startOffset) / d.timeBase));
-    if (av_seek_frame(d.fmt.get(), d.streamIndex, ts, AVSEEK_FLAG_BACKWARD) < 0)
-        avformat_seek_file(d.fmt.get(), d.streamIndex, INT64_MIN, ts, ts, 0);
+    seekStream(d.fmt.get(), d.index, target, d.startOffset);
     avcodec_flush_buffers(d.ctx.get());
     d.demuxerAtEnd = false;
     d.nextTime = target;

@@ -3,6 +3,8 @@
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/H264Params.h"
+#include "EditorCore/PathUtil.h"
+#include "EditorCore/TimeUtil.h"
 
 #include <algorithm>
 #include <atomic>
@@ -26,7 +28,6 @@ using namespace detail;
 
 namespace {
 
-constexpr double kEpsilon = 0.001;
 // Dopo la fine di un tratto si legge ancora un po': in un file i pacchetti dei vari flussi sono mescolati e,
 // con i B-frame, un fotogramma prima della fine può arrivare dopo uno successivo.
 constexpr double kReadPastOut = 1.0;
@@ -74,9 +75,8 @@ bool samePath(const std::string& a, const std::string& b)
     if (std::filesystem::exists(pb, ec) && std::filesystem::equivalent(pa, pb, ec))
         return true;
     // Su Windows i nomi dei file non distinguono maiuscole e minuscole.
-    const auto ca = std::filesystem::weakly_canonical(pa, ec).u8string();
-    const auto cb = std::filesystem::weakly_canonical(pb, ec).u8string();
-    return lowercase(std::string(ca.begin(), ca.end())) == lowercase(std::string(cb.begin(), cb.end()));
+    return lowercase(utf8FromPath(std::filesystem::weakly_canonical(pa, ec)))
+        == lowercase(utf8FromPath(std::filesystem::weakly_canonical(pb, ec)));
 }
 
 // Codec tag dell'originale se il contenitore di uscita lo accetta, altrimenti 0 (lo sceglie il muxer).
@@ -390,16 +390,6 @@ struct ReplacementSource
     bool ended = false;
 };
 
-std::string fileNameOf(const std::string& utf8Path)
-{
-    const auto name = pathFromUtf8(utf8Path).filename().u8string();
-    return std::string(name.begin(), name.end());
-}
-
-}  // namespace
-
-namespace {
-
 // Prova a scrivere un file del formato `format` con il solo flusso `in` e qualche suo pacchetto (in un file
 // temporaneo): alcuni contenitori dichiarano di accettare un codec ma poi non riescono a chiudere il file.
 bool canMux(const AVOutputFormat* format, const std::string& extension, AVFormatContext* input, int streamIndex)
@@ -408,10 +398,7 @@ bool canMux(const AVOutputFormat* format, const std::string& extension, AVFormat
     static std::atomic<int> counter{0};
     const std::filesystem::path probe = std::filesystem::temp_directory_path(ec)
                                       / ("EditorVideoProvaAudio" + std::to_string(++counter) + extension);
-    const std::string probePath = [&] {
-        const auto text = probe.u8string();
-        return std::string(text.begin(), text.end());
-    }();
+    const std::string probePath = utf8FromPath(probe);
     bool ok = false;
     {
         AVFormatContext* raw = nullptr;
@@ -481,7 +468,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
     int rangeCount = 0;
     for (const ClipRanges& clip : clips) {
         for (const TimeRange& range : clip.ranges) {
-            if (!(range.end > range.start + kEpsilon))
+            if (!(range.end > range.start + kTimeEpsilon))
                 throw MediaError("OUT deve stare dopo IN.");
             totalLength += range.length();
             ++rangeCount;
@@ -565,10 +552,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
         replacement.stream = findMainStream(replacement.ctx.get(), AVMEDIA_TYPE_AUDIO);
         if (replacement.stream < 0)
             throw MediaError("Il file " + fileNameOf(audio.replacement->path) + " non contiene audio.");
-        for (unsigned i = 0; i < replacement.ctx->nb_streams; ++i) {
-            if (static_cast<int>(i) != replacement.stream)
-                replacement.ctx->streams[i]->discard = AVDISCARD_ALL;
-        }
+        keepOnlyStream(replacement.ctx.get(), replacement.stream);
         replacement.start = startOffsetSeconds(replacement.ctx.get());
         replacement.offset = audio.replacement->offset;
         const AVStream* in = replacement.ctx->streams[replacement.stream];
@@ -663,7 +647,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 double time = sourceTime + replacement.offset;  // nel file creato
                 if (time >= until)
                     break;
-                if (time >= end - kEpsilon) {
+                if (time >= end - kTimeEpsilon) {
                     replacement.ended = true;
                     break;
                 }
@@ -674,7 +658,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                         continue;
                     time = (pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts) * tb - replacement.start + replacement.offset;
                     duration = pkt->duration * tb;
-                } else if (time < -kEpsilon || time + duration > end + kEpsilon) {
+                } else if (time < -kTimeEpsilon || time + duration > end + kTimeEpsilon) {
                     continue;  // solo i pacchetti interamente dentro il file creato
                 }
                 if (!applyMute(pkt, replacement.copy, in->codecpar, time, time + duration, audio.muted, muteMethod, result))
@@ -787,19 +771,19 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
 
                     if (copy.video) {
                         if (!copy.started) {
-                            if ((packet->flags & AV_PKT_FLAG_KEY) == 0 || time < range.start - kEpsilon) {
+                            if ((packet->flags & AV_PKT_FLAG_KEY) == 0 || time < range.start - kTimeEpsilon) {
                                 av_packet_unref(packet.get());
                                 continue;
                             }
                             copy.started = true;
                         }
-                        if (time < range.start - kEpsilon) {
+                        if (time < range.start - kTimeEpsilon) {
                             // B-frame che precedono il fotogramma chiave (GOP aperto): senza il GOP prima non si
                             // decodificano.
                             av_packet_unref(packet.get());
                             continue;
                         }
-                        if (time >= range.end - kEpsilon) {
+                        if (time >= range.end - kTimeEpsilon) {
                             // Oltre la fine: lo teniamo da parte e lo scriviamo solo se poi arriva un fotogramma
                             // prima della fine (che potrebbe usarlo come riferimento).
                             PacketPtr held(av_packet_alloc());
@@ -821,7 +805,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                             // Audio compresso: solo i pacchetti interamente dentro il tratto, così alle giunzioni non
                             // si sovrappone (al più un pacchetto, ~20 ms, di silenzio a ogni giunzione).
                             const double end = time + std::max<std::int64_t>(packet->duration, 0) * tb;
-                            if (time < range.start - kEpsilon || end > range.end + kEpsilon) {
+                            if (time < range.start - kTimeEpsilon || end > range.end + kTimeEpsilon) {
                                 av_packet_unref(packet.get());
                                 continue;
                             }

@@ -1,21 +1,14 @@
 #include "EditorCore/Project.h"
 
+#include "EditorCore/TimeUtil.h"
+
 #include <algorithm>
 
 namespace editor::core {
 
-namespace {
-
-constexpr double kEpsilon = 0.001;
-
-}  // namespace
-
 double Clip::snapToKeyframe(double seconds) const
 {
-    if (keyframes.empty())
-        return seconds;
-    const auto next = std::upper_bound(keyframes.begin(), keyframes.end(), seconds + kEpsilon);
-    return next == keyframes.begin() ? keyframes.front() : *std::prev(next);
+    return core::snapToKeyframe(keyframes, seconds);
 }
 
 int Project::add(std::string path)

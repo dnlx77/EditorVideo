@@ -44,6 +44,7 @@
     <ClInclude Include="LibraryInfo.h" />
     <ClInclude Include="MediaError.h" />
     <ClInclude Include="MediaProbe.h" />
+    <ClInclude Include="PathUtil.h" />
     <ClInclude Include="Playback.h" />
     <ClInclude Include="Project.h" />
     <ClInclude Include="ProjectFile.h" />
@@ -51,6 +52,7 @@
     <ClInclude Include="SegmentList.h" />
     <ClInclude Include="Sequence.h" />
     <ClInclude Include="Thumbnails.h" />
+    <ClInclude Include="TimeUtil.h" />
     <ClInclude Include="VideoDecoder.h" />
     <ClInclude Include="Waveform.h" />
   </ItemGroup>
@@ -64,6 +66,7 @@
     <ClCompile Include="Json.cpp" />
     <ClCompile Include="LibraryInfo.cpp" />
     <ClCompile Include="MediaProbe.cpp" />
+    <ClCompile Include="PathUtil.cpp" />
     <ClCompile Include="Playback.cpp" />
     <ClCompile Include="Project.cpp" />
     <ClCompile Include="ProjectFile.cpp" />
