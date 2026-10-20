@@ -120,6 +120,18 @@ QRectF SequenceTimeline::audioLane() const
     return QRectF(6, top, std::max(1, width() - 12), std::max(20.0, height() - top - 6));
 }
 
+std::vector<QRectF> SequenceTimeline::blockRects(const QRectF& lane) const
+{
+    std::vector<QRectF> rects;
+    rects.reserve(blocks_.size());
+    double start = 0.0;
+    for (const Block& b : blocks_) {
+        rects.emplace_back(QPointF(xForTime(start) + 1, lane.top() + 2), QPointF(xForTime(start + b.length) - 1, lane.bottom() - 2));
+        start += b.length;
+    }
+    return rects;
+}
+
 QRectF SequenceTimeline::replacementHandle() const
 {
     if (!replacement_ || total() <= 0)
@@ -205,11 +217,10 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
     }
 
     // Blocchi
-    double start = 0.0;
+    const std::vector<QRectF> rects = blockRects(a);
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
         const Block& b = blocks_[i];
-        const QRectF r(QPointF(xForTime(start) + 1, a.top() + 2), QPointF(xForTime(start + b.length) - 1, a.bottom() - 2));
-        start += b.length;
+        const QRectF& r = rects[i];
         QColor color = blockColor(b.colorIndex);
         if (dragging_ && static_cast<int>(i) == dragIndex_)
             color.setAlpha(110);
@@ -298,10 +309,10 @@ void SequenceTimeline::paintAudio(QPainter& p)
 
     if (!replacement_) {
         // Audio originale: la forma d'onda di ogni pezzo, nel colore del suo file.
-        double start = 0.0;
-        for (const Block& b : blocks_) {
-            const QRectF r(QPointF(xForTime(start) + 1, lane.top() + 2), QPointF(xForTime(start + b.length) - 1, lane.bottom() - 2));
-            start += b.length;
+        const std::vector<QRectF> rects = blockRects(lane);
+        for (std::size_t i = 0; i < blocks_.size(); ++i) {
+            const Block& b = blocks_[i];
+            const QRectF& r = rects[i];
             const QColor color = blockColor(b.colorIndex);
             p.setPen(Qt::NoPen);
             p.setBrush(QColor(color.red(), color.green(), color.blue(), 45));

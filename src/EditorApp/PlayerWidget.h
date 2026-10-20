@@ -10,6 +10,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -97,7 +98,9 @@ public:
     std::function<void()> onSegmentChanged;  // IN, OUT o elenco dei tratti cambiati (anche aprendo un altro file)
 
 private:
-    void openAudio();  // l'audio da riprodurre: quello del file o quello esterno
+    // L'audio da riprodurre: quello del file o quello esterno. `own` = decoder dell'audio del file già aperto (si usa
+    // se non c'è un audio esterno, invece di riaprire il file).
+    void openAudio(std::unique_ptr<core::AudioDecoder> own = nullptr);
     void startWorkers(double from);
     void stopWorkers();
     void videoWorker();
@@ -105,7 +108,10 @@ private:
 
     double clock();
     void tick();
+    // Ferma la riproduzione in `position`; con signalWindowEnd avvisa poi onWindowEnd (fine del pezzo).
+    void stopAt(double position, bool signalWindowEnd);
     void showFrameAt(double seconds);
+    void showDecodeError(const std::exception& e);
     void updateControls();
     void updatePositionLabel(double seconds);
     void updateSegmentUi();

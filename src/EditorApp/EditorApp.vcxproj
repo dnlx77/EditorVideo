@@ -52,6 +52,7 @@
     <ClInclude Include="ProgramMonitor.h" />
     <ClInclude Include="SequenceTimeline.h" />
     <ClInclude Include="TimelineWidget.h" />
+    <ClInclude Include="UiText.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AudioOutput.cpp" />

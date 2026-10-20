@@ -1,10 +1,9 @@
 #include "EditorApp/ProgramMonitor.h"
 
 #include "EditorApp/PlayerWidget.h"
-#include "EditorCore/MediaProbe.h"
+#include "EditorApp/UiText.h"
 #include "EditorCore/Project.h"
 
-#include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
 #include <QtWidgets/QHBoxLayout>
@@ -16,15 +15,6 @@
 #include <algorithm>
 
 namespace editor::app {
-
-namespace {
-
-QString timeText(double seconds)
-{
-    return QString::fromStdString(core::formatDuration(seconds));
-}
-
-}  // namespace
 
 ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     : QWidget(parent)
@@ -263,7 +253,7 @@ void ProgramMonitor::updateLabels()
     fragmentLabel_->setText(QStringLiteral("Pezzo %1 di %2: %3 (%4 - %5)")
                                 .arg(index_ + 1)
                                 .arg(sequence.fragments().size())
-                                .arg(clip ? QFileInfo(QString::fromStdString(clip->path)).fileName() : QString(),
+                                .arg(clip ? fileNameOf(clip->path) : QString(),
                                      timeText(f.start), timeText(f.end)));
 }
 

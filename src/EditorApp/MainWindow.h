@@ -102,6 +102,7 @@ public:
     QString lastExportProblem() const { return lastExportProblem_; }  // "annullata" o il messaggio d'errore
     // Cosa verrebbe esportato adesso (vuoto = niente) e quanto dura.
     std::vector<core::ClipRanges> exportPlan() const;
+    bool hasExportPlan() const;  // come !exportPlan().empty(), senza costruire il piano
     double exportLength() const;
 
 protected:

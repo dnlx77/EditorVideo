@@ -167,7 +167,7 @@ SegmentList::RemoveResult Sequence::removeSourceRange(int clipId, double from, d
     return SegmentList::RemoveResult::Removed;
 }
 
-bool Sequence::muteRange(double from, double to)
+bool Sequence::applyToRange(double from, double to, RangeOp op)
 {
     if (to <= from + kTimeEpsilon)
         return false;
@@ -179,7 +179,7 @@ bool Sequence::muteRange(double from, double to)
         const double b = std::min(to, end);
         if (b > a + kTimeEpsilon) {
             const auto before = f.muted;
-            addRange(f.muted, f.start + (a - start), f.start + (b - start));
+            op(f.muted, f.start + (a - start), f.start + (b - start));
             changed = changed || f.muted != before;
         }
         start = end;
@@ -187,24 +187,14 @@ bool Sequence::muteRange(double from, double to)
     return changed;
 }
 
+bool Sequence::muteRange(double from, double to)
+{
+    return applyToRange(from, to, addRange);
+}
+
 bool Sequence::unmuteRange(double from, double to)
 {
-    if (to <= from + kTimeEpsilon)
-        return false;
-    bool changed = false;
-    double start = 0.0;
-    for (Fragment& f : fragments_) {
-        const double end = start + f.length();
-        const double a = std::max(from, start);
-        const double b = std::min(to, end);
-        if (b > a + kTimeEpsilon) {
-            const auto before = f.muted;
-            subtractRange(f.muted, f.start + (a - start), f.start + (b - start));
-            changed = changed || f.muted != before;
-        }
-        start = end;
-    }
-    return changed;
+    return applyToRange(from, to, subtractRange);
 }
 
 std::vector<TimeRange> Sequence::mutedRanges() const

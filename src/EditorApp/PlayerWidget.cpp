@@ -1,6 +1,7 @@
 #include "EditorApp/PlayerWidget.h"
 
 #include "EditorApp/TimelineWidget.h"
+#include "EditorApp/UiText.h"
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Playback.h"
@@ -24,11 +25,6 @@ namespace editor::app {
 namespace {
 
 constexpr std::size_t kMaxQueuedFrames = 8;
-
-QString timeText(double seconds)
-{
-    return QString::fromStdString(core::formatDuration(seconds));
-}
 
 }  // namespace
 
@@ -186,9 +182,10 @@ void PlayerWidget::openFile(const QString& path)
         videoError = QString::fromUtf8(e.what());
     }
     path_ = path;
+    std::unique_ptr<core::AudioDecoder> own;
     try {
-        const core::AudioDecoder own(utf8Path);
-        ownAudioDuration_ = std::max(0.0, own.durationSeconds());
+        own = std::make_unique<core::AudioDecoder>(utf8Path);
+        ownAudioDuration_ = std::max(0.0, own->durationSeconds());
         ownAudio_ = true;
     } catch (const std::exception&) {
         // File senza audio: si riproduce solo il video.
@@ -200,7 +197,7 @@ void PlayerWidget::openFile(const QString& path)
         updateControls();
         return;
     }
-    openAudio();
+    openAudio(std::move(own));  // nessun thread è ancora partito: il decoder passa al thread dell'audio solo con play()
 
     duration_ = std::max({0.0, video_ ? video_->durationSeconds() : 0.0, ownAudioDuration_});
     timeline_->setDuration(duration_);
@@ -226,7 +223,7 @@ void PlayerWidget::openFile(const QString& path)
     updatePositionLabel(0.0);
 }
 
-void PlayerWidget::openAudio()
+void PlayerWidget::openAudio(std::unique_ptr<core::AudioDecoder> own)
 {
     audio_.reset();
     audioOut_.close();
@@ -236,7 +233,10 @@ void PlayerWidget::openAudio()
         return;
     const QString source = externalAudio_.isEmpty() ? path_ : externalAudio_;
     try {
-        audio_ = std::make_unique<core::AudioDecoder>(QDir::toNativeSeparators(source).toStdString());
+        if (externalAudio_.isEmpty() && own)
+            audio_ = std::move(own);
+        else
+            audio_ = std::make_unique<core::AudioDecoder>(QDir::toNativeSeparators(source).toStdString());
         externalActive_ = !externalAudio_.isEmpty();
     } catch (const std::exception&) {
         audioNote_ = QStringLiteral("audio non leggibile");
@@ -450,9 +450,18 @@ void PlayerWidget::audioWorker()
                 // L'audio esterno può cominciare più avanti: fino a lì silenzio, così l'orologio parte dal punto giusto.
                 const double gap = std::round((time - audioFrom_) * rate);
                 if (gap > 0 && gap < rate * 3600) {
-                    const std::vector<std::int16_t> silence(static_cast<std::size_t>(gap) * channels, 0);
                     audioStart_ = audioFrom_;
-                    if (!audioOut_.write(silence.data(), silence.size(), stopWorkers_))
+                    // A blocchi di ~100 ms, sempre lo stesso: anche un'attesa lunga non occupa memoria. write()
+                    // restituisce false se bisogna fermarsi.
+                    const auto block = static_cast<std::size_t>(std::max(1.0, std::round(rate / 10)));
+                    const std::vector<std::int16_t> silence(block * channels, 0);
+                    bool written = true;
+                    for (auto left = static_cast<std::size_t>(gap); written && left > 0;) {
+                        const std::size_t frames = std::min(left, block);
+                        written = audioOut_.write(silence.data(), frames * channels, stopWorkers_);
+                        left -= frames;
+                    }
+                    if (!written)
                         break;
                 }
             }
@@ -517,16 +526,8 @@ void PlayerWidget::tick()
     updatePositionLabel(position_);
 
     if (windowEnd_ > 0 && now >= windowEnd_ - 0.001) {
-        // Fine del pezzo: ci si ferma qui e lo si dice a chi riproduce la sequenza (dopo, fuori da tick()).
-        stopWorkers();
-        playing_ = false;
-        position_ = windowEnd_;
-        updateControls();
-        updatePositionLabel(position_);
-        QTimer::singleShot(0, this, [this] {
-            if (onWindowEnd)
-                onWindowEnd();
-        });
+        // Fine del pezzo: ci si ferma qui e lo si dice a chi riproduce la sequenza.
+        stopAt(windowEnd_, true);
         return;
     }
 
@@ -538,20 +539,30 @@ void PlayerWidget::tick()
     state.clock = now;
     state.duration = duration_;
     if (core::playbackFinished(state)) {
-        stopWorkers();
-        playing_ = false;
-        if (duration_ > 0)
-            position_ = duration_;
-        updateControls();
-        updatePositionLabel(position_);
         // Un pezzo che arriva fino alla fine del file finisce qui, non al limite della finestra.
-        if (windowEnd_ > 0) {
-            QTimer::singleShot(0, this, [this] {
-                if (onWindowEnd)
-                    onWindowEnd();
-            });
-        }
+        stopAt(duration_ > 0 ? duration_ : position_, windowEnd_ > 0);
     }
+}
+
+void PlayerWidget::stopAt(double position, bool signalWindowEnd)
+{
+    stopWorkers();
+    playing_ = false;
+    position_ = position;
+    updateControls();
+    updatePositionLabel(position_);
+    // onWindowEnd si chiama dopo, fuori da tick().
+    if (signalWindowEnd) {
+        QTimer::singleShot(0, this, [this] {
+            if (onWindowEnd)
+                onWindowEnd();
+        });
+    }
+}
+
+void PlayerWidget::showDecodeError(const std::exception& e)
+{
+    view_->setMessage(QStringLiteral("Errore di decodifica del video.\n%1").arg(QString::fromUtf8(e.what())));
 }
 
 void PlayerWidget::showFrameAt(double seconds)
@@ -563,7 +574,7 @@ void PlayerWidget::showFrameAt(double seconds)
         }
         decoderAtDisplayed_ = true;
     } catch (const std::exception& e) {
-        view_->setMessage(QStringLiteral("Errore di decodifica del video.\n%1").arg(QString::fromUtf8(e.what())));
+        showDecodeError(e);
     }
     // Qui i thread sono fermi: si può leggere in sicurezza quale decoder è in uso.
     decoderText_ = QStringLiteral("Decodifica: %1").arg(QString::fromStdString(video_->decoderDescription()));
@@ -700,7 +711,7 @@ void PlayerWidget::stepFrame(int direction)
             showFrameAt(std::max(0.0, displayedTime_ - frameDuration_));
         }
     } catch (const std::exception& e) {
-        view_->setMessage(QStringLiteral("Errore di decodifica del video.\n%1").arg(QString::fromUtf8(e.what())));
+        showDecodeError(e);
     }
     position_ = displayedTime_;
     updatePositionLabel(position_);
