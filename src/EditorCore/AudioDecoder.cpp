@@ -41,6 +41,7 @@ struct AudioDecoder::Impl : OpenedStream
     bool demuxerAtEnd = false;
     double nextTime = 0.0;            // tempo atteso del prossimo campione, se il pacchetto non ha timestamp
     std::optional<double> trimUntil;  // dopo un seek: scarta i campioni prima di questo tempo
+    std::vector<std::int16_t> converted;  // uscita del resampler, riusata da un blocco all'altro
 
     ~Impl() { av_channel_layout_uninit(&swrInLayout); }
 
@@ -166,31 +167,32 @@ std::optional<AudioChunk> AudioDecoder::next()
 
         d.configureResampler(f);
         const int capacity = swr_get_out_samples(d.swr.get(), f->nb_samples);
-        AudioChunk chunk;
-        chunk.samples.resize(static_cast<std::size_t>(std::max(capacity, 0)) * d.outChannels);
-        auto* out = reinterpret_cast<std::uint8_t*>(chunk.samples.data());
+        const std::size_t needed = static_cast<std::size_t>(std::max(capacity, 0)) * d.outChannels;
+        if (d.converted.size() < needed)
+            d.converted.resize(needed);
+        auto* out = reinterpret_cast<std::uint8_t*>(d.converted.data());
         const int converted = swr_convert(d.swr.get(), &out, capacity, const_cast<const std::uint8_t**>(f->extended_data),
                                           f->nb_samples);
         av_frame_unref(f);
         if (converted <= 0)
             continue;
-        chunk.samples.resize(static_cast<std::size_t>(converted) * d.outChannels);
-        chunk.time = time;
         d.nextTime = time + converted / double(d.outRate);
 
+        // Dopo un seek il demuxer riparte da un punto precedente: si tagliano i campioni prima del tempo richiesto.
+        std::size_t skip = 0;
         if (d.trimUntil) {
-            // Dopo un seek il demuxer riparte da un punto precedente: tagliamo fino al tempo richiesto.
             if (d.nextTime <= *d.trimUntil)
                 continue;
-            const auto skip = static_cast<std::size_t>(std::max(0.0, std::round((*d.trimUntil - time) * d.outRate)));
-            if (skip > 0) {
-                chunk.samples.erase(chunk.samples.begin(), chunk.samples.begin() + skip * d.outChannels);
-                chunk.time = time + skip / double(d.outRate);
-            }
+            skip = std::min(static_cast<std::size_t>(std::max(0.0, std::round((*d.trimUntil - time) * d.outRate))),
+                            static_cast<std::size_t>(converted));
             d.trimUntil.reset();
-            if (chunk.samples.empty())
+            if (skip == static_cast<std::size_t>(converted))
                 continue;
         }
+        AudioChunk chunk;
+        chunk.time = skip > 0 ? time + skip / double(d.outRate) : time;
+        chunk.samples.assign(d.converted.begin() + static_cast<std::ptrdiff_t>(skip * d.outChannels),
+                             d.converted.begin() + static_cast<std::ptrdiff_t>(converted) * d.outChannels);
         return chunk;
     }
     return std::nullopt;

@@ -31,23 +31,38 @@ Waveform computeWaveform(const std::string& utf8Path, const std::atomic<bool>* c
     }
     const int channels = decoder->channels();
     const double rate = decoder->sampleRate();
+    if (const double duration = decoder->durationSeconds(); duration > 0)
+        waveform.peaks.reserve(static_cast<std::size_t>(duration / waveform.binSeconds) + 2);
     try {
         while (auto chunk = decoder->next()) {
             if (cancel != nullptr && cancel->load())
                 return {};
             const std::size_t frames = chunk->samples.size() / channels;
-            for (std::size_t i = 0; i < frames; ++i) {
-                const double time = chunk->time + i / rate;
-                if (time < 0)
-                    continue;
-                const auto bin = static_cast<std::size_t>(time / waveform.binSeconds);
+            // Cella del campione i: il tempo si calcola come sempre, ma solo dove la cella può cambiare.
+            const auto binOf = [&](std::size_t i) {
+                return static_cast<std::size_t>((chunk->time + i / rate) / waveform.binSeconds);
+            };
+            std::size_t i = 0;
+            while (i < frames && chunk->time + i / rate < 0)
+                ++i;
+            while (i < frames) {
+                const std::size_t bin = binOf(i);
+                // Primo campione della cella successiva: stima, poi correzione con lo stesso calcolo.
+                const double nextStart = ((bin + 1) * waveform.binSeconds - chunk->time) * rate;
+                std::size_t end = std::clamp(static_cast<std::size_t>(std::max(0.0, std::ceil(nextStart))), i + 1, frames);
+                while (end > i + 1 && binOf(end - 1) != bin)
+                    --end;
+                while (end < frames && binOf(end) == bin)
+                    ++end;
+
+                int value = 0;
+                for (std::size_t k = i * channels; k < end * channels; ++k)
+                    value = std::max(value, std::abs(static_cast<int>(chunk->samples[k])));
                 if (bin >= waveform.peaks.size())
                     waveform.peaks.resize(bin + 1, 0);
-                int value = 0;
-                for (int c = 0; c < channels; ++c)
-                    value = std::max(value, std::abs(static_cast<int>(chunk->samples[i * channels + c])));
                 const auto level = static_cast<std::uint8_t>(std::min(255, value * 255 / 32767));
                 waveform.peaks[bin] = std::max(waveform.peaks[bin], level);
+                i = end;
             }
         }
     } catch (const std::exception&) {

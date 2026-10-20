@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -26,7 +27,15 @@ namespace editor::core {
 
 using namespace detail;
 
+ExportCancelled::ExportCancelled()
+    : MediaError("Esportazione annullata.")
+{
+}
+
 namespace {
+
+constexpr const char* kOutOfMemory = "Memoria insufficiente per l'esportazione.";
+constexpr const char* kOutOfMemoryForOutput = "Memoria insufficiente per preparare il file di destinazione.";
 
 // Dopo la fine di un tratto si legge ancora un po': in un file i pacchetti dei vari flussi sono mescolati e,
 // con i B-frame, un fotogramma prima della fine può arrivare dopo uno successivo.
@@ -42,6 +51,13 @@ struct OutputDeleter
     }
 };
 using OutputPtr = std::unique_ptr<AVFormatContext, OutputDeleter>;
+
+// Alla fine del blocco libera il contenuto del pacchetto, che resta allocato per essere riusato.
+struct PacketUnref
+{
+    AVPacket* pkt;
+    ~PacketUnref() { av_packet_unref(pkt); }
+};
 
 struct StreamCopy
 {
@@ -65,6 +81,38 @@ std::string lowercase(std::string text)
 {
     std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return text;
+}
+
+std::string uppercase(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return text;
+}
+
+// Sostituisce il contenuto del pacchetto con `size` byte da `data` (che possono stare dentro il pacchetto stesso),
+// tenendo tempi, durata, flag e flusso.
+void replacePacketData(AVPacket* pkt, const std::uint8_t* data, std::size_t size)
+{
+    PacketPtr part(av_packet_alloc());
+    if (!part || av_new_packet(part.get(), static_cast<int>(size)) < 0)
+        throw MediaError(kOutOfMemory);
+    std::memcpy(part->data, data, size);
+    part->pts = pkt->pts;
+    part->dts = pkt->dts;
+    part->duration = pkt->duration;
+    part->flags = pkt->flags;
+    part->stream_index = pkt->stream_index;
+    av_packet_unref(pkt);
+    av_packet_move_ref(pkt, part.get());
+}
+
+// Sposta indietro di `shift` (unità del flusso) i tempi del pacchetto che ci sono.
+void shiftPacket(AVPacket* pkt, std::int64_t shift)
+{
+    if (pkt->pts != AV_NOPTS_VALUE)
+        pkt->pts -= shift;
+    if (pkt->dts != AV_NOPTS_VALUE)
+        pkt->dts -= shift;
 }
 
 bool samePath(const std::string& a, const std::string& b)
@@ -101,30 +149,12 @@ bool trimPcm(AVPacket* pkt, const StreamCopy& copy, double time, double tb, cons
     if (first == 0 && last == samples)
         return true;
 
-    PacketPtr part(av_packet_alloc());
-    if (!part || av_new_packet(part.get(), (last - first) * copy.pcmBlockAlign) < 0)
-        throw MediaError("Memoria insufficiente per l'esportazione.");
-    std::memcpy(part->data, pkt->data + static_cast<std::ptrdiff_t>(first) * copy.pcmBlockAlign,
-                static_cast<std::size_t>(last - first) * copy.pcmBlockAlign);
-    const auto offset = static_cast<std::int64_t>(std::llround(first / rate / tb));
-    part->pts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts + offset : AV_NOPTS_VALUE;
-    part->dts = pkt->dts != AV_NOPTS_VALUE ? pkt->dts + offset : AV_NOPTS_VALUE;
-    part->duration = std::llround((last - first) / rate / tb);
-    part->flags = pkt->flags;
-    part->stream_index = pkt->stream_index;
-    av_packet_unref(pkt);
-    av_packet_move_ref(pkt, part.get());
+    replacePacketData(pkt, pkt->data + static_cast<std::ptrdiff_t>(first) * copy.pcmBlockAlign,
+                      static_cast<std::size_t>(last - first) * copy.pcmBlockAlign);
+    shiftPacket(pkt, -static_cast<std::int64_t>(std::llround(first / rate / tb)));
+    pkt->duration = std::llround((last - first) / rate / tb);
     return true;
 }
-
-}  // namespace
-
-ExportCancelled::ExportCancelled()
-    : MediaError("Esportazione annullata.")
-{
-}
-
-namespace {
 
 // Un file da cui si copia: i flussi video e audio vanno, nell'ordine, nei flussi 0, 1, 2... del file creato.
 struct InputFile
@@ -307,7 +337,7 @@ bool isSilenceableMpegFrame(const AVPacket* pkt, const AVCodecParameters* par)
 void silenceMpegFrame(AVPacket* pkt)
 {
     if (av_packet_make_writable(pkt) < 0)
-        throw MediaError("Memoria insufficiente per l'esportazione.");
+        throw MediaError(kOutOfMemory);
     pkt->data[1] |= 0x01;  // protection_bit = 1: niente CRC
     std::memset(pkt->data + 4, 0, static_cast<std::size_t>(pkt->size) - 4);
 }
@@ -335,7 +365,7 @@ bool applyMute(AVPacket* pkt, StreamCopy& copy, const AVCodecParameters* par, do
             if (last <= first)
                 continue;
             if (!writable && av_packet_make_writable(pkt) < 0)
-                throw MediaError("Memoria insufficiente per l'esportazione.");
+                throw MediaError(kOutOfMemory);
             writable = true;
             std::memset(pkt->data + static_cast<std::ptrdiff_t>(first) * copy.pcmBlockAlign, copy.pcmSilence,
                         static_cast<std::size_t>(last - first) * copy.pcmBlockAlign);
@@ -363,17 +393,7 @@ bool applyMute(AVPacket* pkt, StreamCopy& copy, const AVCodecParameters* par, do
         ++stats.droppedPackets;
         return false;
     }
-    PacketPtr part(av_packet_alloc());
-    if (!part || av_new_packet(part.get(), static_cast<int>(copy.silence.size())) < 0)
-        throw MediaError("Memoria insufficiente per l'esportazione.");
-    std::copy(copy.silence.begin(), copy.silence.end(), part->data);
-    part->pts = pkt->pts;
-    part->dts = pkt->dts;
-    part->duration = pkt->duration;
-    part->flags = pkt->flags;
-    part->stream_index = pkt->stream_index;
-    av_packet_unref(pkt);
-    av_packet_move_ref(pkt, part.get());
+    replacePacketData(pkt, copy.silence.data(), copy.silence.size());
     ++stats.silencedPackets;
     return true;
 }
@@ -386,7 +406,8 @@ struct ReplacementSource
     double start = 0.0;   // inizio del file
     double offset = 0.0;  // tempo nel file creato = tempo nel file audio + offset
     StreamCopy copy;
-    PacketPtr pending;    // letto ma non ancora scritto
+    PacketPtr packet;           // riusato per ogni lettura
+    bool pending = false;       // `packet` letto ma non ancora scritto
     bool ended = false;
 };
 
@@ -431,6 +452,27 @@ bool canMux(const AVOutputFormat* format, const std::string& extension, AVFormat
     return ok;
 }
 
+// Come replacementAudioProblem, con il file audio già aperto in `ctx` e il suo flusso audio principale `index`
+// (-1 se non c'è). Legge qualche pacchetto: prima di usare `ctx` per copiare l'audio bisogna riposizionarsi.
+std::string replacementProblem(AVFormatContext* ctx, int index, const std::string& audioPath,
+                               const std::string& outputPath)
+{
+    if (index < 0)
+        return "Il file " + fileNameOf(audioPath) + " non contiene audio.";
+    const AVOutputFormat* format = av_guess_format(nullptr, outputPath.c_str(), nullptr);
+    if (format == nullptr)
+        return {};  // lo dirà l'esportazione
+    const AVCodecID codec = ctx->streams[index]->codecpar->codec_id;
+    const std::string extension = pathFromUtf8(outputPath).extension().string();  // con il punto
+    if (avformat_query_codec(format, codec, FF_COMPLIANCE_NORMAL) == 0 || !canMux(format, extension, ctx, index)) {
+        return "L'audio di " + fileNameOf(audioPath) + " (" + avcodec_get_name(codec) + ") non può stare in un file "
+             + uppercase(extension.empty() ? extension : extension.substr(1))
+             + " senza ricodifica. Scegli un audio in un formato adatto (per MP4 e MOV: AAC, M4A o MP3), "
+               "oppure monta file MKV, che accettano quasi tutti i formati audio.";
+    }
+    return {};
+}
+
 }  // namespace
 
 std::string replacementAudioProblem(const std::string& audioPath, const std::string& outputPath)
@@ -441,24 +483,7 @@ std::string replacementAudioProblem(const std::string& audioPath, const std::str
     } catch (const std::exception& e) {
         return e.what();
     }
-    const int index = findMainStream(ctx.get(), AVMEDIA_TYPE_AUDIO);
-    if (index < 0)
-        return "Il file " + fileNameOf(audioPath) + " non contiene audio.";
-    const AVOutputFormat* format = av_guess_format(nullptr, outputPath.c_str(), nullptr);
-    if (format == nullptr)
-        return {};  // lo dirà l'esportazione
-    const AVCodecID codec = ctx->streams[index]->codecpar->codec_id;
-    if (avformat_query_codec(format, codec, FF_COMPLIANCE_NORMAL) == 0 || !canMux(format, pathFromUtf8(outputPath).extension().string(), ctx.get(), index)) {
-        std::string extension = pathFromUtf8(outputPath).extension().string();
-        if (!extension.empty())
-            extension.erase(0, 1);
-        std::transform(extension.begin(), extension.end(), extension.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        return "L'audio di " + fileNameOf(audioPath) + " (" + avcodec_get_name(codec) + ") non può stare in un file "
-             + extension + " senza ricodifica. Scegli un audio in un formato adatto (per MP4 e MOV: AAC, M4A o MP3), "
-               "oppure monta file MKV, che accettano quasi tutti i formati audio.";
-    }
-    return {};
+    return replacementProblem(ctx.get(), findMainStream(ctx.get(), AVMEDIA_TYPE_AUDIO), audioPath, outputPath);
 }
 
 ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,
@@ -478,11 +503,21 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
     }
     if (rangeCount == 0)
         throw MediaError("Non c'è nessun tratto da esportare.");
+    // Traccia sostitutiva: il file audio si apre una volta sola, per il controllo e poi per la copia.
     const bool replaced = audio.replacement.has_value();
+    ReplacementSource replacement;
     if (replaced) {
         if (samePath(audio.replacement->path, outputPath))
             throw MediaError("Il file di destinazione deve essere diverso dall'audio sostitutivo.");
-        if (const std::string problem = replacementAudioProblem(audio.replacement->path, outputPath); !problem.empty())
+        try {
+            replacement.ctx = openInput(audio.replacement->path);
+        } catch (const std::exception& e) {
+            throw MediaError(e.what());
+        }
+        replacement.stream = findMainStream(replacement.ctx.get(), AVMEDIA_TYPE_AUDIO);
+        if (const std::string problem =
+                replacementProblem(replacement.ctx.get(), replacement.stream, audio.replacement->path, outputPath);
+            !problem.empty())
             throw MediaError(problem);
     }
 
@@ -490,8 +525,13 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
     // traccia sostitutiva l'audio dei file non si copia, quindi conta solo il video.
     std::vector<MediaSignature> signatures;
     if (clips.size() > 1) {
+        // Lo stesso file può tornare più volte (montaggio A, B, A, B): lo si legge una volta sola.
+        std::map<std::string, MediaSignature> read;
         for (const ClipRanges& clip : clips) {
-            signatures.push_back(readMediaSignature(clip.path));
+            auto known = read.find(clip.path);
+            if (known == read.end())
+                known = read.emplace(clip.path, readMediaSignature(clip.path)).first;
+            signatures.push_back(known->second);
             if (replaced)
                 std::erase_if(signatures.back().streams, [](const StreamSignature& s) { return s.kind == StreamKind::Audio; });
         }
@@ -517,7 +557,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                              + avcodec_get_name(par->codec_id) + ".");
         AVStream* out = avformat_new_stream(output.get(), nullptr);
         if (out == nullptr || avcodec_parameters_copy(out->codecpar, par) < 0)
-            throw MediaError("Memoria insufficiente per preparare il file di destinazione.");
+            throw MediaError(kOutOfMemoryForOutput);
         out->codecpar->codec_tag = codecTagFor(output->oformat, par);
         // H.264 da file con livelli diversi: il file unito dichiara il livello più alto (il resto dei parametri
         // coincide, l'ha verificato checkCompatibility).
@@ -534,7 +574,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 av_freep(&out->codecpar->extradata);
                 out->codecpar->extradata = static_cast<std::uint8_t*>(av_mallocz(raised.size() + AV_INPUT_BUFFER_PADDING_SIZE));
                 if (out->codecpar->extradata == nullptr)
-                    throw MediaError("Memoria insufficiente per preparare il file di destinazione.");
+                    throw MediaError(kOutOfMemoryForOutput);
                 std::copy(raised.begin(), raised.end(), out->codecpar->extradata);
                 out->codecpar->extradata_size = static_cast<int>(raised.size());
                 out->codecpar->level = level;
@@ -545,13 +585,11 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
         av_dict_copy(&out->metadata, in->metadata, 0);
     }
 
-    // Traccia sostitutiva: un flusso audio in più, copiato dal file audio.
-    ReplacementSource replacement;
+    // Traccia sostitutiva: un flusso audio in più, copiato dal file audio (aperto e controllato sopra).
     if (replaced) {
-        replacement.ctx = openInput(audio.replacement->path);
-        replacement.stream = findMainStream(replacement.ctx.get(), AVMEDIA_TYPE_AUDIO);
-        if (replacement.stream < 0)
-            throw MediaError("Il file " + fileNameOf(audio.replacement->path) + " non contiene audio.");
+        replacement.packet.reset(av_packet_alloc());
+        if (!replacement.packet)
+            throw MediaError(kOutOfMemory);
         keepOnlyStream(replacement.ctx.get(), replacement.stream);
         replacement.start = startOffsetSeconds(replacement.ctx.get());
         replacement.offset = audio.replacement->offset;
@@ -559,7 +597,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
         describeAudio(replacement.copy, in->codecpar);
         AVStream* out = avformat_new_stream(output.get(), nullptr);
         if (out == nullptr || avcodec_parameters_copy(out->codecpar, in->codecpar) < 0)
-            throw MediaError("Memoria insufficiente per preparare il file di destinazione.");
+            throw MediaError(kOutOfMemoryForOutput);
         out->codecpar->codec_tag = codecTagFor(output->oformat, in->codecpar);
         out->time_base = in->time_base;
         out->disposition = AV_DISPOSITION_DEFAULT;
@@ -591,7 +629,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
 
         PacketPtr packet(av_packet_alloc());
         if (!packet)
-            throw MediaError("Memoria insufficiente per l'esportazione.");
+            throw MediaError(kOutOfMemory);
 
         ExportResult result;
         // Per ogni flusso del file creato: ultimo tempo di decodifica scritto (devono sempre crescere).
@@ -625,23 +663,22 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             const AVStream* in = input->streams[replacement.stream];
             const AVStream* out = output->streams[replacement.copy.output];
             const double tb = av_q2d(in->time_base);
+            AVPacket* pkt = replacement.packet.get();
             while (!replacement.ended) {
                 if (!replacement.pending) {
-                    PacketPtr next(av_packet_alloc());
-                    if (!next)
-                        throw MediaError("Memoria insufficiente per l'esportazione.");
-                    const int ret = av_read_frame(input, next.get());
+                    const int ret = av_read_frame(input, pkt);
                     if (ret == AVERROR_EOF) {
                         replacement.ended = true;
                         break;
                     }
                     if (ret < 0)
                         throw MediaError("Errore durante la lettura dell'audio sostitutivo (" + ffmpegError(ret) + ").");
-                    if (next->stream_index != replacement.stream || (next->pts == AV_NOPTS_VALUE && next->dts == AV_NOPTS_VALUE))
+                    if (pkt->stream_index != replacement.stream || (pkt->pts == AV_NOPTS_VALUE && pkt->dts == AV_NOPTS_VALUE)) {
+                        av_packet_unref(pkt);
                         continue;
-                    replacement.pending = std::move(next);
+                    }
+                    replacement.pending = true;
                 }
-                AVPacket* pkt = replacement.pending.get();
                 const std::int64_t ts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
                 const double sourceTime = ts * tb - replacement.start;
                 double time = sourceTime + replacement.offset;  // nel file creato
@@ -651,7 +688,9 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                     replacement.ended = true;
                     break;
                 }
-                PacketPtr current = std::move(replacement.pending);
+                // Da qui il pacchetto si scrive o si scarta: in entrambi i casi si libera prima della prossima lettura.
+                replacement.pending = false;
+                const PacketUnref release{pkt};
                 double duration = std::max<std::int64_t>(pkt->duration, 0) * tb;
                 if (replacement.copy.pcmBlockAlign > 0) {
                     if (!trimPcm(pkt, replacement.copy, sourceTime, tb, {-replacement.offset, end - replacement.offset}))
@@ -663,11 +702,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 }
                 if (!applyMute(pkt, replacement.copy, in->codecpar, time, time + duration, audio.muted, muteMethod, result))
                     continue;
-                const auto shift = static_cast<std::int64_t>(std::llround((replacement.start - replacement.offset) / tb));
-                if (pkt->pts != AV_NOPTS_VALUE)
-                    pkt->pts -= shift;
-                if (pkt->dts != AV_NOPTS_VALUE)
-                    pkt->dts -= shift;
+                shiftPacket(pkt, std::llround((replacement.start - replacement.offset) / tb));
                 av_packet_rescale_ts(pkt, in->time_base, out->time_base);
                 keepDtsIncreasing(pkt, replacement.copy.output);
                 firstTime = std::min(firstTime, time);
@@ -694,11 +729,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 double audioEnd = outputPosition;  // fine dell'audio compresso come uscirà dal decoder
 
                 const auto write = [&](AVPacket* pkt, StreamCopy& copy, const AVStream* in) {
-                    const auto shift = static_cast<std::int64_t>(std::llround(shiftSeconds / av_q2d(in->time_base)));
-                    if (pkt->pts != AV_NOPTS_VALUE)
-                        pkt->pts -= shift;
-                    if (pkt->dts != AV_NOPTS_VALUE)
-                        pkt->dts -= shift;
+                    shiftPacket(pkt, std::llround(shiftSeconds / av_q2d(in->time_base)));
                     const AVStream* out = output->streams[copy.output];
                     av_packet_rescale_ts(pkt, in->time_base, out->time_base);
                     keepDtsIncreasing(pkt, copy.output);

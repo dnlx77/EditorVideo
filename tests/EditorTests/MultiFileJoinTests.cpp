@@ -218,6 +218,31 @@ TEST_F(MultiFileJoinTest, DifferentSampleRateIsRefused)
               "Clip 2 (campionamento.mkv): frequenza di campionamento 44100 Hz invece di 48000 Hz");
 }
 
+TEST_F(MultiFileJoinTest, AlternatingFilesAreCheckedClipByClip)
+{
+    // A, B, A, B: ogni file si legge una volta sola, ma le differenze si segnalano per ogni pezzo, col suo numero.
+    const std::vector<ClipRanges> refused = {{path("a.mkv"), {{0.0, 0.4}}}, {path("codec.mkv"), {{0.0, 0.4}}},
+                                             {path("a.mkv"), {{1.0, 1.4}}}, {path("codec.mkv"), {{1.0, 1.4}}}};
+    try {
+        exportClips(refused, path("alternati.mkv"), AudioEdit{});
+        ADD_FAILURE() << "l'unione doveva essere rifiutata";
+    } catch (const MediaError& e) {
+        const std::string message = e.what();
+        EXPECT_NE(message.find("Clip 2 (codec.mkv)"), std::string::npos) << message;
+        EXPECT_NE(message.find("Clip 4 (codec.mkv)"), std::string::npos) << message;
+        EXPECT_EQ(message.find("Clip 3"), std::string::npos) << message;
+    }
+    EXPECT_FALSE(fs::exists(dir_ / "alternati.mkv"));
+
+    // Con file compatibili l'unione riesce, nell'ordine dato.
+    const std::string out = path("alternati.mkv");
+    exportClips({{path("a.mkv"), {{0.0, 1.0}}}, {path("b.mkv"), {{0.0, 1.0}}}, {path("a.mkv"), {{1.0, 2.0}}},
+                 {path("b.mkv"), {{1.0, 2.0}}}},
+                out, AudioEdit{});
+    expectVideoFrames(out, concat({framesOf(0, 0.0, 1.0), framesOf(100, 0.0, 1.0), framesOf(0, 1.0, 2.0),
+                                   framesOf(100, 1.0, 2.0)}));
+}
+
 TEST_F(MultiFileJoinTest, OutputMustDifferFromEveryInput)
 {
     EXPECT_THROW(exportClips({{path("a.mkv"), {{0.0, 1.0}}}, {path("b.mkv"), {{0.0, 1.0}}}}, path("b.mkv"), AudioEdit{}),
