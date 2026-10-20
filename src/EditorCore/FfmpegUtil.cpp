@@ -8,12 +8,12 @@
 
 namespace editor::core::detail {
 
-namespace {
-
 bool isCancelled(const std::atomic<bool>* cancel)
 {
     return cancel != nullptr && cancel->load(std::memory_order_relaxed);
 }
+
+namespace {
 
 int interruptCallback(void* opaque)
 {

@@ -39,6 +39,9 @@ using FramePtr = std::unique_ptr<AVFrame, FrameDeleter>;
 
 std::string ffmpegError(int code);
 
+// true se `cancel` c'è ed è diventato true (richiesta di annullare un'operazione lunga).
+bool isCancelled(const std::atomic<bool>* cancel);
+
 // Apre il file (percorso UTF-8) e legge le informazioni sui flussi.
 // Lancia ProbeCancelled se `cancel` diventa true, ProbeError con un messaggio in italiano negli altri casi.
 FormatContextPtr openInput(const std::string& utf8Path, const std::atomic<bool>* cancel = nullptr);

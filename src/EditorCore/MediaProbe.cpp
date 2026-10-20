@@ -18,11 +18,6 @@ using namespace detail;
 
 namespace {
 
-bool isCancelled(const std::atomic<bool>* cancel)
-{
-    return cancel != nullptr && cancel->load(std::memory_order_relaxed);
-}
-
 std::string dictValue(const AVDictionary* dict, const char* key, int flags = 0)
 {
     const AVDictionaryEntry* entry = av_dict_get(dict, key, nullptr, flags);
