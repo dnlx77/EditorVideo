@@ -63,6 +63,11 @@ public:
     int indexAt(double seconds) const;  // pezzo che si trova a quel tempo della sequenza (-1 se oltre la fine)
 
 private:
+    // Modifica di un elenco di tratti di un pezzo (nei tempi del file): aggiunge o toglie [from, to).
+    using RangeOp = void (*)(std::vector<TimeRange>& ranges, double from, double to);
+    // Applica `op` ai tratti senza audio dei pezzi attraversati da [from, to) della sequenza; true se è cambiato qualcosa.
+    bool applyToRange(double from, double to, RangeOp op);
+
     std::vector<Fragment> fragments_;
     int nextId_ = 1;
 };
