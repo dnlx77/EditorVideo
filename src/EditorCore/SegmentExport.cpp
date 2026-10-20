@@ -1,7 +1,6 @@
 #include "EditorCore/SegmentExport.h"
 
 #include "EditorCore/Compatibility.h"
-#include "EditorCore/CutSegment.h"
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/H264Params.h"
 
@@ -475,12 +474,6 @@ std::string replacementAudioProblem(const std::string& audioPath, const std::str
     return {};
 }
 
-ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath,
-                         const ExportProgress& progress)
-{
-    return exportClips(clips, outputPath, AudioEdit{}, progress);
-}
-
 ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,
                          const ExportProgress& progress, MuteMethod muteMethod)
 {
@@ -883,20 +876,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
 ExportResult exportSegments(const std::string& inputPath, const std::string& outputPath,
                             const std::vector<TimeRange>& ranges, const ExportProgress& progress)
 {
-    return exportClips({{inputPath, ranges}}, outputPath, progress);
-}
-ExportResult exportSegment(const std::string& inputPath, const std::string& outputPath, double inSeconds,
-                           double outSeconds, const ExportProgress& progress)
-{
-    return exportSegments(inputPath, outputPath, {{inSeconds, outSeconds}}, progress);
-}
-
-ExportResult exportSegment(const std::string& inputPath, const std::string& outputPath, const CutSegment& segment,
-                           const ExportProgress& progress)
-{
-    if (!segment.hasIn() || !segment.hasOut())
-        throw MediaError("Segna IN e OUT prima di esportare il segmento.");
-    return exportSegment(inputPath, outputPath, segment.in(), segment.out(), progress);
+    return exportClips({{inputPath, ranges}}, outputPath, AudioEdit{}, progress);
 }
 
 }  // namespace editor::core

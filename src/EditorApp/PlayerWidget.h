@@ -47,8 +47,8 @@ public:
     bool hasMedia() const;
 
     void togglePlayPause();
-    void startPlayback();
-    void stopPlayback();
+    void play();
+    void pause();
 
     // Riproduce solo fino a `end` (secondi del file), poi si ferma e chiama onWindowEnd: serve all'anteprima della
     // sequenza, che passa al pezzo successivo. end <= 0 = nessun limite.
@@ -92,18 +92,11 @@ public:
     const core::CutSegment& segment() const;
 
     // Elenco dei tratti da tenere, esportati uno dopo l'altro in un unico file.
-    void addRange();               // aggiunge IN-OUT
-    void cutRange();               // toglie IN-OUT (con l'elenco vuoto si parte dal file intero)
-    void removeRangeAtPlayhead();  // elimina il tratto sotto il cursore
-    void clearRanges();
-    const core::SegmentList& ranges() const { return ranges_; }
     // Riprende un elenco salvato (es. tornando su un file del progetto). Va chiamato dopo setKeyframes().
     void setRanges(const core::SegmentList& ranges);
     std::function<void()> onSegmentChanged;  // IN, OUT o elenco dei tratti cambiati (anche aprendo un altro file)
 
 private:
-    void play();
-    void pause();
     void openAudio();  // l'audio da riprodurre: quello del file o quello esterno
     void startWorkers(double from);
     void stopWorkers();

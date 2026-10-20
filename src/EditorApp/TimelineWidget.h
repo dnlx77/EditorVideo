@@ -23,7 +23,6 @@ public:
     // Tratti tenuti (bande verdi); il resto della linea del tempo viene scurito. Vuoto = niente bande.
     void setKeptRanges(std::vector<core::TimeRange> ranges);
     void setPlayhead(double seconds);  // ignorato mentre l'utente sta trascinando
-    bool isDragging() const { return dragging_; }
 
     std::function<void(double)> onScrub;  // durante il trascinamento (solo per aggiornare le etichette)
     std::function<void(double)> onSeek;   // al rilascio del mouse: spostarsi davvero lì

@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <vector>
 
 namespace fs = std::filesystem;
 using namespace editor::core;
@@ -61,15 +62,16 @@ protected:
 
     static std::string path(const fs::path& name) { return toUtf8(dir_ / name); }
 
-    // Segmento come lo costruisce l'interfaccia: fotogrammi chiave dall'analisi del file, IN agganciato.
-    static CutSegment segmentFor(const std::string& source)
+    // Segmento come lo costruisce l'interfaccia (fotogrammi chiave dall'analisi del file, IN agganciato), come
+    // unico tratto da esportare.
+    static std::vector<TimeRange> segmentFor(const std::string& source)
     {
         const MediaInfo info = probeFile(source);
         CutSegment segment;
         segment.reset(info.keyframeTimes, info.durationSeconds);
         EXPECT_DOUBLE_EQ(segment.setIn(kWantedIn), kSnappedIn);
         EXPECT_TRUE(segment.setOut(kOut));
-        return segment;
+        return {{segment.in(), segment.out()}};
     }
 
     static double lumaAt(const VideoFrame& frame, int x, int y)
@@ -118,7 +120,7 @@ TEST_F(ExportTest, MatroskaSegmentKeepsCodecsAndSync)
 {
     const std::string source = path("sorgente.mkv");
     const std::string exported = path("taglio.mkv");
-    const ExportResult result = exportSegment(source, exported, segmentFor(source));
+    const ExportResult result = exportSegments(source, exported, segmentFor(source));
     EXPECT_EQ(result.streamCount, 2);
     EXPECT_NEAR(result.durationSeconds, kOut - kSnappedIn, 2 * kFrame);
 
@@ -141,7 +143,7 @@ TEST_F(ExportTest, Mp4SegmentWithAacKeepsCodecsAndSync)
 {
     const std::string source = path("sorgente.mp4");
     const std::string exported = path("taglio.mp4");
-    exportSegment(source, exported, segmentFor(source));
+    exportSegments(source, exported, segmentFor(source));
 
     checkExportedVideo(source, exported, "mp4");
 
@@ -156,7 +158,7 @@ TEST_F(ExportTest, PathWithAccentedCharacters)
 {
     const std::string source = path("sorgente.mkv");
     const std::string exported = path(u8"taglio perché è così.mkv");
-    exportSegment(source, exported, segmentFor(source));
+    exportSegments(source, exported, segmentFor(source));
     EXPECT_TRUE(fs::exists(dir_ / u8"taglio perché è così.mkv"));
     EXPECT_NEAR(probeFile(exported).durationSeconds, kOut - kSnappedIn, 2 * kFrame);
 }
@@ -165,29 +167,15 @@ TEST_F(ExportTest, OutNotAfterInIsRejected)
 {
     const std::string source = path("sorgente.mkv");
     const std::string exported = path("errore.mkv");
-    EXPECT_THROW(exportSegment(source, exported, 2.0, 2.0), MediaError);
-    EXPECT_THROW(exportSegment(source, exported, 2.0, 1.0), MediaError);
+    EXPECT_THROW(exportSegments(source, exported, {{2.0, 2.0}}), MediaError);
+    EXPECT_THROW(exportSegments(source, exported, {{2.0, 1.0}}), MediaError);
     EXPECT_FALSE(fs::exists(dir_ / "errore.mkv"));
-}
-
-TEST_F(ExportTest, SegmentWithoutInAndOutIsRejected)
-{
-    const std::string source = path("sorgente.mkv");
-    CutSegment segment;
-    segment.reset({0.0, 1.0, 2.0, 3.0}, 4.0);
-    segment.setIn(1.0);  // manca OUT
-    try {
-        exportSegment(source, path("errore.mkv"), segment);
-        FAIL() << "doveva rifiutare";
-    } catch (const MediaError& e) {
-        EXPECT_NE(std::string(e.what()).find("IN e OUT"), std::string::npos) << e.what();
-    }
 }
 
 TEST_F(ExportTest, CannotOverwriteSource)
 {
     const std::string source = path("sorgente.mkv");
-    EXPECT_THROW(exportSegment(source, source, 1.0, 2.0), MediaError);
+    EXPECT_THROW(exportSegments(source, source, {{1.0, 2.0}}), MediaError);
     EXPECT_GT(fs::file_size(dir_ / "sorgente.mkv"), 0u);  // l'originale è intatto
 }
 
@@ -196,7 +184,7 @@ TEST_F(ExportTest, ContainerThatCannotHoldTheCodecIsRejected)
     // PCM in un WebM non è ammesso: errore chiaro e nessun file a metà.
     const std::string exported = path("errore.webm");
     try {
-        exportSegment(path("sorgente.mkv"), exported, 1.0, 2.0);
+        exportSegments(path("sorgente.mkv"), exported, {{1.0, 2.0}});
         FAIL() << "doveva rifiutare";
     } catch (const MediaError& e) {
         EXPECT_NE(std::string(e.what()).find("non può contenere"), std::string::npos) << e.what();
@@ -209,7 +197,7 @@ TEST_F(ExportTest, ProgressIsReportedAndCanCancel)
     const std::string source = path("sorgente.mkv");
     double last = -1.0;
     bool increasing = true;
-    exportSegment(source, path("progresso.mkv"), 1.0, 3.0, [&](double fraction) {
+    exportSegments(source, path("progresso.mkv"), {{1.0, 3.0}}, [&](double fraction) {
         increasing = increasing && fraction >= last - 1e-9;
         last = fraction;
         return true;
@@ -218,7 +206,8 @@ TEST_F(ExportTest, ProgressIsReportedAndCanCancel)
     EXPECT_DOUBLE_EQ(last, 1.0);
 
     // Annullando a metà non resta niente su disco.
-    EXPECT_THROW(exportSegment(source, path("annullato.mkv"), 1.0, 3.0, [](double fraction) { return fraction < 0.5; }),
+    EXPECT_THROW(exportSegments(source, path("annullato.mkv"), {{1.0, 3.0}},
+                                [](double fraction) { return fraction < 0.5; }),
                  ExportCancelled);
     EXPECT_FALSE(fs::exists(dir_ / "annullato.mkv"));
 }

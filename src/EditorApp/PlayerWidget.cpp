@@ -8,11 +8,9 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QTimer>
-#include <QtGui/QMouseEvent>
 #include <QtGui/QPainter>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
-#include <QtWidgets/QSlider>
 #include <QtWidgets/QStyle>
 #include <QtWidgets/QToolButton>
 #include <QtWidgets/QVBoxLayout>
@@ -773,90 +771,6 @@ const core::CutSegment& PlayerWidget::segment() const
     return segment_;
 }
 
-void PlayerWidget::addRange()
-{
-    if (!hasMedia())
-        return;
-    if (!segment_.hasIn() || !segment_.hasOut()) {
-        segmentNote_ = QStringLiteral("Segna IN e OUT (tasti I e O), poi aggiungi il tratto con A.");
-        updateSegmentUi();
-        return;
-    }
-    const double in = segment_.in();
-    const double out = segment_.out();
-    if (ranges_.add(in, out)) {
-        segmentNote_ = QStringLiteral("Tratto %1 - %2 aggiunto. Segna il prossimo, oppure esporta con Ctrl+E.")
-                           .arg(timeText(in), timeText(out));
-        // IN e OUT tornano liberi per il tratto successivo.
-        segment_.clearIn();
-        segment_.clearOut();
-    } else {
-        segmentNote_ = QStringLiteral("Tratto vuoto: OUT deve stare dopo IN.");
-    }
-    noteIsOutError_ = false;
-    updateSegmentUi();
-}
-
-void PlayerWidget::cutRange()
-{
-    if (!hasMedia())
-        return;
-    if (!segment_.hasIn() || !segment_.hasOut()) {
-        segmentNote_ = QStringLiteral("Segna con I e O il pezzo da togliere, poi premi X.");
-        updateSegmentUi();
-        return;
-    }
-    // Il pezzo da togliere comincia dove l'utente ha segnato IN (non serve agganciarlo: lì finisce la parte tenuta).
-    const double from = wantedIn_;
-    const double to = segment_.out();
-    const bool wasEmpty = ranges_.empty();
-    switch (ranges_.remove(from, to)) {
-    case core::SegmentList::RemoveResult::Removed:
-        segmentNote_ = QStringLiteral("Tolto il pezzo %1 - %2%3. La parte dopo riparte dal fotogramma chiave più vicino.")
-                           .arg(timeText(from), timeText(to),
-                                wasEmpty ? QStringLiteral(" (partendo dal file intero)") : QString());
-        segment_.clearIn();
-        segment_.clearOut();
-        break;
-    case core::SegmentList::RemoveResult::OutsideKept:
-        segmentNote_ = QStringLiteral("Questo tratto (%1 - %2) è già escluso: è fuori dalle parti verdi.")
-                           .arg(timeText(from), timeText(to));
-        break;
-    case core::SegmentList::RemoveResult::NoKeyframeInside:
-        segmentNote_ = QStringLiteral("Non si può togliere %1 - %2 senza ricodifica: dentro non c'è un fotogramma chiave "
-                                      "da cui far ripartire il video. Allarga il pezzo fino a comprendere una tacca "
-                                      "della linea del tempo.")
-                           .arg(timeText(from), timeText(to));
-        break;
-    case core::SegmentList::RemoveResult::Empty:
-        segmentNote_ = QStringLiteral("Tratto vuoto: OUT deve stare dopo IN.");
-        break;
-    }
-    noteIsOutError_ = false;
-    updateSegmentUi();
-}
-
-void PlayerWidget::removeRangeAtPlayhead()
-{
-    if (!hasMedia())
-        return;
-    const double at = markTime();
-    segmentNote_ = ranges_.removeAt(at) ? QStringLiteral("Tratto eliminato.")
-                                        : QStringLiteral("Sotto il cursore (%1) non c'è nessun tratto.").arg(timeText(at));
-    noteIsOutError_ = false;
-    updateSegmentUi();
-}
-
-void PlayerWidget::startPlayback()
-{
-    play();
-}
-
-void PlayerWidget::stopPlayback()
-{
-    pause();
-}
-
 void PlayerWidget::setPlaybackWindow(double end)
 {
     windowEnd_ = end;
@@ -889,14 +803,6 @@ void PlayerWidget::setRanges(const core::SegmentList& ranges)
 {
     ranges_ = ranges;
     segmentNote_.clear();
-    noteIsOutError_ = false;
-    updateSegmentUi();
-}
-
-void PlayerWidget::clearRanges()
-{
-    ranges_.clear();
-    segmentNote_ = QStringLiteral("Elenco dei tratti svuotato.");
     noteIsOutError_ = false;
     updateSegmentUi();
 }

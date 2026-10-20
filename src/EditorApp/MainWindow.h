@@ -91,7 +91,7 @@ public:
     int readyThumbnails() const;
 
     // Esporta il montaggio, o il solo IN-OUT se la sequenza è vuota (chiede dove salvare).
-    void exportSegment();
+    void exportDialog();
     // Esportazione verso `target` senza chiedere niente; showResult = false per non mostrare il messaggio finale
     // (prove automatiche). false se non si può partire (niente da esportare, analisi o esportazione in corso).
     // slowDown rallenta di proposito i passi del primo secondo e mezzo (solo per le prove: così la finestra di

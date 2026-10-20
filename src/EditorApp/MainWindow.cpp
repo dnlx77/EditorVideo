@@ -867,7 +867,7 @@ void MainWindow::updateExportAction()
         removeClipAction_->setEnabled(currentClipId_ != 0);
 }
 
-void MainWindow::exportSegment()
+void MainWindow::exportDialog()
 {
     const auto plan = exportPlan();
     if (plan.empty() || exportThread_ != nullptr)
@@ -1033,7 +1033,7 @@ void MainWindow::createMenus()
             removeClip(currentClipId_, QStringLiteral("Togli il file"));
     });
     fileMenu->addSeparator();
-    exportAction_ = fileMenu->addAction(QStringLiteral("&Esporta..."), this, &MainWindow::exportSegment);
+    exportAction_ = fileMenu->addAction(QStringLiteral("&Esporta..."), this, &MainWindow::exportDialog);
     exportAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
     exportAction_->setStatusTip(QStringLiteral("Salva il montaggio in un nuovo file, senza ricodifica"));
     fileMenu->addSeparator();

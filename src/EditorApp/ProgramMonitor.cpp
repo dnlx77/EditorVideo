@@ -112,10 +112,10 @@ void ProgramMonitor::seekTo(double seconds)
         index = static_cast<int>(sequence.fragments().size()) - 1;  // alla fine: ultimo pezzo
     const bool wasPlaying = playing_;
     if (wasPlaying)
-        player_->stopPlayback();
+        player_->pause();
     load(index, t - sequence.startOf(index));
     if (wasPlaying)
-        player_->startPlayback();
+        player_->play();
     updatePosition();
 }
 
@@ -130,7 +130,7 @@ void ProgramMonitor::togglePlayPause()
     if (sequence.empty())
         return;
     if (playing_) {
-        player_->stopPlayback();
+        player_->pause();
         playing_ = false;
         poll_->stop();
         updatePosition();
@@ -141,7 +141,7 @@ void ProgramMonitor::togglePlayPause()
     else if (index_ < 0)
         seekTo(position_);
     playing_ = true;
-    player_->startPlayback();
+    player_->play();
     poll_->start();
     updateLabels();
 }
@@ -207,7 +207,7 @@ void ProgramMonitor::fragmentEnded()
     const int next = index_ + 1;
     if (next < static_cast<int>(project_.sequence().fragments().size())) {
         load(next, 0.0);
-        player_->startPlayback();
+        player_->play();
     } else {
         playing_ = false;  // fine del montaggio
         poll_->stop();
@@ -219,7 +219,7 @@ void ProgramMonitor::sequenceChanged()
 {
     const core::Sequence& sequence = project_.sequence();
     if (playing_) {
-        player_->stopPlayback();
+        player_->pause();
         playing_ = false;
         poll_->stop();
     }
