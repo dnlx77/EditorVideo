@@ -52,6 +52,13 @@ struct OutputDeleter
 };
 using OutputPtr = std::unique_ptr<AVFormatContext, OutputDeleter>;
 
+// Alla fine del blocco libera il contenuto del pacchetto, che resta allocato per essere riusato.
+struct PacketUnref
+{
+    AVPacket* pkt;
+    ~PacketUnref() { av_packet_unref(pkt); }
+};
+
 struct StreamCopy
 {
     int output = -1;  // indice del flusso nel file di uscita, -1 = non copiato
@@ -399,7 +406,8 @@ struct ReplacementSource
     double start = 0.0;   // inizio del file
     double offset = 0.0;  // tempo nel file creato = tempo nel file audio + offset
     StreamCopy copy;
-    PacketPtr pending;    // letto ma non ancora scritto
+    PacketPtr packet;           // riusato per ogni lettura
+    bool pending = false;       // `packet` letto ma non ancora scritto
     bool ended = false;
 };
 
@@ -579,6 +587,9 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
 
     // Traccia sostitutiva: un flusso audio in più, copiato dal file audio (aperto e controllato sopra).
     if (replaced) {
+        replacement.packet.reset(av_packet_alloc());
+        if (!replacement.packet)
+            throw MediaError(kOutOfMemory);
         keepOnlyStream(replacement.ctx.get(), replacement.stream);
         replacement.start = startOffsetSeconds(replacement.ctx.get());
         replacement.offset = audio.replacement->offset;
@@ -652,23 +663,22 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             const AVStream* in = input->streams[replacement.stream];
             const AVStream* out = output->streams[replacement.copy.output];
             const double tb = av_q2d(in->time_base);
+            AVPacket* pkt = replacement.packet.get();
             while (!replacement.ended) {
                 if (!replacement.pending) {
-                    PacketPtr next(av_packet_alloc());
-                    if (!next)
-                        throw MediaError(kOutOfMemory);
-                    const int ret = av_read_frame(input, next.get());
+                    const int ret = av_read_frame(input, pkt);
                     if (ret == AVERROR_EOF) {
                         replacement.ended = true;
                         break;
                     }
                     if (ret < 0)
                         throw MediaError("Errore durante la lettura dell'audio sostitutivo (" + ffmpegError(ret) + ").");
-                    if (next->stream_index != replacement.stream || (next->pts == AV_NOPTS_VALUE && next->dts == AV_NOPTS_VALUE))
+                    if (pkt->stream_index != replacement.stream || (pkt->pts == AV_NOPTS_VALUE && pkt->dts == AV_NOPTS_VALUE)) {
+                        av_packet_unref(pkt);
                         continue;
-                    replacement.pending = std::move(next);
+                    }
+                    replacement.pending = true;
                 }
-                AVPacket* pkt = replacement.pending.get();
                 const std::int64_t ts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
                 const double sourceTime = ts * tb - replacement.start;
                 double time = sourceTime + replacement.offset;  // nel file creato
@@ -678,7 +688,9 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                     replacement.ended = true;
                     break;
                 }
-                PacketPtr current = std::move(replacement.pending);
+                // Da qui il pacchetto si scrive o si scarta: in entrambi i casi si libera prima della prossima lettura.
+                replacement.pending = false;
+                const PacketUnref release{pkt};
                 double duration = std::max<std::int64_t>(pkt->duration, 0) * tb;
                 if (replacement.copy.pcmBlockAlign > 0) {
                     if (!trimPcm(pkt, replacement.copy, sourceTime, tb, {-replacement.offset, end - replacement.offset}))

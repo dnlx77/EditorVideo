@@ -1,7 +1,6 @@
 #include "EditorCore/H264Params.h"
 
 #include <algorithm>
-#include <set>
 #include <stdexcept>
 
 namespace editor::core {
@@ -100,8 +99,13 @@ void skipScalingList(BitReader& r, int size)
 
 bool highProfile(int profile)
 {
-    static const std::set<int> profiles = {100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135};
-    return profiles.contains(profile);
+    switch (profile) {
+    case 100: case 110: case 122: case 244: case 44: case 83: case 86: case 118: case 128: case 138: case 139:
+    case 134: case 135:
+        return true;
+    default:
+        return false;
+    }
 }
 
 H264Sps parseSps(const std::vector<std::uint8_t>& nal)
