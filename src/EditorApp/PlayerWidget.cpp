@@ -523,7 +523,13 @@ void PlayerWidget::tick()
     }
 
     position_ = duration_ > 0 ? std::clamp(now, 0.0, duration_) : std::max(0.0, now);
-    updatePositionLabel(position_);
+    // Il cursore segue ogni passo; il testo del tempo basta aggiornarlo ~30 volte al secondo (alla fine e in pausa
+    // lo aggiorna comunque updatePositionLabel).
+    timeline_->setPlayhead(position_);
+    if (!labelClock_.isValid() || labelClock_.elapsed() >= 33) {
+        updatePositionLabel(position_);
+        labelClock_.restart();
+    }
 
     if (windowEnd_ > 0 && now >= windowEnd_ - 0.001) {
         // Fine del pezzo: ci si ferma qui e lo si dice a chi riproduce la sequenza.

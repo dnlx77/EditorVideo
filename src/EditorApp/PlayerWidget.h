@@ -4,6 +4,7 @@
 #include "EditorCore/CutSegment.h"
 #include "EditorCore/SegmentList.h"
 
+#include <QtCore/QElapsedTimer>
 #include <QtWidgets/QWidget>
 
 #include <atomic>
@@ -108,6 +109,7 @@ private:
 
     double clock();
     void tick();
+    QElapsedTimer labelClock_;  // ultimo aggiornamento dell'etichetta del tempo durante la riproduzione
     // Ferma la riproduzione in `position`; con signalWindowEnd avvisa poi onWindowEnd (fine del pezzo).
     void stopAt(double position, bool signalWindowEnd);
     void showFrameAt(double seconds);

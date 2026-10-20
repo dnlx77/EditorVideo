@@ -2,6 +2,7 @@
 
 #include "EditorCore/SegmentList.h"
 
+#include <QtGui/QPixmap>
 #include <QtWidgets/QWidget>
 
 #include <functional>
@@ -32,11 +33,20 @@ public:
 
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void changeEvent(QEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
+    // Tutto tranne il cursore (traccia, bande, tacche, IN e OUT) si disegna in cache_ e si rifà solo quando cambia;
+    // a ogni ridisegno si copia cache_ e sopra si disegna il cursore.
+    void invalidate();
+    void paintStatic(QPainter& p);
+    void paintCursor(QPainter& p);
+    void movePlayhead(double seconds);           // ridisegna solo dove era e dove va il cursore
+    QRect cursorRect(double seconds) const;
     QRectF trackRect() const;
     double xForTime(double seconds) const;
     double timeForX(double x) const;
@@ -50,6 +60,8 @@ private:
     std::vector<core::TimeRange> kept_;
     double playhead_ = 0.0;
     bool dragging_ = false;
+    QPixmap cache_;
+    bool cacheValid_ = false;
 };
 
 }  // namespace editor::app
