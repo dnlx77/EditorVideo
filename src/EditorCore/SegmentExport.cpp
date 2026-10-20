@@ -443,6 +443,27 @@ bool canMux(const AVOutputFormat* format, const std::string& extension, AVFormat
     return ok;
 }
 
+// Come replacementAudioProblem, con il file audio già aperto in `ctx` e il suo flusso audio principale `index`
+// (-1 se non c'è). Legge qualche pacchetto: prima di usare `ctx` per copiare l'audio bisogna riposizionarsi.
+std::string replacementProblem(AVFormatContext* ctx, int index, const std::string& audioPath,
+                               const std::string& outputPath)
+{
+    if (index < 0)
+        return "Il file " + fileNameOf(audioPath) + " non contiene audio.";
+    const AVOutputFormat* format = av_guess_format(nullptr, outputPath.c_str(), nullptr);
+    if (format == nullptr)
+        return {};  // lo dirà l'esportazione
+    const AVCodecID codec = ctx->streams[index]->codecpar->codec_id;
+    const std::string extension = pathFromUtf8(outputPath).extension().string();  // con il punto
+    if (avformat_query_codec(format, codec, FF_COMPLIANCE_NORMAL) == 0 || !canMux(format, extension, ctx, index)) {
+        return "L'audio di " + fileNameOf(audioPath) + " (" + avcodec_get_name(codec) + ") non può stare in un file "
+             + uppercase(extension.empty() ? extension : extension.substr(1))
+             + " senza ricodifica. Scegli un audio in un formato adatto (per MP4 e MOV: AAC, M4A o MP3), "
+               "oppure monta file MKV, che accettano quasi tutti i formati audio.";
+    }
+    return {};
+}
+
 }  // namespace
 
 std::string replacementAudioProblem(const std::string& audioPath, const std::string& outputPath)
@@ -453,20 +474,7 @@ std::string replacementAudioProblem(const std::string& audioPath, const std::str
     } catch (const std::exception& e) {
         return e.what();
     }
-    const int index = findMainStream(ctx.get(), AVMEDIA_TYPE_AUDIO);
-    if (index < 0)
-        return "Il file " + fileNameOf(audioPath) + " non contiene audio.";
-    const AVOutputFormat* format = av_guess_format(nullptr, outputPath.c_str(), nullptr);
-    if (format == nullptr)
-        return {};  // lo dirà l'esportazione
-    const AVCodecID codec = ctx->streams[index]->codecpar->codec_id;
-    const std::string extension = pathFromUtf8(outputPath).extension().string();  // con il punto
-    if (avformat_query_codec(format, codec, FF_COMPLIANCE_NORMAL) == 0 || !canMux(format, extension, ctx.get(), index)) {
-        return "L'audio di " + fileNameOf(audioPath) + " (" + avcodec_get_name(codec) + ") non può stare in un file "
-             + uppercase(extension.empty() ? extension : extension.substr(1)) + " senza ricodifica. Scegli un audio in un formato adatto (per MP4 e MOV: AAC, M4A o MP3), "
-               "oppure monta file MKV, che accettano quasi tutti i formati audio.";
-    }
-    return {};
+    return replacementProblem(ctx.get(), findMainStream(ctx.get(), AVMEDIA_TYPE_AUDIO), audioPath, outputPath);
 }
 
 ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,
@@ -486,11 +494,21 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
     }
     if (rangeCount == 0)
         throw MediaError("Non c'è nessun tratto da esportare.");
+    // Traccia sostitutiva: il file audio si apre una volta sola, per il controllo e poi per la copia.
     const bool replaced = audio.replacement.has_value();
+    ReplacementSource replacement;
     if (replaced) {
         if (samePath(audio.replacement->path, outputPath))
             throw MediaError("Il file di destinazione deve essere diverso dall'audio sostitutivo.");
-        if (const std::string problem = replacementAudioProblem(audio.replacement->path, outputPath); !problem.empty())
+        try {
+            replacement.ctx = openInput(audio.replacement->path);
+        } catch (const std::exception& e) {
+            throw MediaError(e.what());
+        }
+        replacement.stream = findMainStream(replacement.ctx.get(), AVMEDIA_TYPE_AUDIO);
+        if (const std::string problem =
+                replacementProblem(replacement.ctx.get(), replacement.stream, audio.replacement->path, outputPath);
+            !problem.empty())
             throw MediaError(problem);
     }
 
@@ -553,13 +571,8 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
         av_dict_copy(&out->metadata, in->metadata, 0);
     }
 
-    // Traccia sostitutiva: un flusso audio in più, copiato dal file audio.
-    ReplacementSource replacement;
+    // Traccia sostitutiva: un flusso audio in più, copiato dal file audio (aperto e controllato sopra).
     if (replaced) {
-        replacement.ctx = openInput(audio.replacement->path);
-        replacement.stream = findMainStream(replacement.ctx.get(), AVMEDIA_TYPE_AUDIO);
-        if (replacement.stream < 0)
-            throw MediaError("Il file " + fileNameOf(audio.replacement->path) + " non contiene audio.");
         keepOnlyStream(replacement.ctx.get(), replacement.stream);
         replacement.start = startOffsetSeconds(replacement.ctx.get());
         replacement.offset = audio.replacement->offset;
