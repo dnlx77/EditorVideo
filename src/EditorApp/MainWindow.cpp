@@ -37,6 +37,7 @@
 #include <cmath>
 #include <cstdio>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <thread>
@@ -842,6 +843,20 @@ std::vector<core::ClipRanges> MainWindow::exportPlan() const
     return {};
 }
 
+bool MainWindow::hasExportPlan() const
+{
+    // Le stesse condizioni di exportPlan(): un pezzo con il suo file nel progetto, oppure (montaggio vuoto) IN e OUT
+    // segnati su un file analizzato.
+    const core::Sequence& sequence = project_.sequence();
+    if (!sequence.empty()) {
+        return std::any_of(sequence.fragments().begin(), sequence.fragments().end(),
+                           [this](const core::Fragment& f) { return project_.find(f.clipId) != nullptr; });
+    }
+    const core::Clip* clip = project_.find(currentClipId_);
+    const core::CutSegment& segment = player_->segment();
+    return clip != nullptr && clip->analyzed && segment.hasIn() && segment.hasOut();
+}
+
 double MainWindow::exportLength() const
 {
     double total = 0.0;
@@ -856,13 +871,13 @@ void MainWindow::updateExportAction()
 {
     if (exportAction_ == nullptr)
         return;
-    const auto plan = exportPlan();
-    exportAction_->setEnabled(!plan.empty() && exportThread_ == nullptr);
+    const bool canExport = hasExportPlan();
+    exportAction_->setEnabled(canExport && exportThread_ == nullptr);
     exportAction_->setText(project_.sequence().empty()
                                ? QStringLiteral("&Esporta segmento IN-OUT...")
                                : QStringLiteral("&Esporta il montaggio (%1 pezzi)...").arg(project_.sequence().fragments().size()));
-    exportAction_->setToolTip(plan.empty() ? QStringLiteral("Metti dei pezzi nel montaggio (A) o segna IN e OUT")
-                                           : QString());
+    exportAction_->setToolTip(!canExport ? QStringLiteral("Metti dei pezzi nel montaggio (A) o segna IN e OUT")
+                                         : QString());
     if (removeClipAction_ != nullptr)
         removeClipAction_->setEnabled(currentClipId_ != 0);
 }
@@ -1358,23 +1373,40 @@ void MainWindow::refreshClipList()
     if (clipList_ == nullptr)
         return;
     updatingList_ = true;
-    clipList_->clear();
-    for (const core::Clip& clip : project_.clips()) {
-        int uses = 0;
-        for (const core::Fragment& f : project_.sequence().fragments())
-            uses += f.clipId == clip.id ? 1 : 0;
+    std::map<int, int> uses;  // pezzi nel montaggio per file
+    for (const core::Fragment& f : project_.sequence().fragments())
+        ++uses[f.clipId];
+    // Con gli stessi file nello stesso ordine si aggiornano le righe che ci sono (restano scorrimento e selezione),
+    // altrimenti si rifà l'elenco.
+    const auto& clips = project_.clips();
+    bool sameFiles = clipList_->count() == static_cast<int>(clips.size());
+    for (int row = 0; sameFiles && row < clipList_->count(); ++row)
+        sameFiles = clipList_->item(row)->data(Qt::UserRole).toInt() == clips[static_cast<std::size_t>(row)].id;
+    if (!sameFiles)
+        clipList_->clear();
+    QListWidgetItem* current = nullptr;
+    for (std::size_t row = 0; row < clips.size(); ++row) {
+        const core::Clip& clip = clips[row];
+        const auto found = uses.find(clip.id);
+        const int count = found != uses.end() ? found->second : 0;
         QString detail = clip.analyzed ? timeText(clip.duration) : QStringLiteral("analisi in corso...");
-        if (uses > 0)
-            detail += QStringLiteral(", %1 pezzi nel montaggio").arg(uses);
-        auto* item = new QListWidgetItem(QStringLiteral("%1  —  %2").arg(fileNameOf(clip.path), detail));
+        if (count > 0)
+            detail += QStringLiteral(", %1 pezzi nel montaggio").arg(count);
+        const QString text = QStringLiteral("%1  —  %2").arg(fileNameOf(clip.path), detail);
+        QListWidgetItem* item = sameFiles ? clipList_->item(static_cast<int>(row)) : new QListWidgetItem;
+        if (item->text() != text)
+            item->setText(text);
         item->setData(Qt::UserRole, clip.id);
         item->setToolTip(qs(clip.path));
         // Lo stesso colore dei suoi blocchi nel montaggio.
         item->setForeground(blockColor(project_.indexOf(clip.id)));
-        clipList_->addItem(item);
+        if (!sameFiles)
+            clipList_->addItem(item);
         if (clip.id == currentClipId_)
-            clipList_->setCurrentItem(item);
+            current = item;
     }
+    if (clipList_->currentItem() != current)
+        clipList_->setCurrentItem(current);
     updatingList_ = false;
 }
 
@@ -1610,8 +1642,7 @@ bool MainWindow::openProject(const QString& path, bool interactive)
     }
     if (const auto& replacement = project_.audioReplacement())
         requestWaveform(replacement->path);
-    sequenceChanged();
-    refreshClipList();
+    sequenceChanged();  // aggiorna anche l'elenco dei file
     const int source = project_.find(loaded.view.sourceClipId) != nullptr ? loaded.view.sourceClipId
                      : project_.empty()                                   ? 0
                                                                           : project_.clips().front().id;
