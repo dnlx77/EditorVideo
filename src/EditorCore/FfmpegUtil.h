@@ -8,7 +8,6 @@ extern "C" {
 }
 
 #include <atomic>
-#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -39,8 +38,6 @@ struct FrameDeleter
 using FramePtr = std::unique_ptr<AVFrame, FrameDeleter>;
 
 std::string ffmpegError(int code);
-
-std::filesystem::path pathFromUtf8(const std::string& utf8);
 
 // Apre il file (percorso UTF-8) e legge le informazioni sui flussi.
 // Lancia ProbeCancelled se `cancel` diventa true, ProbeError con un messaggio in italiano negli altri casi.

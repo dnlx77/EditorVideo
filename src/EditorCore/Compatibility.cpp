@@ -2,6 +2,7 @@
 
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/H264Params.h"
+#include "EditorCore/PathUtil.h"
 
 extern "C" {
 #include <libavutil/channel_layout.h>
@@ -90,8 +91,7 @@ MediaSignature readMediaSignature(const std::string& utf8Path)
     FormatContextPtr fmt = openInput(utf8Path);
     MediaSignature signature;
     signature.path = utf8Path;
-    const auto name = pathFromUtf8(utf8Path).filename().u8string();
-    signature.fileName.assign(name.begin(), name.end());
+    signature.fileName = fileNameOf(utf8Path);
 
     for (unsigned i = 0; i < fmt->nb_streams; ++i) {
         const AVStream* st = fmt->streams[i];

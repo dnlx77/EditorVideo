@@ -3,6 +3,7 @@
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/H264Params.h"
+#include "EditorCore/PathUtil.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <algorithm>
@@ -74,9 +75,8 @@ bool samePath(const std::string& a, const std::string& b)
     if (std::filesystem::exists(pb, ec) && std::filesystem::equivalent(pa, pb, ec))
         return true;
     // Su Windows i nomi dei file non distinguono maiuscole e minuscole.
-    const auto ca = std::filesystem::weakly_canonical(pa, ec).u8string();
-    const auto cb = std::filesystem::weakly_canonical(pb, ec).u8string();
-    return lowercase(std::string(ca.begin(), ca.end())) == lowercase(std::string(cb.begin(), cb.end()));
+    return lowercase(utf8FromPath(std::filesystem::weakly_canonical(pa, ec)))
+        == lowercase(utf8FromPath(std::filesystem::weakly_canonical(pb, ec)));
 }
 
 // Codec tag dell'originale se il contenitore di uscita lo accetta, altrimenti 0 (lo sceglie il muxer).
@@ -390,16 +390,6 @@ struct ReplacementSource
     bool ended = false;
 };
 
-std::string fileNameOf(const std::string& utf8Path)
-{
-    const auto name = pathFromUtf8(utf8Path).filename().u8string();
-    return std::string(name.begin(), name.end());
-}
-
-}  // namespace
-
-namespace {
-
 // Prova a scrivere un file del formato `format` con il solo flusso `in` e qualche suo pacchetto (in un file
 // temporaneo): alcuni contenitori dichiarano di accettare un codec ma poi non riescono a chiudere il file.
 bool canMux(const AVOutputFormat* format, const std::string& extension, AVFormatContext* input, int streamIndex)
@@ -408,10 +398,7 @@ bool canMux(const AVOutputFormat* format, const std::string& extension, AVFormat
     static std::atomic<int> counter{0};
     const std::filesystem::path probe = std::filesystem::temp_directory_path(ec)
                                       / ("EditorVideoProvaAudio" + std::to_string(++counter) + extension);
-    const std::string probePath = [&] {
-        const auto text = probe.u8string();
-        return std::string(text.begin(), text.end());
-    }();
+    const std::string probePath = utf8FromPath(probe);
     bool ok = false;
     {
         AVFormatContext* raw = nullptr;

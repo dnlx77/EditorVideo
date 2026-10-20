@@ -9,6 +9,7 @@
 #include "EditorCore/ProjectFile.h"
 #include "EditorCore/SegmentList.h"
 #include "EditorCore/MediaProbe.h"
+#include "EditorCore/PathUtil.h"
 #include "EditorCore/SegmentExport.h"
 #include "EditorCore/Thumbnails.h"
 #include "EditorCore/VideoDecoder.h"
@@ -325,10 +326,6 @@ int runProjectTest(const QStringList& args, qsizetype at)
         std::printf("Uso: EditorVideo.exe --project-test <file> [<file> ...]\n");
         return 1;
     }
-    const auto utf8 = [](const fs::path& path) {
-        const auto text = path.u8string();
-        return std::string(text.begin(), text.end());
-    };
     const auto read = [](const fs::path& path) {
         std::ifstream in(path, std::ios::binary);
         std::ostringstream content;
@@ -352,8 +349,8 @@ int runProjectTest(const QStringList& args, qsizetype at)
             const fs::path source = fs::path(args[i].toStdWString());
             const fs::path copy = base / "originale" / "video" / source.filename();
             fs::copy_file(source, copy, fs::copy_options::overwrite_existing);
-            const core::MediaInfo info = core::probeFile(utf8(copy));
-            const int id = project.add(utf8(copy));
+            const core::MediaInfo info = core::probeFile(core::utf8FromPath(copy));
+            const int id = project.add(core::utf8FromPath(copy));
             project.setAnalysis(id, info.keyframeTimes, info.durationSeconds);
             project.sequence().insert(-1, id, 0.0, info.durationSeconds, project.snapper());
             project.sequence().insert(-1, id, 0.0, info.durationSeconds / 2, project.snapper());
@@ -363,7 +360,7 @@ int runProjectTest(const QStringList& args, qsizetype at)
         project.setAudioReplacement(core::AudioReplacement{project.clips().front().path, 0.5, project.clips().front().duration});
         const core::ProjectView view{project.clips().front().id, 0.0, 1.0, 0.5, total / 2};
 
-        const std::string saved = utf8(base / "originale" / "montaggio.evproj");
+        const std::string saved = core::utf8FromPath(base / "originale" / "montaggio.evproj");
         core::saveProjectFile(saved, project, view);
         std::printf("Progetto salvato: %s (%d file, %d pezzi)\n", saved.c_str(), static_cast<int>(project.clips().size()),
                     static_cast<int>(project.sequence().fragments().size()));
@@ -378,24 +375,26 @@ int runProjectTest(const QStringList& args, qsizetype at)
             sameDurations = sameDurations && std::abs(loaded.savedDurations[clip.id] - info.durationSeconds) < 1e-9;
         }
         check(sameDurations, "durate dei file uguali a quelle salvate");
-        const std::string again = utf8(base / "originale" / "di_nuovo.evproj");
+        const std::string again = core::utf8FromPath(base / "originale" / "di_nuovo.evproj");
         core::saveProjectFile(again, loaded.project, loaded.view);
-        check(read(fs::path(std::u8string(saved.begin(), saved.end()))) == read(fs::path(std::u8string(again.begin(), again.end()))),
+        check(read(core::pathFromUtf8(saved)) == read(core::pathFromUtf8(again)),
               "salvato di nuovo: identico");
         check(loaded.project.sequence().mutedRanges().size() == project.sequence().mutedRanges().size(), "tratti senza audio");
         check(loaded.view.in == view.in && loaded.view.out == view.out, "IN e OUT della Sorgente");
 
         // Cartella spostata: i file si ritrovano dal percorso relativo, e il progetto riaperto si esporta.
         fs::rename(base / "originale", base / "spostata");
-        core::LoadedProject moved = core::loadProjectFile(utf8(base / "spostata" / "montaggio.evproj"));
+        core::LoadedProject moved = core::loadProjectFile(core::utf8FromPath(base / "spostata" / "montaggio.evproj"));
         bool inside = moved.missing.empty();
         for (const core::Clip& clip : moved.project.clips()) {
-            inside = inside && clip.path.find("spostata") != std::string::npos && fs::exists(fs::path(std::u8string(clip.path.begin(), clip.path.end())));
+            inside = inside && clip.path.find("spostata") != std::string::npos
+                  && fs::exists(core::pathFromUtf8(clip.path));
             const core::MediaInfo info = core::probeFile(clip.path);
             moved.project.setAnalysis(clip.id, info.keyframeTimes, info.durationSeconds);
         }
         check(inside, "cartella spostata: file ritrovati dal percorso relativo");
-        const std::string output = utf8(base / ("esportato" + fs::path(std::u8string(moved.project.clips().front().path.begin(), moved.project.clips().front().path.end())).extension().string()));
+        const std::string extension = core::pathFromUtf8(moved.project.clips().front().path).extension().string();
+        const std::string output = core::utf8FromPath(base / ("esportato" + extension));
         core::exportClips(moved.project.exportPlan(), output, moved.project.audioEdit());
         const double length = core::probeFile(output).durationSeconds;
         std::printf("  esportazione del progetto riaperto: %.3f s (attesi %.3f s)\n", length, total);
@@ -403,8 +402,8 @@ int runProjectTest(const QStringList& args, qsizetype at)
               "esportazione del progetto riaperto");
 
         // Un file tolto: risulta mancante; senza di lui i suoi pezzi vengono tolti.
-        fs::remove(fs::path(std::u8string(moved.project.clips().front().path.begin(), moved.project.clips().front().path.end())));
-        core::LoadedProject missing = core::loadProjectFile(utf8(base / "spostata" / "montaggio.evproj"));
+        fs::remove(core::pathFromUtf8(moved.project.clips().front().path));
+        core::LoadedProject missing = core::loadProjectFile(core::utf8FromPath(base / "spostata" / "montaggio.evproj"));
         std::printf("  file mancanti: %d\n", static_cast<int>(missing.missing.size()));
         const int dropped = core::dropMissing(missing);
         check(!missing.project.audioReplacement() && dropped == 2, "file mancante segnalato e tolto con i suoi 2 pezzi");
@@ -413,7 +412,7 @@ int runProjectTest(const QStringList& args, qsizetype at)
         std::string json = read(base / "spostata" / "montaggio.evproj");
         const auto refused = [&](const std::string& text, const char* what) {
             try {
-                core::projectFromJson(utf8(base / "x.evproj"), text);
+                core::projectFromJson(core::utf8FromPath(base / "x.evproj"), text);
                 check(false, what);
             } catch (const core::ProjectFileError& e) {
                 std::printf("  %s -> \"%s\"\n", what, e.what());

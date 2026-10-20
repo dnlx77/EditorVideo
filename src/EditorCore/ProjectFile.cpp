@@ -2,6 +2,7 @@
 
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/Json.h"
+#include "EditorCore/PathUtil.h"
 
 #include <algorithm>
 #include <cmath>
@@ -18,17 +19,6 @@ namespace {
 
 constexpr const char* kFormatName = "EditorVideo progetto";
 
-std::string utf8(const std::filesystem::path& path)
-{
-    const auto text = path.u8string();
-    return std::string(text.begin(), text.end());
-}
-
-std::string fileNameOf(const std::string& path)
-{
-    return utf8(pathFromUtf8(path).filename());
-}
-
 std::filesystem::path projectDir(const std::string& projectPath)
 {
     std::error_code ec;
@@ -38,10 +28,10 @@ std::filesystem::path projectDir(const std::string& projectPath)
 // Percorso relativo alla cartella del progetto ("" se non si può, es. su un altro disco).
 std::string relativeTo(const std::filesystem::path& dir, const std::string& path)
 {
-    const std::filesystem::path relative = std::filesystem::path(pathFromUtf8(path)).lexically_relative(dir);
+    const std::filesystem::path relative = pathFromUtf8(path).lexically_relative(dir);
     if (relative.empty())
         return {};
-    return utf8(relative);
+    return utf8FromPath(relative);
 }
 
 bool isFile(const std::filesystem::path& path)
@@ -58,7 +48,7 @@ std::optional<std::string> locate(const std::filesystem::path& dir, const std::s
     if (!relative.empty()) {
         const std::filesystem::path candidate = (dir / pathFromUtf8(relative)).lexically_normal();
         if (isFile(candidate))
-            return utf8(candidate);
+            return utf8FromPath(candidate);
     }
     return std::nullopt;
 }

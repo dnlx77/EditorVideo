@@ -1,6 +1,7 @@
 #include "EditorCore/FfmpegUtil.h"
 
 #include "EditorCore/MediaProbe.h"
+#include "EditorCore/PathUtil.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -20,11 +21,6 @@ int interruptCallback(void* opaque)
 }
 
 }  // namespace
-
-std::filesystem::path pathFromUtf8(const std::string& utf8)
-{
-    return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
-}
 
 std::string ffmpegError(int code)
 {
