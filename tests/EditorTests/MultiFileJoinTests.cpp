@@ -95,7 +95,7 @@ protected:
         EXPECT_FALSE(mismatches.empty());
         const std::string out = path("rifiutato.mkv");
         try {
-            exportClips({{path("a.mkv"), {{0.0, 2.0}}}, {path(other), {{0.0, 2.0}}}}, out);
+            exportClips({{path("a.mkv"), {{0.0, 2.0}}}, {path(other), {{0.0, 2.0}}}}, out, AudioEdit{});
             ADD_FAILURE() << "l'unione doveva essere rifiutata";
         } catch (const MediaError& e) {
             EXPECT_NE(std::string(e.what()).find("non si possono unire"), std::string::npos) << e.what();
@@ -113,7 +113,7 @@ TEST_F(MultiFileJoinTest, ThreeWholeMatroskaFiles)
     for (const char* name : kNames)
         clips.push_back({path(std::string(name) + ".mkv"), {{0.0, 2.0}}});
     const std::string out = path("unione.mkv");
-    const ExportResult result = exportClips(clips, out);
+    const ExportResult result = exportClips(clips, out, AudioEdit{});
     EXPECT_EQ(result.clipCount, 3);
     EXPECT_NEAR(result.durationSeconds, 6.0, 2 * kFrame);
     EXPECT_NEAR(probeFile(out).durationSeconds, 6.0, 2 * kFrame);
@@ -140,7 +140,7 @@ TEST_F(MultiFileJoinTest, SegmentsInsideFiles)
         {path("c.mkv"), {{0.0, 2.0}}},
     };
     const std::string out = path("tratti.mkv");
-    const ExportResult result = exportClips(clips, out);
+    const ExportResult result = exportClips(clips, out, AudioEdit{});
     EXPECT_EQ(result.segmentCount, 3);
     EXPECT_NEAR(probeFile(out).durationSeconds, 3.0, 2 * kFrame);
     expectVideoFrames(out, concat({framesOf(0, 0.0, 0.6), framesOf(100, 1.0, 1.4), framesOf(200, 0.0, 2.0)}));
@@ -153,7 +153,7 @@ TEST_F(MultiFileJoinTest, ThreeMp4FilesWithAac)
     for (const char* name : kNames)
         clips.push_back({path(std::string(name) + ".mp4"), {{0.0, 2.0}}});
     const std::string out = path("unione.mp4");
-    exportClips(clips, out);
+    exportClips(clips, out, AudioEdit{});
 
     const MediaInfo info = probeFile(out);
     EXPECT_NE(info.formatName.find("mp4"), std::string::npos);
@@ -195,7 +195,7 @@ TEST_F(MultiFileJoinTest, SequenceOutOfOrderWithRepeatedFile)
     s.move(b, 3);                                      // b in fondo
 
     const std::string out = path("montaggio.mkv");
-    exportClips(project.exportPlan(), out);
+    exportClips(project.exportPlan(), out, AudioEdit{});
     EXPECT_NEAR(probeFile(out).durationSeconds, s.totalLength(), 2 * kFrame);
     expectVideoFrames(out, concat({framesOf(200, 1.0, 2.0), framesOf(0, 1.0, 1.6), framesOf(200, 0.0, 0.8),
                                    framesOf(100, 0.0, 0.4)}));
@@ -220,7 +220,8 @@ TEST_F(MultiFileJoinTest, DifferentSampleRateIsRefused)
 
 TEST_F(MultiFileJoinTest, OutputMustDifferFromEveryInput)
 {
-    EXPECT_THROW(exportClips({{path("a.mkv"), {{0.0, 1.0}}}, {path("b.mkv"), {{0.0, 1.0}}}}, path("b.mkv")), MediaError);
+    EXPECT_THROW(exportClips({{path("a.mkv"), {{0.0, 1.0}}}, {path("b.mkv"), {{0.0, 1.0}}}}, path("b.mkv"), AudioEdit{}),
+                 MediaError);
     EXPECT_GT(fs::file_size(dir_ / "b.mkv"), 0u);
 }
 

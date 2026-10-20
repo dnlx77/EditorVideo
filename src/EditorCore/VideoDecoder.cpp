@@ -52,7 +52,6 @@ AVPixelFormat d3d11PixelFormat(const AVCodec* codec)
 
 struct VideoDecoder::Impl
 {
-    Options options;
     FormatContextPtr fmt;
     int streamIndex = -1;
     AVStream* stream = nullptr;
@@ -303,7 +302,6 @@ VideoDecoder::VideoDecoder(const std::string& utf8Path, const Options& options)
     : impl_(std::make_unique<Impl>())
 {
     Impl& d = *impl_;
-    d.options = options;
     d.hardwareAllowed = options.allowHardware;
     if (!d.packet || !d.frame || !d.previous || !d.transferred)
         throw MediaError("Memoria insufficiente per il decoder video.");
@@ -351,11 +349,6 @@ bool VideoDecoder::usingHardware() const
 std::string VideoDecoder::decoderDescription() const
 {
     return usingHardware() ? "GPU (D3D11VA)" : "software";
-}
-
-std::string VideoDecoder::codecName() const
-{
-    return impl_->codec->name;
 }
 
 double VideoDecoder::durationSeconds() const

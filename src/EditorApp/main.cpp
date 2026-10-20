@@ -67,7 +67,7 @@ int runJoinTest(const QStringList& args, qsizetype at)
             std::printf("Non si possono unire:\n%s\n", core::describeMismatches(mismatches).c_str());
             return 4;
         }
-        const core::ExportResult result = core::exportClips(project.exportPlan(), output);
+        const core::ExportResult result = core::exportClips(project.exportPlan(), output, core::AudioEdit{});
         const core::MediaInfo joined = core::probeFile(output);
         const double expected = project.sequence().totalLength();
         std::printf("Uniti %d file: durata attesa %.3f s, ottenuta %.3f s, %d flussi\n", result.clipCount, expected,
@@ -132,7 +132,7 @@ int runSequenceTest(const QStringList& args, qsizetype at)
             return 4;
         }
         const core::Sequence& sequence = project.sequence();
-        const core::ExportResult result = core::exportClips(project.exportPlan(), output);
+        const core::ExportResult result = core::exportClips(project.exportPlan(), output, core::AudioEdit{});
         const double length = core::probeFile(output).durationSeconds;
         std::printf("Montaggio di %d pezzi: durata attesa %.3f s, ottenuta %.3f s\n", result.segmentCount,
                     sequence.totalLength(), length);

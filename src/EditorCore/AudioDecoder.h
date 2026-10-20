@@ -31,7 +31,6 @@ public:
 
     int sampleRate() const;
     int channels() const;  // 1 o 2
-    std::string codecName() const;
     double durationSeconds() const;  // -1 se sconosciuta
 
     // Si posiziona esattamente su `seconds`: il prossimo blocco parte da lì (i campioni precedenti vengono scartati).

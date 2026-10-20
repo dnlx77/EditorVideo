@@ -10,8 +10,6 @@
 
 namespace editor::core {
 
-class CutSegment;
-
 // Esportazione interrotta dall'utente (il file parziale viene cancellato).
 class ExportCancelled : public MediaError
 {
@@ -63,25 +61,15 @@ ExportResult exportSegments(const std::string& inputPath, const std::string& out
 // Come sopra, con i tratti di più file uniti uno dopo l'altro (anche di contenitori diversi). I file devono avere
 // gli stessi codec e parametri (vedi checkCompatibility), altrimenti MediaError con l'elenco delle differenze.
 // Il contenitore del file creato si ricava dall'estensione di outputPath (di solito quella del primo file).
-ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath,
-                         const ExportProgress& progress = {});
-
-// Come sopra, con le modifiche all'audio: tratti silenziati (tempi della sequenza, cioè del file creato) e traccia
-// sostitutiva. Con la traccia sostitutiva l'audio dei file non si copia: il file creato ha il video dei file e
-// l'audio del file sostitutivo (copiato senza ricodifica, spostato di `offset` e tagliato alla fine del video).
+// Con le modifiche all'audio (AudioEdit{} se non ce ne sono): tratti silenziati (tempi della sequenza, cioè del file
+// creato) e traccia sostitutiva. Con la traccia sostitutiva l'audio dei file non si copia: il file creato ha il video
+// dei file e l'audio del file sostitutivo (copiato senza ricodifica, spostato di `offset` e tagliato alla fine del
+// video).
 ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,
                          const ExportProgress& progress = {}, MuteMethod muteMethod = MuteMethod::Silence);
 
 // Problema che impedisce di usare `audioPath` come traccia sostitutiva in un file come `outputPath` (dall'estensione),
 // in italiano; vuoto se va bene. Es. audio PCM in un MP4.
 std::string replacementAudioProblem(const std::string& audioPath, const std::string& outputPath);
-
-// Un solo tratto [inSeconds, outSeconds).
-ExportResult exportSegment(const std::string& inputPath, const std::string& outputPath, double inSeconds,
-                           double outSeconds, const ExportProgress& progress = {});
-
-// Un solo tratto, con IN e OUT presi dal segmento: entrambi devono essere stati segnati.
-ExportResult exportSegment(const std::string& inputPath, const std::string& outputPath, const CutSegment& segment,
-                           const ExportProgress& progress = {});
 
 }  // namespace editor::core

@@ -158,11 +158,6 @@ int AudioDecoder::channels() const
     return impl_->outChannels;
 }
 
-std::string AudioDecoder::codecName() const
-{
-    return impl_->codec->name;
-}
-
 double AudioDecoder::durationSeconds() const
 {
     const AVFormatContext* fmt = impl_->fmt.get();

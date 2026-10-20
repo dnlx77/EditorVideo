@@ -48,7 +48,6 @@ public:
     // "GPU (D3D11VA)" oppure "software".
     std::string decoderDescription() const;
 
-    std::string codecName() const;
     double durationSeconds() const;  // -1 se sconosciuta
     double frameRate() const;        // 0 se sconosciuta
     int outputWidth() const;         // dimensioni dei fotogrammi restituiti (proporzioni di visualizzazione già applicate)

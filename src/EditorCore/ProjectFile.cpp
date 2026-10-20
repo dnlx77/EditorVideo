@@ -38,9 +38,8 @@ std::filesystem::path projectDir(const std::string& projectPath)
 // Percorso relativo alla cartella del progetto ("" se non si può, es. su un altro disco).
 std::string relativeTo(const std::filesystem::path& dir, const std::string& path)
 {
-    std::error_code ec;
     const std::filesystem::path relative = std::filesystem::path(pathFromUtf8(path)).lexically_relative(dir);
-    if (relative.empty() || ec)
+    if (relative.empty())
         return {};
     return utf8(relative);
 }
