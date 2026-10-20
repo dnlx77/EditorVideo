@@ -52,6 +52,7 @@
     <ClCompile Include="SampleMedia.cpp" />
     <ClCompile Include="SegmentListTests.cpp" />
     <ClCompile Include="SequenceTests.cpp" />
+    <ClCompile Include="TimeUtilTests.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="SampleMedia.h" />

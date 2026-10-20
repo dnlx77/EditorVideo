@@ -3,6 +3,7 @@
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/H264Params.h"
+#include "EditorCore/TimeUtil.h"
 
 #include <algorithm>
 #include <atomic>
@@ -26,7 +27,6 @@ using namespace detail;
 
 namespace {
 
-constexpr double kEpsilon = 0.001;
 // Dopo la fine di un tratto si legge ancora un po': in un file i pacchetti dei vari flussi sono mescolati e,
 // con i B-frame, un fotogramma prima della fine può arrivare dopo uno successivo.
 constexpr double kReadPastOut = 1.0;
@@ -481,7 +481,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
     int rangeCount = 0;
     for (const ClipRanges& clip : clips) {
         for (const TimeRange& range : clip.ranges) {
-            if (!(range.end > range.start + kEpsilon))
+            if (!(range.end > range.start + kTimeEpsilon))
                 throw MediaError("OUT deve stare dopo IN.");
             totalLength += range.length();
             ++rangeCount;
@@ -663,7 +663,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 double time = sourceTime + replacement.offset;  // nel file creato
                 if (time >= until)
                     break;
-                if (time >= end - kEpsilon) {
+                if (time >= end - kTimeEpsilon) {
                     replacement.ended = true;
                     break;
                 }
@@ -674,7 +674,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                         continue;
                     time = (pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts) * tb - replacement.start + replacement.offset;
                     duration = pkt->duration * tb;
-                } else if (time < -kEpsilon || time + duration > end + kEpsilon) {
+                } else if (time < -kTimeEpsilon || time + duration > end + kTimeEpsilon) {
                     continue;  // solo i pacchetti interamente dentro il file creato
                 }
                 if (!applyMute(pkt, replacement.copy, in->codecpar, time, time + duration, audio.muted, muteMethod, result))
@@ -787,19 +787,19 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
 
                     if (copy.video) {
                         if (!copy.started) {
-                            if ((packet->flags & AV_PKT_FLAG_KEY) == 0 || time < range.start - kEpsilon) {
+                            if ((packet->flags & AV_PKT_FLAG_KEY) == 0 || time < range.start - kTimeEpsilon) {
                                 av_packet_unref(packet.get());
                                 continue;
                             }
                             copy.started = true;
                         }
-                        if (time < range.start - kEpsilon) {
+                        if (time < range.start - kTimeEpsilon) {
                             // B-frame che precedono il fotogramma chiave (GOP aperto): senza il GOP prima non si
                             // decodificano.
                             av_packet_unref(packet.get());
                             continue;
                         }
-                        if (time >= range.end - kEpsilon) {
+                        if (time >= range.end - kTimeEpsilon) {
                             // Oltre la fine: lo teniamo da parte e lo scriviamo solo se poi arriva un fotogramma
                             // prima della fine (che potrebbe usarlo come riferimento).
                             PacketPtr held(av_packet_alloc());
@@ -821,7 +821,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                             // Audio compresso: solo i pacchetti interamente dentro il tratto, così alle giunzioni non
                             // si sovrappone (al più un pacchetto, ~20 ms, di silenzio a ogni giunzione).
                             const double end = time + std::max<std::int64_t>(packet->duration, 0) * tb;
-                            if (time < range.start - kEpsilon || end > range.end + kEpsilon) {
+                            if (time < range.start - kTimeEpsilon || end > range.end + kTimeEpsilon) {
                                 av_packet_unref(packet.get());
                                 continue;
                             }
