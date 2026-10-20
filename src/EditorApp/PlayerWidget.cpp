@@ -206,7 +206,7 @@ void PlayerWidget::openFile(const QString& path)
     frameDuration_ = video_ && video_->frameRate() > 0 ? 1.0 / video_->frameRate() : 0.04;
     // Per un video i fotogrammi chiave arrivano dall'analisi del file (setKeyframes); senza video non servono.
     segment_.reset({}, duration_);
-    ranges_.reset({}, duration_);
+    ranges_.clear();
     keyframesKnown_ = video_ == nullptr;
     updateSegmentUi();
 
@@ -287,7 +287,7 @@ void PlayerWidget::closeFile()
     timeline_->setDuration(0.0);
     timeline_->setKeyframes({});
     segment_.reset({}, 0.0);
-    ranges_.reset({}, 0.0);
+    ranges_.clear();
     keyframesKnown_ = false;
     segmentNote_.clear();
     updateSegmentUi();
@@ -618,7 +618,7 @@ void PlayerWidget::setKeyframes(const std::vector<double>& keyframes)
     // Arrivano a file già aperto: IN e OUT eventualmente messi nel frattempo si perdono (non dovrebbero esserci,
     // perché IN si può mettere solo conoscendo i fotogrammi chiave).
     segment_.reset(keyframes, duration_);
-    ranges_.reset(keyframes, duration_);
+    ranges_.clear();
     keyframesKnown_ = true;
     timeline_->setKeyframes(keyframes);
     segmentNote_.clear();
@@ -760,7 +760,7 @@ void PlayerWidget::seekToEnd()
 void PlayerWidget::updateSegmentUi()
 {
     timeline_->setSegment(segment_.in(), segment_.out(), segment_.hasIn(), segment_.hasOut());
-    timeline_->setKeptRanges(ranges_.ranges());
+    timeline_->setKeptRanges(ranges_);
     if (onSegmentChanged)
         onSegmentChanged();
     if (!hasMedia()) {
@@ -774,10 +774,14 @@ void PlayerWidget::updateSegmentUi()
     QString text = QStringLiteral("IN %1 &nbsp; OUT %2 &nbsp; Segmento <b>%3</b>")
                        .arg(marker(segment_.hasIn(), segment_.in(), "#46be5a"),
                             marker(segment_.hasOut(), segment_.out(), "#e15046"), timeText(segment_.length()));
-    if (!ranges_.empty())
-        text += QStringLiteral(" &nbsp;·&nbsp; Tratti: <b>%1</b>, durata finale <b>%2</b>")
-                    .arg(ranges_.ranges().size())
-                    .arg(timeText(ranges_.totalLength()));
+    if (!ranges_.empty()) {
+        double used = 0.0;
+        for (const core::TimeRange& r : ranges_)
+            used += r.length();
+        text += QStringLiteral(" &nbsp;·&nbsp; Di questo file nel montaggio: <b>%1</b> tratti, <b>%2</b>")
+                    .arg(ranges_.size())
+                    .arg(timeText(used));
+    }
     if (!segmentNote_.isEmpty())
         text += QStringLiteral("<br><small>%1</small>").arg(segmentNote_.toHtmlEscaped());
     segmentLabel_->setText(text);
@@ -816,9 +820,9 @@ void PlayerWidget::showNote(const QString& note)
     updateSegmentUi();
 }
 
-void PlayerWidget::setRanges(const core::SegmentList& ranges)
+void PlayerWidget::setRanges(std::vector<core::TimeRange> ranges)
 {
-    ranges_ = ranges;
+    ranges_ = std::move(ranges);
     segmentNote_.clear();
     noteIsOutError_ = false;
     updateSegmentUi();

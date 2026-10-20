@@ -18,7 +18,7 @@ using editor::tests::expectVideoFrames;
 using editor::tests::leftChannel;
 using editor::tests::sampleAudio;
 using editor::tests::SampleSpec;
-using editor::tests::toUtf8;
+using editor::tests::SampleDirTest;
 using editor::tests::writeSampleFile;
 
 namespace {
@@ -48,16 +48,13 @@ std::vector<int> concat(std::initializer_list<std::vector<int>> parts)
     return all;
 }
 
-class MultiFileJoinTest : public ::testing::Test
+class MultiFileJoinTest : public SampleDirTest<MultiFileJoinTest>
 {
-protected:
-    static void SetUpTestSuite()
+public:
+    static constexpr const char* kDirName = "EditorVideoMultiFileTests";
+
+    static void prepareSamples()
     {
-        dir_ = fs::temp_directory_path() / "EditorVideoMultiFileTests";
-        fs::remove_all(dir_);
-        fs::create_directories(dir_);
-        if (!editor::tests::sampleEncodersAvailable())
-            return;
         for (int i = 0; i < 3; ++i) {
             SampleSpec spec{.video = true, .audio = true, .frames = 50, .gopSize = 25};
             spec.firstIndex = kFirst[i];
@@ -74,20 +71,7 @@ protected:
         writeSampleFile(dir_ / "campionamento.mkv", rate);
     }
 
-    static void TearDownTestSuite()
-    {
-        std::error_code ec;
-        fs::remove_all(dir_, ec);
-    }
-
-    void SetUp() override
-    {
-        if (!editor::tests::sampleEncodersAvailable())
-            GTEST_SKIP() << "FFmpeg senza gli encoder necessari: impossibile generare i file di prova";
-    }
-
-    static std::string path(const std::string& name) { return toUtf8(dir_ / name); }
-
+protected:
     // Il primo messaggio di incompatibilità fra a.mkv e `other`, e il controllo che l'unione venga rifiutata.
     static std::string refusal(const std::string& other)
     {
@@ -103,8 +87,6 @@ protected:
         EXPECT_FALSE(fs::exists(dir_ / "rifiutato.mkv"));
         return mismatches.empty() ? std::string() : mismatches.front().message;
     }
-
-    static inline fs::path dir_;
 };
 
 TEST_F(MultiFileJoinTest, ThreeWholeMatroskaFiles)

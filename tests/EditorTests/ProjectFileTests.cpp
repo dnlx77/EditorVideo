@@ -10,7 +10,7 @@
 
 namespace fs = std::filesystem;
 using namespace editor::core;
-using editor::tests::toUtf8;
+using editor::core::utf8FromPath;
 
 namespace {
 
@@ -82,7 +82,7 @@ protected:
         fs::create_directories(dir_ / "progetto" / "video");
         // Per il progetto i file devono solo esistere: non vengono né letti né modificati.
         for (const char* name : {"video/gita.mp4", "video/città.mkv", "musica.mp3"})
-            write(dir_ / "progetto" / fs::path(std::u8string(reinterpret_cast<const char8_t*>(name))), "contenuto originale");
+            write(dir_ / "progetto" / pathFromUtf8(name), "contenuto originale");
     }
 
     void TearDown() override
@@ -107,11 +107,11 @@ protected:
 
     std::string file(const std::string& relative) const
     {
-        return toUtf8((dir_ / "progetto" / fs::path(std::u8string(reinterpret_cast<const char8_t*>(relative.c_str()))))
+        return utf8FromPath((dir_ / "progetto" / pathFromUtf8(relative))
                           .lexically_normal());
     }
 
-    std::string projectPath() const { return toUtf8(dir_ / "progetto" / "montaggio.evproj"); }
+    std::string projectPath() const { return utf8FromPath(dir_ / "progetto" / "montaggio.evproj"); }
 
     // Progetto di prova: due file, quattro pezzi (uno ripetuto), audio tolto in due tratti, musica al posto
     // dell'audio originale.
@@ -190,7 +190,7 @@ TEST_F(ProjectFileTest, SaveAndReloadGiveTheSameProject)
     Project reopened = loaded.project;
     for (const auto& [id, duration] : loaded.savedDurations)
         reopened.setAnalysis(id, {}, duration);
-    const std::string again = toUtf8(dir_ / "progetto" / "di_nuovo.evproj");
+    const std::string again = utf8FromPath(dir_ / "progetto" / "di_nuovo.evproj");
     saveProjectFile(again, reopened, {loaded.project.clips()[1].id, view.in, view.out, view.sourcePosition,
                                             view.programPosition});
     EXPECT_EQ(read(again), first);
@@ -208,11 +208,11 @@ TEST_F(ProjectFileTest, MovedFolderIsFoundThroughRelativePaths)
     saveProjectFile(projectPath(), sample(view), view);
     fs::rename(dir_ / "progetto", dir_ / "spostato");
 
-    const LoadedProject loaded = loadProjectFile(toUtf8(dir_ / "spostato" / "montaggio.evproj"));
+    const LoadedProject loaded = loadProjectFile(utf8FromPath(dir_ / "spostato" / "montaggio.evproj"));
     EXPECT_TRUE(loaded.missing.empty());
     ASSERT_EQ(loaded.project.clips().size(), 2u);
-    EXPECT_EQ(loaded.project.clips()[0].path, toUtf8(dir_ / "spostato" / "video" / "gita.mp4"));
-    EXPECT_EQ(loaded.project.audioReplacement()->path, toUtf8(dir_ / "spostato" / "musica.mp3"));
+    EXPECT_EQ(loaded.project.clips()[0].path, utf8FromPath(dir_ / "spostato" / "video" / "gita.mp4"));
+    EXPECT_EQ(loaded.project.audioReplacement()->path, utf8FromPath(dir_ / "spostato" / "musica.mp3"));
     EXPECT_EQ(loaded.project.sequence().fragments().size(), 4u);
 }
 
@@ -231,9 +231,9 @@ TEST_F(ProjectFileTest, MissingFilesAreListedAndCanBeDroppedOrFound)
 
     // Trovato altrove il primo, senza il secondo.
     LoadedProject found = loaded;
-    relocateMissing(found, found.missing[0], toUtf8(dir_ / "altrove.mkv"));
+    relocateMissing(found, found.missing[0], utf8FromPath(dir_ / "altrove.mkv"));
     ASSERT_EQ(found.missing.size(), 1u);
-    EXPECT_EQ(found.project.clips()[1].path, toUtf8(dir_ / "altrove.mkv"));
+    EXPECT_EQ(found.project.clips()[1].path, utf8FromPath(dir_ / "altrove.mkv"));
     EXPECT_EQ(dropMissing(found), 0);
     EXPECT_FALSE(found.project.audioReplacement().has_value());
     EXPECT_EQ(found.project.sequence().fragments().size(), 4u);
@@ -291,8 +291,8 @@ TEST_F(ProjectFileTest, DamagedFilesAreRefusedWithoutCrashing)
 
     // Un file vuoto o inesistente.
     write(dir_ / "vuoto.evproj", "");
-    EXPECT_THROW(loadProjectFile(toUtf8(dir_ / "vuoto.evproj")), ProjectFileError);
-    EXPECT_THROW(loadProjectFile(toUtf8(dir_ / "non_esiste.evproj")), ProjectFileError);
+    EXPECT_THROW(loadProjectFile(utf8FromPath(dir_ / "vuoto.evproj")), ProjectFileError);
+    EXPECT_THROW(loadProjectFile(utf8FromPath(dir_ / "non_esiste.evproj")), ProjectFileError);
 }
 
 }  // namespace

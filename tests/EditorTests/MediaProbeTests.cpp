@@ -11,22 +11,18 @@
 namespace fs = std::filesystem;
 using namespace editor::core;
 using editor::tests::SampleSpec;
-using editor::tests::toUtf8;
+using editor::tests::SampleDirTest;
 using editor::tests::writeSampleFile;
 
 namespace {
 
-class MediaProbeTest : public ::testing::Test
+class MediaProbeTest : public SampleDirTest<MediaProbeTest>
 {
-protected:
-    static void SetUpTestSuite()
-    {
-        dir_ = fs::temp_directory_path() / "EditorVideoTests";
-        fs::remove_all(dir_);
-        fs::create_directories(dir_);
-        if (!editor::tests::sampleEncodersAvailable())
-            return;
+public:
+    static constexpr const char* kDirName = "EditorVideoTests";
 
+    static void prepareSamples()
+    {
         // 30 fotogrammi a 25 fps = 1,2 s, fotogrammi chiave a 0; 0,4; 0,8 s.
         writeSampleFile(dir_ / "video_audio.mkv", {.video = true, .audio = true});
         writeSampleFile(dir_ / "solo_video.mp4", {.video = true, .audio = false});
@@ -40,18 +36,10 @@ protected:
         std::size_t length = 0;
         if (getenv_s(&length, nullptr, 0, "EDITORVIDEO_KEEP_SAMPLES") == 0 && length > 0)
             return;
-        std::error_code ec;
-        fs::remove_all(dir_, ec);
+        SampleDirTest::TearDownTestSuite();
     }
 
-    void SetUp() override
-    {
-        if (!editor::tests::sampleEncodersAvailable())
-            GTEST_SKIP() << "FFmpeg senza encoder MPEG-4/PCM: impossibile generare i file di prova";
-    }
-
-    static std::string sample(const fs::path& name) { return toUtf8(dir_ / name); }
-
+protected:
     static void expectThreeKeyframes(const MediaInfo& info)
     {
         ASSERT_EQ(info.keyframeTimes.size(), 3u);
@@ -59,13 +47,11 @@ protected:
         EXPECT_NEAR(info.keyframeTimes[1], 0.4, 0.001);
         EXPECT_NEAR(info.keyframeTimes[2], 0.8, 0.001);
     }
-
-    static inline fs::path dir_;
 };
 
 TEST_F(MediaProbeTest, ReadsMatroskaWithVideoAndAudio)
 {
-    const MediaInfo info = probeFile(sample("video_audio.mkv"));
+    const MediaInfo info = probeFile(path("video_audio.mkv"));
 
     EXPECT_NE(info.formatName.find("matroska"), std::string::npos);
     EXPECT_NEAR(info.durationSeconds, 1.2, 0.05);
@@ -94,7 +80,7 @@ TEST_F(MediaProbeTest, ReadsMatroskaWithVideoAndAudio)
 
 TEST_F(MediaProbeTest, ReadsMp4VideoOnly)
 {
-    const MediaInfo info = probeFile(sample("solo_video.mp4"));
+    const MediaInfo info = probeFile(path("solo_video.mp4"));
 
     EXPECT_NE(info.formatName.find("mp4"), std::string::npos);
     ASSERT_EQ(info.streams.size(), 1u);
@@ -105,7 +91,7 @@ TEST_F(MediaProbeTest, ReadsMp4VideoOnly)
 
 TEST_F(MediaProbeTest, AudioOnlyFileHasNoKeyframes)
 {
-    const MediaInfo info = probeFile(sample("solo_audio.wav"));
+    const MediaInfo info = probeFile(path("solo_audio.wav"));
 
     EXPECT_EQ(info.formatName, "wav");
     ASSERT_EQ(info.streams.size(), 1u);
@@ -117,7 +103,7 @@ TEST_F(MediaProbeTest, AudioOnlyFileHasNoKeyframes)
 
 TEST_F(MediaProbeTest, OpensPathWithAccentedCharacters)
 {
-    const MediaInfo info = probeFile(sample(u8"perché è così.mkv"));
+    const MediaInfo info = probeFile(path(u8"perché è così.mkv"));
     EXPECT_EQ(info.streams.size(), 1u);
     expectThreeKeyframes(info);
 }
@@ -125,7 +111,7 @@ TEST_F(MediaProbeTest, OpensPathWithAccentedCharacters)
 TEST_F(MediaProbeTest, MissingFileGivesItalianError)
 {
     try {
-        probeFile(sample("non_esiste.mp4"));
+        probeFile(path("non_esiste.mp4"));
         FAIL() << "doveva lanciare ProbeError";
     } catch (const ProbeError& e) {
         EXPECT_NE(std::string(e.what()).find("non esiste"), std::string::npos) << e.what();
@@ -134,7 +120,7 @@ TEST_F(MediaProbeTest, MissingFileGivesItalianError)
 
 TEST_F(MediaProbeTest, DirectoryIsRejected)
 {
-    EXPECT_THROW(probeFile(toUtf8(dir_)), ProbeError);
+    EXPECT_THROW(probeFile(utf8FromPath(dir_)), ProbeError);
 }
 
 TEST_F(MediaProbeTest, NonMediaFileIsRejected)
@@ -143,7 +129,7 @@ TEST_F(MediaProbeTest, NonMediaFileIsRejected)
     std::ofstream(path) << "Questo è un file di testo, non un video.\n";
 
     try {
-        probeFile(toUtf8(path));
+        probeFile(utf8FromPath(path));
         FAIL() << "doveva lanciare ProbeError";
     } catch (const ProbeCancelled&) {
         FAIL() << "non doveva risultare annullato";
@@ -155,7 +141,7 @@ TEST_F(MediaProbeTest, NonMediaFileIsRejected)
 TEST_F(MediaProbeTest, CancelFlagStopsAnalysis)
 {
     const std::atomic<bool> cancel{true};
-    EXPECT_THROW(probeFile(sample("video_audio.mkv"), &cancel), ProbeCancelled);
+    EXPECT_THROW(probeFile(path("video_audio.mkv"), &cancel), ProbeCancelled);
 }
 
 TEST(MediaFormatting, Duration)

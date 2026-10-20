@@ -21,7 +21,7 @@ using editor::tests::expectVideoFrames;
 using editor::tests::leftChannel;
 using editor::tests::sampleAudio;
 using editor::tests::SampleSpec;
-using editor::tests::toUtf8;
+using editor::tests::SampleDirTest;
 using editor::tests::writeSampleFile;
 
 namespace {
@@ -117,7 +117,7 @@ TEST(AudioMute, CuttingAPieceTakesItsRangesAway)
     s.insert(-1, 2, 0.0, 4.0, snap);
     s.muteRange(0.5, 1.5);
     s.muteRange(2.5, 3.5);
-    ASSERT_EQ(s.removeSourceRange(2, 1.2, 3.0, snap), SegmentList::RemoveResult::Removed);
+    ASSERT_EQ(s.removeSourceRange(2, 1.2, 3.0, snap), Sequence::RemoveResult::Removed);
     // Restano 0 .. 1,2 e 3 .. 4, con il silenzio 0,5 .. 1,2 e 3 .. 3,5 (che nella sequenza parte da 1,2).
     ASSERT_EQ(s.fragments().size(), 2u);
     expectRanges(s.fragments()[0].muted, {{0.5, 1.2}});
@@ -147,16 +147,13 @@ TEST(AudioMute, ProjectAudioEdit)
 // ---------------------------------------------------------------------------------------------------------------
 // Esportazione
 
-class AudioExportTest : public ::testing::Test
+class AudioExportTest : public SampleDirTest<AudioExportTest>
 {
-protected:
-    static void SetUpTestSuite()
+public:
+    static constexpr const char* kDirName = "EditorVideoAudioTests";
+
+    static void prepareSamples()
     {
-        dir_ = fs::temp_directory_path() / "EditorVideoAudioTests";
-        fs::remove_all(dir_);
-        fs::create_directories(dir_);
-        if (!editor::tests::sampleEncodersAvailable())
-            return;
         // Video da 2 s (fotogrammi chiave a 0 e 1 s) con audio PCM (MKV) e AAC (MP4).
         writeSampleFile(dir_ / "pcm.mkv", {.video = true, .audio = true, .frames = 50, .gopSize = 25});
         writeSampleFile(dir_ / "aac.mp4", {.video = true, .audio = true, .frames = 50, .gopSize = 25, .aacAudio = true});
@@ -170,20 +167,7 @@ protected:
         writeSampleFile(dir_ / "musica.m4a", music);
     }
 
-    static void TearDownTestSuite()
-    {
-        std::error_code ec;
-        fs::remove_all(dir_, ec);
-    }
-
-    void SetUp() override
-    {
-        if (!editor::tests::sampleEncodersAvailable())
-            GTEST_SKIP() << "FFmpeg senza gli encoder necessari: impossibile generare i file di prova";
-    }
-
-    static std::string path(const std::string& name) { return toUtf8(dir_ / name); }
-
+protected:
     static std::vector<int> allFrames()
     {
         std::vector<int> frames(50);
@@ -201,8 +185,6 @@ protected:
             highest = std::max(highest, std::abs(static_cast<int>(samples[i])));
         return highest;
     }
-
-    static inline fs::path dir_;
 };
 
 TEST_F(AudioExportTest, MutedPcmIsSilentExactlyThere)

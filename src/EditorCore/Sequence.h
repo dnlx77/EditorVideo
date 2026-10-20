@@ -1,6 +1,6 @@
 #pragma once
 
-#include "EditorCore/SegmentList.h"
+#include "EditorCore/TimeUtil.h"
 
 #include <functional>
 #include <vector>
@@ -44,8 +44,18 @@ public:
     // o ripetuto). Restituisce l'id della seconda parte, 0 se lì non si può dividere.
     int split(double seconds, const SnapFunction& snap);
 
-    // Toglie [from, to) del file `clipId` dai pezzi che lo contengono (come "taglia via" dello step 5).
-    SegmentList::RemoveResult removeSourceRange(int clipId, double from, double to, const SnapFunction& snap);
+    // Esito di removeSourceRange(): se non è Removed la sequenza non cambia.
+    enum class RemoveResult
+    {
+        Removed,
+        Empty,             // [from, to) vuoto o al contrario
+        OutsideKept,       // [from, to) non tocca nessun pezzo del file: è già escluso
+        NoKeyframeInside,  // tocca un pezzo, ma dentro non c'è un fotogramma chiave da cui far ripartire il resto
+    };
+
+    // Toglie [from, to) del file `clipId` dai pezzi che lo contengono; la parte dopo riparte dal fotogramma chiave
+    // nello stesso punto di `to` o subito prima.
+    RemoveResult removeSourceRange(int clipId, double from, double to, const SnapFunction& snap);
 
     // Audio: toglie (silenzio) o rimette l'audio in [from, to) della sequenza, nei pezzi che lo attraversano.
     // Restituiscono true se qualcosa è cambiato.

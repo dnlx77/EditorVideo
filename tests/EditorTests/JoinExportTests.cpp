@@ -1,7 +1,7 @@
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
-#include "EditorCore/SegmentList.h"
+#include "EditorCore/Project.h"
 #include "EditorCore/VideoDecoder.h"
 #include "MediaChecks.h"
 #include "SampleMedia.h"
@@ -22,7 +22,7 @@ using namespace editor::core;
 using editor::tests::sampleAudio;
 using editor::tests::sampleLuma;
 using editor::tests::SampleSpec;
-using editor::tests::toUtf8;
+using editor::tests::SampleDirTest;
 using editor::tests::writeSampleFile;
 using editor::tests::expectMonotonicPackets;
 using editor::tests::expectVideoFrames;
@@ -54,39 +54,18 @@ double totalLength(const std::vector<TimeRange>& ranges)
     return total;
 }
 
-class JoinExportTest : public ::testing::Test
+class JoinExportTest : public SampleDirTest<JoinExportTest>
 {
-protected:
-    static void SetUpTestSuite()
+public:
+    static constexpr const char* kDirName = "EditorVideoJoinTests";
+
+    static void prepareSamples()
     {
-        dir_ = fs::temp_directory_path() / "EditorVideoJoinTests";
-        fs::remove_all(dir_);
-        fs::create_directories(dir_);
-        if (!editor::tests::sampleEncodersAvailable())
-            return;
-        const SampleSpec base{.video = true, .audio = true, .frames = 100, .gopSize = 25};
-        writeSampleFile(dir_ / "sorgente.mkv", base);
-        SampleSpec mp4 = base;
-        mp4.aacAudio = true;
-        writeSampleFile(dir_ / "sorgente.mp4", mp4);
+        editor::tests::writeExportSources(dir_);
         writeSampleFile(dir_ / "sorgente.wav", {.video = false, .audio = true, .frames = 100});
     }
 
-    static void TearDownTestSuite()
-    {
-        std::error_code ec;
-        fs::remove_all(dir_, ec);
-    }
-
-    void SetUp() override
-    {
-        if (!editor::tests::sampleEncodersAvailable())
-            GTEST_SKIP() << "FFmpeg senza gli encoder necessari: impossibile generare i file di prova";
-    }
-
-    static std::string path(const char* name) { return toUtf8(dir_ / name); }
-
-    static inline fs::path dir_;
+protected:
 };
 
 TEST_F(JoinExportTest, ThreeRangesFromMatroska)
@@ -164,18 +143,22 @@ TEST_F(JoinExportTest, ThreeRangesFromMp4WithAac)
 
 TEST_F(JoinExportTest, CuttingAwayMiddlePart)
 {
-    // "Togli la pubblicità": dall'elenco vuoto si toglie 1,5 .. 3,0 s. Resta 0 .. 1,5 e 3,0 .. 4,0.
+    // "Togli la pubblicità": dal file intero nel montaggio si toglie 1,5 .. 3,0 s. Resta 0 .. 1,5 e 3,0 .. 4,0.
     const std::string source = path("sorgente.mkv");
     const MediaInfo info = probeFile(source);
-    SegmentList list;
-    list.reset(info.keyframeTimes, info.durationSeconds);
-    ASSERT_EQ(list.remove(1.5, 3.0), SegmentList::RemoveResult::Removed);
-    ASSERT_EQ(list.ranges().size(), 2u);
+    Project project;
+    const int id = project.add(source);
+    project.setAnalysis(id, info.keyframeTimes, info.durationSeconds);
+    project.sequence().insert(-1, id, 0.0, info.durationSeconds, project.snapper());
+    ASSERT_EQ(project.sequence().removeSourceRange(id, 1.5, 3.0, project.snapper()), Sequence::RemoveResult::Removed);
+    const std::vector<ClipRanges> plan = project.exportPlan();
+    ASSERT_EQ(plan.size(), 1u);
+    ASSERT_EQ(plan.front().ranges.size(), 2u);
 
     const std::string exported = path("senza_pubblicita.mkv");
-    exportSegments(source, exported, list.ranges());
+    exportClips(plan, exported, AudioEdit{});
     EXPECT_NEAR(probeFile(exported).durationSeconds, 2.5, 2 * kFrame);
-    expectVideoFrames(exported, expectedFrames(list.ranges()));  // 0..37 poi 75..99
+    expectVideoFrames(exported, expectedFrames(plan.front().ranges));  // 0..37 poi 75..99
     expectMonotonicPackets(exported);
 }
 

@@ -219,10 +219,13 @@ std::int16_t sampleAudio(long long n)
     return static_cast<std::int16_t>((n * 7919) % 20000 - 10000);
 }
 
-std::string toUtf8(const std::filesystem::path& path)
+void writeExportSources(const std::filesystem::path& dir)
 {
-    const std::u8string text = path.u8string();
-    return std::string(text.begin(), text.end());
+    const SampleSpec base{.video = true, .audio = true, .frames = 100, .gopSize = 25};
+    writeSampleFile(dir / "sorgente.mkv", base);
+    SampleSpec mp4 = base;
+    mp4.aacAudio = true;
+    writeSampleFile(dir / "sorgente.mp4", mp4);
 }
 
 bool sampleEncodersAvailable()
@@ -234,7 +237,7 @@ bool sampleEncodersAvailable()
 
 void writeSampleFile(const std::filesystem::path& path, const SampleSpec& spec)
 {
-    Writer writer(toUtf8(path));
+    Writer writer(core::utf8FromPath(path));
     if (spec.video)
         writer.addVideo(spec);
     writer.setFirstIndex(spec.firstIndex);

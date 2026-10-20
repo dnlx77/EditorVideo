@@ -50,6 +50,7 @@
     <ClInclude Include="MainWindow.h" />
     <ClInclude Include="PlayerWidget.h" />
     <ClInclude Include="ProgramMonitor.h" />
+    <ClInclude Include="SelfTests.h" />
     <ClInclude Include="SequenceTimeline.h" />
     <ClInclude Include="TimelineWidget.h" />
     <ClInclude Include="UiText.h" />
@@ -60,6 +61,7 @@
     <ClCompile Include="MainWindow.cpp" />
     <ClCompile Include="PlayerWidget.cpp" />
     <ClCompile Include="ProgramMonitor.cpp" />
+    <ClCompile Include="SelfTests.cpp" />
     <ClCompile Include="SequenceTimeline.cpp" />
     <ClCompile Include="TimelineWidget.cpp" />
   </ItemGroup>

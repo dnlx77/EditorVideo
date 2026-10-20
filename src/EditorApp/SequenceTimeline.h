@@ -1,6 +1,6 @@
 #pragma once
 
-#include "EditorCore/SegmentList.h"
+#include "EditorCore/TimeUtil.h"
 
 #include <QtGui/QImage>
 #include <QtGui/QPixmap>

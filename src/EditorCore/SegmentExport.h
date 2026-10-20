@@ -2,7 +2,7 @@
 
 #include "EditorCore/MediaError.h"
 #include "EditorCore/Project.h"
-#include "EditorCore/SegmentList.h"
+#include "EditorCore/TimeUtil.h"
 
 #include <functional>
 #include <string>

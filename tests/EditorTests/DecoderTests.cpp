@@ -15,24 +15,20 @@ using namespace editor::core;
 using editor::tests::sampleAudio;
 using editor::tests::sampleLuma;
 using editor::tests::SampleSpec;
-using editor::tests::toUtf8;
+using editor::tests::SampleDirTest;
 using editor::tests::writeSampleFile;
 
 namespace {
 
 constexpr double kFrameDuration = 1.0 / 25.0;
 
-class DecoderTest : public ::testing::Test
+class DecoderTest : public SampleDirTest<DecoderTest>
 {
-protected:
-    static void SetUpTestSuite()
-    {
-        dir_ = fs::temp_directory_path() / "EditorVideoDecoderTests";
-        fs::remove_all(dir_);
-        fs::create_directories(dir_);
-        if (!editor::tests::sampleEncodersAvailable())
-            return;
+public:
+    static constexpr const char* kDirName = "EditorVideoDecoderTests";
 
+    static void prepareSamples()
+    {
         // 30 fotogrammi a 25 fps (1,2 s), fotogrammi chiave ogni 10.
         writeSampleFile(dir_ / "mpeg4.mkv", {.video = true, .audio = true});
         writeSampleFile(dir_ / "mpeg2.mkv", {.video = true, .audio = false, .mpeg2 = true, .width = 320, .height = 240});
@@ -40,20 +36,7 @@ protected:
         writeSampleFile(dir_ / "solo_video.mp4", {.video = true, .audio = false});
     }
 
-    static void TearDownTestSuite()
-    {
-        std::error_code ec;
-        fs::remove_all(dir_, ec);
-    }
-
-    void SetUp() override
-    {
-        if (!editor::tests::sampleEncodersAvailable())
-            GTEST_SKIP() << "FFmpeg senza gli encoder necessari: impossibile generare i file di prova";
-    }
-
-    static std::string sample(const char* name) { return toUtf8(dir_ / name); }
-
+protected:
     // Luminanza (Y, range TV) del pixel (x, y), ricavata dal grigio BGRA del fotogramma.
     static double lumaAt(const VideoFrame& frame, int x, int y)
     {
@@ -73,13 +56,11 @@ protected:
         const int sy = y * sourceHeight / frame->height;
         EXPECT_NEAR(lumaAt(*frame, x, y), sampleLuma(sx, sy, index), 2.5) << "contenuto del fotogramma " << index;
     }
-
-    static inline fs::path dir_;
 };
 
 TEST_F(DecoderTest, DecodesAllFramesInOrder)
 {
-    VideoDecoder decoder(sample("mpeg4.mkv"), {.allowHardware = false});
+    VideoDecoder decoder(path("mpeg4.mkv"), {.allowHardware = false});
     EXPECT_EQ(decoder.outputWidth(), 64);
     EXPECT_EQ(decoder.outputHeight(), 48);
     EXPECT_NEAR(decoder.frameRate(), 25.0, 0.01);
@@ -101,7 +82,7 @@ TEST_F(DecoderTest, FrameBuffersAreReusedOnlyWhenReleased)
     std::vector<std::shared_ptr<VideoFrame>> held;
     std::shared_ptr<VideoFrame> survivor;
     {
-        VideoDecoder decoder(sample("mpeg4.mkv"), {.allowHardware = false});
+        VideoDecoder decoder(path("mpeg4.mkv"), {.allowHardware = false});
         // Fotogrammi tenuti insieme (come nella coda dell'anteprima): ognuno ha il suo spazio e il suo contenuto.
         held.push_back(decoder.seek(0.0));
         held.push_back(decoder.nextFrame());
@@ -129,7 +110,7 @@ TEST_F(DecoderTest, FrameBuffersAreReusedOnlyWhenReleased)
 
 TEST_F(DecoderTest, SeekReturnsNearestFrame)
 {
-    VideoDecoder decoder(sample("mpeg4.mkv"), {.allowHardware = false});
+    VideoDecoder decoder(path("mpeg4.mkv"), {.allowHardware = false});
 
     // In ordine sparso, anche all'indietro e su fotogrammi non chiave.
     const struct
@@ -145,7 +126,7 @@ TEST_F(DecoderTest, SeekReturnsNearestFrame)
 
 TEST_F(DecoderTest, NextFrameContinuesAfterSeek)
 {
-    VideoDecoder decoder(sample("mpeg4.mkv"), {.allowHardware = false});
+    VideoDecoder decoder(path("mpeg4.mkv"), {.allowHardware = false});
     expectFrame(decoder.seek(0.52), 13, 64, 48);
     expectFrame(decoder.nextFrame(), 14, 64, 48);
     expectFrame(decoder.nextFrame(), 15, 64, 48);
@@ -153,7 +134,7 @@ TEST_F(DecoderTest, NextFrameContinuesAfterSeek)
 
 TEST_F(DecoderTest, SeekPastEndReturnsLastFrame)
 {
-    VideoDecoder decoder(sample("mpeg4.mkv"), {.allowHardware = false});
+    VideoDecoder decoder(path("mpeg4.mkv"), {.allowHardware = false});
     expectFrame(decoder.seek(10.0), 29, 64, 48);
     EXPECT_EQ(decoder.nextFrame(), nullptr);
 }
@@ -161,7 +142,7 @@ TEST_F(DecoderTest, SeekPastEndReturnsLastFrame)
 TEST_F(DecoderTest, CodecWithoutGpuSupportFallsBackToSoftware)
 {
     // MPEG-4 Part 2 non è supportato da D3D11VA: anche chiedendo la GPU si deve decodificare in software.
-    VideoDecoder decoder(sample("mpeg4.mkv"), {.allowHardware = true});
+    VideoDecoder decoder(path("mpeg4.mkv"), {.allowHardware = true});
     expectFrame(decoder.seek(0.61), 15, 64, 48);
     EXPECT_FALSE(decoder.usingHardware());
     EXPECT_EQ(decoder.decoderDescription(), "software");
@@ -169,7 +150,7 @@ TEST_F(DecoderTest, CodecWithoutGpuSupportFallsBackToSoftware)
 
 TEST_F(DecoderTest, HardwareCanBeDisabled)
 {
-    VideoDecoder decoder(sample("mpeg2.mkv"), {.allowHardware = false});
+    VideoDecoder decoder(path("mpeg2.mkv"), {.allowHardware = false});
     auto frame = decoder.seek(0.0);
     int count = 0;
     while (frame) {
@@ -183,7 +164,7 @@ TEST_F(DecoderTest, HardwareCanBeDisabled)
 TEST_F(DecoderTest, Mpeg2DecodesWithGpuWhenAvailable)
 {
     // Con una scheda video compatibile si usa D3D11VA, altrimenti il software: il risultato deve essere lo stesso.
-    VideoDecoder decoder(sample("mpeg2.mkv"));
+    VideoDecoder decoder(path("mpeg2.mkv"));
     expectFrame(decoder.seek(0.61), 15, 320, 240);
     std::cout << "[ INFO     ] MPEG-2 decodificato con: " << decoder.decoderDescription()
               << (hardwareDecodingCompiledIn() ? "" : " (FFmpeg senza D3D11VA)") << '\n';
@@ -197,7 +178,7 @@ TEST_F(DecoderTest, Mpeg2DecodesWithGpuWhenAvailable)
 
 TEST_F(DecoderTest, FramesAreScaledToFitMaximumSize)
 {
-    VideoDecoder decoder(sample("mpeg2.mkv"), {.allowHardware = false, .maxWidth = 160, .maxHeight = 160});
+    VideoDecoder decoder(path("mpeg2.mkv"), {.allowHardware = false, .maxWidth = 160, .maxHeight = 160});
     EXPECT_EQ(decoder.outputWidth(), 160);
     EXPECT_EQ(decoder.outputHeight(), 120);
     expectFrame(decoder.seek(0.2), 5, 320, 240);
@@ -219,12 +200,12 @@ TEST_F(DecoderTest, FramesAreScaledToFitMaximumSize)
 
 TEST_F(DecoderTest, VideoDecoderRejectsAudioOnlyFile)
 {
-    EXPECT_THROW(VideoDecoder(sample("solo_audio.wav")), MediaError);
+    EXPECT_THROW(VideoDecoder(path("solo_audio.wav")), MediaError);
 }
 
 TEST_F(DecoderTest, AudioDecoderReadsWholeFile)
 {
-    AudioDecoder decoder(sample("solo_audio.wav"));
+    AudioDecoder decoder(path("solo_audio.wav"));
     EXPECT_EQ(decoder.sampleRate(), 48000);
     EXPECT_EQ(decoder.channels(), 2);
 
@@ -248,7 +229,7 @@ TEST_F(DecoderTest, AudioSeekIsSampleAccurate)
 {
     for (const char* file : {"solo_audio.wav", "mpeg4.mkv"}) {
         SCOPED_TRACE(file);
-        AudioDecoder decoder(sample(file));
+        AudioDecoder decoder(path(file));
         for (double target : {0.5, 0.123, 1.0, 0.0}) {
             SCOPED_TRACE(target);
             decoder.seek(target);
@@ -264,7 +245,7 @@ TEST_F(DecoderTest, AudioSeekIsSampleAccurate)
 
 TEST_F(DecoderTest, AudioDecoderRejectsVideoOnlyFile)
 {
-    EXPECT_THROW(AudioDecoder(sample("solo_video.mp4")), MediaError);
+    EXPECT_THROW(AudioDecoder(path("solo_video.mp4")), MediaError);
 }
 
 // Non è un vero test: genera file dimostrativi da 10 secondi (audio muto) in %TEMP%\EditorVideoDemo
@@ -284,7 +265,7 @@ TEST(DemoFiles, DISABLED_GeneraVideoDimostrativi)
     writeSampleFile(dir / "demo_mpeg4_software.mkv", spec);
     spec.video = false;
     writeSampleFile(dir / "demo_solo_audio.wav", spec);
-    std::cout << "[ INFO     ] File creati in " << toUtf8(dir) << '\n';
+    std::cout << "[ INFO     ] File creati in " << utf8FromPath(dir) << '\n';
 }
 
 }  // namespace

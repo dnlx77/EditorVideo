@@ -128,10 +128,10 @@ int Sequence::split(double seconds, const SnapFunction& snap)
     return second.id;
 }
 
-SegmentList::RemoveResult Sequence::removeSourceRange(int clipId, double from, double to, const SnapFunction& snap)
+Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, double to, const SnapFunction& snap)
 {
     if (to <= from + kTimeEpsilon)
-        return SegmentList::RemoveResult::Empty;
+        return RemoveResult::Empty;
 
     bool touched = false;
     std::vector<Fragment> result;
@@ -151,7 +151,7 @@ SegmentList::RemoveResult Sequence::removeSourceRange(int clipId, double from, d
         }
     }
     if (!touched)
-        return SegmentList::RemoveResult::OutsideKept;
+        return RemoveResult::OutsideKept;
 
     // Se la parte dopo riparte da prima del pezzo da togliere, non si toglie niente.
     double before = 0.0;
@@ -161,10 +161,10 @@ SegmentList::RemoveResult Sequence::removeSourceRange(int clipId, double from, d
     for (const Fragment& f : result)
         after += f.length();
     if (after >= before - kTimeEpsilon)
-        return SegmentList::RemoveResult::NoKeyframeInside;
+        return RemoveResult::NoKeyframeInside;
 
     fragments_ = std::move(result);
-    return SegmentList::RemoveResult::Removed;
+    return RemoveResult::Removed;
 }
 
 bool Sequence::applyToRange(double from, double to, RangeOp op)
