@@ -4,6 +4,7 @@
 #include <mmsystem.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <vector>
 
@@ -17,12 +18,19 @@ namespace {
 constexpr int kBufferCount = 8;
 constexpr int kBufferMilliseconds = 40;
 
+// drained() si chiama dal thread dell'interfaccia mentre il thread di riproduzione scrive e manda i blocchi: quello
+// che legge è atomico (submitted, fill) oppure è il flag WHDR_DONE, scritto dal driver e letto con atomic_ref.
 struct Buffer
 {
     WAVEHDR header = {};
     std::vector<char> data;
-    bool submitted = false;
+    std::atomic<bool> submitted{false};  // mandato alla scheda e non ancora ripreso (unprepare)
 };
+
+bool isDone(const WAVEHDR& header)
+{
+    return (std::atomic_ref(const_cast<DWORD&>(header.dwFlags)).load(std::memory_order_acquire) & WHDR_DONE) != 0;
+}
 
 }  // namespace
 
@@ -32,7 +40,7 @@ struct AudioOutput::Impl
     HANDLE event = nullptr;
     Buffer buffers[kBufferCount];
     int current = 0;
-    std::size_t fill = 0;  // byte già scritti nel blocco corrente
+    std::atomic<std::size_t> fill{0};  // byte già scritti nel blocco corrente
     int rate = 0;
     int channels = 0;
     // Campioni per canale mandati alla scheda audio dall'ultimo reset: la posizione non può superarli.
@@ -40,24 +48,26 @@ struct AudioOutput::Impl
 
     bool isFree(Buffer& buffer)
     {
-        if (buffer.submitted && (buffer.header.dwFlags & WHDR_DONE) == 0)
+        if (buffer.submitted && !isDone(buffer.header))
             return false;
         if (buffer.submitted) {
-            waveOutUnprepareHeader(device, &buffer.header, sizeof(WAVEHDR));
+            // Prima si segna libero (drained() non guarda più l'intestazione), poi la si riprende.
             buffer.submitted = false;
+            waveOutUnprepareHeader(device, &buffer.header, sizeof(WAVEHDR));
         }
         return true;
     }
 
     void submit(Buffer& buffer)
     {
+        const std::size_t bytes = fill;
         buffer.header = {};
         buffer.header.lpData = buffer.data.data();
-        buffer.header.dwBufferLength = static_cast<DWORD>(fill);
+        buffer.header.dwBufferLength = static_cast<DWORD>(bytes);
         waveOutPrepareHeader(device, &buffer.header, sizeof(WAVEHDR));
-        buffer.submitted = true;
+        buffer.submitted = true;  // l'intestazione è pronta prima che drained() la possa leggere
         waveOutWrite(device, &buffer.header, sizeof(WAVEHDR));
-        submittedFrames += static_cast<long long>(fill / (channels * 2));
+        submittedFrames += static_cast<long long>(bytes / (channels * 2));
         current = (current + 1) % kBufferCount;
         fill = 0;
     }
@@ -150,9 +160,10 @@ bool AudioOutput::write(const std::int16_t* samples, std::size_t count, const st
         if (stop.load())
             return false;
 
-        const std::size_t chunk = std::min(remaining, buffer.data.size() - d.fill);
-        std::memcpy(buffer.data.data() + d.fill, src, chunk);
-        d.fill += chunk;
+        const std::size_t filled = d.fill;
+        const std::size_t chunk = std::min(remaining, buffer.data.size() - filled);
+        std::memcpy(buffer.data.data() + filled, src, chunk);
+        d.fill = filled + chunk;
         src += chunk;
         remaining -= chunk;
         if (d.fill == buffer.data.size())
@@ -195,7 +206,7 @@ bool AudioOutput::drained() const
     if (d.fill > 0)
         return false;
     return std::all_of(std::begin(d.buffers), std::end(d.buffers), [](const Buffer& buffer) {
-        return !buffer.submitted || (buffer.header.dwFlags & WHDR_DONE) != 0;
+        return !buffer.submitted || isDone(buffer.header);
     });
 }
 
