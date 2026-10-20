@@ -16,7 +16,7 @@ using namespace editor::core;
 using editor::tests::sampleAudio;
 using editor::tests::sampleLuma;
 using editor::tests::SampleSpec;
-using editor::tests::toUtf8;
+using editor::tests::SampleDirTest;
 using editor::tests::writeSampleFile;
 
 namespace {
@@ -31,37 +31,17 @@ constexpr double kOut = 2.6;
 constexpr int kFirstFrame = 25;
 constexpr int kFrameCount = 40;
 
-class ExportTest : public ::testing::Test
+class ExportTest : public SampleDirTest<ExportTest>
 {
+public:
+    static constexpr const char* kDirName = "EditorVideoExportTests";
+
+    static void prepareSamples()
+    {
+        editor::tests::writeExportSources(dir_);
+    }
+
 protected:
-    static void SetUpTestSuite()
-    {
-        dir_ = fs::temp_directory_path() / "EditorVideoExportTests";
-        fs::remove_all(dir_);
-        fs::create_directories(dir_);
-        if (!editor::tests::sampleEncodersAvailable())
-            return;
-        const SampleSpec base{.video = true, .audio = true, .frames = 100, .gopSize = 25};
-        writeSampleFile(dir_ / "sorgente.mkv", base);
-        SampleSpec mp4 = base;
-        mp4.aacAudio = true;
-        writeSampleFile(dir_ / "sorgente.mp4", mp4);
-    }
-
-    static void TearDownTestSuite()
-    {
-        std::error_code ec;
-        fs::remove_all(dir_, ec);
-    }
-
-    void SetUp() override
-    {
-        if (!editor::tests::sampleEncodersAvailable())
-            GTEST_SKIP() << "FFmpeg senza gli encoder necessari: impossibile generare i file di prova";
-    }
-
-    static std::string path(const fs::path& name) { return toUtf8(dir_ / name); }
-
     // Segmento come lo costruisce l'interfaccia (fotogrammi chiave dall'analisi del file, IN agganciato), come
     // unico tratto da esportare.
     static std::vector<TimeRange> segmentFor(const std::string& source)
@@ -112,8 +92,6 @@ protected:
         }
         EXPECT_EQ(count, kFrameCount);
     }
-
-    static inline fs::path dir_;
 };
 
 TEST_F(ExportTest, MatroskaSegmentKeepsCodecsAndSync)

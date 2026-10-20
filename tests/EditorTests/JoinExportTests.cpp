@@ -22,7 +22,7 @@ using namespace editor::core;
 using editor::tests::sampleAudio;
 using editor::tests::sampleLuma;
 using editor::tests::SampleSpec;
-using editor::tests::toUtf8;
+using editor::tests::SampleDirTest;
 using editor::tests::writeSampleFile;
 using editor::tests::expectMonotonicPackets;
 using editor::tests::expectVideoFrames;
@@ -54,39 +54,18 @@ double totalLength(const std::vector<TimeRange>& ranges)
     return total;
 }
 
-class JoinExportTest : public ::testing::Test
+class JoinExportTest : public SampleDirTest<JoinExportTest>
 {
-protected:
-    static void SetUpTestSuite()
+public:
+    static constexpr const char* kDirName = "EditorVideoJoinTests";
+
+    static void prepareSamples()
     {
-        dir_ = fs::temp_directory_path() / "EditorVideoJoinTests";
-        fs::remove_all(dir_);
-        fs::create_directories(dir_);
-        if (!editor::tests::sampleEncodersAvailable())
-            return;
-        const SampleSpec base{.video = true, .audio = true, .frames = 100, .gopSize = 25};
-        writeSampleFile(dir_ / "sorgente.mkv", base);
-        SampleSpec mp4 = base;
-        mp4.aacAudio = true;
-        writeSampleFile(dir_ / "sorgente.mp4", mp4);
+        editor::tests::writeExportSources(dir_);
         writeSampleFile(dir_ / "sorgente.wav", {.video = false, .audio = true, .frames = 100});
     }
 
-    static void TearDownTestSuite()
-    {
-        std::error_code ec;
-        fs::remove_all(dir_, ec);
-    }
-
-    void SetUp() override
-    {
-        if (!editor::tests::sampleEncodersAvailable())
-            GTEST_SKIP() << "FFmpeg senza gli encoder necessari: impossibile generare i file di prova";
-    }
-
-    static std::string path(const char* name) { return toUtf8(dir_ / name); }
-
-    static inline fs::path dir_;
+protected:
 };
 
 TEST_F(JoinExportTest, ThreeRangesFromMatroska)

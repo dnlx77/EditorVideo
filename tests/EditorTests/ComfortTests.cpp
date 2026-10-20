@@ -16,7 +16,7 @@ using namespace editor::core;
 using editor::tests::lumaAt;
 using editor::tests::sampleLuma;
 using editor::tests::SampleSpec;
-using editor::tests::toUtf8;
+using editor::tests::SampleDirTest;
 using editor::tests::writeSampleFile;
 
 namespace {
@@ -175,35 +175,18 @@ TEST(EditHistory, UndoKeepsTheAnalysisDoneMeanwhile)
 // ---------------------------------------------------------------------------------------------------------------
 // Miniature ed esportazione annullata
 
-class ComfortMediaTest : public ::testing::Test
+class ComfortMediaTest : public SampleDirTest<ComfortMediaTest>
 {
-protected:
-    static void SetUpTestSuite()
+public:
+    static constexpr const char* kDirName = "EditorVideoComfortTests";
+
+    static void prepareSamples()
     {
-        dir_ = fs::temp_directory_path() / "EditorVideoComfortTests";
-        fs::remove_all(dir_);
-        fs::create_directories(dir_);
-        if (!editor::tests::sampleEncodersAvailable())
-            return;
         writeSampleFile(dir_ / "video.mkv", {.video = true, .audio = true, .frames = 50, .gopSize = 10});
         writeSampleFile(dir_ / "audio.wav", {.video = false, .audio = true, .frames = 50});
     }
 
-    static void TearDownTestSuite()
-    {
-        std::error_code ec;
-        fs::remove_all(dir_, ec);
-    }
-
-    void SetUp() override
-    {
-        if (!editor::tests::sampleEncodersAvailable())
-            GTEST_SKIP() << "FFmpeg senza gli encoder necessari: impossibile generare i file di prova";
-    }
-
-    static std::string path(const std::string& name) { return toUtf8(dir_ / name); }
-
-    static inline fs::path dir_;
+protected:
 };
 
 TEST_F(ComfortMediaTest, ThumbnailIsTheFrameAtThatTime)

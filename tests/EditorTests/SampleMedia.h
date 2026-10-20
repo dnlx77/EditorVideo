@@ -1,8 +1,13 @@
 #pragma once
 
+#include "EditorCore/PathUtil.h"
+
+#include <gtest/gtest.h>
+
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <system_error>
 
 namespace editor::tests {
 
@@ -36,6 +41,42 @@ void writeSampleFile(const std::filesystem::path& path, const SampleSpec& spec);
 // false se la build di FFmpeg non ha gli encoder usati da writeSampleFile.
 bool sampleEncodersAvailable();
 
-std::string toUtf8(const std::filesystem::path& path);
+// I file "sorgente.mkv" (MPEG-4 + PCM) e "sorgente.mp4" (MPEG-4 + AAC) usati dalle prove di esportazione: 4 s,
+// 100 fotogrammi, un fotogramma chiave ogni secondo.
+void writeExportSources(const std::filesystem::path& dir);
+
+// Base dei test che lavorano su file di prova generati in una cartella temporanea propria (una per gruppo di test).
+// La classe derivata dichiara, pubblici, kDirName (nome della cartella in %TEMP%) e prepareSamples() (genera i file
+// in dir_). Senza gli encoder di FFmpeg i file non si generano e i test vengono saltati.
+template <typename Derived>
+class SampleDirTest : public ::testing::Test
+{
+protected:
+    static void SetUpTestSuite()
+    {
+        dir_ = std::filesystem::temp_directory_path() / Derived::kDirName;
+        std::filesystem::remove_all(dir_);
+        std::filesystem::create_directories(dir_);
+        if (sampleEncodersAvailable())
+            Derived::prepareSamples();
+    }
+
+    static void TearDownTestSuite()
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec);
+    }
+
+    void SetUp() override
+    {
+        if (!sampleEncodersAvailable())
+            GTEST_SKIP() << "FFmpeg senza gli encoder necessari: impossibile generare i file di prova";
+    }
+
+    // Percorso UTF-8 di un file della cartella.
+    static std::string path(const std::filesystem::path& name) { return core::utf8FromPath(dir_ / name); }
+
+    static inline std::filesystem::path dir_;
+};
 
 }  // namespace editor::tests
