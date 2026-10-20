@@ -161,7 +161,7 @@ jobs:
         shell: pwsh
         run: |
           # Salva, riapre, sposta la cartella, esporta; file mancante, versione sconosciuta e file rovinato.
-          $p = Start-Process bind\Release\EditorVideo.exe -PassThru `
+          $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru `
                  -ArgumentList '--project-test', "`"$env:TEMP\EditorVideoDemo\demo_mpeg2_gpu.mkv`"" `
                  -RedirectStandardOutput progetto.txt -RedirectStandardError progetto-err.txt
           $null = $p.Handle  # necessario per leggere ExitCode
@@ -174,7 +174,7 @@ jobs:
         run: |
           # Una miniatura per fotogramma chiave dai file dimostrativi (il file solo audio non ne ha).
           $demo = "$env:TEMP\EditorVideoDemo"
-          $p = Start-Process bind\Release\EditorVideo.exe -PassThru `
+          $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru `
                  -ArgumentList '--thumbnail-test', "`"$demo\demo_mpeg2_gpu.mkv`"", "`"$demo\demo_mpeg4_software.mkv`"", "`"$demo\demo_solo_audio.wav`"" `
                  -RedirectStandardOutput miniature.txt -RedirectStandardError miniature-err.txt
           $null = $p.Handle  # necessario per leggere ExitCode
