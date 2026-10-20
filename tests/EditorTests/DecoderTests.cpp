@@ -7,6 +7,8 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <memory>
+#include <vector>
 
 namespace fs = std::filesystem;
 using namespace editor::core;
@@ -92,6 +94,37 @@ TEST_F(DecoderTest, DecodesAllFramesInOrder)
         frame = decoder.nextFrame();
     }
     EXPECT_EQ(count, 30);
+}
+
+TEST_F(DecoderTest, FrameBuffersAreReusedOnlyWhenReleased)
+{
+    std::vector<std::shared_ptr<VideoFrame>> held;
+    std::shared_ptr<VideoFrame> survivor;
+    {
+        VideoDecoder decoder(sample("mpeg4.mkv"), {.allowHardware = false});
+        // Fotogrammi tenuti insieme (come nella coda dell'anteprima): ognuno ha il suo spazio e il suo contenuto.
+        held.push_back(decoder.seek(0.0));
+        held.push_back(decoder.nextFrame());
+        held.push_back(decoder.nextFrame());
+        for (int i = 0; i < 3; ++i)
+            expectFrame(held[i], i, 64, 48);
+        EXPECT_NE(held[0]->pixels.data(), held[1]->pixels.data());
+        EXPECT_NE(held[1]->pixels.data(), held[2]->pixels.data());
+        EXPECT_NE(held[0]->pixels.data(), held[2]->pixels.data());
+
+        // Lasciato un fotogramma, il suo spazio serve per il successivo, con il contenuto giusto.
+        const std::uint8_t* released = held[0]->pixels.data();
+        held.erase(held.begin());
+        survivor = decoder.nextFrame();
+        expectFrame(survivor, 3, 64, 48);
+        EXPECT_EQ(survivor->pixels.data(), released);
+        expectFrame(held[0], 1, 64, 48);  // quelli ancora tenuti non sono stati toccati
+        expectFrame(held[1], 2, 64, 48);
+    }
+    // Un fotogramma resta valido anche dopo la chiusura del decoder.
+    expectFrame(survivor, 3, 64, 48);
+    held.clear();
+    survivor.reset();
 }
 
 TEST_F(DecoderTest, SeekReturnsNearestFrame)
