@@ -83,6 +83,7 @@ protected:
 private:
     QRectF videoLane() const;
     QRectF audioLane() const;
+    std::vector<QRectF> blockRects(const QRectF& lane) const;  // il riquadro di ogni blocco nella corsia
     QRectF replacementHandle() const;  // maniglia della traccia sostitutiva (vuoto se non c'è)
     double total() const;
     double xForTime(double seconds) const;

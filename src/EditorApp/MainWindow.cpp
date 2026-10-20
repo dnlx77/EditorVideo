@@ -2,6 +2,7 @@
 
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
+#include "EditorApp/UiText.h"
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/LibraryInfo.h"
@@ -48,11 +49,6 @@ namespace {
 QString qs(const std::string& utf8)
 {
     return QString::fromStdString(utf8);
-}
-
-QString timeText(double seconds)
-{
-    return qs(core::formatDuration(seconds));
 }
 
 QTreeWidgetItem* addRow(QTreeWidgetItem* parent, const QString& name, const QString& value)
@@ -137,11 +133,6 @@ QSettings settings()
 QString nativeAbsolute(const QString& path)
 {
     return QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
-}
-
-QString fileNameOf(const std::string& utf8Path)
-{
-    return QFileInfo(qs(utf8Path)).fileName();
 }
 
 }  // namespace

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -107,7 +108,10 @@ private:
 
     double clock();
     void tick();
+    // Ferma la riproduzione in `position`; con signalWindowEnd avvisa poi onWindowEnd (fine del pezzo).
+    void stopAt(double position, bool signalWindowEnd);
     void showFrameAt(double seconds);
+    void showDecodeError(const std::exception& e);
     void updateControls();
     void updatePositionLabel(double seconds);
     void updateSegmentUi();

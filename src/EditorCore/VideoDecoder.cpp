@@ -143,6 +143,13 @@ struct VideoDecoder::Impl : OpenedStream
     bool decodeNext()
     {
         int errors = 0;
+        // Errore di decodifica: con la GPU si passa al software (HardwareFailure), altrimenti si salta, fino a 200.
+        const auto decodeError = [&] {
+            if (usingHardwareDevice() && hardwareActive)
+                failHardware();
+            if (++errors > 200)
+                throw MediaError("Troppi errori di decodifica: il video potrebbe essere danneggiato.");
+        };
         for (;;) {
             const int ret = avcodec_receive_frame(ctx.get(), frame.get());
             if (ret == 0)
@@ -150,10 +157,7 @@ struct VideoDecoder::Impl : OpenedStream
             if (ret == AVERROR_EOF)
                 return false;
             if (ret != AVERROR(EAGAIN)) {
-                if (usingHardwareDevice() && hardwareActive)
-                    failHardware();
-                if (++errors > 200)
-                    throw MediaError("Troppi errori di decodifica: il video potrebbe essere danneggiato.");
+                decodeError();
                 continue;  // fotogramma danneggiato: proviamo con il successivo
             }
 
@@ -171,12 +175,8 @@ struct VideoDecoder::Impl : OpenedStream
             }
             const int sent = avcodec_send_packet(ctx.get(), packet.get());
             av_packet_unref(packet.get());
-            if (sent < 0 && sent != AVERROR(EAGAIN)) {
-                if (usingHardwareDevice() && hardwareActive)
-                    failHardware();
-                if (++errors > 200)
-                    throw MediaError("Troppi errori di decodifica: il video potrebbe essere danneggiato.");
-            }
+            if (sent < 0 && sent != AVERROR(EAGAIN))
+                decodeError();
         }
     }
 

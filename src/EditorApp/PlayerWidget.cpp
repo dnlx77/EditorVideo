@@ -1,6 +1,7 @@
 #include "EditorApp/PlayerWidget.h"
 
 #include "EditorApp/TimelineWidget.h"
+#include "EditorApp/UiText.h"
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Playback.h"
@@ -24,11 +25,6 @@ namespace editor::app {
 namespace {
 
 constexpr std::size_t kMaxQueuedFrames = 8;
-
-QString timeText(double seconds)
-{
-    return QString::fromStdString(core::formatDuration(seconds));
-}
 
 }  // namespace
 
@@ -521,16 +517,8 @@ void PlayerWidget::tick()
     updatePositionLabel(position_);
 
     if (windowEnd_ > 0 && now >= windowEnd_ - 0.001) {
-        // Fine del pezzo: ci si ferma qui e lo si dice a chi riproduce la sequenza (dopo, fuori da tick()).
-        stopWorkers();
-        playing_ = false;
-        position_ = windowEnd_;
-        updateControls();
-        updatePositionLabel(position_);
-        QTimer::singleShot(0, this, [this] {
-            if (onWindowEnd)
-                onWindowEnd();
-        });
+        // Fine del pezzo: ci si ferma qui e lo si dice a chi riproduce la sequenza.
+        stopAt(windowEnd_, true);
         return;
     }
 
@@ -542,20 +530,30 @@ void PlayerWidget::tick()
     state.clock = now;
     state.duration = duration_;
     if (core::playbackFinished(state)) {
-        stopWorkers();
-        playing_ = false;
-        if (duration_ > 0)
-            position_ = duration_;
-        updateControls();
-        updatePositionLabel(position_);
         // Un pezzo che arriva fino alla fine del file finisce qui, non al limite della finestra.
-        if (windowEnd_ > 0) {
-            QTimer::singleShot(0, this, [this] {
-                if (onWindowEnd)
-                    onWindowEnd();
-            });
-        }
+        stopAt(duration_ > 0 ? duration_ : position_, windowEnd_ > 0);
     }
+}
+
+void PlayerWidget::stopAt(double position, bool signalWindowEnd)
+{
+    stopWorkers();
+    playing_ = false;
+    position_ = position;
+    updateControls();
+    updatePositionLabel(position_);
+    // onWindowEnd si chiama dopo, fuori da tick().
+    if (signalWindowEnd) {
+        QTimer::singleShot(0, this, [this] {
+            if (onWindowEnd)
+                onWindowEnd();
+        });
+    }
+}
+
+void PlayerWidget::showDecodeError(const std::exception& e)
+{
+    view_->setMessage(QStringLiteral("Errore di decodifica del video.\n%1").arg(QString::fromUtf8(e.what())));
 }
 
 void PlayerWidget::showFrameAt(double seconds)
@@ -567,7 +565,7 @@ void PlayerWidget::showFrameAt(double seconds)
         }
         decoderAtDisplayed_ = true;
     } catch (const std::exception& e) {
-        view_->setMessage(QStringLiteral("Errore di decodifica del video.\n%1").arg(QString::fromUtf8(e.what())));
+        showDecodeError(e);
     }
     // Qui i thread sono fermi: si può leggere in sicurezza quale decoder è in uso.
     decoderText_ = QStringLiteral("Decodifica: %1").arg(QString::fromStdString(video_->decoderDescription()));
@@ -704,7 +702,7 @@ void PlayerWidget::stepFrame(int direction)
             showFrameAt(std::max(0.0, displayedTime_ - frameDuration_));
         }
     } catch (const std::exception& e) {
-        view_->setMessage(QStringLiteral("Errore di decodifica del video.\n%1").arg(QString::fromUtf8(e.what())));
+        showDecodeError(e);
     }
     position_ = displayedTime_;
     updatePositionLabel(position_);
