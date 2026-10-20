@@ -13,32 +13,32 @@ jobs:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\..\vcpkg-cache
       # In CI compiliamo solo Release: il triplet "release" evita di costruire anche le librerie Debug.
       VCPKG_TRIPLET: x64-windows-release
+      # Commit di vcpkg (script e strumento) usato dalla CI. È fisso perché gli hash dei pacchetti dipendono anche da
+      # vcpkg stesso: con l'ultima versione a ogni esecuzione la cache non serviva più e Qt e FFmpeg si ricompilavano
+      # ogni volta. Le versioni dei pacchetti restano quelle di "builtin-baseline" in vcpkg.json. Deve essere almeno
+      # 8995e218 (2026-10-06): prima vcpkg.targets perdeva /p:VcpkgTriplet e l'installazione falliva.
+      VCPKG_COMMIT: 469a0504e4a6ebf6173d1c0f51a7fa34c382fd43
     steps:
       - uses: actions/checkout@v4
 
       - name: Installa vcpkg
-        id: vcpkg
         shell: pwsh
         run: |
-          # vcpkg fermo al commit di "builtin-baseline" (vcpkg.json): con l'ultima versione a ogni esecuzione
-          # cambiavano gli hash dei pacchetti e la cache non serviva più, quindi Qt e FFmpeg si ricompilavano ogni volta.
-          $baseline = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
           git clone https://github.com/microsoft/vcpkg "$env:VCPKG_ROOT"
-          git -C "$env:VCPKG_ROOT" checkout --quiet $baseline
+          git -C "$env:VCPKG_ROOT" checkout --quiet $env:VCPKG_COMMIT
           & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
           New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
-          "baseline=$baseline" >> $env:GITHUB_OUTPUT
 
       - name: Ripristina la cache di vcpkg
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
           # Una chiave nuova a ogni esecuzione (una cache non si può sovrascrivere): si riparte dalla più recente con
-          # la stessa versione di vcpkg e, se sono stati compilati pacchetti nuovi, se ne salva una aggiornata.
-          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ steps.vcpkg.outputs.baseline }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}
+          # lo stesso commit di vcpkg e, se sono stati compilati pacchetti nuovi, se ne salva una aggiornata.
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}
           restore-keys: |
-            vcpkg-${{ env.VCPKG_TRIPLET }}-${{ steps.vcpkg.outputs.baseline }}-${{ hashFiles('vcpkg.json') }}-
-            vcpkg-${{ env.VCPKG_TRIPLET }}-${{ steps.vcpkg.outputs.baseline }}-
+            vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-
+            vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-
 
       - name: Contenuto della cache
         id: before
@@ -69,7 +69,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ steps.vcpkg.outputs.baseline }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}
+          key: vcpkg-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}
 
       - name: Test
         shell: pwsh
