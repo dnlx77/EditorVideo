@@ -141,6 +141,11 @@ public:
     // slowDown rallenta di proposito i passi del primo secondo e mezzo (solo per le prove: così la finestra di
     // avanzamento compare anche con file piccoli).
     bool startExport(const QString& target, bool showResult, std::chrono::milliseconds slowDown = {});
+    // Ricodifica all'esportazione (qualità, "Ricodifica tutto"): scelte nella finestra prima di esportare.
+    void setReencodeOptions(const core::ReencodeOptions& options) { reencodeOptions_ = options; }
+    // Prima di esportare il montaggio: quanti tratti si copiano e quanti si ricodificano, qualità e "Ricodifica tutto".
+    // false se si rinuncia (o non si può esportare: il motivo è già stato mostrato).
+    bool exportOptionsDialog();
     bool isExporting() const { return exportThread_ != nullptr; }
     bool lastExportSucceeded() const { return lastExportOk_; }
     QString lastExportProblem() const { return lastExportProblem_; }  // "annullata" o il messaggio d'errore
@@ -339,6 +344,7 @@ private:
     std::atomic<bool> cancelWave_{false};
 
     QThread* exportThread_ = nullptr;
+    core::ReencodeOptions reencodeOptions_;
     std::atomic<bool> cancelExport_{false};
     bool lastExportOk_ = false;
     QString lastExportProblem_;

@@ -399,16 +399,13 @@ TEST_F(ParameterJoin, TheProjectFormatDecidesWhatIsRefused)
     const std::string three = utf8FromPath(dir_ / "tre.mp4");
     const std::string four = utf8FromPath(dir_ / "quattro.mp4");
     EXPECT_NE(classifyClip(readMediaSignature(three), formatOf(readMediaSignature(four))).fit, ClipFit::Reencode);
-    // Un formato con un'altra risoluzione: l'esportazione è rifiutata e dice perché.
+    // Un formato con un'altra risoluzione: il pezzo si ricodifica in quella risoluzione (step R3).
     ProjectFormat other = formatOf(readMediaSignature(three));
     other.streams[0].width = 640;
     other.streams[0].height = 480;
-    try {
-        exportClips({{three, {{0.0, 1.0}}}}, utf8FromPath(dir_ / "rifiutato.mp4"), AudioEdit{}, {}, MuteMethod::Silence, &other);
-        ADD_FAILURE() << "doveva essere rifiutata";
-    } catch (const MediaError& e) {
-        EXPECT_NE(std::string(e.what()).find("640x480"), std::string::npos) << e.what();
-    }
+    const ExportResult result = exportClips({{three, {{0.0, 1.0}}}}, utf8FromPath(dir_ / "ricodificato.mp4"), AudioEdit{}, {},
+                                            MuteMethod::Silence, &other);
+    EXPECT_EQ(result.reencodedSegments, 1);
 }
 
 }  // namespace

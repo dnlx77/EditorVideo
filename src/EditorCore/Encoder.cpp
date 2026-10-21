@@ -6,6 +6,7 @@ extern "C" {
 #include <libavutil/audio_fifo.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/hwcontext.h>
+#include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
@@ -13,6 +14,7 @@ extern "C" {
 
 #include <algorithm>
 #include <mutex>
+#include <thread>
 
 namespace editor::core {
 
@@ -292,14 +294,20 @@ const std::vector<VideoEncoderInfo>& availableVideoEncoders()
     static std::vector<VideoEncoderInfo> encoders;
     static std::once_flag once;
     std::call_once(once, [] {
-        // Gli encoder che non trovano la loro scheda video lo scrivono nel registro di FFmpeg: durante la prova no.
-        const int level = av_log_get_level();
-        av_log_set_level(AV_LOG_QUIET);
-        for (const Candidate& c : kCandidates) {
-            if (works(c))
-                encoders.push_back({c.codec, c.backend, c.name});
-        }
-        av_log_set_level(level);
+        // La prova si fa sempre in un thread a parte, anche se la chiede il thread della finestra: Media Foundation usa
+        // COM, e nel thread della finestra (COM a thread singolo, quello delle finestre di Windows) non funziona e lascia
+        // bloccata la finestra di Windows per salvare che si apre dopo.
+        std::thread probe([] {
+            // Gli encoder che non trovano la loro scheda video lo scrivono nel registro di FFmpeg: durante la prova no.
+            const int level = av_log_get_level();
+            av_log_set_level(AV_LOG_QUIET);
+            for (const Candidate& c : kCandidates) {
+                if (works(c))
+                    encoders.push_back({c.codec, c.backend, c.name});
+            }
+            av_log_set_level(level);
+        });
+        probe.join();
     });
     return encoders;
 }
@@ -387,23 +395,70 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
     }
 
     FramePtr work(av_frame_alloc());
-    if (source->format == ctx->pix_fmt && source->width == ctx->width && source->height == ctx->height) {
+    if (source->format == ctx->pix_fmt && source->width == ctx->width && source->height == ctx->height
+        && source->color_range != AVCOL_RANGE_JPEG) {
         if (av_frame_ref(work.get(), source) < 0)
             throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
     } else {
-        // Formato o misura diversi: conversione.
-        impl_->sws.reset(sws_getCachedContext(impl_->sws.release(), source->width, source->height,
-                                              static_cast<AVPixelFormat>(source->format), ctx->width, ctx->height,
-                                              ctx->pix_fmt, SWS_BICUBIC, nullptr, nullptr, nullptr));
-        if (!impl_->sws)
-            throw MediaError("Conversione del fotogramma da codificare non possibile.");
+        // Formato o misura diversi: conversione. Le proporzioni dell'immagine restano quelle dell'originale (con le
+        // proporzioni dei suoi pixel): se sono diverse da quelle del video codificato, bande nere ai lati o sopra e sotto.
         work->format = ctx->pix_fmt;
         work->width = ctx->width;
         work->height = ctx->height;
         if (av_frame_get_buffer(work.get(), 0) < 0)
             throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
-        sws_scale(impl_->sws.get(), source->data, source->linesize, 0, source->height, work->data, work->linesize);
+        const AVRational sar = source->sample_aspect_ratio.num > 0 ? source->sample_aspect_ratio : AVRational{1, 1};
+        const double aspect = static_cast<double>(source->width) * sar.num / (static_cast<double>(source->height) * sar.den);
+        int width = ctx->width;
+        int height = ctx->height;
+        if (aspect > static_cast<double>(ctx->width) / ctx->height + 1e-3)
+            height = std::min(ctx->height, static_cast<int>(std::lround(ctx->width / aspect / 2.0)) * 2);
+        else if (aspect < static_cast<double>(ctx->width) / ctx->height - 1e-3)
+            width = std::min(ctx->width, static_cast<int>(std::lround(ctx->height * aspect / 2.0)) * 2);
+        // I formati "J" (es. yuvj420p, dei video dei telefoni e di alcuni registratori) sono quelli normali a gamma piena:
+        // la conversione va detta così, altrimenti i colori escono un po' sbiaditi o troppo contrastati.
+        AVPixelFormat sourceFormat = static_cast<AVPixelFormat>(source->format);
+        bool fullRange = source->color_range == AVCOL_RANGE_JPEG;
+        switch (sourceFormat) {
+        case AV_PIX_FMT_YUVJ420P: sourceFormat = AV_PIX_FMT_YUV420P; fullRange = true; break;
+        case AV_PIX_FMT_YUVJ422P: sourceFormat = AV_PIX_FMT_YUV422P; fullRange = true; break;
+        case AV_PIX_FMT_YUVJ444P: sourceFormat = AV_PIX_FMT_YUV444P; fullRange = true; break;
+        default: break;
+        }
+        impl_->sws.reset(sws_getCachedContext(impl_->sws.release(), source->width, source->height, sourceFormat, width, height,
+                                              ctx->pix_fmt, SWS_BICUBIC, nullptr, nullptr, nullptr));
+        if (!impl_->sws)
+            throw MediaError("Conversione del fotogramma da codificare non possibile.");
+        const int* coefficients = sws_getCoefficients(SWS_CS_DEFAULT);
+        sws_setColorspaceDetails(impl_->sws.get(), coefficients, fullRange ? 1 : 0, coefficients, 0, 0, 1 << 16, 1 << 16);
+        if (width == ctx->width && height == ctx->height) {
+            sws_scale(impl_->sws.get(), source->data, source->linesize, 0, source->height, work->data, work->linesize);
+        } else {
+            FramePtr fitted(av_frame_alloc());
+            fitted->format = ctx->pix_fmt;
+            fitted->width = width;
+            fitted->height = height;
+            if (av_frame_get_buffer(fitted.get(), 0) < 0)
+                throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
+            sws_scale(impl_->sws.get(), source->data, source->linesize, 0, source->height, fitted->data, fitted->linesize);
+            // Nero dappertutto, poi l'immagine al centro (in posizioni pari, per il colore sottocampionato).
+            const std::ptrdiff_t linesizes[4] = {work->linesize[0], work->linesize[1], work->linesize[2], work->linesize[3]};
+            av_image_fill_black(work->data, linesizes, ctx->pix_fmt, AVCOL_RANGE_MPEG, ctx->width, ctx->height);
+            const int x = (ctx->width - width) / 2 & ~1;
+            const int y = (ctx->height - height) / 2 & ~1;
+            const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(ctx->pix_fmt);
+            for (int plane = 0; plane < av_pix_fmt_count_planes(ctx->pix_fmt); ++plane) {
+                const bool chroma = plane == 1 || plane == 2;
+                const int rows = chroma ? AV_CEIL_RSHIFT(height, desc->log2_chroma_h) : height;
+                const int top = chroma ? y >> desc->log2_chroma_h : y;
+                const int left = av_image_get_linesize(ctx->pix_fmt, x, plane);
+                const int bytes = av_image_get_linesize(ctx->pix_fmt, width, plane);
+                av_image_copy_plane(work->data[plane] + static_cast<std::ptrdiff_t>(top) * work->linesize[plane] + left,
+                                    work->linesize[plane], fitted->data[plane], fitted->linesize[plane], bytes, rows);
+            }
+        }
         av_frame_copy_props(work.get(), source);
+        work->sample_aspect_ratio = {1, 1};
     }
     work->pts = frame->pts;
     work->pict_type = forceKeyframe ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;

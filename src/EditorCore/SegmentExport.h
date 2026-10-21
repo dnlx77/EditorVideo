@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EditorCore/Encoder.h"
 #include "EditorCore/MediaError.h"
 #include "EditorCore/Project.h"
 #include "EditorCore/TimeUtil.h"
@@ -17,6 +18,13 @@ public:
     ExportCancelled();
 };
 
+// I pezzi non si possono unire in un file (né copiandoli né ricodificandoli), con il motivo in italiano.
+class ClipsNotJoinable : public MediaError
+{
+public:
+    using MediaError::MediaError;
+};
+
 struct ExportResult
 {
     double durationSeconds = 0.0;  // durata del file creato
@@ -28,6 +36,25 @@ struct ExportResult
     int droppedPackets = 0;
     // I pezzi hanno parametri di codifica diversi (H.264/HEVC): ripetuti nel flusso davanti a ogni fotogramma chiave.
     bool parametersInStream = false;
+    int reencodedSegments = 0;  // tratti ricodificati (gli altri sono copiati)
+};
+
+// Ricodifica all'esportazione (vedi exportClips).
+struct ReencodeOptions
+{
+    QualityPreset quality = QualityPreset::High;
+    bool all = false;  // "Ricodifica tutto": anche i pezzi che si potrebbero copiare
+};
+
+// Che cosa farà l'esportazione, senza farla: quanti tratti si copiano e quanti si ricodificano (e quanto durano), o
+// perché non si può esportare.
+struct ExportPreview
+{
+    int copiedSegments = 0;
+    int reencodedSegments = 0;
+    double copiedSeconds = 0.0;
+    double reencodedSeconds = 0.0;
+    std::string problem;  // vuoto = si può esportare
 };
 
 // Come togliere l'audio nei tratti silenziati, per l'audio compresso (il PCM viene sempre azzerato al campione).
@@ -60,13 +87,19 @@ using ExportProgress = std::function<bool(double fraction)>;
 ExportResult exportSegments(const std::string& inputPath, const std::string& outputPath,
                             const std::vector<TimeRange>& ranges, const ExportProgress& progress = {});
 
-// Come sopra, con i tratti di più file uniti uno dopo l'altro (anche di contenitori diversi). I file devono avere
-// gli stessi codec e parametri del formato del progetto (`format`; senza, quello del primo file), altrimenti
-// MediaError con l'elenco delle differenze (vedi classifyClip).
-// Fanno eccezione i parametri di codifica di H.264 e HEVC (es. un altro numero di fotogrammi di riferimento): in quel
-// caso i parametri di ogni file (SPS e PPS, per HEVC anche VPS) si ripetono nel flusso davanti a ogni suo fotogramma
-// chiave, e nei file MP4 il video si dichiara "avc3"/"hev1" (parametri nel flusso). Se tutti i file hanno gli stessi
-// parametri il file creato è come prima ("avc1"/"hvc1"), il più compatibile.
+// Come sopra, con i tratti di più file uniti uno dopo l'altro (anche di contenitori diversi), nel formato del progetto
+// (`format`; senza, quello del primo file). Ogni file si confronta con il formato (vedi classifyClip):
+// - uguale: i suoi tratti si copiano così come sono;
+// - parametri di codifica H.264/HEVC diversi (es. un altro numero di fotogrammi di riferimento): si copiano, e i
+//   parametri di ogni file (SPS e PPS, per HEVC anche VPS) si ripetono nel flusso davanti a ogni suo fotogramma
+//   chiave; nei file MP4 il video si dichiara "avc3"/"hev1" (parametri nel flusso);
+// - diverso (risoluzione, fotogrammi al secondo, codec...): i suoi tratti si ricodificano nel formato del progetto con
+//   l'encoder della scheda video (vedi VideoEncoder), con bande nere se le proporzioni sono diverse e i fotogrammi
+//   ripetuti o saltati per arrivare ai fotogrammi al secondo del progetto; l'audio si copia se è uguale a quello del
+//   formato, altrimenti si ricodifica in AAC. Anche questi tratti hanno i parametri nel flusso.
+// Con reencode.all si ricodifica tutto. Se tutti i file si copiano con gli stessi parametri il file creato è come
+// prima ("avc1"/"hvc1"), il più compatibile. ClipsNotJoinable se non si può (es. il formato non è H.264 o HEVC, o non
+// c'è un encoder).
 // Il contenitore del file creato si ricava dall'estensione di outputPath (di solito quella del primo file).
 // Con le modifiche all'audio (AudioEdit{} se non ce ne sono): tratti silenziati (tempi della sequenza, cioè del file
 // creato) e traccia sostitutiva. Con la traccia sostitutiva l'audio dei file non si copia: il file creato ha il video
@@ -74,7 +107,11 @@ ExportResult exportSegments(const std::string& inputPath, const std::string& out
 // video).
 ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,
                          const ExportProgress& progress = {}, MuteMethod muteMethod = MuteMethod::Silence,
-                         const ProjectFormat* format = nullptr);
+                         const ProjectFormat* format = nullptr, const ReencodeOptions& reencode = {});
+
+// Che cosa farebbe exportClips con questi argomenti (legge solo le caratteristiche dei file).
+ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdit& audio, const ProjectFormat* format,
+                            const ReencodeOptions& reencode = {});
 
 // Problema che impedisce di usare `audioPath` come traccia sostitutiva in un file come `outputPath` (dall'estensione),
 // in italiano; vuoto se va bene. Es. audio PCM in un MP4.

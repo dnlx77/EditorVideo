@@ -24,6 +24,15 @@ int main(int argc, char* argv[])
     if (const auto code = editor::app::runCommandLineTest(arguments))
         return *code;
 
+    if (const qsizetype at = arguments.indexOf(QStringLiteral("--project-export-test")); at >= 0 && at + 2 < arguments.size()) {
+        const int code = editor::app::runProjectExportTest(app, arguments[at + 1], arguments[at + 2]);
+        std::fflush(stdout);
+        return code;
+    }
+
+    if (const qsizetype at = arguments.indexOf(QStringLiteral("--export-dialog-test")); at >= 0 && at + 2 < arguments.size())
+        return editor::app::runExportDialogTest(app, arguments[at + 1], arguments[at + 2]);
+
     if (arguments.contains(QStringLiteral("--dock-test"))) {
         const int code = editor::app::runDockTest(app);
         std::fflush(stdout);
