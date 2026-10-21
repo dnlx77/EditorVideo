@@ -3,6 +3,7 @@
 #include "EditorApp/ZoomableTimeline.h"
 #include "EditorCore/TimeUtil.h"
 
+#include <QtCore/QStringList>
 #include <QtGui/QImage>
 #include <QtGui/QPixmap>
 
@@ -10,6 +11,8 @@
 #include <memory>
 #include <optional>
 #include <vector>
+
+class QMimeData;
 
 namespace editor::core {
 struct Waveform;
@@ -68,6 +71,8 @@ public:
     std::function<void(int)> onActivate;              // doppio clic
     std::function<void(double from, double to)> onAudioSelection;  // tratto selezionato (vuoto = tolto)
     std::function<void(double offset)> onReplacementMoved;         // traccia sostitutiva spostata
+    // File trascinati da Esplora file e lasciati qui: vanno nella sequenza a partire dalla posizione `index`.
+    std::function<void(const QStringList& paths, int index)> onFilesDropped;
     // Miniatura del file `clipId` al tempo `sourceTime` (nei tempi del file); un'immagine vuota se non è ancora
     // pronta (chi la fornisce la prepara in background e poi chiede di ridisegnare).
     std::function<QImage(int clipId, double sourceTime)> thumbnailFor;
@@ -85,6 +90,10 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
+    void dragLeaveEvent(QDragLeaveEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
     QRectF timeAxis() const override { return videoLane(); }
     void viewChanged() override { invalidate(); }
     double playheadTime() const override { return playhead_; }
@@ -125,9 +134,14 @@ private:
     bool movingReplacement_ = false;
     double replacementStart_ = 0.0;  // offset all'inizio del trascinamento
 
+    double fileDropX_ = -1.0;  // file trascinati sopra la linea del tempo: dove (-1 = nessuno)
+
     QPixmap cache_;
     bool cacheValid_ = false;
 };
+
+// I file locali (percorsi nativi) trascinati in `mime`; vuoto se non ce ne sono.
+QStringList droppedFiles(const QMimeData* mime);
 
 // Colore del blocco per un file (si ripetono dopo una decina di file).
 QColor blockColor(int colorIndex);

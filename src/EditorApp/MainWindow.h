@@ -81,6 +81,16 @@ public:
     bool isTitleHighlighted(QDockWidget* dock) const;
     bool isDockPreviewVisible() const { return dockPreview_ != nullptr && dockPreview_->isVisible(); }
     int timelineHeight() const { return timelineHeight_; }  // altezza da agganciata, da riprendere riagganciandola
+
+    // File trascinati da Esplora file (o un progetto, o una cartella): sempre aggiunti all'elenco dei file; lasciati
+    // sulla Sorgente vi si apre l'ultimo, sulla linea del tempo del montaggio vanno interi nella sequenza da `index`.
+    enum class DropTarget
+    {
+        Files,
+        Source,
+        Sequence,
+    };
+    void dropFiles(const QStringList& paths, DropTarget target, int sequenceIndex = -1);
     bool isPanelFullScreen() const { return fullScreenDock_ != nullptr; }
     QDockWidget* sourceDock() const { return sourceDock_; }
     QDockWidget* programDock() const { return programDock_; }
@@ -141,6 +151,8 @@ public:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     bool event(QEvent* event) override;
 

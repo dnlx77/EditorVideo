@@ -40,6 +40,7 @@
     <ClCompile Include="CutSegmentTests.cpp" />
     <ClCompile Include="DecoderTests.cpp" />
     <ClCompile Include="ExportTests.cpp" />
+    <ClCompile Include="FileDropTests.cpp" />
     <ClCompile Include="H264ParamsTests.cpp" />
     <ClCompile Include="JoinExportTests.cpp" />
     <ClCompile Include="LibraryInfoTests.cpp" />

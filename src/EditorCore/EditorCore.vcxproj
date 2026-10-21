@@ -38,6 +38,7 @@
     <ClInclude Include="Compatibility.h" />
     <ClInclude Include="CutSegment.h" />
     <ClInclude Include="EditHistory.h" />
+    <ClInclude Include="FileDrop.h" />
     <ClInclude Include="FfmpegUtil.h" />
     <ClInclude Include="H264Params.h" />
     <ClInclude Include="Json.h" />
@@ -61,6 +62,7 @@
     <ClCompile Include="Compatibility.cpp" />
     <ClCompile Include="CutSegment.cpp" />
     <ClCompile Include="EditHistory.cpp" />
+    <ClCompile Include="FileDrop.cpp" />
     <ClCompile Include="FfmpegUtil.cpp" />
     <ClCompile Include="H264Params.cpp" />
     <ClCompile Include="Json.cpp" />

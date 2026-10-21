@@ -6,6 +6,7 @@
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
+#include "EditorCore/FileDrop.h"
 #include "EditorCore/LibraryInfo.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
@@ -19,7 +20,10 @@
 #include <QtCore/QSettings>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
+#include <QtCore/QMimeData>
 #include <QtGui/QCloseEvent>
+#include <QtGui/QDragEnterEvent>
+#include <QtGui/QDropEvent>
 #include <QtGui/QCursor>
 #include <QtGui/QHoverEvent>
 #include <QtGui/QWindow>
@@ -307,6 +311,7 @@ MainWindow::MainWindow(QWidget* parent)
         recordEdit(QStringLiteral("Sposta pezzo"), before);
     };
     timeline_->thumbnailFor = [this](int clipId, double sourceTime) { return thumbnailFor(clipId, sourceTime); };
+    timeline_->onFilesDropped = [this](const QStringList& paths, int index) { dropFiles(paths, DropTarget::Sequence, index); };
     timeline_->onActivate = [this](int fragmentId) {
         // Doppio clic: il pezzo torna nella Sorgente con i suoi IN e OUT.
         const core::Fragment* f = project_.sequence().find(fragmentId);
@@ -364,6 +369,12 @@ MainWindow::MainWindow(QWidget* parent)
     auto* center = new QWidget(this);
     center->hide();
     setCentralWidget(center);
+    // File trascinati da Esplora file: ovunque nella finestra e nei pannelli, anche staccati.
+    setAcceptDrops(true);
+    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+        dock->setAcceptDrops(true);
+        dock->installEventFilter(this);
+    }
     setDockNestingEnabled(true);
     // Senza animazioni: i pannelli si sistemano subito (con il riaggancio a fine spostamento della finestra un'animazione
     // poteva restare a metà, con la linea del tempo senza spazio finché un altro pannello non si muoveva).
@@ -1258,6 +1269,26 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         else if (watched == sequencePanel_)
             sequenceLabel_->setVisible(sequencePanel_->height() >= 110);
     }
+    // File trascinati su un pannello (la linea del tempo del montaggio li gestisce da sé).
+    if (auto* dock = qobject_cast<QDockWidget*>(watched)) {
+        if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove) {
+            auto* drag = static_cast<QDragMoveEvent*>(event);
+            if (!droppedFiles(drag->mimeData()).isEmpty()) {
+                drag->acceptProposedAction();
+                return true;
+            }
+        } else if (event->type() == QEvent::Drop) {
+            auto* drop = static_cast<QDropEvent*>(event);
+            const QStringList files = droppedFiles(drop->mimeData());
+            if (!files.isEmpty()) {
+                drop->acceptProposedAction();
+                // Dopo, fuori dal trascinamento (che in Windows tiene fermo Esplora file finché non finisce).
+                const DropTarget target = dock == sourceDock_ ? DropTarget::Source : DropTarget::Files;
+                QTimer::singleShot(0, this, [this, files, target] { dropFiles(files, target); });
+                return true;
+            }
+        }
+    }
 
     // Un clic su un'anteprima la rende quella attiva (Spazio e frecce vanno lì).
     if (event->type() == QEvent::MouseButtonPress) {
@@ -1284,6 +1315,82 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             return true;
     }
     return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* event)
+{
+    if (!droppedFiles(event->mimeData()).isEmpty())
+        event->acceptProposedAction();
+}
+
+void MainWindow::dropEvent(QDropEvent* event)
+{
+    const QStringList files = droppedFiles(event->mimeData());
+    if (files.isEmpty())
+        return;
+    event->acceptProposedAction();
+    QTimer::singleShot(0, this, [this, files] { dropFiles(files, DropTarget::Files); });
+}
+
+void MainWindow::dropFiles(const QStringList& paths, DropTarget target, int sequenceIndex)
+{
+    std::vector<std::string> utf8;
+    for (const QString& path : paths)
+        utf8.push_back(nativeAbsolute(path).toStdString());
+    const core::DropPlan plan = core::planDrop(utf8, project_, core::inspectMedia);
+
+    // Un progetto si apre (chiedendo se salvare quello di adesso).
+    if (plan.project) {
+        if (maybeSave())
+            openProject(qs(*plan.project));
+        return;
+    }
+    if (!plan.unreadable.empty()) {
+        QString list;
+        for (const std::string& name : plan.unreadable)
+            list += QStringLiteral("\n• %1").arg(qs(name));
+        QMessageBox::warning(this, QStringLiteral("File non aggiunti"),
+                             QStringLiteral("Questi file non sono video o audio leggibili e non sono stati aggiunti:%1%2")
+                                 .arg(list, plan.media.empty() ? QString() : QStringLiteral("\n\nGli altri sì.")));
+    }
+    if (plan.media.empty())
+        return;
+
+    // Una sola modifica, da annullare tutta insieme: file nuovi nell'elenco (senza doppioni) e, sulla linea del tempo,
+    // tutti i file interi nella sequenza nel punto di rilascio.
+    const core::Project before = project_;
+    std::vector<int> fragments;
+    const std::vector<int> ids =
+        core::applyDrop(project_, plan.media, target == DropTarget::Sequence ? std::max(0, sequenceIndex) : -1, &fragments);
+    int added = 0;
+    for (std::size_t i = 0; i < plan.media.size(); ++i) {
+        if (plan.media[i].existingClipId != 0)
+            continue;
+        ++added;
+        probeQueue_.push_back(ids[i]);
+        requestWaveform(plan.media[i].path);
+    }
+    if (added > 0 || !fragments.empty())
+        recordEdit(QStringLiteral("Aggiungi file"), before);
+    if (target == DropTarget::Source || currentClipId_ == 0) {
+        setProgramActive(false);
+        selectClip(ids.back());  // l'ultimo file trascinato
+    }
+    if (!fragments.empty()) {
+        timeline_->setSelected(fragments.front());
+        setProgramActive(true);
+        program_->seekTo(project_.sequence().startOf(project_.sequence().indexOf(fragments.front())));
+    }
+    refreshClipList();
+    startNextProbe();
+    const int already = static_cast<int>(plan.media.size()) - added;
+    QString message = added > 0 ? QStringLiteral("Aggiunti %1 file al progetto").arg(added)
+                                : QStringLiteral("I file erano già nel progetto");
+    if (added > 0 && already > 0)
+        message += QStringLiteral(" (%1 c'erano già)").arg(already);
+    if (!fragments.empty())
+        message += QStringLiteral(", %1 pezzi messi nel montaggio").arg(fragments.size());
+    statusBar()->showMessage(message + QStringLiteral("."), 8000);
 }
 
 void MainWindow::createMenus()
@@ -2533,6 +2640,7 @@ void MainWindow::showShortcuts()
         {"Ctrl+S / Ctrl+Maiusc+S", "Salva progetto / salva con nome"},
         {"Ctrl+E", "Esporta"},
         {"Doppio clic sull'immagine", "Schermo intero dell'anteprima (Esc o doppio clic per uscire)"},
+        {"Trascina file da Esplora file", "Aggiungili al progetto (sulla Sorgente: aprili; sulla linea del tempo: anche nel montaggio)"},
         {"F1", "Questo elenco"},
     };
     QString html = QStringLiteral("<table cellspacing='0' cellpadding='4'>");

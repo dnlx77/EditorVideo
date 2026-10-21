@@ -22,8 +22,12 @@
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QMimeData>
+#include <QtCore/QUrl>
 #include <QtCore/QTimer>
 #include <QtGui/QGuiApplication>
+#include <QtGui/QDragEnterEvent>
+#include <QtGui/QDropEvent>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QWheelEvent>
 #include <QtGui/QWindow>
@@ -1063,6 +1067,60 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                             reset ? "OK" : "NON riuscito");
                 std::fflush(stdout);
                 ok = ok && (docksOk || !player->hasMedia()) && changed && restored && reset;
+            }
+
+            // File trascinati da Esplora file (simulati con QMimeData): sulla linea del tempo del montaggio, in fondo, il file
+            // (già nel progetto) va intero nella sequenza senza un doppione nell'elenco; poi una cartella sulla Sorgente.
+            // Ogni trascinamento si annulla in un colpo solo.
+            {
+                SequenceTimeline* timeline = window->sequenceTimeline();
+                const auto& seq = window->project().sequence();
+                const QString file = QString::fromStdString(window->project().clips().front().path);
+                const std::size_t pieces = seq.fragments().size();
+                const std::size_t clips = window->project().clips().size();
+                QMimeData mime;
+                mime.setUrls({QUrl::fromLocalFile(file)});
+                // Linea del tempo rimpicciolita oltre "Adatta": lo spazio vuoto a destra vale come "in fondo".
+                for (int i = 0; i < 20; ++i)
+                    timeline->zoomOut();
+                const QPointF end(timeline->width() - 12, 30);
+                QDragEnterEvent enter(end.toPoint(), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(timeline, &enter);
+                QDropEvent drop(end, Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(timeline, &drop);
+                const bool inserted = enter.isAccepted() && drop.isAccepted() && seq.fragments().size() == pieces + 1
+                                   && seq.fragments().back().clipId == seq.fragments().front().clipId
+                                   && window->project().clips().size() == clips;
+                timeline->fitAll();
+                const QString label = window->undoText();
+                const bool undone = window->undo() && seq.fragments().size() == pieces;
+
+                // Una cartella sulla Sorgente (con una copia del file e un testo, che va ignorato): si aggiunge la
+                // copia, che si apre nella Sorgente, e uno solo Annulla la toglie.
+                QDir folder(QDir::temp().filePath(QStringLiteral("EditorVideoProvaTrascina")));
+                folder.removeRecursively();
+                QDir().mkpath(folder.path());
+                QFile::copy(file, folder.filePath(QStringLiteral("copia.") + QFileInfo(file).suffix()));
+                QFile note(folder.filePath(QStringLiteral("note.txt")));
+                if (note.open(QIODevice::WriteOnly))
+                    note.write("non è un video");
+                note.close();
+                window->dropFiles({QDir::toNativeSeparators(folder.path())}, MainWindow::DropTarget::Source);
+                const std::size_t afterFolder = window->project().clips().size();
+                const bool folderOk = afterFolder == clips + 1 && seq.fragments().size() == pieces
+                                   && window->currentFile().contains(QStringLiteral("copia."));
+                window->undo();
+                const bool folderUndone = window->project().clips().size() == clips;
+                QElapsedTimer settle;  // si lascia finire l'analisi della copia prima di cancellarla
+                settle.start();
+                while (settle.elapsed() < 3000 && !window->project().allAnalyzed())
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                std::printf("Trascinamento: nel montaggio %s (\"%s\" %s), cartella: %d file in più %s\n",
+                            inserted ? "OK" : "NON riuscito", qPrintable(label.mid(1)), undone ? "annullato" : "NON annullato",
+                            static_cast<int>(afterFolder - clips), folderOk && folderUndone ? "e annullati" : "NON riuscito");
+                std::fflush(stdout);
+                ok = ok && inserted && undone && label.contains(QStringLiteral("Aggiungi file")) && folderOk && folderUndone;
+                folder.removeRecursively();
             }
 
             // Progetto: salvato e riaperto, con gli stessi pezzi e lo stesso audio tolto (e senza modifiche

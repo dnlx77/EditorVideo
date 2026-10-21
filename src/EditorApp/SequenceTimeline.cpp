@@ -3,6 +3,11 @@
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Waveform.h"
 
+#include <QtCore/QDir>
+#include <QtCore/QMimeData>
+#include <QtCore/QUrl>
+#include <QtGui/QDragEnterEvent>
+#include <QtGui/QDropEvent>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QResizeEvent>
 #include <QtGui/QPainter>
@@ -43,6 +48,18 @@ void drawWave(QPainter& p, const QRectF& r, const core::Waveform& wave, double s
 
 }  // namespace
 
+QStringList droppedFiles(const QMimeData* mime)
+{
+    QStringList files;
+    if (mime == nullptr || !mime->hasUrls())
+        return files;
+    for (const QUrl& url : mime->urls()) {
+        if (url.isLocalFile())
+            files.append(QDir::toNativeSeparators(url.toLocalFile()));
+    }
+    return files;
+}
+
 QColor blockColor(int colorIndex)
 {
     static const QColor colors[] = {{66, 133, 214}, {214, 120, 60}, {82, 168, 98}, {170, 92, 190}, {196, 168, 54},
@@ -55,6 +72,7 @@ SequenceTimeline::SequenceTimeline(QWidget* parent)
 {
     setFocusPolicy(Qt::ClickFocus);
     setMouseTracking(true);
+    setAcceptDrops(true);  // video trascinati da Esplora file
     setToolTip(QStringLiteral("Video: clic per andare lì · trascina per spostare il pezzo · doppio clic per riaprirlo "
                               "a sinistra · Canc: togli · S: dividi al cursore\n"
                               "Audio: trascina per selezionare un tratto (o I e O nel Montaggio) · M: togli l'audio · "
@@ -244,6 +262,21 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
     }
     QPainter p(this);
     p.drawPixmap(0, 0, cache_);
+    if (fileDropX_ >= 0) {
+        // File trascinati: dove andranno, fra i pezzi.
+        const int index = dropIndexAt(fileDropX_);
+        double at = 0.0;
+        for (int i = 0; i < index && i < static_cast<int>(blocks_.size()); ++i)
+            at += blocks_[i].length;
+        const QRectF lanes = videoLane().united(audioLane());
+        const double x = blocks_.empty() ? lanes.left() + 2 : std::clamp(xForTime(at), lanes.left() + 2, lanes.right() - 2);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(palette().color(QPalette::Highlight), 4));
+        p.drawLine(QPointF(x, lanes.top() - 4), QPointF(x, lanes.bottom() + 4));
+        p.setPen(palette().color(QPalette::Text));
+        p.drawText(QRectF(x + 6, lanes.top() - 15, 300, 14), Qt::AlignLeft | Qt::AlignVCenter,
+                   QStringLiteral("Lascia qui per mettere i file nel montaggio"));
+    }
     if (blocks_.empty())
         return;
 
@@ -564,6 +597,43 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
     }
     dragging_ = false;
     dragIndex_ = -1;
+}
+
+void SequenceTimeline::dragEnterEvent(QDragEnterEvent* event)
+{
+    if (droppedFiles(event->mimeData()).isEmpty())
+        return;
+    event->acceptProposedAction();
+    fileDropX_ = event->position().x();
+    update();
+}
+
+void SequenceTimeline::dragMoveEvent(QDragMoveEvent* event)
+{
+    if (fileDropX_ < 0)
+        return;
+    event->acceptProposedAction();
+    fileDropX_ = event->position().x();
+    update();
+}
+
+void SequenceTimeline::dragLeaveEvent(QDragLeaveEvent*)
+{
+    fileDropX_ = -1.0;
+    update();
+}
+
+void SequenceTimeline::dropEvent(QDropEvent* event)
+{
+    const QStringList files = droppedFiles(event->mimeData());
+    const int index = blocks_.empty() ? 0 : dropIndexAt(event->position().x());
+    fileDropX_ = -1.0;
+    update();
+    if (files.isEmpty())
+        return;
+    event->acceptProposedAction();
+    if (onFilesDropped)
+        onFilesDropped(files, index);
 }
 
 void SequenceTimeline::mouseDoubleClickEvent(QMouseEvent* event)
