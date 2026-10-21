@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -70,6 +71,12 @@ public:
     // Un controllo della linea del tempo staccata (ogni 50 ms, o dalle prove con valori finti): se il pulsante del mouse
     // è appena stato rilasciato dopo averla spostata, si guarda dove è stata lasciata (redockTimelineIfDroppedLow).
     void timelinePollStep(bool buttonDown, const QPoint& cursor);
+    // Solo per le prove: il controllo periodico vero si spegne e i passi li dà la prova.
+    void setTimelinePollAutomatic(bool automatic) { timelinePollAutomatic_ = automatic; }
+    // Solo per le prove: la posizione del cursore (al posto di quella vera) e chi fa lo spostamento della finestra
+    // staccata al posto di Windows (riceve la finestra e il punto in cui è stata presa).
+    void setTestCursor(std::optional<QPoint> cursor) { testCursor_ = cursor; }
+    void setNativeDragForTest(std::function<void(void* hwnd, QPoint grab)> drag) { nativeDragForTest_ = std::move(drag); }
     // Il titolo di un pannello agganciato evidenziato (mouse sopra: da lì si trascina).
     bool isTitleHighlighted(QDockWidget* dock) const;
     bool isDockPreviewVisible() const { return dockPreview_ != nullptr && dockPreview_->isVisible(); }
@@ -234,6 +241,20 @@ private:
     QWidget* dockPreview_ = nullptr;        // dove andrà la linea del tempo se la si lascia adesso
     std::unique_ptr<QAbstractNativeEventFilter> titleDoubleClick_;  // doppio clic sul titolo di Windows (vedi .cpp)
     void showDockPreview(bool visible);
+    bool timelinePollAutomatic_ = true;
+    std::optional<QPoint> testCursor_;
+    std::function<void(void* hwnd, QPoint grab)> nativeDragForTest_;
+    QPoint cursorNow() const;
+    // Trascinamento dal titolo della linea del tempo agganciata: lo fa Windows, non Qt (vedi startTimelineDrag).
+    bool titlePressed_ = false;
+    QPoint titlePressGlobal_;
+    QPoint titlePressLocal_;
+    void startTimelineDrag(const QPoint& global, const QPoint& local);
+    bool nativeMoveLoop_ = false;
+    bool movedByWindows_ = false;           // da WM_ENTERSIZEMOVE fino al rilascio: la sta spostando Windows           // Windows sta spostando la finestra staccata (fra WM_ENTERSIZEMOVE e WM_EXITSIZEMOVE)
+    // Rilasciata nella metà bassa: si riaggancia quando nessun trascinamento è più in corso (né quello di Qt, che riceve
+    // il rilascio dopo che il pulsante si è alzato, né lo spostamento della finestra fatto da Windows).
+    void finishTimelineDrop(const QPoint& cursor, int attempts);
     bool pollButtonDown_ = false;
     QPoint pollPressPos_;                   // dov'era la linea del tempo staccata quando è stato premuto il pulsante
     void setTitleHighlight(QDockWidget* dock, bool highlighted);

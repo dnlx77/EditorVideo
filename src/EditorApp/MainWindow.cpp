@@ -152,11 +152,19 @@ QSettings settings()
 
 // Il doppio clic sul titolo di una finestra staccata è di Windows (la barra del titolo è sua) e a Qt non arriva come
 // evento che si possa intercettare: lo si prende fra i messaggi di Windows, prima che Windows lo gestisca da sé.
+// EDITORVIDEO_DEBUG_DOCK=1: scrive su stderr cosa succede staccando e riagganciando la linea del tempo.
+bool debugDock()
+{
+    static const bool enabled = qEnvironmentVariableIntValue("EDITORVIDEO_DEBUG_DOCK") != 0;
+    return enabled;
+}
+
 class TitleDoubleClickFilter : public QAbstractNativeEventFilter
 {
 public:
-    explicit TitleDoubleClickFilter(std::function<bool(void* hwnd)> onDoubleClick)
+    TitleDoubleClickFilter(std::function<bool(void* hwnd)> onDoubleClick, std::function<void(void* hwnd, bool moving)> onMoveLoop)
         : onDoubleClick_(std::move(onDoubleClick))
+        , onMoveLoop_(std::move(onMoveLoop))
     {
     }
 
@@ -165,6 +173,13 @@ public:
         if (eventType != "windows_generic_MSG")
             return false;
         const auto* msg = static_cast<const MSG*>(message);
+        // Inizio e fine dello spostamento di una finestra da parte di Windows (trascinando il suo titolo).
+        if (debugDock() && (msg->message == WM_ENTERSIZEMOVE || msg->message == WM_EXITSIZEMOVE || msg->message == WM_MOVE))
+            std::fprintf(stderr, "native %x hwnd %p\n", msg->message, static_cast<void*>(msg->hwnd));
+        if (msg->message == WM_ENTERSIZEMOVE || msg->message == WM_EXITSIZEMOVE) {
+            onMoveLoop_(msg->hwnd, msg->message == WM_ENTERSIZEMOVE);
+            return false;
+        }
         if (msg->message != WM_NCLBUTTONDBLCLK || msg->wParam != HTCAPTION || !onDoubleClick_(msg->hwnd))
             return false;
         if (result != nullptr)  // per i messaggi dalla coda Qt può non passarlo
@@ -174,6 +189,7 @@ public:
 
 private:
     std::function<bool(void* hwnd)> onDoubleClick_;
+    std::function<void(void* hwnd, bool moving)> onMoveLoop_;
 };
 
 QString nativeAbsolute(const QString& path)
@@ -359,28 +375,45 @@ MainWindow::MainWindow(QWidget* parent)
     // sottilissima): troppo difficile. Quindi: lasciata ovunque nella metà bassa della finestra si riaggancia da sola;
     // con il doppio clic sul titolo (o in qualsiasi altro modo) torna sempre in basso a tutta larghezza.
     // Doppio clic sul titolo (di Windows) della linea del tempo staccata: si riaggancia in basso.
-    titleDoubleClick_ = std::make_unique<TitleDoubleClickFilter>([this](void* hwnd) {
-        if (!timelineDock_->isFloating() || fullScreenDock_ != nullptr || timelineDock_->windowHandle() == nullptr
-            || reinterpret_cast<void*>(timelineDock_->windowHandle()->winId()) != hwnd)
-            return false;
-        QTimer::singleShot(0, this, [this] { redockTimeline(); });
-        return true;
-    });
+    const auto isFloatingTimeline = [this](void* hwnd) {
+        return timelineDock_->isFloating() && timelineDock_->windowHandle() != nullptr
+            && reinterpret_cast<void*>(timelineDock_->windowHandle()->winId()) == hwnd;
+    };
+    titleDoubleClick_ = std::make_unique<TitleDoubleClickFilter>(
+        [this, isFloatingTimeline](void* hwnd) {
+            if (fullScreenDock_ != nullptr || !isFloatingTimeline(hwnd))
+                return false;
+            QTimer::singleShot(0, this, [this] { redockTimeline(); });
+            return true;
+        },
+        [this, isFloatingTimeline](void* hwnd, bool moving) {
+            if (!isFloatingTimeline(hwnd))
+                return;
+            // Windows comincia o finisce di spostare la linea del tempo staccata (la si sta trascinando dal titolo).
+            nativeMoveLoop_ = moving;
+            if (moving)
+                movedByWindows_ = true;
+            if (moving)
+                timelinePollStep(true, cursorNow());
+            else
+                QTimer::singleShot(0, this, [this] { timelinePollStep(false, cursorNow()); });
+        });
     qApp->installNativeEventFilter(titleDoubleClick_.get());
-    // Finché è staccata un controllo periodico guarda il pulsante del mouse: non dipende da quali eventi arrivano (lo
-    // spostamento di una finestra staccata lo fa Windows, e a Qt non dice quando il pulsante viene rilasciato).
+    // Finché è staccata la si sposta solo con lo spostamento di Windows (WM_ENTERSIZEMOVE .. WM_EXITSIZEMOVE): un
+    // controllo periodico aggiorna l'anteprima di dove andrà, e alla fine dello spostamento si guarda dove è stata lasciata.
     timelinePoll_ = new QTimer(this);
     timelinePoll_->setInterval(50);
     connect(timelinePoll_, &QTimer::timeout, this, [this] {
-        // Lo stato vero del pulsante principale (fisico: con i pulsanti scambiati è il destro).
-        const bool down = (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) != 0 ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
-        timelinePollStep(down, QCursor::pos());
+        if (timelinePollAutomatic_ && nativeMoveLoop_)
+            timelinePollStep(true, cursorNow());
     });
     connect(timelineDock_, &QDockWidget::topLevelChanged, this, [this](bool floating) {
+        if (debugDock())
+            std::fprintf(stderr, "topLevelChanged %d grabber %p\n", floating, static_cast<void*>(QWidget::mouseGrabber()));
         if (floating) {
             if (fullScreenDock_ == nullptr) {
-                // Staccata (di solito trascinandola, quindi con il pulsante ancora premuto): da qui si controlla.
-                pollButtonDown_ = (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) != 0 ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
+                // Staccata: da qui si segue lo spostamento.
+                pollButtonDown_ = nativeMoveLoop_;
                 pollPressPos_ = timelineDock_->pos();
                 timelinePoll_->start();
             }
@@ -1156,6 +1189,50 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         QTimer::singleShot(0, this, [this] { redockTimeline(); });
         return true;
     }
+    // Linea del tempo agganciata trascinata dal titolo: non la stacca Qt (il suo trascinamento lascia la zona in basso in
+    // uno stato da cui il riaggancio non funziona) ma la si stacca qui e la si fa spostare a Windows, come quando è già
+    // staccata.
+    if (watched == timelineDock_ && !timelineDock_->isFloating() && fullScreenDock_ == nullptr) {
+        const auto inTitle = [this](const QPointF& pos) {
+            return timelineDock_->widget() != nullptr && pos.y() >= 0 && pos.y() < timelineDock_->widget()->geometry().top();
+        };
+        switch (event->type()) {
+        case QEvent::MouseButtonPress: {
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            if (mouse->button() == Qt::LeftButton && inTitle(mouse->position())) {
+                titlePressed_ = true;
+                titlePressGlobal_ = mouse->globalPosition().toPoint();
+                titlePressLocal_ = mouse->position().toPoint();
+                timelineDock_->setCursor(Qt::ClosedHandCursor);
+                return true;
+            }
+            break;
+        }
+        case QEvent::MouseMove: {
+            if (!titlePressed_)
+                break;
+            const auto* mouse = static_cast<QMouseEvent*>(event);
+            if ((mouse->globalPosition().toPoint() - titlePressGlobal_).manhattanLength() >= QApplication::startDragDistance()) {
+                titlePressed_ = false;
+                startTimelineDrag(mouse->globalPosition().toPoint(), titlePressLocal_);
+            }
+            return true;
+        }
+        case QEvent::MouseButtonRelease:
+            if (titlePressed_) {
+                titlePressed_ = false;
+                timelineDock_->setCursor(Qt::OpenHandCursor);
+                return true;
+            }
+            break;
+        case QEvent::MouseButtonDblClick:
+            if (inTitle(static_cast<QMouseEvent*>(event)->position()))
+                return true;  // agganciata resta agganciata
+            break;
+        default:
+            break;
+        }
+    }
     // Titolo dei pannelli agganciati evidenziato con il mouse sopra.
     if (auto* hovered = qobject_cast<QDockWidget*>(watched); hovered != nullptr && updateTitleHover(hovered, event))
         return false;
@@ -1904,6 +1981,9 @@ void MainWindow::redockTimeline()
 {
     if (fullScreenDock_ == timelineDock_)
         exitFullScreen();
+    if (debugDock())
+        std::fprintf(stderr, "redock: floating %d area %d w %d\n", timelineDock_->isFloating(),
+                     static_cast<int>(dockWidgetArea(timelineDock_)), timelineDock_->width());
     timelinePoll_->stop();
     showDockPreview(false);
     timelineRedocking_ = true;
@@ -1998,14 +2078,72 @@ void MainWindow::timelinePollStep(bool buttonDown, const QPoint& cursor)
         pollPressPos_ = timelineDock_->pos();  // inizio di un trascinamento (o di un clic qualsiasi)
     const QRect window = frameGeometry();
     const bool low = window.contains(cursor) && cursor.y() >= window.top() + window.height() / 2;
-    const bool moved = timelineDock_->pos() != pollPressPos_;
+    // Spostata: lo dice Windows (ha fatto lui lo spostamento) oppure la posizione (prove senza Windows).
+    const bool moved = movedByWindows_ || timelineDock_->pos() != pollPressPos_;
     // Durante il trascinamento, con il cursore nella metà bassa: si vede dove andrà.
     showDockPreview(buttonDown && moved && low);
     // Rilasciato dopo averla spostata: è stata lasciata lì.
     const bool released = !buttonDown && pollButtonDown_ && moved;
     pollButtonDown_ = buttonDown;
-    if (released)
-        redockTimelineIfDroppedLow(cursor, false);
+    if (!buttonDown)
+        movedByWindows_ = false;
+    if (released) {
+        showDockPreview(false);
+        // Il pulsante si è alzato, ma chi sta trascinando (Qt, o Windows) può non averlo ancora saputo: si aspetta
+        // che abbia finito, altrimenti alla fine del suo trascinamento la staccherebbe di nuovo.
+        QTimer::singleShot(30, this, [this, cursor] { finishTimelineDrop(cursor, 40); });
+    }
+}
+
+QPoint MainWindow::cursorNow() const
+{
+    return testCursor_ ? *testCursor_ : QCursor::pos();
+}
+
+void MainWindow::startTimelineDrag(const QPoint& global, const QPoint& local)
+{
+    // Staccata qui, larga al massimo due terzi della finestra, con il punto preso sotto il cursore; poi lo spostamento
+    // lo fa Windows (come trascinando il titolo di una finestra), che a fine spostamento manda WM_EXITSIZEMOVE.
+    const int w = std::min(timelineDock_->width(), std::max(420, width() * 2 / 3));
+    const int h = timelineDock_->height();
+    timelineDock_->setFloating(true);
+    timelineDock_->resize(w, h);
+    const int grabX = std::clamp(local.x(), 40, w - 40);
+    timelineDock_->move(global - QPoint(grabX, 12));
+    timelineDock_->show();
+    QCoreApplication::processEvents();  // la finestra nativa deve esistere ed essere al suo posto
+    void* hwnd = reinterpret_cast<void*>(timelineDock_->winId());
+    if (nativeDragForTest_) {
+        nativeDragForTest_(hwnd, global);
+        return;
+    }
+    POINT cursor{};
+    GetCursorPos(&cursor);  // in pixel fisici, come vuole Windows
+    ReleaseCapture();       // il mouse non è più di Qt: lo prende Windows
+    SendMessageW(static_cast<HWND>(hwnd), WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(cursor.x, cursor.y));
+}
+
+void MainWindow::finishTimelineDrop(const QPoint& cursor, int attempts)
+{
+    if (debugDock())
+        std::fprintf(stderr, "finish: floating %d grabber %p buttons %d moveloop %d area %d w %d\n", timelineDock_->isFloating(),
+                     static_cast<void*>(QWidget::mouseGrabber()), static_cast<int>(QGuiApplication::mouseButtons()),
+                     nativeMoveLoop_, static_cast<int>(dockWidgetArea(timelineDock_)), timelineDock_->width());
+    if (!timelineDock_->isFloating() || fullScreenDock_ != nullptr)
+        return;
+    const bool dragging = nativeMoveLoop_ || QWidget::mouseGrabber() != nullptr;
+    if (dragging) {
+        if (attempts > 0)
+            QTimer::singleShot(25, this, [this, cursor, attempts] { finishTimelineDrop(cursor, attempts - 1); });
+        return;
+    }
+    if (!redockTimelineIfDroppedLow(cursor, false))
+        return;
+    // Controllo: se qualcosa l'ha staccata di nuovo subito dopo, si riprova (qualche volta).
+    QTimer::singleShot(80, this, [this, cursor, attempts] {
+        if (timelineDock_->isFloating() && attempts > 0)
+            finishTimelineDrop(cursor, attempts - 1);
+    });
 }
 
 void MainWindow::showDockPreview(bool visible)
