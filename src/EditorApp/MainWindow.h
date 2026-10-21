@@ -13,17 +13,19 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+class QAbstractNativeEventFilter;
 class QAction;
+class QDockWidget;
 class QLabel;
 class QMenu;
 class QListWidget;
-class QStackedWidget;
 class QThread;
 class QTreeWidget;
 
@@ -53,6 +55,37 @@ public:
     PlayerWidget* player() const { return player_; }  // anteprima di partenza (Sorgente)
     ProgramMonitor* programMonitor() const { return program_; }
     SequenceTimeline* sequenceTimeline() const { return timeline_; }
+
+    // Pannelli (File del progetto, Sorgente, Montaggio, Linea del tempo del montaggio): spostabili, ridimensionabili e
+    // staccabili come finestre. La disposizione si salva chiudendo il programma.
+    void restoreLayout();  // quella salvata (all'avvio); se un pannello finirebbe fuori dagli schermi, torna dentro
+    void resetLayout();    // Finestra > Ripristina disposizione
+    // Schermo intero di un pannello (doppio clic sull'immagine di un'anteprima); di nuovo, o Esc, per uscire.
+    void toggleFullScreen(QDockWidget* dock);
+    // La linea del tempo del montaggio di nuovo agganciata in basso, a tutta larghezza (menu Finestra, doppio clic sul
+    // titolo quando è staccata, o lasciandola nella metà bassa della finestra).
+    void redockTimeline();
+    // Pannello della linea del tempo staccato e appena spostato: se il pulsante del mouse è stato rilasciato con il
+    // cursore (coordinate dello schermo) nella metà bassa della finestra, si riaggancia in basso. true se l'ha fatto.
+    bool redockTimelineIfDroppedLow(const QPoint& cursor, bool buttonDown);
+    // Un controllo della linea del tempo staccata (ogni 50 ms, o dalle prove con valori finti): se il pulsante del mouse
+    // è appena stato rilasciato dopo averla spostata, si guarda dove è stata lasciata (redockTimelineIfDroppedLow).
+    void timelinePollStep(bool buttonDown, const QPoint& cursor);
+    // Solo per le prove: il controllo periodico vero si spegne e i passi li dà la prova.
+    void setTimelinePollAutomatic(bool automatic) { timelinePollAutomatic_ = automatic; }
+    // Solo per le prove: la posizione del cursore (al posto di quella vera) e chi fa lo spostamento della finestra
+    // staccata al posto di Windows (riceve la finestra e il punto in cui è stata presa).
+    void setTestCursor(std::optional<QPoint> cursor) { testCursor_ = cursor; }
+    void setNativeDragForTest(std::function<void(void* hwnd, QPoint grab)> drag) { nativeDragForTest_ = std::move(drag); }
+    // Il titolo di un pannello agganciato evidenziato (mouse sopra: da lì si trascina).
+    bool isTitleHighlighted(QDockWidget* dock) const;
+    bool isDockPreviewVisible() const { return dockPreview_ != nullptr && dockPreview_->isVisible(); }
+    int timelineHeight() const { return timelineHeight_; }  // altezza da agganciata, da riprendere riagganciandola
+    bool isPanelFullScreen() const { return fullScreenDock_ != nullptr; }
+    QDockWidget* sourceDock() const { return sourceDock_; }
+    QDockWidget* programDock() const { return programDock_; }
+    QDockWidget* filesDock() const { return filesDock_; }
+    QDockWidget* timelineDock() const { return timelineDock_; }
     QString currentFile() const { return currentPath_; }
     const core::Project& project() const { return project_; }
     int currentClipId() const { return currentClipId_; }
@@ -109,6 +142,7 @@ public:
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    bool event(QEvent* event) override;
 
 private:
     void createMenus();
@@ -116,6 +150,27 @@ private:
     void addFilesDialog();
     void showAbout();
     void showShortcuts();
+    void saveLayout();
+    void exitFullScreen();
+    // Un pannello staccato (o la finestra) che non sta su nessuno schermo torna su quello principale.
+    void keepOnScreen(QWidget* window);
+
+    // Incrocio fra un separatore verticale e uno orizzontale dei pannelli: trascinandolo si cambiano insieme larghezza
+    // e altezza. findCorner dice quali pannelli stanno ai lati dell'incrocio in `pos` (false se lì non c'è).
+    struct CornerDrag
+    {
+        QDockWidget* left = nullptr;
+        QDockWidget* right = nullptr;
+        QDockWidget* top = nullptr;
+        QDockWidget* bottom = nullptr;
+        QPoint start;
+        int leftWidth = 0;
+        int rightWidth = 0;
+        int topHeight = 0;
+        int bottomHeight = 0;
+    };
+    bool findCorner(const QPoint& pos, CornerDrag& corner) const;
+    QDockWidget* dockedPanelAt(const QPoint& pos) const;
     void showInfo(const core::MediaInfo& info);
     void replaceAudioDialog();
     void openProjectDialog();
@@ -172,8 +227,42 @@ private:
     };
     void showExportResult(const ExportOutcome& outcome, const QString& target);
 
-    QStackedWidget* pages_ = nullptr;
-    QLabel* placeholder_ = nullptr;
+    QWidget* filesPanel_ = nullptr;     // contenuto del pannello dei file
+    QWidget* filesTabs_ = nullptr;      // Informazioni / Fotogrammi chiave
+    QWidget* sequencePanel_ = nullptr;  // contenuto del pannello della linea del tempo
+    QDockWidget* filesDock_ = nullptr;
+    QDockWidget* sourceDock_ = nullptr;
+    QDockWidget* programDock_ = nullptr;
+    QDockWidget* timelineDock_ = nullptr;
+    QDockWidget* fullScreenDock_ = nullptr;
+    QByteArray layoutBeforeFullScreen_;  // disposizione da ritrovare uscendo dallo schermo intero
+    std::optional<CornerDrag> cornerDrag_;  // si sta trascinando un incrocio fra separatori
+    QTimer* timelinePoll_ = nullptr;        // controlla la linea del tempo staccata (vedi timelinePollStep)
+    QWidget* dockPreview_ = nullptr;        // dove andrà la linea del tempo se la si lascia adesso
+    std::unique_ptr<QAbstractNativeEventFilter> titleDoubleClick_;  // doppio clic sul titolo di Windows (vedi .cpp)
+    void showDockPreview(bool visible);
+    bool timelinePollAutomatic_ = true;
+    std::optional<QPoint> testCursor_;
+    std::function<void(void* hwnd, QPoint grab)> nativeDragForTest_;
+    QPoint cursorNow() const;
+    // Trascinamento dal titolo della linea del tempo agganciata: lo fa Windows, non Qt (vedi startTimelineDrag).
+    bool titlePressed_ = false;
+    QPoint titlePressGlobal_;
+    QPoint titlePressLocal_;
+    void startTimelineDrag(const QPoint& global, const QPoint& local);
+    bool nativeMoveLoop_ = false;
+    bool movedByWindows_ = false;           // da WM_ENTERSIZEMOVE fino al rilascio: la sta spostando Windows           // Windows sta spostando la finestra staccata (fra WM_ENTERSIZEMOVE e WM_EXITSIZEMOVE)
+    // Rilasciata nella metà bassa: si riaggancia quando nessun trascinamento è più in corso (né quello di Qt, che riceve
+    // il rilascio dopo che il pulsante si è alzato, né lo spostamento della finestra fatto da Windows).
+    void finishTimelineDrop(const QPoint& cursor, int attempts);
+    bool pollButtonDown_ = false;
+    QPoint pollPressPos_;                   // dov'era la linea del tempo staccata quando è stato premuto il pulsante
+    void setTitleHighlight(QDockWidget* dock, bool highlighted);
+    bool updateTitleHover(QDockWidget* dock, QEvent* event);  // eventi del mouse sul pannello: evidenzia il titolo
+    int timelineHeight_ = 230;              // ultima altezza della linea del tempo agganciata
+    bool timelineRedocking_ = false;        // riagganciata da poco: l'altezza giusta arriva dopo (vedi redockTimeline)
+    void applyTimelineHeight();
+    bool cornerCursor_ = false;
     QListWidget* clipList_ = nullptr;
     QTreeWidget* infoTree_ = nullptr;
     QLabel* keyframeTitle_ = nullptr;

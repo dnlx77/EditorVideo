@@ -9,6 +9,7 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QTimer>
+#include <QtGui/QMouseEvent>
 #include <QtGui/QPainter>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -35,7 +36,7 @@ public:
     explicit VideoView(QWidget* parent = nullptr)
         : QWidget(parent)
     {
-        setMinimumSize(320, 180);
+        setMinimumSize(64, 36);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         setAttribute(Qt::WA_OpaquePaintEvent);
     }
@@ -59,8 +60,15 @@ public:
     QSize pixelSize() const { return (QSizeF(size()) * devicePixelRatioF()).toSize(); }
 
     std::function<void()> onResized;
+    std::function<void()> onDoubleClicked;
 
 protected:
+    void mouseDoubleClickEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::LeftButton && onDoubleClicked)
+            onDoubleClicked();
+    }
+
     void resizeEvent(QResizeEvent* event) override
     {
         QWidget::resizeEvent(event);
@@ -114,22 +122,29 @@ PlayerWidget::PlayerWidget(QWidget* parent)
 
     timeLabel_ = new QLabel;
     segmentLabel_ = new QLabel;
+    // Le scritte non impongono una larghezza minima: in un pannello stretto si tagliano.
+    timeLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    segmentLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     segmentLabel_->setTextFormat(Qt::RichText);
     // Sempre alta due righe (segmento + nota): così l'anteprima non cambia misura quando compare la nota.
     segmentLabel_->setMinimumHeight(fontMetrics().lineSpacing() * 2 + 4);
     decoderLabel_ = new QLabel;
+    decoderLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
     controls_ = new QWidget;
     auto* controls = new QHBoxLayout(controls_);
     controls->setContentsMargins(0, 0, 0, 0);
     controls->addWidget(playButton_);
-    controls->addWidget(timeLabel_);
+    controls->addWidget(timeLabel_, 2);
     controls->addSpacing(16);
-    controls->addWidget(segmentLabel_, 1);
-    controls->addWidget(decoderLabel_);
+    controls->addWidget(segmentLabel_, 5);
+    controls->addWidget(decoderLabel_, 2);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
+    // La misura minima la decide minimumSizeHint (piccola), non la somma delle righe: quelle che non ci stanno si
+    // nascondono (updateCompact).
+    layout->setSizeConstraint(QLayout::SetNoConstraint);
     layout->addWidget(view_, 1);
     layout->addWidget(timeline_);
     layout->addWidget(controls_);
@@ -148,6 +163,10 @@ PlayerWidget::PlayerWidget(QWidget* parent)
         if (video_ && !playing_)
             showFrameAt(position_);
     });
+    view_->onDoubleClicked = [this] {
+        if (onVideoDoubleClicked)
+            onVideoDoubleClicked();
+    };
     view_->onResized = [this] {
         if (!video_)
             return;
@@ -292,7 +311,7 @@ void PlayerWidget::closeFile()
     keyframesKnown_ = false;
     segmentNote_.clear();
     updateSegmentUi();
-    view_->setMessage(QString());
+    view_->setMessage(idleMessage_);
     updateControls();
     updatePositionLabel(0.0);
 }
@@ -799,10 +818,41 @@ void PlayerWidget::setPlaybackWindow(double end)
     windowEnd_ = end;
 }
 
+void PlayerWidget::setIdleMessage(const QString& message)
+{
+    idleMessage_ = message;
+    if (!hasMedia())
+        view_->setMessage(idleMessage_);
+}
+
 void PlayerWidget::setChromeVisible(bool visible)
 {
+    chromeVisible_ = visible;
     timeline_->setVisible(visible);
     controls_->setVisible(visible);
+    updateCompact();
+}
+
+QSize PlayerWidget::minimumSizeHint() const
+{
+    return {120, chromeVisible_ ? 64 : 36};
+}
+
+void PlayerWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    updateCompact();
+}
+
+void PlayerWidget::updateCompact()
+{
+    if (!chromeVisible_)
+        return;
+    // Dal meno importante: decoder e segmento (righe di testo), poi la linea del tempo.
+    const int h = height();
+    segmentLabel_->setVisible(h >= 220);
+    decoderLabel_->setVisible(h >= 220 && width() >= 420);
+    timeline_->setVisible(h >= 140);
 }
 
 void PlayerWidget::setInOut(double in, double out)

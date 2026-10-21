@@ -24,12 +24,17 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtGui/QGuiApplication>
+#include <QtGui/QMouseEvent>
 #include <QtGui/QWheelEvent>
+#include <QtGui/QWindow>
+#include <QtWidgets/QDockWidget>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressDialog>
 
 #include <algorithm>
+
+#include <windows.h>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -306,14 +311,14 @@ int runAudioTest(const QStringList& args, qsizetype at)
                     const double t = chunk.time + n / rate;
                     const double level = std::abs(chunk.samples[n * channels]) / 32768.0;
                     bool inside = false;
-                    bool near = false;
+                    bool nearMuted = false;
                     for (const core::TimeRange& m : edit.muted) {
                         inside = inside || (t >= m.start + kMargin && t < m.end - kMargin);
-                        near = near || (t >= m.start - kMargin && t < m.end + kMargin);
+                        nearMuted = nearMuted || (t >= m.start - kMargin && t < m.end + kMargin);
                     }
                     if (inside)
                         mutedPeak = std::max(mutedPeak, level);
-                    else if (!near)
+                    else if (!nearMuted)
                         otherPeak = std::max(otherPeak, level);
                 }
             });
@@ -568,6 +573,145 @@ std::optional<int> runCommandLineTest(const QStringList& arguments)
     return std::nullopt;
 }
 
+int runDockTest(QApplication& app)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);  // ogni riga subito, anche se la prova si interrompe
+    std::printf("Prova dei pannelli con la finestra vera\n");
+    MainWindow window;
+    window.setTimelinePollAutomatic(false);  // i passi li dà la prova
+    window.setAttribute(Qt::WA_ShowWithoutActivating);
+    // EDITORVIDEO_DOCK_TEST_SAVED=1: con la disposizione salvata dall'utente e la finestra ingrandita (come la usa lui).
+    if (qEnvironmentVariableIntValue("EDITORVIDEO_DOCK_TEST_SAVED") != 0) {
+        window.restoreLayout();
+        window.showMaximized();
+    } else {
+        window.resize(1200, 800);
+        window.show();
+    }
+    QDockWidget* timeline = window.timelineDock();
+    // Aspetta davvero (i riagganci partono da timer): processEvents da solo ritorna appena non c'è niente da fare.
+    const auto settle = [&](int ms = 250) {
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < ms)
+            app.processEvents(QEventLoop::AllEvents, 20);
+    };
+    settle();
+    const QRect frame = window.frameGeometry();
+    const QPoint low = frame.center() + QPoint(0, frame.height() / 4);
+    const QPoint high = frame.center() - QPoint(0, frame.height() / 4);
+    // Lo spostamento che farebbe Windows trascinando il titolo: inizio, finestra spostata dov'è il cursore, fine.
+    QPoint dropAt = low;
+    int previews = 0;
+    const auto windowsMove = [&](void* hwnd, QPoint) {
+        const auto h = static_cast<HWND>(hwnd);
+        window.setTestCursor(frame.center());
+        // Come con il mouse vero: Qt riceve la pressione sul titolo di Windows (e avvierebbe il suo trascinamento dei
+        // pannelli, che poi non vede mai finire perché il rilascio se lo prende lo spostamento di Windows).
+        {
+            const QPoint grab = timeline->mapToGlobal(QPoint(timeline->width() / 2, -8));
+            QMouseEvent press(QEvent::NonClientAreaMouseButtonPress, QPointF(timeline->mapFromGlobal(grab)), QPointF(grab),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(timeline, &press);
+        }
+        SendMessageW(h, WM_ENTERSIZEMOVE, 0, 0);
+        settle(60);
+        window.setTestCursor(dropAt);
+        SetWindowPos(h, nullptr, dropAt.x() - 200, dropAt.y() - 12, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        window.timelinePollStep(true, dropAt);  // un passo del controllo periodico durante lo spostamento
+        previews += window.isDockPreviewVisible() == (dropAt == low) ? 1 : 0;
+        SendMessageW(h, WM_EXITSIZEMOVE, 0, 0);
+    };
+    window.setNativeDragForTest(windowsMove);
+    const auto docked = [&](const char* how, int round) {
+        settle();
+        // I pannelli di sopra devono finire sopra la linea del tempo (non restare alti fino in fondo, coprendola).
+        int overlap = 0;
+        for (QDockWidget* dock : {window.filesDock(), window.sourceDock(), window.programDock()}) {
+            if (dock->isVisible() && !dock->isFloating())
+                overlap = std::max(overlap, dock->geometry().bottom() - timeline->geometry().top() + 1);
+        }
+        const bool ok = !timeline->isFloating() && window.dockWidgetArea(timeline) == Qt::BottomDockWidgetArea
+                     && timeline->width() >= window.width() - 30 && timeline->height() >= 225 && overlap <= 0
+                     && timeline->isVisible() && !timeline->testAttribute(Qt::WA_NativeWindow);
+        std::printf("  %s, giro %d: %s (staccata %s, larga %d su %d, alta %d, sovrapposta %d px)\n", how, round,
+                    ok ? "OK" : "NON riuscito", timeline->isFloating() ? "sì" : "no", timeline->width(), window.width(),
+                    timeline->height(), overlap);
+        return ok;
+    };
+    const auto undock = [&] {
+        timeline->setAttribute(Qt::WA_ShowWithoutActivating);
+        timeline->setFloating(true);
+        settle(100);
+        return timeline->isFloating();
+    };
+    // Agganciata, presa dal titolo e trascinata (eventi di Qt: pressione, movimento oltre la soglia).
+    const auto dragFromDockedTitle = [&](QPoint to) {
+        dropAt = to;
+        const QPoint press(timeline->width() / 2, 6);
+        const QPoint global = timeline->mapToGlobal(press);
+        QMouseEvent down(QEvent::MouseButtonPress, QPointF(press), QPointF(global), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(timeline, &down);
+        const QPoint moved = press + QPoint(0, -30);
+        QMouseEvent move(QEvent::MouseMove, QPointF(moved), QPointF(timeline->mapToGlobal(moved)), Qt::NoButton, Qt::LeftButton,
+                         Qt::NoModifier);
+        QCoreApplication::sendEvent(timeline, &move);  // qui parte lo spostamento (della prova, al posto di Windows)
+    };
+    int good = 0;
+    int stays = 0;
+    for (int round = 1; round <= 5; ++round) {
+        // 1. Agganciata, trascinata dal titolo e lasciata nella metà bassa.
+        dragFromDockedTitle(low);
+        good += docked("trascinata dal titolo e lasciata in basso", round) ? 1 : 0;
+        // 2. Agganciata, trascinata dal titolo e lasciata in alto: resta staccata; poi trascinata di nuovo (ora è già
+        //    staccata: il titolo è di Windows) e lasciata in basso.
+        dragFromDockedTitle(high);
+        settle();
+        stays += timeline->isFloating() ? 1 : 0;
+        if (timeline->isFloating()) {
+            dropAt = low;
+            windowsMove(reinterpret_cast<void*>(timeline->windowHandle()->winId()), QPoint());
+        }
+        good += docked("staccata, poi trascinata di nuovo e lasciata in basso", round) ? 1 : 0;
+        // 3. Doppio clic sul titolo di Windows della finestra staccata.
+        if (undock()) {
+            const QPoint title = timeline->mapToGlobal(QPoint(timeline->width() / 2, -8));
+            PostMessageW(reinterpret_cast<HWND>(timeline->windowHandle()->winId()), WM_NCLBUTTONDBLCLK, HTCAPTION, MAKELPARAM(title.x(), title.y()));
+        }
+        good += docked("doppio clic sul titolo", round) ? 1 : 0;
+        // 4. Menu.
+        if (undock())
+            window.redockTimeline();
+        good += docked("menu Riaggancia", round) ? 1 : 0;
+    }
+    std::printf("  lasciata in alto resta staccata: %d su 5; anteprima giusta durante lo spostamento: %d su 15\n", stays,
+                previews);
+    // Finestra > Ripristina disposizione dopo tutti questi sganci e riagganci: torna quella iniziale, senza sovrapposizioni.
+    window.resetLayout();
+    const bool resetOk = docked("Ripristina disposizione", 0);
+    good += resetOk ? 1 : 0;
+    // Con EDITORVIDEO_DOCK_TEST_CAPTURE=immagine.png un'immagine della finestra alla fine.
+    if (const QString capture = qEnvironmentVariable("EDITORVIDEO_DOCK_TEST_CAPTURE"); !capture.isEmpty())
+        window.grab().save(capture);
+
+    // Il titolo di un pannello agganciato con il mouse sopra: disegnato davvero con il colore di evidenziazione.
+    QDockWidget* source = window.sourceDock();
+    const QPointF titlePoint(source->width() / 2.0, 5);
+    QHoverEvent hover(QEvent::HoverMove, titlePoint, source->mapToGlobal(titlePoint), QPointF(-1, -1));
+    QCoreApplication::sendEvent(source, &hover);
+    settle();
+    const QImage lit = source->grab().toImage();
+    const QColor wanted = source->palette().color(QPalette::Highlight);
+    const QColor got = lit.pixelColor(lit.width() / 3, static_cast<int>(5 * lit.devicePixelRatio()));
+    const bool titleOk = window.isTitleHighlighted(source) && std::abs(got.red() - wanted.red()) < 30
+                      && std::abs(got.green() - wanted.green()) < 30 && std::abs(got.blue() - wanted.blue()) < 30;
+    std::printf("  titolo evidenziato: colore %s, atteso %s: %s\n", qPrintable(got.name()), qPrintable(wanted.name()),
+                titleOk ? "OK" : "NO");
+    const bool ok = good == 21 && stays == 5 && previews == 15 && titleOk;
+    std::printf("%s (%d su 21)\n", ok ? "Controllo dei pannelli: OK" : "Controllo dei pannelli: NON RIUSCITO", good);
+    return ok ? 0 : 3;
+}
+
 void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
 {
     std::printf("Piattaforma Qt: %s\n%s\n", qPrintable(QGuiApplication::platformName()),
@@ -712,6 +856,213 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 thumbs.start();
                 while (window->pendingThumbnails() > 0 && thumbs.elapsed() < 20000)
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            }
+
+            // Pannelli: la Sorgente staccata come finestra durante la riproduzione (il video deve continuare ad andare
+            // e a mostrarsi), riagganciata, a schermo intero e ritorno; disposizione salvata e ripristinata.
+            {
+                const auto advances = [&](const char* when) {
+                    const double from = player->currentPosition();
+                    QElapsedTimer t;
+                    t.start();
+                    while (t.elapsed() < 700)
+                        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    const double moved = player->currentPosition() - from;
+                    std::printf("  %s: la riproduzione avanza di %.2f s in 0,7 s (%s)\n", when, moved,
+                                qPrintable(player->statusText()));
+                    return moved > 0.3;
+                };
+                QDockWidget* source = window->sourceDock();
+                player->seekTo(0.0);
+                player->play();
+                bool docksOk = advances("agganciata");
+                source->setFloating(true);
+                docksOk = advances("staccata") && source->isFloating() && docksOk;
+                source->setFloating(false);
+                docksOk = advances("riagganciata") && !source->isFloating() && docksOk;
+                window->toggleFullScreen(source);
+                const bool full = window->isPanelFullScreen() && source->isFloating();
+                docksOk = advances("a schermo intero") && full && docksOk;
+                window->toggleFullScreen(source);
+                docksOk = docksOk && !window->isPanelFullScreen() && !source->isFloating();
+                player->pause();
+
+                // Disposizione: salvata, cambiata (pannello spostato e uno nascosto), ripristinata.
+                const QByteArray state = window->saveState();
+                const Qt::DockWidgetArea area = window->dockWidgetArea(window->filesDock());
+                window->addDockWidget(Qt::RightDockWidgetArea, window->filesDock());
+                window->timelineDock()->hide();
+                const bool changed = window->dockWidgetArea(window->filesDock()) == Qt::RightDockWidgetArea;
+                const bool restored = window->restoreState(state) && window->dockWidgetArea(window->filesDock()) == area
+                                   && window->timelineDock()->isVisible();
+                window->timelineDock()->hide();
+                window->resetLayout();
+                const bool reset = window->timelineDock()->isVisible() && !window->sourceDock()->isFloating();
+
+                // La linea del tempo staccata e riagganciata torna sotto a tutto, larga quanto la finestra.
+                QDockWidget* timelineDock = window->timelineDock();
+                timelineDock->setFloating(true);
+                QCoreApplication::processEvents();
+                timelineDock->setFloating(false);
+                window->addDockWidget(Qt::BottomDockWidgetArea, timelineDock);
+                QCoreApplication::processEvents();
+                const bool fullWidth = window->dockWidgetArea(timelineDock) == Qt::BottomDockWidgetArea
+                                    && timelineDock->width() >= window->width() - 30;
+
+                // Staccata e lasciata dall'utente: nella metà alta della finestra resta staccata, nella metà bassa
+                // (a pulsante rilasciato) si riaggancia sotto a tutto; il comando del menu la riaggancia sempre.
+                timelineDock->setFloating(true);
+                QCoreApplication::processEvents();
+                const QRect frame = window->frameGeometry();
+                const bool highStays = !window->redockTimelineIfDroppedLow(frame.center() - QPoint(0, frame.height() / 4), false)
+                                    && timelineDock->isFloating();
+                const bool heldStays = !window->redockTimelineIfDroppedLow(frame.center() + QPoint(0, frame.height() / 4), true)
+                                    && timelineDock->isFloating();
+                const bool lowDocks = window->redockTimelineIfDroppedLow(frame.center() + QPoint(0, frame.height() / 4), false)
+                                   && !timelineDock->isFloating()
+                                   && window->dockWidgetArea(timelineDock) == Qt::BottomDockWidgetArea;
+                QCoreApplication::processEvents();
+                QCoreApplication::processEvents();
+                const bool lowFull = timelineDock->width() >= window->width() - 30 && timelineDock->height() >= 225;
+                const int lowHeight = timelineDock->height();
+                timelineDock->setFloating(true);
+                window->redockTimeline();
+                QCoreApplication::processEvents();
+                QCoreApplication::processEvents();
+                const bool menuDocks = !timelineDock->isFloating() && timelineDock->width() >= window->width() - 30
+                                    && timelineDock->height() >= 225;
+                const int menuHeight = timelineDock->height();
+                // Più alta prima di staccarla: riagganciata riprende quell'altezza.
+                window->resizeDocks({timelineDock}, {400}, Qt::Vertical);
+                QCoreApplication::processEvents();
+                const int before = timelineDock->height();
+                timelineDock->setFloating(true);
+                QCoreApplication::processEvents();
+                timelineDock->setFloating(false);  // come il doppio clic sul titolo
+                QCoreApplication::processEvents();
+                QCoreApplication::processEvents();
+                const bool keptHeight = !timelineDock->isFloating() && std::abs(timelineDock->height() - before) <= 4;
+                std::printf("  altezza della linea del tempo riagganciata: %d px (in basso), %d px dal menu, %d px dopo il doppio "
+                            "clic (prima %d)\n",
+                            lowHeight, menuHeight, timelineDock->height(), before);
+                std::printf("  linea del tempo lasciata in alto: %s, trascinata: %s, lasciata in basso: %s, dal menu: %s\n",
+                            highStays ? "resta staccata" : "AGGANCIATA", heldStays ? "resta staccata" : "AGGANCIATA",
+                            lowDocks && lowFull ? "riagganciata a tutta larghezza" : "NON riagganciata",
+                            menuDocks ? "riagganciata" : "NON riagganciata");
+                // Cicli ripetuti, come farebbe l'utente: staccata, trascinata (pulsante premuto, finestra spostata) e lasciata
+                // nella metà bassa; poi staccata e riagganciata con il doppio clic; poi dal menu. Ogni volta in basso, a
+                // tutta larghezza e alta almeno 230 px.
+                int cycles = 0;
+                for (int i = 0; i < 5; ++i) {
+                    const auto docked = [&] {
+                        QElapsedTimer wait;  // i riagganci partono da timer: si aspetta davvero
+                        wait.start();
+                        while (wait.elapsed() < 250)
+                            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                        return !timelineDock->isFloating() && window->dockWidgetArea(timelineDock) == Qt::BottomDockWidgetArea
+                            && timelineDock->width() >= window->width() - 30 && timelineDock->height() >= 225;
+                    };
+                    timelineDock->setFloating(true);
+                    QCoreApplication::processEvents();
+                    window->timelinePollStep(true, frame.center() - QPoint(0, frame.height() / 4));  // premuto sul titolo
+                    timelineDock->move(timelineDock->pos() + QPoint(30, 120));                    // trascinata
+                    window->timelinePollStep(true, frame.center() + QPoint(0, frame.height() / 4));
+                    window->timelinePollStep(false, frame.center() + QPoint(0, frame.height() / 4));  // lasciata in basso
+                    const bool dragged = docked();
+                    timelineDock->setFloating(true);
+                    QCoreApplication::processEvents();
+                    timelineDock->setFloating(false);  // come il doppio clic sul titolo
+                    const bool doubleClick = docked();
+                    timelineDock->setFloating(true);
+                    QCoreApplication::processEvents();
+                    window->redockTimeline();
+                    const bool menu = docked();
+                    // Staccata, spostata e lasciata in alto: resta staccata.
+                    timelineDock->setFloating(true);
+                    QCoreApplication::processEvents();
+                    window->timelinePollStep(true, frame.center());
+                    timelineDock->move(timelineDock->pos() + QPoint(10, -60));
+                    window->timelinePollStep(false, frame.center() - QPoint(0, frame.height() / 4));
+                    docked();
+                    const bool stays = timelineDock->isFloating();
+                    window->redockTimeline();
+                    docked();
+                    cycles += dragged && doubleClick && menu && stays ? 1 : 0;
+                }
+                std::printf("  cicli stacca/riaggancia riusciti: %d su 5\n", cycles);
+
+                // Titolo evidenziato con il mouse sopra (e non sul contenuto).
+                QDockWidget* titled = window->sourceDock();
+                const auto hover = [&](QPointF at) {
+                    QHoverEvent e(QEvent::HoverMove, at, titled->mapToGlobal(at), QPointF(-1, -1));
+                    QCoreApplication::sendEvent(titled, &e);
+                };
+                hover(QPointF(titled->width() / 2.0, 6));
+                const bool titleLit = window->isTitleHighlighted(titled) && titled->cursor().shape() == Qt::OpenHandCursor;
+                hover(QPointF(titled->width() / 2.0, titled->height() / 2.0));
+                const bool contentNotLit = !window->isTitleHighlighted(titled);
+                std::printf("  titolo dei pannelli: evidenziato %s, sul contenuto no %s\n", titleLit ? "OK" : "NO",
+                            contentNotLit ? "OK" : "NO");
+
+                const bool redockOk = highStays && heldStays && lowDocks && lowFull && menuDocks && keptHeight && cycles == 5
+                                   && titleLit && contentNotLit;
+                window->resetLayout();
+                QCoreApplication::processEvents();
+                window->resetLayout();
+                QCoreApplication::processEvents();
+
+                // Incrocio fra il separatore verticale (file | Sorgente) e quello orizzontale (sopra | linea del tempo):
+                // trascinandolo cambiano insieme la larghezza dei file e l'altezza della linea del tempo.
+                QDockWidget* files = window->filesDock();
+                const QRect fg = files->geometry();
+                const QRect sg = window->sourceDock()->geometry();
+                const QRect tg = timelineDock->geometry();
+                const QPoint corner((fg.right() + sg.left()) / 2 + 1, (fg.bottom() + tg.top()) / 2 + 1);
+                const int filesWidth = files->width();
+                const int timelineHeight = timelineDock->height();
+                const auto mouse = [&](QEvent::Type type, QPoint at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+                    QMouseEvent e(type, QPointF(at), window->mapToGlobal(QPointF(at)), button, buttons, Qt::NoModifier);
+                    QCoreApplication::sendEvent(window, &e);
+                };
+                mouse(QEvent::MouseButtonPress, corner, Qt::LeftButton, Qt::LeftButton);
+                mouse(QEvent::MouseMove, corner + QPoint(40, -30), Qt::NoButton, Qt::LeftButton);
+                mouse(QEvent::MouseButtonRelease, corner + QPoint(40, -30), Qt::LeftButton, Qt::NoButton);
+                QCoreApplication::processEvents();
+                const int widthChange = files->width() - filesWidth;
+                const int heightChange = timelineDock->height() - timelineHeight;
+                const bool cornerOk = std::abs(widthChange - 40) <= 4 && std::abs(heightChange - 30) <= 4;
+                std::printf("  incrocio dei separatori in (%d, %d): file %+d px, linea del tempo %+d px (attesi +40 e +30)\n",
+                            corner.x(), corner.y(), widthChange, heightChange);
+                window->resetLayout();
+
+                // Pannelli piccoli: la misura minima di ognuno e, con EDITORVIDEO_SMOKE_SCREENSHOT, un'immagine di ognuno
+                // staccato a 170x120.
+                bool smallOk = true;
+                const QString shots = qEnvironmentVariable("EDITORVIDEO_SMOKE_SCREENSHOT");
+                for (QDockWidget* dock : {window->filesDock(), window->sourceDock(), window->programDock(), timelineDock}) {
+                    const QSize minimum = dock->minimumSizeHint().expandedTo(dock->minimumSize());
+                    std::printf("  pannello %s: misura minima %dx%d\n", qPrintable(dock->windowTitle()), minimum.width(),
+                                minimum.height());
+                    smallOk = smallOk && minimum.width() <= 170 && minimum.height() <= 140;
+                    if (!shots.isEmpty()) {
+                        dock->setFloating(true);
+                        dock->resize(170, 120);
+                        QCoreApplication::processEvents();
+                        dock->grab().save(QString(shots).replace(QStringLiteral(".png"),
+                                                                  QStringLiteral("_%1.png").arg(dock->objectName())));
+                        dock->setFloating(false);
+                    }
+                }
+                window->resetLayout();
+                QCoreApplication::processEvents();
+                std::printf("  linea del tempo riagganciata a tutta larghezza %s, incrocio %s, pannelli piccoli %s\n",
+                            fullWidth ? "OK" : "NO", cornerOk ? "OK" : "NO", smallOk ? "OK" : "NO");
+                docksOk = docksOk && fullWidth && redockOk && cornerOk && smallOk;
+                std::printf("Pannelli: staccati e riagganciati %s, disposizione salvata e ripristinata %s, ripristino iniziale %s\n",
+                            docksOk ? "OK" : "NON riuscito", changed && restored ? "OK" : "NON riuscita",
+                            reset ? "OK" : "NON riuscito");
+                std::fflush(stdout);
+                ok = ok && (docksOk || !player->hasMedia()) && changed && restored && reset;
             }
 
             // Progetto: salvato e riaperto, con gli stessi pezzi e lo stesso audio tolto (e senza modifiche

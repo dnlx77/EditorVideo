@@ -92,6 +92,19 @@ public:
     void seekToEnd();                    // ultimo fotogramma
     double frameDuration() const { return frameDuration_; }
     TimelineWidget* timeline() const { return timeline_; }  // per lo zoom (menu e prove)
+    // Doppio clic sull'immagine (schermo intero).
+    std::function<void()> onVideoDoubleClicked;
+    // Cosa scrivere nell'anteprima quando non c'è nessun file.
+    void setIdleMessage(const QString& message);
+
+    // Può diventare molto piccola: quando lo spazio è poco nasconde prima le righe secondarie (segmento, decoder) e poi
+    // la linea del tempo, lasciando l'immagine e i comandi di riproduzione.
+    QSize minimumSizeHint() const override;
+
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
+public:
     const core::CutSegment& segment() const;
 
     // Tratti del file che sono nel montaggio (bande verdi), in ordine e già uniti. Va chiamato dopo setKeyframes(),
@@ -103,6 +116,7 @@ private:
     // L'audio da riprodurre: quello del file o quello esterno. `own` = decoder dell'audio del file già aperto (si usa
     // se non c'è un audio esterno, invece di riaprire il file).
     void openAudio(std::unique_ptr<core::AudioDecoder> own = nullptr);
+    void updateCompact();  // cosa mostrare per la misura attuale
     void startWorkers(double from);
     void stopWorkers();
     void videoWorker();
@@ -140,6 +154,8 @@ private:
     QString externalAudio_;
     double externalDelta_ = 0.0;
     bool externalActive_ = false;    // audio_ è quello esterno
+    QString idleMessage_;
+    bool chromeVisible_ = true;  // vedi setChromeVisible
     QString audioNote_;    // es. "audio non disponibile"
     QString decoderText_;  // "Decodifica: GPU (D3D11VA)" / "Decodifica: software"
 
