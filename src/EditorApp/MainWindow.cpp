@@ -216,10 +216,6 @@ MainWindow::MainWindow(QWidget* parent)
     setWindowTitle(QStringLiteral("EditorVideo"));
     resize(1500, 900);
 
-    // Quali encoder per la ricodifica funzionano su questo PC: la prova (un fotogramma con ognuno) si fa subito, in
-    // background, così quando servono il risultato è già pronto.
-    encoderProbeThread_ = QThread::create([] { core::availableVideoEncoders(); });
-    encoderProbeThread_->start();
 
 
     // --- Sinistra: file del progetto, informazioni, fotogrammi chiave
@@ -491,8 +487,6 @@ MainWindow::MainWindow(QWidget* parent)
 MainWindow::~MainWindow()
 {
     qApp->removeNativeEventFilter(titleDoubleClick_.get());
-    encoderProbeThread_->wait();  // la prova degli encoder dura al massimo qualche secondo
-    delete encoderProbeThread_;
     // Se un'analisi è ancora in corso la interrompiamo e aspettiamo che il thread finisca.
     if (probeThread_ != nullptr) {
         cancelProbe_ = true;
@@ -2854,7 +2848,9 @@ void MainWindow::projectSettingsDialog()
 
 void MainWindow::showAbout()
 {
-    QApplication::setOverrideCursor(Qt::WaitCursor);  // se la prova degli encoder non è ancora finita
+    // Quali encoder funzionano su questo PC: la prova (un fotogramma con ognuno) si fa la prima volta che serve, non
+    // all'avvio (su un PC lento rallenterebbe tutto il resto), e dura al massimo qualche secondo.
+    QApplication::setOverrideCursor(Qt::WaitCursor);
     QString encoders;
     for (const core::VideoEncoderInfo& info : core::availableVideoEncoders())
         encoders += QStringLiteral("<br>• %1").arg(QString::fromStdString(core::describe(info)).toHtmlEscaped());
