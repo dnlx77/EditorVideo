@@ -1202,16 +1202,26 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 program->seekTo(lastStart + 0.2);  // nello spazio
                 const bool inGap = program->inGap() && program->currentIndex() == -1;
                 program->togglePlayPause();
+                const bool started = program->isPlaying();
+                // Fino all'arrivo nel pezzo dopo lo spazio (1 s di spazio da attraversare), al massimo 6 s: su un PC lento
+                // (es. la build automatica, senza scheda video) un giro degli eventi può durare a lungo.
                 QElapsedTimer playing;
                 playing.start();
-                while (playing.elapsed() < 1300)
+                while (playing.elapsed() < 6000 && (program->currentIndex() != last || program->position() < moved + 0.05))
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                const double elapsed = playing.elapsed() / 1000.0;
                 const double reached = program->position();
                 const int piece = program->currentIndex();
                 if (program->isPlaying())
                     program->togglePlayPause();
-                const bool crossed = inGap && piece == last && reached > moved && reached < lastStart + 0.2 + 1.9;
+                // Il tempo scorre come quello vero (con un po' di margine per il passaggio al pezzo).
+                const bool crossed = inGap && started && piece == last && reached > moved
+                                  && reached < lastStart + 0.2 + elapsed + 0.6;
+                std::printf("  spazio vuoto: partita %s, %.2f s per arrivare a %.3f s\n", started ? "sì" : "NO", elapsed, reached);
 
+                // Come con un clic sullo spazio: il fuoco va alla linea del tempo (con il fuoco sull'elenco dei file Canc
+                // toglierebbe il file).
+                line->setFocus(Qt::MouseFocusReason);
                 line->setSelectedGap(sequence.fragments()[last].id);
                 if (const QString image = qEnvironmentVariable("EDITORVIDEO_SMOKE_GAP_SCREENSHOT"); !image.isEmpty())
                     line->grab().save(image);  // la linea del tempo con lo spazio selezionato
