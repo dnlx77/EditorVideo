@@ -56,6 +56,14 @@ public:
         update();
     }
 
+    void setBlank(bool blank)
+    {
+        if (blank != blank_) {
+            blank_ = blank;
+            update();
+        }
+    }
+
     // Dimensione dell'area in pixel fisici (con lo zoom di Windows applicato).
     QSize pixelSize() const { return (QSizeF(size()) * devicePixelRatioF()).toSize(); }
 
@@ -80,6 +88,8 @@ protected:
     {
         QPainter painter(this);
         painter.fillRect(rect(), Qt::black);
+        if (blank_)
+            return;
         if (frame_) {
             // Di solito il decoder produce già fotogrammi della misura giusta e il disegno è 1:1, senza scalare.
             // Subito dopo un ridimensionamento della finestra può arrivare ancora qualche fotogramma della misura
@@ -103,6 +113,7 @@ protected:
 private:
     std::shared_ptr<core::VideoFrame> frame_;
     QString message_;
+    bool blank_ = false;
 };
 
 PlayerWidget::PlayerWidget(QWidget* parent)
@@ -288,6 +299,11 @@ void PlayerWidget::setExternalAudio(const QString& path, double delta)
     updateControls();
     if (wasPlaying)
         play();
+}
+
+void PlayerWidget::setBlank(bool blank)
+{
+    view_->setBlank(blank);
 }
 
 void PlayerWidget::closeFile()

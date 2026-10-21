@@ -1170,6 +1170,60 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 std::fflush(stdout);
                 ok = ok && crossed;
             }
+            // Spazi vuoti: l'ultimo pezzo trascinato col mouse 1 s più avanti lascia uno spazio; Annulla e Ripeti;
+            // l'anteprima passa lo spazio (nero) e arriva al pezzo; Canc sullo spazio selezionato lo chiude.
+            if (sequence.fragments().size() >= 2) {
+                auto* line = window->sequenceTimeline();
+                auto* program = window->programMonitor();
+                line->fitAll();
+                QCoreApplication::processEvents();
+                const int last = static_cast<int>(sequence.fragments().size()) - 1;
+                const double lastStart = sequence.startOf(last);
+                const double total = sequence.totalLength();
+                const double y = line->videoLaneCenter();
+                const double x0 = line->xForSequenceTime(lastStart + sequence.fragments().back().length() / 2);
+                const double x1 = x0 + (line->xForSequenceTime(lastStart + 1.0) - line->xForSequenceTime(lastStart));
+                const auto mouse = [&](QEvent::Type type, double x, Qt::MouseButtons buttons) {
+                    QMouseEvent e(type, QPointF(x, y), line->mapToGlobal(QPointF(x, y)),
+                                  type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
+                    QCoreApplication::sendEvent(line, &e);
+                };
+                mouse(QEvent::MouseButtonPress, x0, Qt::LeftButton);
+                mouse(QEvent::MouseMove, (x0 + x1) / 2, Qt::LeftButton);
+                mouse(QEvent::MouseMove, x1, Qt::LeftButton);
+                mouse(QEvent::MouseButtonRelease, x1, Qt::NoButton);
+                QCoreApplication::processEvents();
+                const double moved = sequence.startOf(last);
+                const bool dragged = sequence.gapCount() == 1 && std::abs(moved - (lastStart + 1.0)) < 0.05
+                                  && std::abs(sequence.startOf(last - 1) - (lastStart - sequence.fragments()[last - 1].length())) < 1e-6;
+                const bool undone = window->undo() && sequence.gapCount() == 0 && std::abs(sequence.startOf(last) - lastStart) < 1e-6;
+                const bool redone = window->redo() && sequence.gapCount() == 1;
+
+                program->seekTo(lastStart + 0.2);  // nello spazio
+                const bool inGap = program->inGap() && program->currentIndex() == -1;
+                program->togglePlayPause();
+                QElapsedTimer playing;
+                playing.start();
+                while (playing.elapsed() < 1300)
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                const double reached = program->position();
+                const int piece = program->currentIndex();
+                if (program->isPlaying())
+                    program->togglePlayPause();
+                const bool crossed = inGap && piece == last && reached > moved && reached < lastStart + 0.2 + 1.9;
+
+                line->setSelectedGap(sequence.fragments()[last].id);
+                if (const QString image = qEnvironmentVariable("EDITORVIDEO_SMOKE_GAP_SCREENSHOT"); !image.isEmpty())
+                    line->grab().save(image);  // la linea del tempo con lo spazio selezionato
+                window->deleteSelection();
+                const bool closed = sequence.gapCount() == 0 && std::abs(sequence.totalLength() - total) < 1e-6;
+                std::printf("Spazi vuoti: trascinato %s (%.3f -> %.3f s), annulla %s, ripeti %s, anteprima nello spazio %s "
+                            "(arrivata a %.3f s, pezzo %d), chiuso con Canc %s\n",
+                            dragged ? "sì" : "NO", lastStart, moved, undone ? "sì" : "NO", redone ? "sì" : "NO",
+                            crossed ? "sì" : "NO", reached, piece + 1, closed ? "sì" : "NO");
+                std::fflush(stdout);
+                ok = ok && dragged && undone && redone && crossed && closed;
+            }
             const double expectedLength = window->exportLength();
 
             // Esportazione dei tratti come dal menu (senza chiedere dove salvare), con il messaggio finale.

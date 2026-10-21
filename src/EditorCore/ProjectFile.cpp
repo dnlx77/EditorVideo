@@ -103,8 +103,11 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         JsonValue::Array muted;
         for (const TimeRange& r : f.muted)
             muted.emplace_back(JsonValue::Array{ticks(r.start), ticks(r.end)});
-        sequence.emplace_back(JsonValue::Object{
-            {"file", f.clipId}, {"inizio", ticks(f.start)}, {"fine", ticks(f.end)}, {"senzaAudio", std::move(muted)}});
+        JsonValue::Object piece{
+            {"file", f.clipId}, {"inizio", ticks(f.start)}, {"fine", ticks(f.end)}, {"senzaAudio", std::move(muted)}};
+        if (f.gap > 0.0)
+            piece["spazioPrima"] = ticks(f.gap);
+        sequence.emplace_back(std::move(piece));
     }
 
     JsonValue replacement;
@@ -117,7 +120,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
 
     const JsonValue::Object root{
         {"formato", kFormatName},
-        {"versione", kProjectFormatVersion},
+        // Senza spazi vuoti il file resta quello della versione 1, che si apre anche con i programmi di prima.
+        {"versione", project.sequence().gapCount() > 0 ? kProjectFormatVersion : 1},
         {"unitaDiTempo", JsonValue::Object{{"tickAlSecondo", kProjectTicksPerSecond},
                                            {"nota", "i tempi sono numeri interi di tick (1/705600000 di secondo)"}}},
         {"file", std::move(files)},
@@ -222,6 +226,11 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                         throw ProjectFileError(name + " è rovinato: un tratto senza audio non è valido.");
                     f.muted.push_back({seconds(pair[0], "senzaAudio"), seconds(pair[1], "senzaAudio")});
                 }
+            }
+            if (piece["spazioPrima"].isInteger()) {
+                f.gap = seconds(piece["spazioPrima"], "spazioPrima");
+                if (f.gap < 0.0)
+                    throw ProjectFileError(name + " è rovinato: uno spazio vuoto della sequenza è negativo.");
             }
             fragments.push_back(std::move(f));
         }

@@ -73,8 +73,9 @@ SequenceTimeline::SequenceTimeline(QWidget* parent)
     setFocusPolicy(Qt::ClickFocus);
     setMouseTracking(true);
     setAcceptDrops(true);  // video trascinati da Esplora file
-    setToolTip(QStringLiteral("Video: clic per andare lì · trascina per spostare il pezzo · doppio clic per riaprirlo "
-                              "a sinistra · Canc: togli · S: dividi al cursore\n"
+    setToolTip(QStringLiteral("Video: clic per andare lì · trascina un pezzo per spostarlo avanti o indietro (lascia "
+                              "spazi vuoti, da riempire con altri pezzi) · doppio clic per riaprirlo a sinistra · "
+                              "Canc: togli il pezzo o chiudi lo spazio vuoto selezionato · S: dividi al cursore\n"
                               "Audio: trascina per selezionare un tratto (o I e O nel Montaggio) · M: togli l'audio · "
                               "Maiusc+M: rimettilo · la traccia sostitutiva si sposta trascinando la sua maniglia\n"
                               "Ctrl+rotellina (o + e -): ingrandisci e riduci · rotellina: scorri"));
@@ -95,10 +96,13 @@ void SequenceTimeline::setBlocks(std::vector<Block> blocks)
     blocks_ = std::move(blocks);
     total_ = 0.0;
     for (const Block& b : blocks_)
-        total_ += b.length;
+        total_ += b.gap + b.length;
     if (std::none_of(blocks_.begin(), blocks_.end(), [this](const Block& b) { return b.fragmentId == selected_; }))
         selected_ = 0;
-    setTimelineDuration(total_);
+    if (std::none_of(blocks_.begin(), blocks_.end(), [this](const Block& b) { return b.fragmentId == selectedGap_ && b.gap > 0; }))
+        selectedGap_ = 0;
+    // Dopo l'ultimo pezzo resta sempre un po' di posto (anche con "Adatta"), per poterlo trascinare più avanti.
+    setTimelineDuration(blocks_.empty() ? 0.0 : total_ + std::max(2.0, total_ * 0.15));
     invalidate();
 }
 
@@ -148,6 +152,16 @@ void SequenceTimeline::changeEvent(QEvent* event)
 void SequenceTimeline::setSelected(int fragmentId)
 {
     selected_ = fragmentId;
+    if (fragmentId != 0)
+        selectedGap_ = 0;
+    invalidate();
+}
+
+void SequenceTimeline::setSelectedGap(int fragmentId)
+{
+    selectedGap_ = fragmentId;
+    if (fragmentId != 0)
+        selected_ = 0;
     invalidate();
 }
 
@@ -200,6 +214,7 @@ std::vector<QRectF> SequenceTimeline::blockRects(const QRectF& lane) const
     rects.reserve(blocks_.size());
     double start = 0.0;
     for (const Block& b : blocks_) {
+        start += b.gap;
         rects.emplace_back(QPointF(xForTime(start) + 1, lane.top() + 2), QPointF(xForTime(start + b.length) - 1, lane.bottom() - 2));
         start += b.length;
     }
@@ -223,6 +238,9 @@ int SequenceTimeline::blockAt(double x) const
     const double t = timeForX(x);
     double start = 0.0;
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
+        if (t < start + blocks_[i].gap)
+            return -1;  // spazio vuoto
+        start += blocks_[i].gap;
         if (t >= start && t < start + blocks_[i].length)
             return static_cast<int>(i);
         start += blocks_[i].length;
@@ -230,19 +248,79 @@ int SequenceTimeline::blockAt(double x) const
     return blocks_.empty() ? -1 : static_cast<int>(blocks_.size()) - 1;
 }
 
+int SequenceTimeline::gapAt(double x) const
+{
+    const double t = timeForX(x);
+    double start = 0.0;
+    for (std::size_t i = 0; i < blocks_.size(); ++i) {
+        if (blocks_[i].gap > 0 && t >= start && t < start + blocks_[i].gap)
+            return static_cast<int>(i);
+        start += blocks_[i].gap + blocks_[i].length;
+    }
+    return -1;
+}
+
+double SequenceTimeline::startOfBlock(int index) const
+{
+    double start = 0.0;
+    for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
+        start += blocks_[i].gap;
+        if (i == index)
+            break;
+        start += blocks_[i].length;
+    }
+    return start;
+}
+
 int SequenceTimeline::dropIndexAt(double x) const
 {
-    // Il blocco va prima del primo blocco la cui metà sta a destra del punto.
+    // I file vanno prima del primo blocco la cui metà sta a destra del punto (in uno spazio vuoto: prima del blocco
+    // che lo segue, cioè all'inizio dello spazio).
     const double t = timeForX(x);
     double start = 0.0;
     int index = 0;
     for (const Block& b : blocks_) {
+        start += b.gap;
         if (t < start + b.length / 2)
             return index;
         start += b.length;
         ++index;
     }
     return index;
+}
+
+double SequenceTimeline::dragTarget(double x) const
+{
+    if (dragIndex_ < 0 || dragIndex_ >= static_cast<int>(blocks_.size()))
+        return 0.0;
+    const Block& dragged = blocks_[dragIndex_];
+    double desired = timeForX(x) - dragGrab_;
+    // Aggancio magnetico: l'inizio o la fine del blocco, se a meno di 10 pixel da un bordo di un altro blocco o
+    // dall'inizio della sequenza. (Il cursore no: il clic per prendere il blocco lo porta proprio lì.)
+    std::vector<double> edges{0.0};
+    double start = 0.0;
+    for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
+        start += blocks_[i].gap;
+        if (i != dragIndex_) {
+            edges.push_back(start);
+            edges.push_back(start + blocks_[i].length);
+        }
+        start += blocks_[i].length;
+    }
+    const double reach = 10.0 / zoom().pixelsPerSecond();
+    double best = reach;
+    double snapped = desired;
+    for (const double edge : edges) {
+        for (const double offset : {0.0, dragged.length}) {
+            const double distance = std::abs(desired + offset - edge);
+            if (distance < best) {
+                best = distance;
+                snapped = edge - offset;
+            }
+        }
+    }
+    desired = std::max(0.0, snapped);
+    return freeStart ? freeStart(dragged.fragmentId, desired) : desired;
 }
 
 void SequenceTimeline::paintEvent(QPaintEvent*)
@@ -265,9 +343,7 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
     if (fileDropX_ >= 0) {
         // File trascinati: dove andranno, fra i pezzi.
         const int index = dropIndexAt(fileDropX_);
-        double at = 0.0;
-        for (int i = 0; i < index && i < static_cast<int>(blocks_.size()); ++i)
-            at += blocks_[i].length;
+        const double at = index > 0 ? startOfBlock(index - 1) + blocks_[static_cast<std::size_t>(index - 1)].length : 0.0;
         const QRectF lanes = videoLane().united(audioLane());
         const double x = blocks_.empty() ? lanes.left() + 2 : std::clamp(xForTime(at), lanes.left() + 2, lanes.right() - 2);
         p.setRenderHint(QPainter::Antialiasing);
@@ -327,6 +403,32 @@ void SequenceTimeline::paintStatic(QPainter& p)
     const std::vector<QRectF> rects = blockRects(a);
     p.save();
     p.setClipRect(a.adjusted(-1, -4, 1, 4));
+
+    // Spazi vuoti: un riquadro tratteggiato (evidenziato se selezionato), con la durata se c'è posto.
+    {
+        double start = 0.0;
+        for (const Block& b : blocks_) {
+            if (b.gap > 0) {
+                const QRectF full(QPointF(xForTime(start) + 1, a.top() + 2), QPointF(xForTime(start + b.gap) - 1, a.bottom() - 2));
+                if (full.right() >= visibleLeft() - 4 && full.left() <= visibleRight() + 4 && full.width() >= 1) {
+                    const QRectF r = visiblePart(full);
+                    const bool selected = b.fragmentId == selectedGap_;
+                    QColor fill = selected ? pal.color(QPalette::Highlight) : pal.color(QPalette::Mid);
+                    fill.setAlpha(selected ? 70 : 40);
+                    p.setBrush(fill);
+                    p.setPen(QPen(selected ? pal.color(QPalette::Highlight) : pal.color(QPalette::Mid), selected ? 2 : 1, Qt::DashLine));
+                    p.drawRoundedRect(r, 3, 3);
+                    if (r.width() > 50) {
+                        p.setPen(pal.color(QPalette::PlaceholderText));
+                        const QString text = QStringLiteral("spazio vuoto\n%1").arg(
+                            QString::fromStdString(core::formatDuration(b.gap)).mid(3));
+                        p.drawText(r.adjusted(4, 2, -4, -2), Qt::AlignCenter, p.fontMetrics().elidedText(text, Qt::ElideRight, static_cast<int>(r.width() * 2)));
+                    }
+                }
+            }
+            start += b.gap + b.length;
+        }
+    }
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
         const Block& b = blocks_[i];
         const QRectF& full = rects[i];
@@ -391,15 +493,20 @@ void SequenceTimeline::paintStatic(QPainter& p)
     p.restore();
     paintAudio(p);
 
-    // Dove finirebbe il blocco trascinato
-    if (dragging_) {
-        const int drop = dropIndexAt(dragX_);
-        double at = 0.0;
-        for (int i = 0; i < drop && i < static_cast<int>(blocks_.size()); ++i)
-            at += blocks_[i].length;
-        const double x = std::clamp(xForTime(at), a.left(), a.right());
+    // Dove andrà il blocco trascinato: il suo contorno, nel colore della selezione.
+    if (dragging_ && dragIndex_ >= 0 && dragIndex_ < static_cast<int>(blocks_.size())) {
+        const Block& b = blocks_[static_cast<std::size_t>(dragIndex_)];
+        const QRectF target(QPointF(xForTime(dragStart_) + 1, a.top() + 1), QPointF(xForTime(dragStart_ + b.length) - 1, a.bottom() - 1));
+        QColor fill = blockColor(b.colorIndex);
+        fill.setAlpha(150);
+        p.setBrush(fill);
         p.setPen(QPen(pal.color(QPalette::Highlight), 3));
-        p.drawLine(QPointF(x, a.top() - 4), QPointF(x, a.bottom() + 4));
+        p.drawRoundedRect(visiblePart(target), 3, 3);
+        p.setPen(Qt::white);
+        if (target.width() > 30)
+            p.drawText(visiblePart(target).adjusted(4, 2, -4, -2), Qt::AlignLeft | Qt::AlignVCenter,
+                       p.fontMetrics().elidedText(QStringLiteral("%1\n%2").arg(b.label, QString::fromStdString(core::formatDuration(dragStart_)).mid(3)), Qt::ElideRight,
+                                                  static_cast<int>(target.width() * 2)));
     }
 }
 
@@ -527,8 +634,16 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
     dragging_ = false;
     if (dragIndex_ >= 0) {
         selected_ = blocks_[dragIndex_].fragmentId;
+        selectedGap_ = 0;
+        dragGrab_ = t - startOfBlock(dragIndex_);
+        dragStart_ = startOfBlock(dragIndex_);
         if (onSelect)
             onSelect(selected_);
+    } else if (const int gap = gapAt(pressX_); gap >= 0) {
+        selectedGap_ = blocks_[gap].fragmentId;
+        selected_ = 0;
+        if (onSelect)
+            onSelect(0);
     }
     playhead_ = t;
     invalidate();
@@ -556,11 +671,14 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
     }
     if (dragIndex_ < 0)
         return;
-    dragX_ = x;
-    if (!dragging_ && std::abs(dragX_ - pressX_) > 8)
+    if (!dragging_ && std::abs(x - pressX_) > 8) {
         dragging_ = true;
-    if (dragging_)
+        setCursor(Qt::ClosedHandCursor);
+    }
+    if (dragging_) {
+        dragStart_ = dragTarget(x);
         invalidate();
+    }
 }
 
 void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
@@ -584,15 +702,15 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
     if (dragging_ && dragIndex_ >= 0) {
-        int to = dropIndexAt(event->position().x());
-        if (to > dragIndex_)
-            --to;  // togliendo il blocco dalla sua posizione, quelli dopo scalano di uno
         const int fragment = blocks_[dragIndex_].fragmentId;
+        const double from = startOfBlock(dragIndex_);
+        const double to = dragTarget(event->position().x());
         dragging_ = false;
         dragIndex_ = -1;
+        setCursor(Qt::ArrowCursor);
         invalidate();
-        if (onMove)
-            onMove(fragment, std::min(to, static_cast<int>(blocks_.size()) - 1));
+        if (std::abs(to - from) > 1e-6 && onMoveTo)
+            onMoveTo(fragment, to);
         return;
     }
     dragging_ = false;
