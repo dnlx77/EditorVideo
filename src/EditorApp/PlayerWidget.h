@@ -57,6 +57,9 @@ public:
     void setPlaybackWindow(double end);
     std::function<void()> onWindowEnd;
 
+    // Solo nero al posto dell'immagine (uno spazio vuoto del montaggio), senza chiudere il file.
+    void setBlank(bool blank);
+
     // Nasconde la linea del tempo e i comandi (l'anteprima della sequenza ha i suoi).
     void setChromeVisible(bool visible);
     // Imposta IN e OUT (es. per riprendere un pezzo della sequenza) e una nota sotto la linea del tempo.

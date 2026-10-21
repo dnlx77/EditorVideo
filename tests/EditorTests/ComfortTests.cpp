@@ -57,6 +57,9 @@ TEST(EditHistory, EveryActionUndoesAndRedoesExactly)
     apply("Aggiungi pezzo", [&] { s.insert(-1, 1, 0.5, 3.5, project.snapper()); });
     apply("Aggiungi pezzo", [&] { s.insert(-1, 2, 2.0, 6.0, project.snapper()); });
     apply("Sposta pezzo", [&] { s.move(s.fragments()[1].id, 0); });
+    apply("Sposta pezzo", [&] { s.moveTo(s.fragments()[1].id, s.startOf(1) + 2.0); });  // lascia uno spazio vuoto
+    apply("Chiudi spazio vuoto", [&] { s.closeGap(1); });
+    apply("Sposta pezzo", [&] { s.moveTo(s.fragments()[1].id, s.startOf(1) + 0.1); });  // (il pezzo si divide ancora a 5,2)
     apply("Dividi pezzo", [&] { s.split(5.2, project.snapper()); });
     apply("Togli IN-OUT", [&] { s.removeSourceRange(1, 1.2, 2.5, project.snapper()); });
     apply("Togli audio", [&] { s.muteRange(0.5, 1.5); });

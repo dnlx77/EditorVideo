@@ -19,7 +19,7 @@ namespace editor::core {
 // basi dei tempi usate da video e audio (1/90000, 1/1000, 1/48000, 1/44100, 1001/30000...), quindi un tempo
 // letto da un file torna identico dopo salvataggio e riapertura.
 constexpr std::int64_t kProjectTicksPerSecond = 705'600'000;
-constexpr int kProjectFormatVersion = 1;
+constexpr int kProjectFormatVersion = 2;  // 2: spazi vuoti nella sequenza ("spazioPrima")
 inline constexpr const char* kProjectExtension = ".evproj";
 
 std::int64_t secondsToTicks(double seconds);

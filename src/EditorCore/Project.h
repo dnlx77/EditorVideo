@@ -47,6 +47,14 @@ struct AudioEdit
     bool empty() const { return muted.empty() && !replacement; }
 };
 
+// Cosa diventano gli spazi vuoti del montaggio nel file esportato. Senza ricodifica non si può creare un tratto nero:
+// gli spazi si chiudono e i pezzi si uniscono uno dopo l'altro. Con la ricodifica si potrà aggiungere qui un modo che
+// li riempie di nero e silenzio.
+enum class GapExport
+{
+    Close,
+};
+
 // Progetto: i file di partenza e la sequenza (il montaggio) fatta con pezzi di quei file.
 class Project
 {
@@ -72,14 +80,15 @@ public:
     Sequence::SnapFunction snapper() const;
 
     // La sequenza come elenco di file e tratti da esportare (pezzi consecutivi dello stesso file insieme).
-    std::vector<ClipRanges> exportPlan() const;
+    std::vector<ClipRanges> exportPlan(GapExport gaps = GapExport::Close) const;
 
     // Traccia audio sostitutiva (vedi AudioReplacement); std::nullopt = audio originale.
     void setAudioReplacement(std::optional<AudioReplacement> replacement);
     const std::optional<AudioReplacement>& audioReplacement() const { return replacement_; }
     void setAudioOffset(double offset);  // sposta la traccia sostitutiva
-    // Tratti silenziati e traccia sostitutiva, per l'esportazione.
-    AudioEdit audioEdit() const;
+    // Tratti silenziati e traccia sostitutiva, per l'esportazione: nei tempi del file esportato (con gli spazi vuoti
+    // trattati come dice `gaps`).
+    AudioEdit audioEdit(GapExport gaps = GapExport::Close) const;
 
     // Torna allo stato di `snapshot` (Annulla / Ripeti): file, sequenza e audio. L'analisi dei file già fatta qui
     // (fotogrammi chiave e durata) resta, anche se nell'istantanea il file non era ancora analizzato.

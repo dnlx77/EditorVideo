@@ -149,6 +149,7 @@ protected:
             EXPECT_EQ(actual.indexOf(fa[i].clipId), expected.indexOf(fe[i].clipId)) << "pezzo " << i;
             EXPECT_EQ(fa[i].start, ticksToSeconds(secondsToTicks(fe[i].start))) << "pezzo " << i;
             EXPECT_EQ(fa[i].end, ticksToSeconds(secondsToTicks(fe[i].end))) << "pezzo " << i;
+            EXPECT_EQ(fa[i].gap, ticksToSeconds(secondsToTicks(fe[i].gap))) << "pezzo " << i;
             ASSERT_EQ(fa[i].muted.size(), fe[i].muted.size()) << "pezzo " << i;
             for (std::size_t m = 0; m < fe[i].muted.size(); ++m) {
                 EXPECT_NEAR(fa[i].muted[m].start, fe[i].muted[m].start, 1e-9);
@@ -293,6 +294,51 @@ TEST_F(ProjectFileTest, DamagedFilesAreRefusedWithoutCrashing)
     write(dir_ / "vuoto.evproj", "");
     EXPECT_THROW(loadProjectFile(utf8FromPath(dir_ / "vuoto.evproj")), ProjectFileError);
     EXPECT_THROW(loadProjectFile(utf8FromPath(dir_ / "non_esiste.evproj")), ProjectFileError);
+}
+
+TEST_F(ProjectFileTest, GapsAreSavedAndOldProjectsHaveNone)
+{
+    ProjectView view;
+    Project project = sample(view);
+    const std::string plain = projectToJson(projectPath(), project, view);
+    EXPECT_NE(plain.find("\"versione\": 1"), std::string::npos);  // senza spazi: come i progetti di prima
+    EXPECT_EQ(plain.find("spazioPrima"), std::string::npos);
+
+    Sequence& s = project.sequence();
+    ASSERT_TRUE(s.moveTo(s.fragments()[3].id, s.startOf(3) + 1.25));  // l'ultimo più avanti...
+    ASSERT_TRUE(s.moveTo(s.fragments()[2].id, s.startOf(2) + 1.0));   // ...e il penultimo nello spazio lasciato
+    ASSERT_EQ(s.gapCount(), 2);
+    saveProjectFile(projectPath(), project, view);
+    const std::string text = read(projectPath());
+    EXPECT_NE(text.find("\"versione\": 2"), std::string::npos);
+    EXPECT_NE(text.find("spazioPrima"), std::string::npos);
+
+    const LoadedProject loaded = loadProjectFile(projectPath());
+    expectSame(project, loaded.project);
+    EXPECT_EQ(loaded.project.sequence().gapCount(), 2);
+    EXPECT_NEAR(loaded.project.sequence().totalLength(), project.sequence().totalLength(), 1e-6);
+}
+
+TEST(GapExport, GapsAreClosedInTheExportedFile)
+{
+    Project project;
+    const int a = project.add("C:\\video\\a.mp4");
+    project.setAnalysis(a, {0.0, 1.0, 2.0, 3.0}, 4.0);
+    Sequence& s = project.sequence();
+    s.insert(-1, a, 0.0, 1.0, project.snapper());
+    const int second = s.insert(-1, a, 2.0, 4.0, project.snapper());
+    ASSERT_TRUE(s.moveTo(second, 3.0));  // spazio 1 .. 3
+    s.muteRange(3.5, 4.0);               // nel secondo pezzo, nei tempi della sequenza
+
+    const auto plan = project.exportPlan();
+    ASSERT_EQ(plan.size(), 1u);
+    ASSERT_EQ(plan[0].ranges.size(), 2u);
+    // Nel file esportato i pezzi sono attaccati: il tratto senza audio è 1,5 .. 2 (non 3,5 .. 4).
+    const AudioEdit audio = project.audioEdit();
+    ASSERT_EQ(audio.muted.size(), 1u);
+    EXPECT_NEAR(audio.muted[0].start, 1.5, 1e-9);
+    EXPECT_NEAR(audio.muted[0].end, 2.0, 1e-9);
+    EXPECT_EQ(project.sequence().gapCount(), 1);  // il montaggio resta com'è
 }
 
 }  // namespace

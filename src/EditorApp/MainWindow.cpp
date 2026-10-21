@@ -305,10 +305,13 @@ MainWindow::MainWindow(QWidget* parent)
         program_->seekTo(seconds);
     };
     timeline_->onSelect = [this](int) { setProgramActive(true); };
-    timeline_->onMove = [this](int fragmentId, int toIndex) {
+    timeline_->freeStart = [this](int fragmentId, double desired) {
+        return project_.sequence().nearestFreeStart(fragmentId, desired);
+    };
+    timeline_->onMoveTo = [this](int fragmentId, double start) {
         const core::Project before = project_;
-        project_.sequence().move(fragmentId, toIndex);
-        recordEdit(QStringLiteral("Sposta pezzo"), before);
+        if (project_.sequence().moveTo(fragmentId, start))
+            recordEdit(QStringLiteral("Sposta pezzo"), before);
     };
     timeline_->thumbnailFor = [this](int clipId, double sourceTime) { return thumbnailFor(clipId, sourceTime); };
     timeline_->onFilesDropped = [this](const QStringList& paths, int index) { dropFiles(paths, DropTarget::Sequence, index); };
@@ -595,7 +598,9 @@ void MainWindow::addToSequence()
     const core::Project before = project_;
     core::Sequence& sequence = project_.sequence();
     const int selected = sequence.indexOf(timeline_->selected());
-    const int at = selected >= 0 ? selected + 1 : -1;  // dopo il pezzo selezionato, altrimenti in fondo
+    const int gap = sequence.indexOf(timeline_->selectedGap());
+    // Nello spazio vuoto selezionato (dal suo inizio), dopo il pezzo selezionato, altrimenti in fondo.
+    const int at = gap >= 0 ? gap : selected >= 0 ? selected + 1 : -1;
     const int id = sequence.insert(at, clip->id, in, out, project_.snapper());
     if (id == 0) {
         player_->showNote(QStringLiteral("Pezzo vuoto: OUT deve stare dopo IN."));
@@ -678,6 +683,14 @@ void MainWindow::deleteSelection()
         return;
     }
     const core::Project before = project_;
+    if (const int gap = timeline_->selectedGap(); gap != 0) {
+        // Spazio vuoto selezionato: si chiude, i pezzi dopo scorrono indietro.
+        if (project_.sequence().closeGap(project_.sequence().indexOf(gap))) {
+            timeline_->setSelectedGap(0);
+            recordEdit(QStringLiteral("Chiudi spazio vuoto"), before);
+        }
+        return;
+    }
     if (project_.sequence().remove(timeline_->selected())) {
         timeline_->setSelected(0);
         recordEdit(QStringLiteral("Elimina pezzo"), before);
@@ -784,7 +797,7 @@ void MainWindow::refreshTimeline()
     for (const core::Fragment& f : sequence.fragments()) {
         const core::Clip* clip = project_.find(f.clipId);
         blocks.push_back({f.id, project_.indexOf(f.clipId), clip ? fileNameOf(clip->path) : QString(), f.length(), f.start,
-                          f.clipId, clip ? waveformFor(clip->path) : nullptr});
+                          f.clipId, clip ? waveformFor(clip->path) : nullptr, f.gap});
     }
     timeline_->setBlocks(std::move(blocks));
     // Zoom massimo: 12 pixel per fotogramma del primo file con un video (30 fps se non si sa ancora).
@@ -820,6 +833,8 @@ void MainWindow::refreshTimeline()
                                     : QStringLiteral("<b>Montaggio</b>: %1 pezzi  ·  durata <b>%2</b>")
                                           .arg(sequence.fragments().size())
                                           .arg(timeText(sequence.totalLength()));
+    if (const int gaps = sequence.gapCount(); gaps > 0)
+        text += gaps == 1 ? QStringLiteral("  ·  1 spazio vuoto") : QStringLiteral("  ·  %1 spazi vuoti").arg(gaps);
     if (replacement)
         text += QStringLiteral("  ·  audio: <b>%1</b> (al posto dell'originale)").arg(fileNameOf(replacement->path).toHtmlEscaped());
     if (!muted.empty())
@@ -1089,6 +1104,23 @@ void MainWindow::exportDialog()
     const QString extension = source.suffix();
     const QString suffix = project_.sequence().empty() ? QStringLiteral("_taglio.") : QStringLiteral("_montaggio.");
     const QString suggested = source.dir().filePath(source.completeBaseName() + suffix + extension);
+    // Spazi vuoti: senza ricodifica non si può fare un tratto nero, quindi nel file si chiudono (core::GapExport).
+    if (const int gaps = project_.sequence().gapCount(); gaps > 0) {
+        core::Sequence closed = project_.sequence();
+        closed.closeAllGaps();
+        QString text = QStringLiteral("Il montaggio ha %1. Senza ricodifica non si può esportare un tratto nero: nel file "
+                                      "esportato gli spazi vuoti vengono tolti e i pezzi si susseguono uno dopo l'altro "
+                                      "(durata %2 invece di %3).")
+                           .arg(gaps == 1 ? QStringLiteral("1 spazio vuoto") : QStringLiteral("%1 spazi vuoti").arg(gaps),
+                                timeText(closed.totalLength()), timeText(project_.sequence().totalLength()));
+        if (project_.audioReplacement())
+            text += QStringLiteral("\n\nL'audio sostitutivo resta continuo: dopo uno spazio tolto non è più allineato al "
+                                   "video come nell'anteprima.");
+        if (QMessageBox::question(this, QStringLiteral("Spazi vuoti"), text + QStringLiteral("\n\nEsportare lo stesso?"),
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes)
+            != QMessageBox::Yes)
+            return;
+    }
     QString target = QFileDialog::getSaveFileName(
         this, QStringLiteral("Esporta"), suggested, QStringLiteral("File %1 (*.%2)").arg(extension.toUpper(), extension));
     if (target.isEmpty())

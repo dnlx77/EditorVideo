@@ -89,6 +89,8 @@ void ProgramMonitor::load(int index, double offset)
     const core::Clip* clip = project_.find(f.clipId);
     if (clip == nullptr)
         return;
+    gapIndex_ = -1;
+    player_->setBlank(false);
     if (f.clipId != loadedClipId_) {
         player_->openFile(QString::fromStdString(clip->path));
         loadedClipId_ = f.clipId;
@@ -113,14 +115,32 @@ void ProgramMonitor::seekTo(double seconds)
         return;
     const double t = std::clamp(seconds, 0.0, sequence.totalLength());
     int index = sequence.indexAt(t);
-    if (index < 0)
+    if (index < 0) {
+        if (const int gap = sequence.gapIndexAt(t); gap >= 0) {
+            enterGap(gap, t);
+            return;
+        }
         index = static_cast<int>(sequence.fragments().size()) - 1;  // alla fine: ultimo pezzo
+    }
     const bool wasPlaying = playing_;
     if (wasPlaying)
         player_->pause();
     load(index, t - sequence.startOf(index));
     if (wasPlaying)
         player_->play();
+    updatePosition();
+}
+
+void ProgramMonitor::enterGap(int index, double seconds)
+{
+    if (player_->isPlaying())
+        player_->pause();
+    player_->setBlank(true);
+    index_ = -1;
+    gapIndex_ = index;
+    position_ = seconds;
+    gapBase_ = seconds;
+    gapClock_.restart();
     updatePosition();
 }
 
@@ -135,6 +155,7 @@ void ProgramMonitor::togglePlayPause()
     if (sequence.empty())
         return;
     if (playing_) {
+        updatePosition();  // nello spazio vuoto: il tempo arrivato fin qui
         player_->pause();
         playing_ = false;
         poll_->stop();
@@ -148,7 +169,12 @@ void ProgramMonitor::togglePlayPause()
     playing_ = true;
     if (onPlaybackStarted)
         onPlaybackStarted();
-    player_->play();
+    if (gapIndex_ >= 0) {
+        gapBase_ = position_;  // nello spazio vuoto scorre solo il tempo
+        gapClock_.restart();
+    } else {
+        player_->play();
+    }
     poll_->start();
     updateLabels();
 }
@@ -176,16 +202,17 @@ void ProgramMonitor::stepToCut(int direction)
     setPlaying(false);
     const int count = static_cast<int>(sequence.fragments().size());
     double target = position_;
-    // Inizio di ogni pezzo, sommando le durate una volta sola (come startOf, nello stesso ordine).
+    // Inizio di ogni pezzo, sommando le durate (e gli spazi vuoti) una volta sola, come startOf.
     std::vector<double> starts(static_cast<std::size_t>(count));
     double start = 0.0;
     for (int i = 0; i < count; ++i) {
+        start += sequence.fragments()[static_cast<std::size_t>(i)].gap;
         starts[static_cast<std::size_t>(i)] = start;
         start += sequence.fragments()[static_cast<std::size_t>(i)].length();
     }
     if (direction > 0) {
         target = sequence.totalLength();
-        for (int i = 1; i < count; ++i) {
+        for (int i = 0; i < count; ++i) {
             if (starts[static_cast<std::size_t>(i)] > position_ + 0.001) {
                 target = starts[static_cast<std::size_t>(i)];
                 break;
@@ -218,8 +245,14 @@ void ProgramMonitor::fragmentEnded()
 {
     if (!playing_)
         return;
+    const core::Sequence& sequence = project_.sequence();
     const int next = index_ + 1;
-    if (next < static_cast<int>(project_.sequence().fragments().size())) {
+    if (next < static_cast<int>(sequence.fragments().size())) {
+        const double gap = sequence.fragments()[static_cast<std::size_t>(next)].gap;
+        if (gap > 0.0) {
+            enterGap(next, sequence.startOf(next) - gap);  // prima del pezzo dopo c'è uno spazio vuoto
+            return;
+        }
         load(next, 0.0);
         player_->play();
     } else {
@@ -241,6 +274,8 @@ void ProgramMonitor::sequenceChanged()
         loadedClipId_ = 0;
     if (sequence.empty()) {
         index_ = -1;
+        gapIndex_ = -1;
+        player_->setBlank(false);
         position_ = 0.0;
         loadedClipId_ = 0;
         player_->closeFile();
@@ -253,7 +288,15 @@ void ProgramMonitor::sequenceChanged()
 void ProgramMonitor::updatePosition()
 {
     const core::Sequence& sequence = project_.sequence();
-    if (index_ >= 0 && index_ < static_cast<int>(sequence.fragments().size())) {
+    if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
+        const double gapEnd = sequence.startOf(gapIndex_);
+        if (playing_)
+            position_ = std::min(gapEnd, gapBase_ + static_cast<double>(gapClock_.nsecsElapsed()) / 1e9);
+        if (playing_ && position_ >= gapEnd - 1e-6) {
+            load(gapIndex_, 0.0);  // finito lo spazio vuoto: il pezzo dopo
+            player_->play();
+        }
+    } else if (index_ >= 0 && index_ < static_cast<int>(sequence.fragments().size())) {
         const core::Fragment& f = sequence.fragments()[index_];
         position_ = sequence.startOf(index_) + std::clamp(player_->currentPosition() - f.start, 0.0, f.length());
     }
@@ -268,6 +311,10 @@ void ProgramMonitor::updateLabels()
     playButton_->setEnabled(!sequence.empty());
     playButton_->setIcon(style()->standardIcon(playing_ ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
     timeLabel_->setText(QStringLiteral("%1 / %2").arg(timeText(position_), timeText(sequence.totalLength())));
+    if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
+        fragmentLabel_->setText(QStringLiteral("Spazio vuoto (nero) prima del pezzo %1").arg(gapIndex_ + 1));
+        return;
+    }
     if (index_ < 0 || index_ >= static_cast<int>(sequence.fragments().size())) {
         fragmentLabel_->setText(sequence.empty() ? QStringLiteral("Sequenza vuota") : QString());
         return;
