@@ -45,6 +45,13 @@ La finestra è divisa così:
 
 **File > Apri file video...** (Ctrl+O) apre un file in un progetto nuovo; **File > Aggiungi file...** (Ctrl+Maiusc+O, anche più file insieme) ne aggiunge altri. Vengono analizzati uno alla volta in background. Si possono anche passare i file da riga di comando: `EditorVideo.exe "C:\Video\a.mp4" "C:\Video\b.mp4"`.
 
+### Trascinare i file
+
+- Si possono **trascinare file da Esplora file** sulla finestra: ovunque li si lasci vengono aggiunti all'elenco dei file del progetto (quelli che ci sono già non vengono ripetuti).
+- Lasciati sulla **Sorgente**, l'ultimo si apre anche lì. Lasciati sulla **linea del tempo del montaggio**, vanno anche nel montaggio, interi, nel punto in cui si lasciano (una linea mostra dove) e nell'ordine in cui sono stati trascinati.
+- Una **cartella** aggiunge i video e gli audio che contiene (non quelli delle sottocartelle). Un **progetto** (.evproj) si apre, chiedendo prima se salvare quello aperto. I file che non sono video o audio leggibili vengono elencati in un messaggio; gli altri si aggiungono lo stesso.
+- Ogni trascinamento si annulla con un solo **Ctrl+Z** ("Annulla Aggiungi file").
+
 ### Pannelli
 
 - File del progetto, Sorgente, Montaggio e la linea del tempo del montaggio sono **pannelli**: si ridimensionano trascinando i bordi, si spostano trascinando il titolo (anche uno accanto all'altro o uno sopra l'altro, o come schede) e si **staccano** come finestre a sé con il pulsante sul titolo o un doppio clic sul titolo, per esempio per mettere il Montaggio su un secondo monitor. Doppio clic sul titolo di una finestra staccata per riagganciarla.
