@@ -1361,8 +1361,11 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
                                    : QStringLiteral("Segmento salvato");
     QMessageBox::information(
         this, QStringLiteral("Esportazione completata"),
-        QStringLiteral("%1 in:\n%2\n\nDurata: %3\nSenza ricodifica: stessa qualità dell'originale.")
-            .arg(what, target, timeText(outcome.result->durationSeconds)));
+        QStringLiteral("%1 in:\n%2\n\nDurata: %3\n%4")
+            .arg(what, target, timeText(outcome.result->durationSeconds),
+                 outcome.result->reencodedSegments == 0
+                     ? QStringLiteral("Senza ricodifica: stessa qualità dell'originale.")
+                     : QStringLiteral("%1 tratti ricodificati, gli altri copiati senza ricodifica.").arg(outcome.result->reencodedSegments)));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

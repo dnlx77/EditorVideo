@@ -39,6 +39,10 @@
 #include <algorithm>
 
 #include <windows.h>
+#include "EditorCore/Encoder.h"
+#include <atomic>
+#include <thread>
+#include <QtWidgets/QFileDialog>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -666,6 +670,141 @@ std::optional<int> runCommandLineTest(const QStringList& arguments)
         }
     }
     return std::nullopt;
+}
+
+namespace {
+
+// La casella del nome del file nella finestra di Windows per salvare (Edit dentro ComboBox dentro ComboBoxEx32).
+HWND fileNameEdit(HWND dialog)
+{
+    HWND found = nullptr;
+    EnumChildWindows(
+        dialog,
+        [](HWND child, LPARAM param) -> BOOL {
+            wchar_t name[64] = {};
+            GetClassNameW(child, name, 64);
+            wchar_t parent[64] = {};
+            GetClassNameW(GetParent(child), parent, 64);
+            if (std::wstring(name) == L"Edit" && std::wstring(parent) == L"ComboBox") {
+                *reinterpret_cast<HWND*>(param) = child;
+                return FALSE;
+            }
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&found));
+    return found;
+}
+
+}  // namespace
+
+// --export-dialog-test <progetto> <destinazione>: come l'utente: apre il progetto, Esporta, Invio nella finestra del
+// riepilogo, il nome del file nella finestra di Windows e Salva, chiude il messaggio finale. Un thread a parte guida le
+// finestre (senza mouse) e dice a che punto si ferma. Codice 0 se arriva in fondo, 3 se si blocca.
+int runExportDialogTest(QApplication& app, const QString& project, const QString& output)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    MainWindow window;
+    window.show();
+    if (!window.openProject(project, false))
+        return 2;
+    QElapsedTimer waiting;
+    waiting.start();
+    while (!window.project().allAnalyzed() && waiting.elapsed() < 60000)
+        app.processEvents(QEventLoop::AllEvents, 50);
+    QFile::remove(output);
+    std::atomic<int> stage{0};  // 1 riepilogo confermato, 2 nome del file dato, 3 messaggio finale chiuso
+    std::atomic<bool> stop{false};
+    const std::wstring target = QDir::toNativeSeparators(output).toStdWString();
+    std::thread driver([&] {
+        while (!stop) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            if (stage == 0) {
+                if (HWND h = FindWindowW(nullptr, L"Esporta il montaggio")) {
+                    std::printf("  [%.1f s] riepilogo: Invio\n", waiting.elapsed() / 1000.0);
+                    PostMessageW(h, WM_KEYDOWN, VK_RETURN, 0);
+                    PostMessageW(h, WM_KEYUP, VK_RETURN, 0xC0000001);
+                    stage = 1;
+                }
+            } else if (stage == 1) {
+                if (HWND h = FindWindowW(L"#32770", L"Esporta")) {
+                    if (HWND edit = fileNameEdit(h)) {
+                        std::printf("  [%.1f s] finestra di salvataggio: nome e Salva\n", waiting.elapsed() / 1000.0);
+                        SendMessageW(edit, WM_SETTEXT, 0, reinterpret_cast<LPARAM>(target.c_str()));
+                        PostMessageW(h, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), 0);
+                        stage = 2;
+                    }
+                }
+            } else if (stage == 2) {
+                for (const wchar_t* title : {L"Esportazione completata", L"Esportazione non riuscita"}) {
+                    if (HWND h = FindWindowW(nullptr, title)) {
+                        std::printf("  [%.1f s] messaggio finale: %ls\n", waiting.elapsed() / 1000.0, title);
+                        PostMessageW(h, WM_KEYDOWN, VK_RETURN, 0);
+                        PostMessageW(h, WM_KEYUP, VK_RETURN, 0xC0000001);
+                        stage = 3;
+                    }
+                }
+            }
+        }
+    });
+    waiting.restart();
+    QTimer::singleShot(0, &window, [&window] { window.exportDialog(); });
+    while (stage < 3 && waiting.elapsed() < 120000)
+        app.processEvents(QEventLoop::AllEvents, 50);
+    // Ancora un po' perché il messaggio si chiuda e l'esportazione sia registrata.
+    QElapsedTimer tail;
+    tail.start();
+    while (tail.elapsed() < 1000)
+        app.processEvents(QEventLoop::AllEvents, 50);
+    stop = true;
+    driver.join();
+    const char* stages[] = {"riepilogo mai comparso", "finestra di salvataggio mai comparsa",
+                            "messaggio finale mai comparso", "arrivata in fondo"};
+    std::printf("Esportazione dal pulsante: %s, %s (file %s)\n", stages[stage.load()],
+                window.lastExportSucceeded() ? "riuscita" : qPrintable(QStringLiteral("non riuscita: ") + window.lastExportProblem()),
+                QFile::exists(output) ? "creato" : "assente");
+    return stage == 3 && window.lastExportSucceeded() ? 0 : 3;
+}
+
+int runProjectExportTest(QApplication& app, const QString& project, const QString& output)
+{
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    MainWindow window;
+    window.show();
+    if (!window.openProject(project, false)) {
+        std::printf("Il progetto non si apre\n");
+        return 2;
+    }
+    QElapsedTimer waiting;
+    waiting.start();
+    while (!window.project().allAnalyzed() && waiting.elapsed() < 60000)
+        app.processEvents(QEventLoop::AllEvents, 50);
+    const core::ExportPreview preview = core::previewExport(window.project().exportPlan(), window.project().audioEdit(),
+                                                            &window.project().format());
+    std::printf("Pezzi copiati %d, ricodificati %d%s%s\n", preview.copiedSegments, preview.reencodedSegments,
+                preview.problem.empty() ? "" : ": ", preview.problem.c_str());
+    QFile::remove(output);
+    QElapsedTimer exporting;
+    exporting.start();
+    if (!window.startExport(QDir::toNativeSeparators(output), false)) {
+        std::printf("Esportazione non partita\n");
+        return 2;
+    }
+    int lastPercent = -1;
+    while (window.isExporting() && exporting.elapsed() < 300000) {
+        app.processEvents(QEventLoop::AllEvents, 50);
+        if (const int percent = static_cast<int>(exporting.elapsed() / 5000); percent != lastPercent) {
+            lastPercent = percent;
+            std::printf("  ... %.0f s\n", exporting.elapsed() / 1000.0);
+        }
+    }
+    if (window.isExporting()) {
+        std::printf("Esportazione BLOCCATA: dopo %.0f s non è ancora finita\n", exporting.elapsed() / 1000.0);
+        return 3;
+    }
+    std::printf("Esportazione %s in %.1f s%s%s\n", window.lastExportSucceeded() ? "riuscita" : "NON riuscita",
+                exporting.elapsed() / 1000.0, window.lastExportSucceeded() ? "" : ": ",
+                qPrintable(window.lastExportProblem()));
+    return window.lastExportSucceeded() ? 0 : 2;
 }
 
 int runDockTest(QApplication& app)

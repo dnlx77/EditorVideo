@@ -14,6 +14,7 @@ extern "C" {
 
 #include <algorithm>
 #include <mutex>
+#include <thread>
 
 namespace editor::core {
 
@@ -293,14 +294,20 @@ const std::vector<VideoEncoderInfo>& availableVideoEncoders()
     static std::vector<VideoEncoderInfo> encoders;
     static std::once_flag once;
     std::call_once(once, [] {
-        // Gli encoder che non trovano la loro scheda video lo scrivono nel registro di FFmpeg: durante la prova no.
-        const int level = av_log_get_level();
-        av_log_set_level(AV_LOG_QUIET);
-        for (const Candidate& c : kCandidates) {
-            if (works(c))
-                encoders.push_back({c.codec, c.backend, c.name});
-        }
-        av_log_set_level(level);
+        // La prova si fa sempre in un thread a parte, anche se la chiede il thread della finestra: Media Foundation usa
+        // COM, e nel thread della finestra (COM a thread singolo, quello delle finestre di Windows) non funziona e lascia
+        // bloccata la finestra di Windows per salvare che si apre dopo.
+        std::thread probe([] {
+            // Gli encoder che non trovano la loro scheda video lo scrivono nel registro di FFmpeg: durante la prova no.
+            const int level = av_log_get_level();
+            av_log_set_level(AV_LOG_QUIET);
+            for (const Candidate& c : kCandidates) {
+                if (works(c))
+                    encoders.push_back({c.codec, c.backend, c.name});
+            }
+            av_log_set_level(level);
+        });
+        probe.join();
     });
     return encoders;
 }
@@ -388,7 +395,8 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
     }
 
     FramePtr work(av_frame_alloc());
-    if (source->format == ctx->pix_fmt && source->width == ctx->width && source->height == ctx->height) {
+    if (source->format == ctx->pix_fmt && source->width == ctx->width && source->height == ctx->height
+        && source->color_range != AVCOL_RANGE_JPEG) {
         if (av_frame_ref(work.get(), source) < 0)
             throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
     } else {
@@ -407,11 +415,22 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
             height = std::min(ctx->height, static_cast<int>(std::lround(ctx->width / aspect / 2.0)) * 2);
         else if (aspect < static_cast<double>(ctx->width) / ctx->height - 1e-3)
             width = std::min(ctx->width, static_cast<int>(std::lround(ctx->height * aspect / 2.0)) * 2);
-        impl_->sws.reset(sws_getCachedContext(impl_->sws.release(), source->width, source->height,
-                                              static_cast<AVPixelFormat>(source->format), width, height, ctx->pix_fmt,
-                                              SWS_BICUBIC, nullptr, nullptr, nullptr));
+        // I formati "J" (es. yuvj420p, dei video dei telefoni e di alcuni registratori) sono quelli normali a gamma piena:
+        // la conversione va detta così, altrimenti i colori escono un po' sbiaditi o troppo contrastati.
+        AVPixelFormat sourceFormat = static_cast<AVPixelFormat>(source->format);
+        bool fullRange = source->color_range == AVCOL_RANGE_JPEG;
+        switch (sourceFormat) {
+        case AV_PIX_FMT_YUVJ420P: sourceFormat = AV_PIX_FMT_YUV420P; fullRange = true; break;
+        case AV_PIX_FMT_YUVJ422P: sourceFormat = AV_PIX_FMT_YUV422P; fullRange = true; break;
+        case AV_PIX_FMT_YUVJ444P: sourceFormat = AV_PIX_FMT_YUV444P; fullRange = true; break;
+        default: break;
+        }
+        impl_->sws.reset(sws_getCachedContext(impl_->sws.release(), source->width, source->height, sourceFormat, width, height,
+                                              ctx->pix_fmt, SWS_BICUBIC, nullptr, nullptr, nullptr));
         if (!impl_->sws)
             throw MediaError("Conversione del fotogramma da codificare non possibile.");
+        const int* coefficients = sws_getCoefficients(SWS_CS_DEFAULT);
+        sws_setColorspaceDetails(impl_->sws.get(), coefficients, fullRange ? 1 : 0, coefficients, 0, 0, 1 << 16, 1 << 16);
         if (width == ctx->width && height == ctx->height) {
             sws_scale(impl_->sws.get(), source->data, source->linesize, 0, source->height, work->data, work->linesize);
         } else {
