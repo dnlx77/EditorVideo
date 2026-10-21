@@ -1,6 +1,7 @@
 #include "EditorCore/TimelineZoom.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace editor::core {
 
@@ -8,21 +9,19 @@ namespace {
 
 // Margine a sinistra quando si passa alla pagina successiva: il cursore non riparte proprio dal bordo.
 constexpr double kFollowMargin = 0.05;
+// Zoom minimo: tutto il contenuto in un decimo della larghezza.
+constexpr double kMinFraction = 0.1;
 
 }  // namespace
 
 void TimelineZoom::setDuration(double seconds)
 {
     duration_ = std::max(0.0, seconds);
-    if (!fit_ && pixelsPerSecond_ <= fitPixelsPerSecond())
-        fit();
 }
 
 void TimelineZoom::setWidth(double pixels)
 {
     width_ = std::max(1.0, pixels);
-    if (!fit_ && pixelsPerSecond_ <= fitPixelsPerSecond())
-        fit();
 }
 
 void TimelineZoom::setMaxPixelsPerSecond(double pixelsPerSecond)
@@ -37,6 +36,11 @@ double TimelineZoom::fitPixelsPerSecond() const
     return duration_ > 0 ? width_ / duration_ : 1.0;
 }
 
+double TimelineZoom::minPixelsPerSecond() const
+{
+    return fitPixelsPerSecond() * kMinFraction;
+}
+
 double TimelineZoom::maxPixelsPerSecond() const
 {
     return std::max(maxPixelsPerSecond_, fitPixelsPerSecond());
@@ -44,7 +48,7 @@ double TimelineZoom::maxPixelsPerSecond() const
 
 double TimelineZoom::pixelsPerSecond() const
 {
-    return fit_ ? fitPixelsPerSecond() : std::clamp(pixelsPerSecond_, fitPixelsPerSecond(), maxPixelsPerSecond());
+    return fit_ ? fitPixelsPerSecond() : std::clamp(pixelsPerSecond_, minPixelsPerSecond(), maxPixelsPerSecond());
 }
 
 bool TimelineZoom::isFit() const
@@ -87,9 +91,9 @@ void TimelineZoom::zoomAt(double factor, double x)
     if (duration_ <= 0 || factor <= 0)
         return;
     const double anchor = offset() + x / pixelsPerSecond();  // il tempo che deve restare in x
-    const double wanted = std::min(pixelsPerSecond() * factor, maxPixelsPerSecond());
-    if (wanted <= fitPixelsPerSecond() * (1.0 + 1e-9)) {
-        fit();
+    const double wanted = std::clamp(pixelsPerSecond() * factor, minPixelsPerSecond(), maxPixelsPerSecond());
+    if (std::abs(wanted - fitPixelsPerSecond()) <= fitPixelsPerSecond() * 1e-9) {
+        fit();  // proprio "Adatta" (es. un file brevissimo, già al massimo)
         return;
     }
     fit_ = false;
@@ -116,7 +120,7 @@ void TimelineZoom::scrollBy(double pixels)
 
 bool TimelineZoom::follow(double seconds)
 {
-    if (fit_)
+    if (fit_ || !canScroll())
         return false;
     const double start = offset();
     const double visible = visibleSeconds();

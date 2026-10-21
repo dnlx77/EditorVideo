@@ -34,7 +34,8 @@ ZoomableTimeline::ZoomableTimeline(QWidget* parent)
 
     fit_ = new QToolButton(this);
     fit_->setText(QStringLiteral("Adatta"));
-    fit_->setToolTip(QStringLiteral("Mostra tutta la linea del tempo (Ctrl+rotellina o + e - per ingrandire e ridurre)"));
+    fit_->setToolTip(QStringLiteral("Tutta la linea del tempo nella larghezza (Ctrl+rotellina o + e - per ingrandire e "
+                                    "ridurre, anche oltre)"));
     fit_->setFocusPolicy(Qt::NoFocus);
     fit_->setAutoRaise(true);
     connect(fit_, &QToolButton::clicked, this, [this] { fitAll(); });
@@ -130,10 +131,11 @@ void ZoomableTimeline::resizeEvent(QResizeEvent* event)
 void ZoomableTimeline::syncControls()
 {
     syncing_ = true;
-    const bool zoomed = !zoom_.isFit();
-    scroll_->setVisible(zoomed);
-    fit_->setEnabled(zoomed);
-    if (zoomed) {
+    // La barra serve solo quando il contenuto è più largo (ingrandito); rimpicciolito oltre "Adatta" sta tutto.
+    const bool scrollable = zoom_.canScroll();
+    scroll_->setVisible(scrollable);
+    fit_->setEnabled(!zoom_.isFit());
+    if (scrollable) {
         const double pps = zoom_.pixelsPerSecond();
         scroll_->setRange(0, static_cast<int>(std::lround(zoom_.maxOffset() * pps)));
         scroll_->setPageStep(static_cast<int>(zoom_.width()));
@@ -153,7 +155,7 @@ void ZoomableTimeline::wheelEvent(QWheelEvent* event)
         event->accept();
         return;
     }
-    if (zoom_.isFit()) {
+    if (!zoom_.canScroll()) {
         event->ignore();  // niente da scorrere: la rotellina va a chi contiene la linea del tempo
         return;
     }
