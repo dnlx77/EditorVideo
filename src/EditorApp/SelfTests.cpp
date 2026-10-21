@@ -784,16 +784,36 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                                    && !timelineDock->isFloating()
                                    && window->dockWidgetArea(timelineDock) == Qt::BottomDockWidgetArea;
                 QCoreApplication::processEvents();
-                const bool lowFull = timelineDock->width() >= window->width() - 30;
+                QCoreApplication::processEvents();
+                const bool lowFull = timelineDock->width() >= window->width() - 30 && timelineDock->height() >= 225;
+                const int lowHeight = timelineDock->height();
                 timelineDock->setFloating(true);
                 window->redockTimeline();
                 QCoreApplication::processEvents();
-                const bool menuDocks = !timelineDock->isFloating() && timelineDock->width() >= window->width() - 30;
+                QCoreApplication::processEvents();
+                const bool menuDocks = !timelineDock->isFloating() && timelineDock->width() >= window->width() - 30
+                                    && timelineDock->height() >= 225;
+                const int menuHeight = timelineDock->height();
+                // Più alta prima di staccarla: riagganciata riprende quell'altezza.
+                window->resizeDocks({timelineDock}, {400}, Qt::Vertical);
+                QCoreApplication::processEvents();
+                const int before = timelineDock->height();
+                timelineDock->setFloating(true);
+                QCoreApplication::processEvents();
+                timelineDock->setFloating(false);  // come il doppio clic sul titolo
+                QCoreApplication::processEvents();
+                QCoreApplication::processEvents();
+                const bool keptHeight = !timelineDock->isFloating() && std::abs(timelineDock->height() - before) <= 4;
+                std::printf("  altezza della linea del tempo riagganciata: %d px (in basso), %d px dal menu, %d px dopo il doppio "
+                            "clic (prima %d)\n",
+                            lowHeight, menuHeight, timelineDock->height(), before);
                 std::printf("  linea del tempo lasciata in alto: %s, trascinata: %s, lasciata in basso: %s, dal menu: %s\n",
                             highStays ? "resta staccata" : "AGGANCIATA", heldStays ? "resta staccata" : "AGGANCIATA",
                             lowDocks && lowFull ? "riagganciata a tutta larghezza" : "NON riagganciata",
                             menuDocks ? "riagganciata" : "NON riagganciata");
-                const bool redockOk = highStays && heldStays && lowDocks && lowFull && menuDocks;
+                const bool redockOk = highStays && heldStays && lowDocks && lowFull && menuDocks && keptHeight;
+                window->resetLayout();
+                QCoreApplication::processEvents();
                 window->resetLayout();
                 QCoreApplication::processEvents();
 
