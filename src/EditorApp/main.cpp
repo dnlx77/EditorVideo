@@ -24,6 +24,9 @@ int main(int argc, char* argv[])
         return *code;
 
     editor::app::MainWindow window;
+    // La disposizione dei pannelli salvata l'ultima volta; le prove partono sempre da quella iniziale.
+    if (!smokeTest)
+        window.restoreLayout();
     window.show();
 
     // "EditorVideo.exe file.mp4" (o un file trascinato sull'icona) apre subito quel file; altri file dopo il primo

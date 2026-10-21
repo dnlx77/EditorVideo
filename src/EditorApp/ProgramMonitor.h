@@ -40,6 +40,7 @@ public:
     std::function<void(double)> onPositionChanged;
     std::function<void()> onActivated;  // l'utente ha usato questa anteprima (per i tasti Spazio e frecce)
     std::function<void()> onPlaybackStarted;
+    std::function<void()> onVideoDoubleClicked;  // doppio clic sull'immagine (schermo intero)
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;

@@ -92,6 +92,10 @@ public:
     void seekToEnd();                    // ultimo fotogramma
     double frameDuration() const { return frameDuration_; }
     TimelineWidget* timeline() const { return timeline_; }  // per lo zoom (menu e prove)
+    // Doppio clic sull'immagine (schermo intero).
+    std::function<void()> onVideoDoubleClicked;
+    // Cosa scrivere nell'anteprima quando non c'è nessun file.
+    void setIdleMessage(const QString& message);
     const core::CutSegment& segment() const;
 
     // Tratti del file che sono nel montaggio (bande verdi), in ordine e già uniti. Va chiamato dopo setKeyframes(),
@@ -140,6 +144,7 @@ private:
     QString externalAudio_;
     double externalDelta_ = 0.0;
     bool externalActive_ = false;    // audio_ è quello esterno
+    QString idleMessage_;
     QString audioNote_;    // es. "audio non disponibile"
     QString decoderText_;  // "Decodifica: GPU (D3D11VA)" / "Decodifica: software"
 

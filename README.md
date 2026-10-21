@@ -45,6 +45,12 @@ La finestra è divisa così:
 
 **File > Apri file video...** (Ctrl+O) apre un file in un progetto nuovo; **File > Aggiungi file...** (Ctrl+Maiusc+O, anche più file insieme) ne aggiunge altri. Vengono analizzati uno alla volta in background. Si possono anche passare i file da riga di comando: `EditorVideo.exe "C:\Video\a.mp4" "C:\Video\b.mp4"`.
 
+### Pannelli
+
+- File del progetto, Sorgente, Montaggio e la linea del tempo del montaggio sono **pannelli**: si ridimensionano trascinando i bordi, si spostano trascinando il titolo (anche uno accanto all'altro o uno sopra l'altro, o come schede) e si **staccano** come finestre a sé con il pulsante sul titolo o un doppio clic sul titolo, per esempio per mettere il Montaggio su un secondo monitor. Doppio clic sul titolo di una finestra staccata per riagganciarla.
+- **Doppio clic sull'immagine** della Sorgente o del Montaggio: quell'anteprima a schermo intero; **Esc** o un altro doppio clic per uscire. Spazio, frecce e gli altri tasti funzionano anche a schermo intero e nei pannelli staccati.
+- La disposizione viene salvata chiudendo il programma e ritrovata alla riapertura (se un monitor non c'è più, la finestra torna su quello principale). Il menu **Finestra** mostra o nasconde ogni pannello e ha **Ripristina disposizione** per tornare a quella iniziale.
+
 ### Comandi
 
 | Comando | Tasto |

@@ -25,6 +25,7 @@
 #include <QtCore/QTimer>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QWheelEvent>
+#include <QtWidgets/QDockWidget>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressDialog>
@@ -706,6 +707,53 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 thumbs.start();
                 while (window->pendingThumbnails() > 0 && thumbs.elapsed() < 20000)
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            }
+
+            // Pannelli: la Sorgente staccata come finestra durante la riproduzione (il video deve continuare ad andare
+            // e a mostrarsi), riagganciata, a schermo intero e ritorno; disposizione salvata e ripristinata.
+            {
+                const auto advances = [&](const char* when) {
+                    const double from = player->currentPosition();
+                    QElapsedTimer t;
+                    t.start();
+                    while (t.elapsed() < 700)
+                        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    const double moved = player->currentPosition() - from;
+                    std::printf("  %s: la riproduzione avanza di %.2f s in 0,7 s (%s)\n", when, moved,
+                                qPrintable(player->statusText()));
+                    return moved > 0.3;
+                };
+                QDockWidget* source = window->sourceDock();
+                player->seekTo(0.0);
+                player->play();
+                bool docksOk = advances("agganciata");
+                source->setFloating(true);
+                docksOk = advances("staccata") && source->isFloating() && docksOk;
+                source->setFloating(false);
+                docksOk = advances("riagganciata") && !source->isFloating() && docksOk;
+                window->toggleFullScreen(source);
+                const bool full = window->isPanelFullScreen() && source->isFloating();
+                docksOk = advances("a schermo intero") && full && docksOk;
+                window->toggleFullScreen(source);
+                docksOk = docksOk && !window->isPanelFullScreen() && !source->isFloating();
+                player->pause();
+
+                // Disposizione: salvata, cambiata (pannello spostato e uno nascosto), ripristinata.
+                const QByteArray state = window->saveState();
+                const Qt::DockWidgetArea area = window->dockWidgetArea(window->filesDock());
+                window->addDockWidget(Qt::RightDockWidgetArea, window->filesDock());
+                window->timelineDock()->hide();
+                const bool changed = window->dockWidgetArea(window->filesDock()) == Qt::RightDockWidgetArea;
+                const bool restored = window->restoreState(state) && window->dockWidgetArea(window->filesDock()) == area
+                                   && window->timelineDock()->isVisible();
+                window->timelineDock()->hide();
+                window->resetLayout();
+                const bool reset = window->timelineDock()->isVisible() && !window->sourceDock()->isFloating();
+                std::printf("Pannelli: staccati e riagganciati %s, disposizione salvata e ripristinata %s, ripristino iniziale %s\n",
+                            docksOk ? "OK" : "NON riuscito", changed && restored ? "OK" : "NON riuscita",
+                            reset ? "OK" : "NON riuscito");
+                std::fflush(stdout);
+                ok = ok && (docksOk || !player->hasMedia()) && changed && restored && reset;
             }
 
             // Progetto: salvato e riaperto, con gli stessi pezzi e lo stesso audio tolto (e senza modifiche

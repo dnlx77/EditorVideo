@@ -22,6 +22,10 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
 {
     player_ = new PlayerWidget;
     player_->setChromeVisible(false);
+    player_->onVideoDoubleClicked = [this] {
+        if (onVideoDoubleClicked)
+            onVideoDoubleClicked();
+    };
     player_->onWindowEnd = [this] { fragmentEnded(); };
 
     playButton_ = new QToolButton;

@@ -9,6 +9,7 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QTimer>
+#include <QtGui/QMouseEvent>
 #include <QtGui/QPainter>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -59,8 +60,15 @@ public:
     QSize pixelSize() const { return (QSizeF(size()) * devicePixelRatioF()).toSize(); }
 
     std::function<void()> onResized;
+    std::function<void()> onDoubleClicked;
 
 protected:
+    void mouseDoubleClickEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::LeftButton && onDoubleClicked)
+            onDoubleClicked();
+    }
+
     void resizeEvent(QResizeEvent* event) override
     {
         QWidget::resizeEvent(event);
@@ -148,6 +156,10 @@ PlayerWidget::PlayerWidget(QWidget* parent)
         if (video_ && !playing_)
             showFrameAt(position_);
     });
+    view_->onDoubleClicked = [this] {
+        if (onVideoDoubleClicked)
+            onVideoDoubleClicked();
+    };
     view_->onResized = [this] {
         if (!video_)
             return;
@@ -292,7 +304,7 @@ void PlayerWidget::closeFile()
     keyframesKnown_ = false;
     segmentNote_.clear();
     updateSegmentUi();
-    view_->setMessage(QString());
+    view_->setMessage(idleMessage_);
     updateControls();
     updatePositionLabel(0.0);
 }
@@ -797,6 +809,13 @@ const core::CutSegment& PlayerWidget::segment() const
 void PlayerWidget::setPlaybackWindow(double end)
 {
     windowEnd_ = end;
+}
+
+void PlayerWidget::setIdleMessage(const QString& message)
+{
+    idleMessage_ = message;
+    if (!hasMedia())
+        view_->setMessage(idleMessage_);
 }
 
 void PlayerWidget::setChromeVisible(bool visible)

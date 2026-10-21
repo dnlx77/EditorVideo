@@ -20,7 +20,9 @@
 #include <QtCore/QTimer>
 #include <QtGui/QCloseEvent>
 #include <QtGui/QKeyEvent>
+#include <QtGui/QScreen>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QDockWidget>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLabel>
@@ -30,7 +32,6 @@
 #include <QtWidgets/QProgressDialog>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QSplitter>
-#include <QtWidgets/QStackedWidget>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QTreeWidget>
@@ -154,8 +155,6 @@ MainWindow::MainWindow(QWidget* parent)
     setWindowTitle(QStringLiteral("EditorVideo"));
     resize(1500, 900);
 
-    placeholder_ = new QLabel(QStringLiteral("Apri un file video da File > Apri..."));
-    placeholder_->setAlignment(Qt::AlignCenter);
 
     // --- Sinistra: file del progetto, informazioni, fotogrammi chiave
     clipList_ = new QListWidget;
@@ -214,7 +213,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     // --- Centro: Sorgente (il file scelto) e Montaggio (il risultato)
     player_ = new PlayerWidget;
+    player_->setIdleMessage(QStringLiteral("Apri un file video da File > Apri file video..."));
     player_->onSegmentChanged = [this] { updateExportAction(); };
+    player_->onVideoDoubleClicked = [this] { toggleFullScreen(sourceDock_); };
     player_->installEventFilter(this);  // un clic sulla Sorgente la rende l'anteprima attiva
     sourceTitle_ = new QLabel(sourceTitle(true));
     auto* sourcePanel = new QWidget;
@@ -227,15 +228,7 @@ MainWindow::MainWindow(QWidget* parent)
     program_->onActivated = [this] { setProgramActive(true); };
     program_->onPositionChanged = [this](double seconds) { timeline_->setPlayhead(seconds); };
     program_->onPlaybackStarted = [this] { timeline_->resumeFollowing(); };
-
-    auto* monitors = new QSplitter;
-    monitors->addWidget(leftPanel);
-    monitors->addWidget(sourcePanel);
-    monitors->addWidget(program_);
-    monitors->setStretchFactor(0, 1);
-    monitors->setStretchFactor(1, 3);
-    monitors->setStretchFactor(2, 3);
-    monitors->setSizes({320, 590, 590});
+    program_->onVideoDoubleClicked = [this] { toggleFullScreen(programDock_); };
 
     // --- In basso: la sequenza
     timeline_ = new SequenceTimeline;
@@ -286,16 +279,26 @@ MainWindow::MainWindow(QWidget* parent)
     sequenceLayout->addWidget(sequenceLabel_);
     sequenceLayout->addWidget(timeline_);
 
-    auto* main = new QSplitter(Qt::Vertical);
-    main->addWidget(monitors);
-    main->addWidget(sequencePanel);
-    main->setStretchFactor(0, 4);
-    main->setStretchFactor(1, 1);
-
-    pages_ = new QStackedWidget(this);
-    pages_->addWidget(placeholder_);
-    pages_->addWidget(main);
-    setCentralWidget(pages_);
+    // --- Pannelli: tutto sta in pannelli spostabili; al centro non resta niente.
+    const auto makeDock = [this](const QString& title, const QString& name, QWidget* content) {
+        auto* dock = new QDockWidget(title, this);
+        dock->setObjectName(name);  // serve per salvare e ripristinare la disposizione
+        dock->setWidget(content);
+        dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable
+                          | QDockWidget::DockWidgetClosable);
+        return dock;
+    };
+    filesDock_ = makeDock(QStringLiteral("File del progetto"), QStringLiteral("pannelloFile"), leftPanel);
+    sourceDock_ = makeDock(QStringLiteral("Sorgente"), QStringLiteral("pannelloSorgente"), sourcePanel);
+    programDock_ = makeDock(QStringLiteral("Montaggio"), QStringLiteral("pannelloMontaggio"), program_);
+    timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),
+                             sequencePanel);
+    auto* center = new QWidget(this);
+    center->hide();
+    setCentralWidget(center);
+    setDockNestingEnabled(true);
+    setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks);
+    resetLayout();
 
     // Un clic in qualsiasi punto di un'anteprima (anche sulla sua linea del tempo) la rende quella attiva.
     for (QWidget* w : player_->findChildren<QWidget*>())
@@ -588,8 +591,6 @@ void MainWindow::afterHistoryChange(const QString& message)
         player_->closeFile();
         if (!project_.empty())
             selectClip(project_.clips().front().id);
-        else
-            pages_->setCurrentIndex(0);
     } else if (currentClipId_ == 0 && !project_.empty()) {
         selectClip(project_.clips().front().id);
     }
@@ -1180,12 +1181,39 @@ void MainWindow::createMenus()
     originalAudioAction_ = audioMenu->addAction(QStringLiteral("Usa l'audio &originale"), this, [this] { restoreOriginalAudio(); });
     originalAudioAction_->setEnabled(false);
 
+    QMenu* windowMenu = menuBar()->addMenu(QStringLiteral("Fi&nestra"));
+    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+        QAction* toggle = dock->toggleViewAction();
+        toggle->setText(QStringLiteral("Pannello %1").arg(dock->windowTitle()));
+        windowMenu->addAction(toggle);
+    }
+    windowMenu->addSeparator();
+    windowMenu->addAction(QStringLiteral("Schermo intero della Sorgente"), this, [this] { toggleFullScreen(sourceDock_); });
+    windowMenu->addAction(QStringLiteral("Schermo intero del Montaggio"), this, [this] { toggleFullScreen(programDock_); });
+    QAction* exitFull = windowMenu->addAction(QStringLiteral("Esci dallo schermo intero"), this, [this] { exitFullScreen(); });
+    exitFull->setShortcut(QKeySequence(Qt::Key_Escape));
+    windowMenu->addSeparator();
+    windowMenu->addAction(QStringLiteral("&Ripristina disposizione"), this, [this] { resetLayout(); });
+
     QMenu* helpMenu = menuBar()->addMenu(QStringLiteral("&Aiuto"));
     helpMenu->addAction(QStringLiteral("&Scorciatoie da tastiera"), this, &MainWindow::showShortcuts)
         ->setShortcut(QKeySequence(Qt::Key_F1));
     helpMenu->addAction(QStringLiteral("&Informazioni su EditorVideo"), this, &MainWindow::showAbout);
     updateExportAction();
     updateUndoActions();
+
+    // Le scorciatoie valgono anche in un pannello staccato (che è una finestra a sé) o a schermo intero.
+    QList<QAction*> shortcuts;
+    for (QAction* menu : menuBar()->actions()) {
+        if (menu->menu() == nullptr)
+            continue;
+        for (QAction* action : menu->menu()->actions()) {
+            if (!action->shortcuts().isEmpty())
+                shortcuts.append(action);
+        }
+    }
+    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_})
+        dock->addActions(shortcuts);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1369,7 +1397,6 @@ void MainWindow::selectClip(int id)
         updateTitle();
     }
     refreshClipList();
-    pages_->setCurrentIndex(1);
     updateExportAction();
 }
 
@@ -1398,7 +1425,6 @@ void MainWindow::removeClip(int id, const QString& undoLabel)
             infoTree_->clear();
             keyframeList_->clear();
             updateTitle();
-            pages_->setCurrentIndex(0);
         }
     }
     sequenceChanged();
@@ -1490,7 +1516,6 @@ void MainWindow::showInfo(const core::MediaInfo& info)
         keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> nessun flusso video"));
     }
 
-    pages_->setCurrentIndex(1);
     statusBar()->showMessage(QStringLiteral("%1  ·  %2  ·  %3 fotogrammi chiave")
                                  .arg(fileName, qs(core::formatDuration(info.durationSeconds)))
                                  .arg(info.keyframeTimes.size()));
@@ -1554,10 +1579,106 @@ bool MainWindow::maybeSave()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    if (maybeSave())
-        event->accept();
-    else
+    if (!maybeSave()) {
         event->ignore();
+        return;
+    }
+    if (fullScreenDock_ != nullptr)
+        exitFullScreen();
+    saveLayout();
+    event->accept();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Pannelli
+
+void MainWindow::resetLayout()
+{
+    if (fullScreenDock_ != nullptr)
+        exitFullScreen();
+    // A sinistra i file, al centro Sorgente e Montaggio affiancati, sotto la linea del tempo del montaggio.
+    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+        dock->setFloating(false);
+        removeDockWidget(dock);
+    }
+    addDockWidget(Qt::TopDockWidgetArea, filesDock_);
+    splitDockWidget(filesDock_, sourceDock_, Qt::Horizontal);
+    splitDockWidget(sourceDock_, programDock_, Qt::Horizontal);
+    addDockWidget(Qt::BottomDockWidgetArea, timelineDock_);
+    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_})
+        dock->show();
+    resizeDocks({filesDock_, sourceDock_, programDock_}, {320, 590, 590}, Qt::Horizontal);
+    resizeDocks({sourceDock_, timelineDock_}, {620, 230}, Qt::Vertical);
+}
+
+void MainWindow::saveLayout()
+{
+    QSettings s = settings();
+    s.setValue(QStringLiteral("finestra/geometria"), saveGeometry());
+    s.setValue(QStringLiteral("finestra/disposizione"), saveState());
+}
+
+void MainWindow::restoreLayout()
+{
+    QSettings s = settings();
+    const QByteArray geometry = s.value(QStringLiteral("finestra/geometria")).toByteArray();
+    const QByteArray state = s.value(QStringLiteral("finestra/disposizione")).toByteArray();
+    if (!geometry.isEmpty())
+        restoreGeometry(geometry);
+    if (!state.isEmpty() && !restoreState(state))
+        resetLayout();
+    // Il monitor dove stava la finestra (o un pannello staccato) potrebbe non esserci più.
+    keepOnScreen(this);
+    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+        if (dock->isFloating())
+            keepOnScreen(dock);
+    }
+}
+
+void MainWindow::keepOnScreen(QWidget* window)
+{
+    const QRect frame = window->frameGeometry();
+    for (const QScreen* screen : QGuiApplication::screens()) {
+        if (screen->availableGeometry().intersects(frame.adjusted(40, 10, -40, -10)))
+            return;
+    }
+    const QRect available = QGuiApplication::primaryScreen()->availableGeometry();
+    QSize size = window->size().boundedTo(available.size() - QSize(40, 60));
+    window->resize(size);
+    window->move(available.center() - QPoint(size.width() / 2, size.height() / 2));
+}
+
+void MainWindow::toggleFullScreen(QDockWidget* dock)
+{
+    if (fullScreenDock_ != nullptr) {
+        const bool same = fullScreenDock_ == dock;
+        exitFullScreen();
+        if (same)
+            return;
+    }
+    // Il pannello diventa una finestra a sé, a schermo intero e senza la barra del titolo; uscendo si ritrova la
+    // disposizione di prima.
+    layoutBeforeFullScreen_ = saveState();
+    fullScreenDock_ = dock;
+    dock->setFloating(true);
+    dock->setTitleBarWidget(new QWidget(dock));
+    dock->showFullScreen();
+    dock->activateWindow();
+    statusBar()->showMessage(QStringLiteral("Schermo intero: Esc o doppio clic sull'immagine per uscire."), 5000);
+}
+
+void MainWindow::exitFullScreen()
+{
+    QDockWidget* dock = fullScreenDock_;
+    if (dock == nullptr)
+        return;
+    fullScreenDock_ = nullptr;
+    QWidget* title = dock->titleBarWidget();
+    dock->setTitleBarWidget(nullptr);
+    delete title;
+    dock->showNormal();
+    restoreState(layoutBeforeFullScreen_);
+    activateWindow();
 }
 
 bool MainWindow::saveProject()
@@ -1691,8 +1812,6 @@ bool MainWindow::openProject(const QString& path, bool interactive)
     if (source != 0) {
         selectClip(source);
         player_->seekTo(loaded.view.sourcePosition);
-    } else {
-        pages_->setCurrentIndex(project_.empty() ? 0 : 1);
     }
     program_->seekTo(loaded.view.programPosition);
     startNextProbe();
@@ -1849,6 +1968,7 @@ void MainWindow::showShortcuts()
         {"Ctrl+P", "Apri progetto"},
         {"Ctrl+S / Ctrl+Maiusc+S", "Salva progetto / salva con nome"},
         {"Ctrl+E", "Esporta"},
+        {"Doppio clic sull'immagine", "Schermo intero dell'anteprima (Esc o doppio clic per uscire)"},
         {"F1", "Questo elenco"},
     };
     QString html = QStringLiteral("<table cellspacing='0' cellpadding='4'>");

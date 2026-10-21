@@ -20,10 +20,10 @@
 #include <vector>
 
 class QAction;
+class QDockWidget;
 class QLabel;
 class QMenu;
 class QListWidget;
-class QStackedWidget;
 class QThread;
 class QTreeWidget;
 
@@ -53,6 +53,18 @@ public:
     PlayerWidget* player() const { return player_; }  // anteprima di partenza (Sorgente)
     ProgramMonitor* programMonitor() const { return program_; }
     SequenceTimeline* sequenceTimeline() const { return timeline_; }
+
+    // Pannelli (File del progetto, Sorgente, Montaggio, Linea del tempo del montaggio): spostabili, ridimensionabili e
+    // staccabili come finestre. La disposizione si salva chiudendo il programma.
+    void restoreLayout();  // quella salvata (all'avvio); se un pannello finirebbe fuori dagli schermi, torna dentro
+    void resetLayout();    // Finestra > Ripristina disposizione
+    // Schermo intero di un pannello (doppio clic sull'immagine di un'anteprima); di nuovo, o Esc, per uscire.
+    void toggleFullScreen(QDockWidget* dock);
+    bool isPanelFullScreen() const { return fullScreenDock_ != nullptr; }
+    QDockWidget* sourceDock() const { return sourceDock_; }
+    QDockWidget* programDock() const { return programDock_; }
+    QDockWidget* filesDock() const { return filesDock_; }
+    QDockWidget* timelineDock() const { return timelineDock_; }
     QString currentFile() const { return currentPath_; }
     const core::Project& project() const { return project_; }
     int currentClipId() const { return currentClipId_; }
@@ -116,6 +128,10 @@ private:
     void addFilesDialog();
     void showAbout();
     void showShortcuts();
+    void saveLayout();
+    void exitFullScreen();
+    // Un pannello staccato (o la finestra) che non sta su nessuno schermo torna su quello principale.
+    void keepOnScreen(QWidget* window);
     void showInfo(const core::MediaInfo& info);
     void replaceAudioDialog();
     void openProjectDialog();
@@ -172,8 +188,12 @@ private:
     };
     void showExportResult(const ExportOutcome& outcome, const QString& target);
 
-    QStackedWidget* pages_ = nullptr;
-    QLabel* placeholder_ = nullptr;
+    QDockWidget* filesDock_ = nullptr;
+    QDockWidget* sourceDock_ = nullptr;
+    QDockWidget* programDock_ = nullptr;
+    QDockWidget* timelineDock_ = nullptr;
+    QDockWidget* fullScreenDock_ = nullptr;
+    QByteArray layoutBeforeFullScreen_;  // disposizione da ritrovare uscendo dallo schermo intero
     QListWidget* clipList_ = nullptr;
     QTreeWidget* infoTree_ = nullptr;
     QLabel* keyframeTitle_ = nullptr;
