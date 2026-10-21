@@ -7,6 +7,7 @@
 #include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/FileDrop.h"
+#include "EditorCore/Encoder.h"
 #include "EditorCore/LibraryInfo.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
@@ -208,6 +209,11 @@ MainWindow::MainWindow(QWidget* parent)
 {
     setWindowTitle(QStringLiteral("EditorVideo"));
     resize(1500, 900);
+
+    // Quali encoder per la ricodifica funzionano su questo PC: la prova (un fotogramma con ognuno) si fa subito, in
+    // background, così quando servono il risultato è già pronto.
+    encoderProbeThread_ = QThread::create([] { core::availableVideoEncoders(); });
+    encoderProbeThread_->start();
 
 
     // --- Sinistra: file del progetto, informazioni, fotogrammi chiave
@@ -480,6 +486,8 @@ MainWindow::MainWindow(QWidget* parent)
 MainWindow::~MainWindow()
 {
     qApp->removeNativeEventFilter(titleDoubleClick_.get());
+    encoderProbeThread_->wait();  // la prova degli encoder dura al massimo qualche secondo
+    delete encoderProbeThread_;
     // Se un'analisi è ancora in corso la interrompiamo e aspettiamo che il thread finisca.
     if (probeThread_ != nullptr) {
         cancelProbe_ = true;
@@ -2687,9 +2695,18 @@ void MainWindow::showShortcuts()
 
 void MainWindow::showAbout()
 {
+    QApplication::setOverrideCursor(Qt::WaitCursor);  // se la prova degli encoder non è ancora finita
+    QString encoders;
+    for (const core::VideoEncoderInfo& info : core::availableVideoEncoders())
+        encoders += QStringLiteral("<br>• %1").arg(QString::fromStdString(core::describe(info)).toHtmlEscaped());
+    QApplication::restoreOverrideCursor();
+    if (encoders.isEmpty())
+        encoders = QStringLiteral("<br>• nessuno (la ricodifica non sarà disponibile)");
     QMessageBox::about(this, QStringLiteral("Informazioni su EditorVideo"),
                        QStringLiteral("<b>EditorVideo</b><br>Taglio e unione di video senza ricodifica.<br><br>")
-                           + versionSummary().toHtmlEscaped());
+                           + versionSummary().toHtmlEscaped()
+                           + QStringLiteral("<br><br>Encoder video funzionanti su questo PC:") + encoders
+                           + QStringLiteral("<br>Audio: AAC (FFmpeg)"));
 }
 
 QString versionSummary()
