@@ -65,6 +65,43 @@ jobs:
           Write-Output "Cache di vcpkg ripristinata: $($files.Count) pacchetti, $mb MB"
           "count=$($files.Count)" >> $env:GITHUB_OUTPUT
 
+      - name: Scarica prima i sorgenti GNU usati da vcpkg
+        shell: pwsh
+        run: |
+          # vcpkg (pacchetto vcpkg-make, usato per compilare FFmpeg) scarica automake da ftpmirror.gnu.org, che dal
+          # server della build automatica a volte non risponde (curl error 35, errore SSL) e fa fallire tutto. Lo si
+          # scarica prima da più mirror, nella cartella dei download di vcpkg con il nome che vcpkg si aspetta: vcpkg
+          # lo trova lì e ne controlla lo SHA512. Se nessun mirror risponde non si ferma niente: ci riprova vcpkg.
+          # (Al commit di vcpkg in VCPKG_COMMIT è l'unico file preso dai server GNU per i nostri pacchetti.)
+          $downloads = Join-Path $env:VCPKG_ROOT 'downloads'
+          New-Item -ItemType Directory -Force $downloads | Out-Null
+          $files = @('automake/automake-1.17.tar.gz')
+          $mirrors = @('https://ftp.gnu.org/gnu/', 'https://mirrors.kernel.org/gnu/', 'https://ftpmirror.gnu.org/gnu/',
+                       'https://www.mirrorservice.org/sites/ftp.gnu.org/gnu/')
+          foreach ($file in $files) {
+            $target = Join-Path $downloads (Split-Path $file -Leaf)
+            if (Test-Path $target) { continue }
+            $done = $false
+            foreach ($mirror in $mirrors) {
+              for ($try = 1; $try -le 3 -and -not $done; $try++) {
+                try {
+                  Invoke-WebRequest -Uri ($mirror + $file) -OutFile "$target.part" -TimeoutSec 120
+                  Move-Item -Force "$target.part" $target
+                  $done = $true
+                  Write-Output "Scaricato $file da $mirror"
+                } catch {
+                  Write-Output "Non riuscito ($mirror, tentativo $try): $($_.Exception.Message)"
+                  Start-Sleep -Seconds (2 * $try)
+                }
+              }
+              if ($done) { break }
+            }
+            if (-not $done) {
+              Remove-Item -Force "$target.part" -ErrorAction SilentlyContinue
+              Write-Output "::warning::$file non scaricato da nessun mirror: ci riprova vcpkg"
+            }
+          }
+
       - uses: microsoft/setup-msbuild@v2
 
       - name: Compila (Release x64)

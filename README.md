@@ -65,7 +65,7 @@ La finestra è divisa così:
 
 | Comando | Tasto |
 |---|---|
-| Riproduci / Pausa (l'anteprima usata per ultima, segnata con ▶ se è la Sorgente) | Spazio (oppure L / K) |
+| Riproduci / Pausa (l'anteprima usata per ultima, segnata con ▶ nel titolo del suo pannello) | Spazio (oppure L / K) |
 | Fotogramma precedente / successivo | ← / → (oppure `,` / `.`) |
 | Sorgente: fotogramma chiave precedente / successivo · Montaggio: inizio del pezzo precedente / successivo | Maiusc+← / Maiusc+→ |
 | Indietro / avanti di 5 secondi | Ctrl+← / Ctrl+→ (J indietro) |
@@ -147,6 +147,7 @@ Nella timeline del montaggio ogni pezzo mostra un fotogramma all'inizio e, se il
 
 - Il video viene decodificato dalla **scheda video (D3D11VA)** quando il codec lo permette (H.264, HEVC, VP9, AV1, MPEG-2... secondo la GPU), altrimenti dal **processore**: il passaggio è automatico, anche se la GPU dà errore a metà. In basso a destra c'è scritto quale si sta usando (`Decodifica: GPU (D3D11VA)` / `Decodifica: software`).
 - L'audio è il riferimento per la sincronizzazione: ogni fotogramma viene mostrato quando l'audio arriva al suo tempo. Se il file non ha audio (o non c'è una scheda audio) si usa l'orologio di sistema.
+- **Ricodifica** (in preparazione, per ora non cambia l'esportazione): il programma sa codificare video H.264, HEVC e AV1 con la scheda video (**NVIDIA NVENC**, oppure **Media Foundation** di Windows, che usa la scheda video o il codificatore software di Windows) a qualità costante, e audio AAC. All'avvio prova, in background, quali encoder funzionano davvero su questo PC codificando un fotogramma con ognuno: l'elenco è in **Aiuto > Informazioni**. La build di FFmpeg resta LGPL (niente x264/x265).
 - L'audio esce dalla scheda audio predefinita di Windows (waveOut), così non serve il modulo Qt Multimedia.
 
 ## Test
@@ -154,6 +155,7 @@ Nella timeline del montaggio ogni pezzo mostra un fotogramma all'inizio e, se il
 - Esegui `EditorTests` (progetto di avvio o da `bin\x64\Debug\EditorTests.exe`), oppure usa Esplora test di Visual Studio.
 - I test generano al volo piccoli video di prova (MKV, MP4, WAV) con FFmpeg nella cartella temporanea: nel repository non ci sono file binari. Con la variabile d'ambiente `EDITORVIDEO_KEEP_SAMPLES=1` i file dei test di analisi restano in `%TEMP%\EditorVideoTests`.
 - Per provare l'anteprima senza file propri: `EditorTests.exe --gtest_also_run_disabled_tests --gtest_filter=*GeneraVideoDimostrativi*` crea in `%TEMP%\EditorVideoDemo` due video da 10 secondi (uno MPEG-2, che di solito la GPU decodifica, e uno MPEG-4 Part 2, sempre in software) e un file solo audio. L'audio è muto.
+- I test `Encoders.*` codificano 5 secondi di video (alta e media qualità, con fotogrammi chiave chiesti) e audio AAC con ogni encoder funzionante, poi rileggono il file e controllano durata, numero di fotogrammi, fotogrammi chiave e luminosità; scrivono quali encoder hanno trovato. Senza nessun encoder video (es. un server senza scheda video né Media Foundation) le prove video vengono saltate con un messaggio.
 - `EditorVideo.exe --smoke-test` verifica che l'applicazione parta con tutte le DLL; `EditorVideo.exe --smoke-test file.mkv` riproduce anche il file per 2 secondi, controlla che la posizione avanzi col tempo giusto, segna due tratti e li esporta uniti dalla finestra (controllando anche che la finestra di avanzamento si chiuda) (con `EDITORVIDEO_SMOKE_SCREENSHOT=immagine.png` salva anche un'immagine della finestra). Con `EDITORVIDEO_NO_AUDIO=1` si simula un PC senza scheda audio.
 - `EditorVideo.exe --export-test origine destinazione IN OUT [IN OUT ...]` (tempi in secondi) esporta uno o più tratti uniti come l'interfaccia, con ogni IN agganciato al fotogramma chiave, e controlla il file creato (codici di uscita: 0 tutto giusto, 2 errore, 3 controllo non riuscito).
 - `EditorVideo.exe --join-test destinazione file1 file2 [...]` unisce i file interi come l'interfaccia, dopo il controllo di compatibilità, e controlla il file creato (codici di uscita: 0 tutto giusto, 4 file non compatibili, 2 errore, 3 controllo non riuscito).

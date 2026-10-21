@@ -7,6 +7,7 @@
 #include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/FileDrop.h"
+#include "EditorCore/Encoder.h"
 #include "EditorCore/LibraryInfo.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
@@ -30,7 +31,9 @@
 #include <QtWidgets/QStyle>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QKeyEvent>
+#include <QtGui/QHelpEvent>
 #include <QtGui/QScreen>
+#include <QtWidgets/QToolTip>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QFileDialog>
@@ -142,11 +145,10 @@ const QString kProjectFilter = QStringLiteral("Progetto EditorVideo (*%1)").arg(
 constexpr int kRecentProjects = 5;
 const QString kRecentProjectsKey = QStringLiteral("progettiRecenti");  // impostazione con i progetti recenti
 
-// Titolo della Sorgente; con il triangolo quando l'anteprima attiva è il Montaggio (vedi setProgramActive).
-QString sourceTitle(bool sourceActive)
+// Titolo del pannello di un'anteprima: con il triangolo se è quella attiva (lì vanno Spazio e frecce).
+QString previewTitle(const QString& name, bool active)
 {
-    return (sourceActive ? QStringLiteral("<b>Sorgente</b>") : QStringLiteral("<b>▶ Sorgente</b>"))
-         + QStringLiteral(" (segna I e O, poi A per metterlo nel montaggio)");
+    return active ? QStringLiteral("▶ ") + name : name;
 }
 
 QSettings settings()
@@ -210,6 +212,7 @@ MainWindow::MainWindow(QWidget* parent)
     resize(1500, 900);
 
 
+
     // --- Sinistra: file del progetto, informazioni, fotogrammi chiave
     clipList_ = new QListWidget;
     clipList_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -263,9 +266,6 @@ MainWindow::MainWindow(QWidget* parent)
     auto* clipPanel = new QWidget;
     auto* clipLayout = new QVBoxLayout(clipPanel);
     clipLayout->setContentsMargins(0, 0, 0, 0);
-    auto* clipTitle = new QLabel(QStringLiteral("<b>File del progetto</b>"));
-    clipTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    clipLayout->addWidget(clipTitle);
     clipLayout->addWidget(clipList_);
     leftPanel->addWidget(clipPanel);
     leftPanel->addWidget(tabs);
@@ -283,12 +283,9 @@ MainWindow::MainWindow(QWidget* parent)
     player_->onSegmentChanged = [this] { updateExportAction(); };
     player_->onVideoDoubleClicked = [this] { toggleFullScreen(sourceDock_); };
     player_->installEventFilter(this);  // un clic sulla Sorgente la rende l'anteprima attiva
-    sourceTitle_ = new QLabel(sourceTitle(true));
-    sourceTitle_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* sourcePanel = new QWidget;
     auto* sourceLayout = new QVBoxLayout(sourcePanel);
     sourceLayout->setContentsMargins(0, 0, 0, 0);
-    sourceLayout->addWidget(sourceTitle_);
     sourceLayout->addWidget(player_, 1);
 
     program_ = new ProgramMonitor(project_);
@@ -369,6 +366,11 @@ MainWindow::MainWindow(QWidget* parent)
     programDock_ = makeDock(QStringLiteral("Montaggio"), QStringLiteral("pannelloMontaggio"), program_);
     timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),
                              sequencePanel);
+    // Spiegazioni, nel suggerimento sul titolo del pannello (vedi eventFilter).
+    filesDock_->setProperty("spiegazione", QStringLiteral("I file del progetto: clic per mostrarne uno nella Sorgente, "
+                                                          "Canc per toglierlo; si aggiungono anche trascinandoli qui"));
+    sourceDock_->setProperty("spiegazione", QStringLiteral("Il file scelto: segna I e O, poi A per metterlo nel montaggio"));
+    programDock_->setProperty("spiegazione", QStringLiteral("Il risultato: i pezzi del montaggio uno dopo l'altro"));
     auto* center = new QWidget(this);
     center->hide();
     setCentralWidget(center);
@@ -506,8 +508,12 @@ MainWindow::~MainWindow()
 void MainWindow::setProgramActive(bool active)
 {
     programActive_ = active;
-    // Il titolo dice a quale anteprima vanno Spazio e frecce.
-    sourceTitle_->setText(sourceTitle(active));
+    // Il titolo del pannello dice a quale anteprima vanno Spazio e frecce (▶). Cambiare il titolo cambierebbe anche la
+    // voce del menu Finestra: quella resta il nome del pannello.
+    sourceDock_->setWindowTitle(previewTitle(QStringLiteral("Sorgente"), !active));
+    programDock_->setWindowTitle(previewTitle(QStringLiteral("Montaggio"), active));
+    sourceDock_->toggleViewAction()->setText(QStringLiteral("Pannello Sorgente"));
+    programDock_->toggleViewAction()->setText(QStringLiteral("Pannello Montaggio"));
 }
 
 void MainWindow::togglePlay()
@@ -1233,7 +1239,18 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     if (watched == timelineDock_ && timelineDock_->isFloating()
         && (event->type() == QEvent::NonClientAreaMouseButtonPress || event->type() == QEvent::NonClientAreaMouseMove
             || event->type() == QEvent::NonClientAreaMouseButtonRelease))
-        return true;    // Linea del tempo staccata: il doppio clic sul titolo la riaggancia sempre. Il titolo di una finestra staccata è
+        return true;
+    // Suggerimento sul titolo di un pannello agganciato (solo sul titolo: dentro valgono quelli del contenuto).
+    if (auto* dock = qobject_cast<QDockWidget*>(watched); dock != nullptr && event->type() == QEvent::ToolTip
+        && !dock->isFloating() && dock->widget() != nullptr) {
+        const auto* help = static_cast<QHelpEvent*>(event);
+        const QString text = dock->property("spiegazione").toString();
+        if (help->pos().y() < dock->widget()->geometry().top() && !text.isEmpty()) {
+            QToolTip::showText(help->globalPos(), text, dock);
+            return true;
+        }
+    }
+    // Linea del tempo staccata: il doppio clic sul titolo la riaggancia sempre. Il titolo di una finestra staccata è
     // quello di Windows, che col doppio clic la ingrandirebbe: lo si intercetta prima.
     if (watched == timelineDock_ && timelineDock_->isFloating() && fullScreenDock_ == nullptr
         && (event->type() == QEvent::NonClientAreaMouseButtonDblClick
@@ -2687,9 +2704,20 @@ void MainWindow::showShortcuts()
 
 void MainWindow::showAbout()
 {
+    // Quali encoder funzionano su questo PC: la prova (un fotogramma con ognuno) si fa la prima volta che serve, non
+    // all'avvio (su un PC lento rallenterebbe tutto il resto), e dura al massimo qualche secondo.
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QString encoders;
+    for (const core::VideoEncoderInfo& info : core::availableVideoEncoders())
+        encoders += QStringLiteral("<br>• %1").arg(QString::fromStdString(core::describe(info)).toHtmlEscaped());
+    QApplication::restoreOverrideCursor();
+    if (encoders.isEmpty())
+        encoders = QStringLiteral("<br>• nessuno (la ricodifica non sarà disponibile)");
     QMessageBox::about(this, QStringLiteral("Informazioni su EditorVideo"),
                        QStringLiteral("<b>EditorVideo</b><br>Taglio e unione di video senza ricodifica.<br><br>")
-                           + versionSummary().toHtmlEscaped());
+                           + versionSummary().toHtmlEscaped()
+                           + QStringLiteral("<br><br>Encoder video funzionanti su questo PC:") + encoders
+                           + QStringLiteral("<br>Audio: AAC (FFmpeg)"));
 }
 
 QString versionSummary()
