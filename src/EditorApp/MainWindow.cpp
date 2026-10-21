@@ -1182,7 +1182,15 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
-    // Linea del tempo staccata: il doppio clic sul titolo la riaggancia sempre. Il titolo di una finestra staccata è
+    // Linea del tempo staccata: il titolo di Windows non va a Qt. Premendo lì Qt avvierebbe il suo trascinamento dei
+    // pannelli, che apre nella finestra uno spazio di anteprima; il rilascio però se lo prende lo spostamento di Windows,
+    // quindi quel trascinamento non finisce mai e la disposizione resta bloccata (Sorgente e Montaggio alti fino in fondo,
+    // nemmeno "Ripristina disposizione" funziona) finché un altro pannello non si muove. Lo spostamento lo fa comunque
+    // Windows, e il riaggancio lo gestisce questa finestra (vedi timelinePollStep).
+    if (watched == timelineDock_ && timelineDock_->isFloating()
+        && (event->type() == QEvent::NonClientAreaMouseButtonPress || event->type() == QEvent::NonClientAreaMouseMove
+            || event->type() == QEvent::NonClientAreaMouseButtonRelease))
+        return true;    // Linea del tempo staccata: il doppio clic sul titolo la riaggancia sempre. Il titolo di una finestra staccata è
     // quello di Windows, che col doppio clic la ingrandirebbe: lo si intercetta prima.
     if (watched == timelineDock_ && timelineDock_->isFloating() && fullScreenDock_ == nullptr
         && (event->type() == QEvent::NonClientAreaMouseButtonDblClick
@@ -1831,6 +1839,10 @@ void MainWindow::resetLayout()
         dock->show();
     resizeDocks({filesDock_, sourceDock_, programDock_}, {320, 590, 590}, Qt::Horizontal);
     resizeDocks({sourceDock_, timelineDock_}, {620, 230}, Qt::Vertical);
+    // La linea del tempo alta quella iniziale anche se la finestra non ha posto per 620 + 230 (il resto va sopra).
+    timelineHeight_ = 230;
+    timelineRedocking_ = true;
+    QTimer::singleShot(0, this, [this] { applyTimelineHeight(); });
 }
 
 void MainWindow::saveLayout()
