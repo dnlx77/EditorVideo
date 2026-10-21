@@ -647,7 +647,7 @@ void MainWindow::cutFromSequence()
     bool removed = false;
     switch (project_.sequence().removeSourceRange(clip->id, from, to, project_.snapper())) {
     case core::Sequence::RemoveResult::Removed:
-        note = QStringLiteral("Tolto %1 - %2 dal montaggio. La parte dopo riparte dal fotogramma chiave più vicino.")
+        note = QStringLiteral("Tolto %1 - %2 dal montaggio.")
                    .arg(timeText(from), timeText(to));
         player_->clearSegment();
         removed = true;
@@ -681,7 +681,7 @@ void MainWindow::splitAtPlayhead()
         return;
     }
     const int index = project_.sequence().indexOf(id);
-    statusBar()->showMessage(QStringLiteral("Pezzo diviso a %1 (fotogramma chiave più vicino prima del cursore).")
+    statusBar()->showMessage(QStringLiteral("Pezzo diviso a %1.")
                                  .arg(timeText(project_.sequence().startOf(index))),
                              8000);
     timeline_->setSelected(id);
@@ -1086,7 +1086,7 @@ void MainWindow::updateSourceBands()
     const core::Clip* clip = project_.find(currentClipId_);
     if (clip == nullptr || !clip->analyzed)
         return;
-    // Ogni pezzo riportato dentro il file e con l'inizio sul fotogramma chiave (come nel montaggio), poi uniti.
+    // Ogni pezzo riportato dentro il file, poi uniti.
     std::vector<core::TimeRange> used;
     for (const core::Fragment& f : project_.sequence().fragments()) {
         if (f.clipId != clip->id)
@@ -1094,7 +1094,7 @@ void MainWindow::updateSourceBands()
         const double start = core::clampTo(f.start, clip->duration);
         const double end = core::clampTo(f.end, clip->duration);
         if (end > start + core::kTimeEpsilon)
-            used.push_back({clip->snapToKeyframe(start), end});
+            used.push_back({start, end});
     }
     player_->setRanges(core::mergeRanges(std::move(used)));
 }
@@ -1130,12 +1130,10 @@ bool MainWindow::hasExportPlan() const
 
 double MainWindow::exportLength() const
 {
-    double total = 0.0;
-    for (const core::ClipRanges& clip : exportPlan()) {
-        for (const core::TimeRange& r : clip.ranges)
-            total += r.length();
-    }
-    return total;
+    // Come l'esportazione: senza taglio preciso possibile IN va al fotogramma chiave prima (il file è più lungo).
+    const core::ProjectFormat format = project_.sequence().empty() ? core::ProjectFormat{} : project_.format();
+    const core::AudioEdit audio = project_.sequence().empty() ? core::AudioEdit{} : project_.audioEdit();
+    return core::previewExport(exportPlan(), audio, format.empty() ? nullptr : &format, reencodeOptions_).outputSeconds;
 }
 
 void MainWindow::updateExportAction()
@@ -1329,12 +1327,18 @@ bool MainWindow::exportOptionsDialog()
             text += QStringLiteral(", <b>%1 ricodificati</b> nel formato del progetto (%2)")
                         .arg(p.reencodedSegments)
                         .arg(timeText(p.reencodedSeconds));
+        if (p.preciseCuts > 0)
+            text += QStringLiteral(", <b>%1 tagli precisi</b> (%2 ricodificati ai bordi, fra il taglio e il fotogramma chiave più vicino)")
+                        .arg(p.preciseCuts)
+                        .arg(timeText(p.preciseSeconds));
         text += QStringLiteral(".");
+        if (!p.impreciseCuts.empty())
+            text += QStringLiteral("<br><span style='color:#d08a1a'>%1</span>").arg(QString::fromStdString(p.impreciseCuts).toHtmlEscaped());
         if (p.reencodedSegments > 0 && p.copiedSegments > 0)
             text += QStringLiteral("<br>I pezzi copiati non perdono niente; quelli ricodificati sono quasi uguali "
                                    "all'originale con la qualità alta.");
         summary->setText(text);
-        quality->setEnabled(p.reencodedSegments > 0);
+        quality->setEnabled(p.reencodedSegments > 0 || p.preciseCuts > 0);
     };
     describe(first);
     connect(all, &QCheckBox::toggled, &dialog, [&](bool checked) { describe(checked ? preview(true) : first); });

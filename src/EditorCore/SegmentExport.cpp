@@ -305,12 +305,57 @@ const StreamSignature* streamOf(const MediaSignature& signature, StreamKind kind
     return it == signature.streams.end() ? nullptr : &*it;
 }
 
+// Una parte di un tratto: copiata o ricodificata.
+struct Piece
+{
+    TimeRange range;
+    bool reencode = false;
+    // Il tratto continua nella parte dopo (dallo stesso file): l'audio è continuo, quindi il blocco a cavallo della
+    // giunzione va in questa parte (non si perde) e la parte dopo parte esattamente alla fine di questa.
+    bool continues = false;
+};
+
+// Taglio preciso di un tratto copiato (vedi exportClips): ricodificati i bordi fra IN e il primo fotogramma chiave e, con
+// i B-frame, fra l'ultimo fotogramma chiave e OUT; copiato il resto. Tutto ricodificato se dentro non c'è un fotogramma
+// chiave da cui copiare.
+std::vector<Piece> splitForPreciseCut(const TimeRange& range, const std::vector<double>& keyframes, bool bFrames)
+{
+    constexpr double kOnKeyframe = 1e-3;  // entro un millesimo: è lo stesso fotogramma
+    const auto first = std::lower_bound(keyframes.begin(), keyframes.end(), range.start - kOnKeyframe);
+    if (first == keyframes.end() || *first >= range.end - kOnKeyframe)
+        return {{range, true}};
+    const double copyStart = std::max(*first, range.start);
+    double copyEnd = range.end;
+    if (bFrames) {
+        // OUT su un fotogramma chiave: fino lì si copia. Altrimenti si copia fino all'ultimo prima di OUT.
+        const auto atEnd = std::lower_bound(keyframes.begin(), keyframes.end(), range.end - kOnKeyframe);
+        const bool outOnKeyframe = atEnd != keyframes.end() && *atEnd <= range.end + kOnKeyframe;
+        if (!outOnKeyframe) {
+            const double last = *std::prev(atEnd);
+            if (last <= copyStart + kOnKeyframe)
+                return {{range, true}};
+            copyEnd = last;
+        }
+    }
+    std::vector<Piece> pieces;
+    if (copyStart > range.start + kOnKeyframe)
+        pieces.push_back({{range.start, copyStart}, true});
+    pieces.push_back({{copyStart, copyEnd}, false});
+    if (copyEnd < range.end - kOnKeyframe)
+        pieces.push_back({{copyEnd, range.end}, true});
+    for (std::size_t i = 0; i + 1 < pieces.size(); ++i)
+        pieces[i].continues = true;
+    return pieces;
+}
+
 // Che cosa succede a ogni file della lista all'esportazione.
 struct PlanAnalysis
 {
     std::vector<MediaSignature> signatures;     // per file della lista (vuoto: un solo file, si copia com'è)
     std::vector<bool> reencode;                 // per file
-    std::vector<bool> copyAudio;                // per file ricodificato: l'audio si copia (uguale a quello del formato)
+    std::vector<bool> copyAudio;                // per file: l'audio si copia (uguale a quello del formato)
+    std::vector<std::vector<std::vector<Piece>>> pieces;  // per file e per tratto: le parti, copiate o ricodificate
+    std::string impreciseCuts;                  // vedi ExportPreview
     ProjectFormat reference;                    // il formato da rispettare
     bool parametersInStream = false;            // vedi ExportResult
     std::vector<ParameterSets> clipParameters;  // per file copiato, se parametersInStream
@@ -323,8 +368,6 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
     plan.reencode.assign(clips.size(), reencodeAll);
     plan.copyAudio.assign(clips.size(), false);
     const bool checkFormat = format != nullptr && !format->empty();
-    if (clips.size() < 2 && !checkFormat && !reencodeAll)
-        return plan;
     // Lo stesso file può tornare più volte (montaggio A, B, A, B): lo si legge una volta sola. Con una traccia
     // sostitutiva l'audio dei file non si copia, quindi conta solo il video.
     std::map<std::string, MediaSignature> read;
@@ -351,29 +394,75 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
 
     const bool anyReencoded = std::find(plan.reencode.begin(), plan.reencode.end(), true) != plan.reencode.end();
     const StreamSignature* video = plan.reference.video();
-    if (anyReencoded) {
-        // Ricodifica: nel formato del progetto, che deve essere un video H.264 o HEVC con un encoder su questo PC.
-        if (video == nullptr) {
-            plan.problem = "Il formato del progetto (" + plan.reference.sourceName + ") non ha video: la ricodifica per ora "
-                           "si fa solo per i video.";
-        } else if (video->codec != "h264" && video->codec != "hevc") {
-            plan.problem = "Il formato del progetto (" + plan.reference.sourceName + ") è " + video->codec
-                         + ": la ricodifica per ora si fa solo in H.264 e HEVC. Scegli come formato un file H.264 o HEVC "
-                           "(Montaggio > Impostazioni del progetto) oppure togli i pezzi segnati con R.";
-        } else {
-            const VideoCodec codec = video->codec == "hevc" ? VideoCodec::Hevc : VideoCodec::H264;
-            if (!preferredVideoEncoder(codec)) {
-                plan.problem = "Per ricodificare in " + codecName(codec) + " serve un encoder, ma su questo PC non ce n'è "
-                               "uno funzionante (vedi Aiuto > Informazioni).";
-            } else if (!parameterSetsOf(codecIdOf(video->codec), video->extradata)) {
-                plan.problem = "I parametri di codifica del formato del progetto (" + plan.reference.sourceName
-                             + ") sono in un formato che non si sa ripetere nel flusso (Annex B).";
+    // Perché non si può ricodificare nel formato del progetto (vuoto = si può): un video H.264 o HEVC con un encoder su
+    // questo PC e i parametri in un formato che si sa ripetere nel flusso.
+    std::string cannotReencode;
+    if (video == nullptr) {
+        cannotReencode = "Il formato del progetto (" + plan.reference.sourceName + ") non ha video: la ricodifica per ora "
+                         "si fa solo per i video.";
+    } else if (video->codec != "h264" && video->codec != "hevc") {
+        cannotReencode = "Il formato del progetto (" + plan.reference.sourceName + ") è " + video->codec
+                       + ": la ricodifica per ora si fa solo in H.264 e HEVC.";
+    } else {
+        const VideoCodec codec = video->codec == "hevc" ? VideoCodec::Hevc : VideoCodec::H264;
+        if (!preferredVideoEncoder(codec)) {
+            cannotReencode = "Per ricodificare in " + codecName(codec) + " serve un encoder, ma su questo PC non ce n'è "
+                             "uno funzionante (vedi Aiuto > Informazioni).";
+        } else if (!parameterSetsOf(codecIdOf(video->codec), video->extradata)) {
+            cannotReencode = "I parametri di codifica del formato del progetto (" + plan.reference.sourceName
+                           + ") sono in un formato che non si sa ripetere nel flusso (Annex B).";
+        }
+    }
+
+    // Le parti di ogni tratto. Nei file copiati, il taglio preciso (bordi ricodificati) se si può; altrimenti IN va al
+    // fotogramma chiave prima, come senza ricodifica.
+    std::map<std::string, std::vector<double>> keyframesOf;  // letti dal file se il piano non li ha
+    bool preciseNeeded = false;
+    plan.pieces.resize(clips.size());
+    for (std::size_t c = 0; c < clips.size(); ++c) {
+        std::vector<double> keyframes = clips[c].keyframes;
+        if (keyframes.empty() && !plan.reencode[c]) {
+            auto known = keyframesOf.find(clips[c].path);
+            if (known == keyframesOf.end())
+                known = keyframesOf.emplace(clips[c].path, probeFile(clips[c].path).keyframeTimes).first;
+            keyframes = known->second;
+        }
+        std::sort(keyframes.begin(), keyframes.end());
+        const StreamSignature* own = streamOf(plan.signatures[c], StreamKind::Video);
+        for (const TimeRange& range : clips[c].ranges) {
+            if (plan.reencode[c] || own == nullptr || keyframes.empty()) {
+                plan.pieces[c].push_back({{range, plan.reencode[c]}});
+                continue;
             }
+            std::vector<Piece> pieces = splitForPreciseCut(range, keyframes, own->bFrames);
+            const bool precise = std::any_of(pieces.begin(), pieces.end(), [](const Piece& p) { return p.reencode; });
+            if (precise && !cannotReencode.empty()) {
+                // Senza ricodifica: dal fotogramma chiave nello stesso punto o prima di IN.
+                pieces = {{{snapToKeyframe(keyframes, range.start), range.end}, false}};
+                if (plan.impreciseCuts.empty())
+                    plan.impreciseCuts = "Il taglio preciso non è possibile, quindi IN va al fotogramma chiave più vicino prima: "
+                                       + cannotReencode;
+            }
+            preciseNeeded = preciseNeeded || (precise && cannotReencode.empty());
+            plan.pieces[c].push_back(std::move(pieces));
+        }
+    }
+
+    if (anyReencoded || preciseNeeded) {
+        if (anyReencoded) {
+            plan.problem = cannotReencode;
+            if (!plan.problem.empty() && video != nullptr && video->codec != "h264" && video->codec != "hevc")
+                plan.problem += " Scegli come formato un file H.264 o HEVC (Montaggio > Impostazioni del progetto) oppure togli i "
+                                "pezzi segnati con R.";
         }
         const StreamSignature* audio = plan.reference.audio();
         for (std::size_t c = 0; c < clips.size() && plan.problem.empty(); ++c) {
-            if (!plan.reencode[c])
+            if (!plan.reencode[c]) {
+                // Copiato (con i bordi ricodificati): l'audio è uguale a quello del formato, quindi si copia.
+                const StreamSignature* own = streamOf(plan.signatures[c], StreamKind::Audio);
+                plan.copyAudio[c] = audio != nullptr && own != nullptr && sameAudio(*own, *audio);
                 continue;
+            }
             if (streamOf(plan.signatures[c], StreamKind::Video) == nullptr) {
                 plan.problem = "Il file " + plan.signatures[c].fileName + " non ha video: non si può mettere in un "
                                "montaggio video.";
@@ -1074,7 +1163,8 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
         // formato dei pixel li adatta l'encoder (bande nere se le proporzioni sono diverse). L'audio si copia se è uguale
         // a quello del formato, altrimenti si ricodifica in AAC (silenzio se il file non ha audio). Restituisce dove
         // finiscono, nel file creato, il video e l'audio scritti.
-        const auto reencodeRange = [&](InputFile& current, const TimeRange& range, std::size_t c) -> std::pair<double, double> {
+        const auto reencodeRange = [&](InputFile& current, const TimeRange& range, std::size_t c,
+                                       bool continues) -> std::pair<double, double> {
             AVFormatContext* input = current.ctx.get();
             const double start = current.start;
             const StreamSignature& format = *plan.reference.video();
@@ -1154,8 +1244,11 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                     audioEncoder = std::make_unique<AudioEncoder>(AudioEncoderSettings{outA->codecpar->sample_rate,
                                                                                        outA->codecpar->ch_layout.nb_channels});
             }
-            for (unsigned i = 0; i < input->nb_streams; ++i)
+            std::vector<AVDiscard> discarded(input->nb_streams);
+            for (unsigned i = 0; i < input->nb_streams; ++i) {
+                discarded[i] = input->streams[i]->discard;
                 input->streams[i]->discard = static_cast<int>(i) == videoIndex || static_cast<int>(i) == audioIndex ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+            }
 
             // Dal fotogramma chiave all'inizio del tratto (o quello subito prima).
             const auto ts = std::llround((range.start + start) / av_q2d(inV->time_base));
@@ -1268,7 +1361,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                         return;
                 } else {
                     const double end = time + std::max<std::int64_t>(pkt->duration, 0) * tb;
-                    if (time < range.start - kTimeEpsilon || end > range.end + kTimeEpsilon)
+                    if (time < range.start - kTimeEpsilon || (continues ? time >= range.end - kTimeEpsilon : end > range.end + kTimeEpsilon))
                         return;
                 }
                 const std::int64_t kept = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
@@ -1355,7 +1448,8 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 }
                 audioEncoder->finish(audioSink);
             }
-            ++result.reencodedSegments;
+            for (unsigned i = 0; i < input->nb_streams; ++i)
+                input->streams[i]->discard = discarded[i];  // i flussi copiati nelle parti dopo
             return {outputPosition + frames * frameSeconds, audioEnd};
         };
 
@@ -1366,10 +1460,17 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             AVFormatContext* input = current.ctx.get();
             const double start = current.start;
 
-            for (const TimeRange& range : clips[c].ranges) {
-                if (plan.reencode[c]) {
-                    const auto [videoEnd, audioEnd] = reencodeRange(current, range, c);
-                    outputPosition = std::max({outputPosition + range.length(), videoEnd, audioEnd});
+            for (std::size_t r = 0; r < clips[c].ranges.size(); ++r) {
+              for (const Piece& piece : plan.pieces[c][r]) {
+                const TimeRange& range = piece.range;
+                if (piece.reencode) {
+                    const auto [videoEnd, audioEnd] = reencodeRange(current, range, c, piece.continues);
+                    if (plan.reencode[c])
+                        ++result.reencodedSegments;
+                    else
+                        ++result.preciseCuts;
+                    // Dentro lo stesso tratto l'audio continua: la parte dopo riparte esattamente da qui.
+                    outputPosition = std::max({outputPosition + range.length(), videoEnd, piece.continues ? 0.0 : audioEnd});
                     doneLength += range.length();
                     continue;
                 }
@@ -1496,9 +1597,11 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                             }
                         } else {
                             // Audio compresso: solo i pacchetti interamente dentro il tratto, così alle giunzioni non
-                            // si sovrappone (al più un pacchetto, ~20 ms, di silenzio a ogni giunzione).
+                            // si sovrappone (al più un pacchetto, ~20 ms, di silenzio a ogni giunzione). Dove il tratto
+                            // continua nella parte dopo (taglio preciso) l'audio è continuo: il pacchetto a cavallo resta qui.
                             const double end = time + std::max<std::int64_t>(packet->duration, 0) * tb;
-                            if (time < range.start - kTimeEpsilon || end > range.end + kTimeEpsilon) {
+                            if (time < range.start - kTimeEpsilon
+                                || (piece.continues ? time >= range.end - kTimeEpsilon : end > range.end + kTimeEpsilon)) {
                                 av_packet_unref(packet.get());
                                 continue;
                             }
@@ -1527,8 +1630,9 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 // Il tratto successivo comincia dove finisce questo: alla sua durata, o più in là se è stato scritto
                 // qualche fotogramma di riferimento oltre la fine o se l'ultimo blocco audio decodificato va oltre
                 // (pochi millesimi): così video e audio ripartono insieme e l'audio non si sovrappone.
-                outputPosition = std::max({outputPosition + range.length(), videoEnd, audioEnd});
+                outputPosition = std::max({outputPosition + range.length(), videoEnd, piece.continues ? 0.0 : audioEnd});
                 doneLength += range.length();
+              }
             }
         }
         // Il resto della traccia sostitutiva, fino alla fine del file creato.
@@ -1560,14 +1664,24 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
     try {
         const PlanAnalysis plan = analyzePlan(clips, format, audio.replacement.has_value(), reencode.all);
         preview.problem = plan.problem;
+        preview.impreciseCuts = plan.impreciseCuts;
         for (std::size_t c = 0; c < clips.size(); ++c) {
-            for (const TimeRange& range : clips[c].ranges) {
+            for (std::size_t r = 0; r < clips[c].ranges.size(); ++r) {
                 if (plan.reencode[c]) {
                     ++preview.reencodedSegments;
-                    preview.reencodedSeconds += range.length();
-                } else {
-                    ++preview.copiedSegments;
-                    preview.copiedSeconds += range.length();
+                    preview.reencodedSeconds += clips[c].ranges[r].length();
+                    preview.outputSeconds += clips[c].ranges[r].length();
+                    continue;
+                }
+                ++preview.copiedSegments;
+                for (const Piece& piece : plan.pieces[c][r]) {
+                    preview.outputSeconds += piece.range.length();
+                    if (piece.reencode) {
+                        ++preview.preciseCuts;
+                        preview.preciseSeconds += piece.range.length();
+                    } else {
+                        preview.copiedSeconds += piece.range.length();
+                    }
                 }
             }
         }

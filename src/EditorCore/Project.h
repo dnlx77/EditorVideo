@@ -27,6 +27,8 @@ struct ClipRanges
 {
     std::string path;
     std::vector<TimeRange> ranges;
+    // Fotogrammi chiave del file (in ordine), per il taglio preciso; vuoto = da leggere dal file.
+    std::vector<double> keyframes;
 };
 
 // Un file audio (MP3, AAC, M4A, WAV...) che prende il posto dell'audio originale di tutta la sequenza.
@@ -77,7 +79,8 @@ public:
 
     Sequence& sequence() { return sequence_; }
     const Sequence& sequence() const { return sequence_; }
-    // Aggancio ai fotogrammi chiave dei file del progetto, per le operazioni sulla sequenza.
+    // Per le operazioni sulla sequenza: con il taglio preciso i tempi restano esattamente quelli scelti (le parti fra
+    // un fotogramma chiave e un taglio si ricodificano all'esportazione), quindi nessun aggancio.
     Sequence::SnapFunction snapper() const;
 
     // La sequenza come elenco di file e tratti da esportare (pezzi consecutivi dello stesso file insieme).

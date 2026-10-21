@@ -50,6 +50,7 @@
     <ClCompile Include="MultiFileJoinTests.cpp" />
     <ClCompile Include="ParameterJoinTests.cpp" />
     <ClCompile Include="PlaybackTests.cpp" />
+    <ClCompile Include="PreciseCutTests.cpp" />
     <ClCompile Include="ProjectFileTests.cpp" />
     <ClCompile Include="ReencodeTests.cpp" />
     <ClCompile Include="ProjectTests.cpp" />

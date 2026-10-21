@@ -680,14 +680,14 @@ void PlayerWidget::markIn()
     if (playing_)
         pause();
     const double wanted = markTime();
-    const double snapped = segment_.setIn(wanted);
-    wantedIn_ = std::clamp(wanted, 0.0, duration_ > 0 ? duration_ : wanted);
+    const double in = segment_.setIn(wanted);
+    wantedIn_ = in;
     segmentNote_.clear();
     noteIsOutError_ = false;
-    if (std::abs(snapped - wanted) > 0.0005)
-        segmentNote_ = QStringLiteral("IN spostato da %1 al fotogramma chiave %2: senza ricodifica si può partire "
-                                      "solo da un fotogramma chiave. Per togliere un pezzo (X) vale invece %1.")
-                           .arg(timeText(wanted), timeText(snapped));
+    // Fra due fotogrammi chiave: si può, la parte fino al fotogramma chiave dopo si ricodificherà.
+    if (std::abs(segment_.snapToKeyframe(in) - in) > 0.0005)
+        segmentNote_ = QStringLiteral("IN fra due fotogrammi chiave: all'esportazione la parte da qui al fotogramma chiave "
+                                      "dopo viene ricodificata (taglio preciso), il resto si copia.");
     updateSegmentUi();
 }
 
@@ -700,7 +700,7 @@ void PlayerWidget::markOut()
     // OUT comprende il fotogramma visibile: il segmento finisce alla fine di quel fotogramma.
     const double wanted = video_ ? displayedTime_ + frameDuration_ : position_;
     if (segment_.setOut(wanted)) {
-        // La spiegazione su IN agganciato resta visibile; si toglie solo un eventuale errore su OUT.
+        // La spiegazione su IN resta visibile; si toglie solo un eventuale errore su OUT.
         if (noteIsOutError_)
             segmentNote_.clear();
         noteIsOutError_ = false;

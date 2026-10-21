@@ -6,17 +6,16 @@ namespace editor::core {
 
 // Segmento da tenere di un file, delimitato da IN e OUT (tempi in secondi dall'inizio del file).
 //
-// Il taglio avviene senza ricodifica, quindi il video può iniziare solo da un fotogramma chiave:
-// IN viene spostato sul fotogramma chiave nello stesso punto o subito prima. OUT invece può stare su
-// qualsiasi punto dopo IN. Finché IN o OUT non sono impostati valgono l'inizio e la fine del file.
+// IN e OUT restano esattamente dove li mette l'utente (taglio preciso: all'esportazione la parte fra IN e il primo
+// fotogramma chiave si ricodifica, vedi exportClips). Finché IN o OUT non sono impostati valgono l'inizio e la fine del
+// file.
 class CutSegment
 {
 public:
     // Nuovo file: azzera IN e OUT. `keyframes` in ordine crescente; vuoto = nessun aggancio (es. file solo audio).
     void reset(std::vector<double> keyframes, double duration);
 
-    // Imposta IN agganciandolo al fotogramma chiave e restituisce il tempo effettivo.
-    // Se OUT non sta più dopo il nuovo IN, OUT viene tolto.
+    // Imposta IN (dentro il file) e restituisce il tempo effettivo. Se OUT non sta più dopo il nuovo IN, OUT viene tolto.
     double setIn(double seconds);
     // Imposta OUT; false (e nessuna modifica) se non sta dopo IN.
     bool setOut(double seconds);

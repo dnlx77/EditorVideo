@@ -24,7 +24,8 @@ namespace {
 constexpr double kFrame = 1.0 / 25.0;
 
 // File di prova da 4 s (100 fotogrammi), fotogrammi chiave ogni secondo (0, 1, 2, 3).
-// Il segmento usato nei test: IN chiesto a 1,3 s (-> fotogramma chiave 1,0 s), OUT a 2,6 s => 1,6 s, fotogrammi 25..64.
+// Il segmento usato nei test: IN chiesto a 1,3 s, OUT a 2,6 s. Questi file (MPEG-4 Part 2) non si sanno ricodificare,
+// quindi niente taglio preciso: l'esportazione parte dal fotogramma chiave 1,0 s => 1,6 s, fotogrammi 25..64.
 constexpr double kWantedIn = 1.3;
 constexpr double kSnappedIn = 1.0;
 constexpr double kOut = 2.6;
@@ -49,7 +50,7 @@ protected:
         const MediaInfo info = probeFile(source);
         CutSegment segment;
         segment.reset(info.keyframeTimes, info.durationSeconds);
-        EXPECT_DOUBLE_EQ(segment.setIn(kWantedIn), kSnappedIn);
+        EXPECT_DOUBLE_EQ(segment.setIn(kWantedIn), kWantedIn);  // IN resta dove lo si mette
         EXPECT_TRUE(segment.setOut(kOut));
         return {{segment.in(), segment.out()}};
     }

@@ -142,6 +142,7 @@ MediaSignature readMediaSignature(const std::string& utf8Path)
         StreamSignature s;
         s.kind = video ? StreamKind::Video : StreamKind::Audio;
         readStreamFormat(fmt.get(), st, s);
+        s.bFrames = video && par->video_delay > 0;
         if (par->extradata != nullptr && par->extradata_size > 0)
             s.extradata.assign(par->extradata, par->extradata + par->extradata_size);
         signature.streams.push_back(std::move(s));

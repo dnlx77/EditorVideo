@@ -82,8 +82,9 @@ std::string refusal(const core::Project& project)
 {
     const core::ExportPreview preview = core::previewExport(project.exportPlan(), core::AudioEdit{}, nullptr);
     if (preview.problem.empty())
-        std::printf("Tratti copiati: %d (%.3f s), ricodificati: %d (%.3f s)\n", preview.copiedSegments,
-                    preview.copiedSeconds, preview.reencodedSegments, preview.reencodedSeconds);
+        std::printf("Tratti copiati: %d (%.3f s), ricodificati: %d (%.3f s), tagli precisi: %d (%.3f s ricodificati ai bordi)\n",
+                    preview.copiedSegments, preview.copiedSeconds, preview.reencodedSegments, preview.reencodedSeconds,
+                    preview.preciseCuts, preview.preciseSeconds);
     return preview.problem.empty() ? std::string() : preview.problem + "\n";
 }
 
@@ -591,8 +592,8 @@ int runThumbnailTest(const QStringList& args, qsizetype at)
 }
 
 // --export-test <origine> <destinazione> <IN s> <OUT s> [<IN s> <OUT s> ...]: mette i tratti del file nel montaggio,
-// nell'ordine dato e ognuno con l'IN agganciato al fotogramma chiave, li esporta come farebbe l'interfaccia e controlla
-// il file creato (durata, codec, fotogramma chiave all'inizio). Codici come --join-test.
+// nell'ordine dato, li esporta come farebbe l'interfaccia (taglio preciso se si può, altrimenti IN al fotogramma chiave
+// prima) e controlla il file creato (durata, codec, fotogramma chiave all'inizio). Codici come --join-test.
 int runExportTest(const QStringList& args, qsizetype at)
 {
     const qsizetype pairs = (args.size() - at - 3) / 2;
@@ -603,7 +604,7 @@ int runExportTest(const QStringList& args, qsizetype at)
     const std::string input = args[at + 1].toStdString();
     const std::string output = args[at + 2].toStdString();
     return guarded([&]() -> int {
-        // Un montaggio con i tratti del file, nell'ordine dato: ogni IN si aggancia al fotogramma chiave.
+        // Un montaggio con i tratti del file, nell'ordine dato.
         core::Project project;
         const AnalyzedClip clip = addAnalyzedClip(project, input);
         const core::MediaInfo& source = clip.info;
@@ -618,15 +619,20 @@ int runExportTest(const QStringList& args, qsizetype at)
         for (const core::Fragment& f : sequence.fragments())
             std::printf("Tratto: %.3f - %.3f s\n", f.start, f.end);
 
+        // Durata attesa: quella dei tratti con il taglio preciso; se non si può, IN va al fotogramma chiave prima.
+        const core::ExportPreview preview = core::previewExport(project.exportPlan(), core::AudioEdit{}, nullptr);
+        if (!preview.impreciseCuts.empty())
+            std::printf("%s\n", preview.impreciseCuts.c_str());
         const core::ExportResult result = core::exportClips(project.exportPlan(), output, core::AudioEdit{});
         const core::MediaInfo exported = core::probeFile(output);
-        std::printf("Esportato: %d tratti, durata attesa %.3f s, ottenuta %.3f s, %d flussi\n", result.segmentCount,
-                    sequence.totalLength(), exported.durationSeconds, result.streamCount);
+        std::printf("Esportato: %d tratti (%d tagli precisi), durata attesa %.3f s, ottenuta %.3f s, %d flussi\n",
+                    result.segmentCount, result.preciseCuts, preview.outputSeconds, exported.durationSeconds,
+                    result.streamCount);
 
         // Tolleranza: un paio di fotogrammi per giunzione.
         const double tolerance = 0.1 + 0.05 * static_cast<double>(sequence.fragments().size() - 1);
         bool ok = exported.streams.size() == static_cast<std::size_t>(result.streamCount)
-               && std::abs(exported.durationSeconds - sequence.totalLength()) < tolerance;
+               && std::abs(exported.durationSeconds - preview.outputSeconds) < tolerance;
         // Stessi codec dell'originale, nello stesso ordine (video e audio).
         std::size_t next = 0;
         for (const core::StreamInfo& stream : source.streams) {
@@ -985,10 +991,11 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                                    || std::any_of(keyframes.begin(), keyframes.end(),
                                                   [&](double k) { return std::abs(k - segment.in()) < 1e-6; });
             std::printf("Segmento: IN %.3f s, OUT %.3f s, durata %.3f s%s\n", segment.in(), segment.out(),
-                        segment.length(), inOnKeyframe ? "" : " (IN non su un fotogramma chiave!)");
+                        segment.length(), inOnKeyframe ? "" : " (IN fra due fotogrammi chiave: taglio preciso)");
             std::fflush(stdout);
             // IN non dopo la posizione letta sopra (con margine: la pausa arriva qualche istante dopo).
-            const bool segmentOk = segment.hasIn() && segment.hasOut() && inOnKeyframe && segment.in() <= position + 0.1
+            // IN resta dove lo si mette (taglio preciso), non oltre la posizione letta sopra.
+            const bool segmentOk = segment.hasIn() && segment.hasOut() && segment.in() <= position + 0.1
                                 && segment.length() > 0;
             if (!segmentOk)
                 std::printf("  NON riuscito: segmento IN-OUT non valido\n");

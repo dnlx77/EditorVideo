@@ -21,6 +21,7 @@ struct StreamSignature
     int height = 0;
     std::string pixelFormat;
     double frameRate = 0.0;
+    bool bFrames = false;  // fotogrammi che guardano avanti (l'ordine di decodifica non è quello di visualizzazione)
 
     // Audio
     int sampleRate = 0;

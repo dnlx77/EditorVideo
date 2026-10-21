@@ -146,7 +146,7 @@ CodecContextPtr openVideo(const Candidate& candidate, const VideoEncoderSettings
     ctx->gop_size = s.gopFrames > 0 ? s.gopFrames : std::max(1, static_cast<int>(2 * av_q2d(ctx->framerate) + 0.5));
     if (s.referenceFrames > 0)
         ctx->refs = s.referenceFrames;
-    ctx->max_b_frames = 0;  // l'ordine dei pacchetti è quello dei fotogrammi: più semplice da unire ai pezzi copiati
+    ctx->max_b_frames = std::max(0, s.bFrames);  // di solito 0: vedi VideoEncoderSettings::bFrames
     if (!s.inBandParameters)
         ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     AVDictionary* raw = nullptr;

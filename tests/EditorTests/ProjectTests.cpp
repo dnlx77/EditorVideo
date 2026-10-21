@@ -32,19 +32,21 @@ TEST(Project, ExportPlanFollowsTheSequence)
     EXPECT_TRUE(project.exportPlan().empty());
 
     Sequence& s = project.sequence();
-    s.insert(-1, b, 1.5, 2.5, project.snapper());  // -> 1.0 .. 2.5
+    // Taglio preciso: i tempi restano quelli scelti, anche fra due fotogrammi chiave.
+    s.insert(-1, b, 1.5, 2.5, project.snapper());
     s.insert(-1, a, 4.0, 6.0, project.snapper());
-    s.insert(-1, a, 0.5, 1.0, project.snapper());  // -> 0.0 .. 1.0, stesso file del precedente: stesso blocco
+    s.insert(-1, a, 0.5, 1.0, project.snapper());  // stesso file del precedente: stesso blocco
     s.insert(-1, b, 0.0, 1.0, project.snapper());
 
     const auto plan = project.exportPlan();
     ASSERT_EQ(plan.size(), 3u);
     EXPECT_EQ(plan[0].path, "b.mp4");
-    EXPECT_EQ(plan[0].ranges, (std::vector<TimeRange>{{1.0, 2.5}}));
+    EXPECT_EQ(plan[0].ranges, (std::vector<TimeRange>{{1.5, 2.5}}));
+    EXPECT_EQ(plan[0].keyframes, (std::vector<double>{0.0, 1.0, 2.0}));  // per il taglio preciso
     EXPECT_EQ(plan[1].path, "a.mp4");
-    EXPECT_EQ(plan[1].ranges, (std::vector<TimeRange>{{4.0, 6.0}, {0.0, 1.0}}));
+    EXPECT_EQ(plan[1].ranges, (std::vector<TimeRange>{{4.0, 6.0}, {0.5, 1.0}}));
     EXPECT_EQ(plan[2].path, "b.mp4");
-    EXPECT_DOUBLE_EQ(s.totalLength(), 5.5);
+    EXPECT_DOUBLE_EQ(s.totalLength(), 4.5);
 }
 
 TEST(Project, RemovingClipRemovesItsPieces)
