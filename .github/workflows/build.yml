@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# Un push nuovo sullo stesso ramo (o la stessa pull request) annulla l'esecuzione superata: altrimenti si accumulano in
+# coda e ognuna rifà tutto.
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows:
     runs-on: windows-2025-vs2026
@@ -177,3 +183,15 @@ jobs:
           # Una miniatura per fotogramma chiave dai file dimostrativi (il file solo audio non ne ha).
           $demo = "$env:TEMP\EditorVideoDemo"
           & ci\run-editorvideo.ps1 -Name miniature -Arguments '--thumbnail-test', "`"$demo\demo_mpeg2_gpu.mkv`"", "`"$demo\demo_mpeg4_software.mkv`"", "`"$demo\demo_solo_audio.wav`""
+
+      - name: Prova dei pannelli
+        shell: pwsh
+        run: |
+          # Con la finestra vera: la linea del tempo staccata e riagganciata 5 volte per ogni modo (doppio clic sul titolo
+          # di Windows, lasciata nella metà bassa, menu), ogni volta in basso, a tutta larghezza e alta abbastanza.
+          $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru -ArgumentList '--dock-test' `
+                 -RedirectStandardOutput pannelli.txt -RedirectStandardError pannelli-err.txt
+          $null = $p.Handle  # necessario per leggere ExitCode
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "prova dei pannelli bloccata" }
+          Get-Content pannelli.txt, pannelli-err.txt
+          if ($p.ExitCode -ne 0) { throw "pannelli: codice $($p.ExitCode)" }

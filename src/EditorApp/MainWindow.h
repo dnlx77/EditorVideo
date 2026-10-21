@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+class QAbstractNativeEventFilter;
 class QAction;
 class QDockWidget;
 class QLabel;
@@ -66,6 +67,12 @@ public:
     // Pannello della linea del tempo staccato e appena spostato: se il pulsante del mouse è stato rilasciato con il
     // cursore (coordinate dello schermo) nella metà bassa della finestra, si riaggancia in basso. true se l'ha fatto.
     bool redockTimelineIfDroppedLow(const QPoint& cursor, bool buttonDown);
+    // Un controllo della linea del tempo staccata (ogni 50 ms, o dalle prove con valori finti): se il pulsante del mouse
+    // è appena stato rilasciato dopo averla spostata, si guarda dove è stata lasciata (redockTimelineIfDroppedLow).
+    void timelinePollStep(bool buttonDown, const QPoint& cursor);
+    // Il titolo di un pannello agganciato evidenziato (mouse sopra: da lì si trascina).
+    bool isTitleHighlighted(QDockWidget* dock) const;
+    bool isDockPreviewVisible() const { return dockPreview_ != nullptr && dockPreview_->isVisible(); }
     int timelineHeight() const { return timelineHeight_; }  // altezza da agganciata, da riprendere riagganciandola
 
     // File trascinati da Esplora file (o un progetto, o una cartella): sempre aggiunti all'elenco dei file; lasciati
@@ -235,7 +242,14 @@ private:
     QDockWidget* fullScreenDock_ = nullptr;
     QByteArray layoutBeforeFullScreen_;  // disposizione da ritrovare uscendo dallo schermo intero
     std::optional<CornerDrag> cornerDrag_;  // si sta trascinando un incrocio fra separatori
-    QTimer* timelineMoved_ = nullptr;       // la linea del tempo staccata si è appena spostata (vedi eventFilter)
+    QTimer* timelinePoll_ = nullptr;        // controlla la linea del tempo staccata (vedi timelinePollStep)
+    QWidget* dockPreview_ = nullptr;        // dove andrà la linea del tempo se la si lascia adesso
+    std::unique_ptr<QAbstractNativeEventFilter> titleDoubleClick_;  // doppio clic sul titolo di Windows (vedi .cpp)
+    void showDockPreview(bool visible);
+    bool pollButtonDown_ = false;
+    QPoint pollPressPos_;                   // dov'era la linea del tempo staccata quando è stato premuto il pulsante
+    void setTitleHighlight(QDockWidget* dock, bool highlighted);
+    bool updateTitleHover(QDockWidget* dock, QEvent* event);  // eventi del mouse sul pannello: evidenzia il titolo
     int timelineHeight_ = 230;              // ultima altezza della linea del tempo agganciata
     bool timelineRedocking_ = false;        // riagganciata da poco: l'altezza giusta arriva dopo (vedi redockTimeline)
     void applyTimelineHeight();

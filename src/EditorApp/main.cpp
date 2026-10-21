@@ -4,6 +4,7 @@
 
 #include <QtWidgets/QApplication>
 
+#include <cstdio>
 #include <cstring>
 
 int main(int argc, char* argv[])
@@ -22,6 +23,12 @@ int main(int argc, char* argv[])
     const QStringList arguments = QApplication::arguments();
     if (const auto code = editor::app::runCommandLineTest(arguments))
         return *code;
+
+    if (arguments.contains(QStringLiteral("--dock-test"))) {
+        const int code = editor::app::runDockTest(app);
+        std::fflush(stdout);
+        return code;
+    }
 
     editor::app::MainWindow window;
     // La disposizione dei pannelli salvata l'ultima volta; le prove partono sempre da quella iniziale.

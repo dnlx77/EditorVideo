@@ -14,6 +14,7 @@
 #include "EditorCore/TimeUtil.h"
 #include "EditorCore/Waveform.h"
 
+#include <QtCore/QAbstractNativeEventFilter>
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
 #include <QtCore/QSettings>
@@ -24,6 +25,9 @@
 #include <QtGui/QDragEnterEvent>
 #include <QtGui/QDropEvent>
 #include <QtGui/QCursor>
+#include <QtGui/QHoverEvent>
+#include <QtGui/QWindow>
+#include <QtWidgets/QStyle>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QScreen>
@@ -149,6 +153,32 @@ QSettings settings()
 {
     return QSettings(QSettings::NativeFormat, QSettings::UserScope, QStringLiteral("EditorVideo"), QStringLiteral("EditorVideo"));
 }
+
+// Il doppio clic sul titolo di una finestra staccata è di Windows (la barra del titolo è sua) e a Qt non arriva come
+// evento che si possa intercettare: lo si prende fra i messaggi di Windows, prima che Windows lo gestisca da sé.
+class TitleDoubleClickFilter : public QAbstractNativeEventFilter
+{
+public:
+    explicit TitleDoubleClickFilter(std::function<bool(void* hwnd)> onDoubleClick)
+        : onDoubleClick_(std::move(onDoubleClick))
+    {
+    }
+
+    bool nativeEventFilter(const QByteArray& eventType, void* message, qintptr* result) override
+    {
+        if (eventType != "windows_generic_MSG")
+            return false;
+        const auto* msg = static_cast<const MSG*>(message);
+        if (msg->message != WM_NCLBUTTONDBLCLK || msg->wParam != HTCAPTION || !onDoubleClick_(msg->hwnd))
+            return false;
+        if (result != nullptr)  // per i messaggi dalla coda Qt può non passarlo
+            *result = 0;
+        return true;  // gestito: Windows non deve fare altro
+    }
+
+private:
+    std::function<bool(void* hwnd)> onDoubleClick_;
+};
 
 QString nativeAbsolute(const QString& path)
 {
@@ -339,22 +369,38 @@ MainWindow::MainWindow(QWidget* parent)
     // Qt la riaggancia solo se la si porta a filo del bordo inferiore della finestra (la zona in basso, vuota, è
     // sottilissima): troppo difficile. Quindi: lasciata ovunque nella metà bassa della finestra si riaggancia da sola;
     // con il doppio clic sul titolo (o in qualsiasi altro modo) torna sempre in basso a tutta larghezza.
-    timelineDock_->installEventFilter(this);
-    timelineMoved_ = new QTimer(this);
-    timelineMoved_->setSingleShot(true);
-    timelineMoved_->setInterval(200);
-    connect(timelineMoved_, &QTimer::timeout, this, [this] {
-        // Lo stato vero del pulsante: durante lo spostamento della finestra (fatto da Windows) Qt non lo vede.
+    // Doppio clic sul titolo (di Windows) della linea del tempo staccata: si riaggancia in basso.
+    titleDoubleClick_ = std::make_unique<TitleDoubleClickFilter>([this](void* hwnd) {
+        if (!timelineDock_->isFloating() || fullScreenDock_ != nullptr || timelineDock_->windowHandle() == nullptr
+            || reinterpret_cast<void*>(timelineDock_->windowHandle()->winId()) != hwnd)
+            return false;
+        QTimer::singleShot(0, this, [this] { redockTimeline(); });
+        return true;
+    });
+    qApp->installNativeEventFilter(titleDoubleClick_.get());
+    // Finché è staccata un controllo periodico guarda il pulsante del mouse: non dipende da quali eventi arrivano (lo
+    // spostamento di una finestra staccata lo fa Windows, e a Qt non dice quando il pulsante viene rilasciato).
+    timelinePoll_ = new QTimer(this);
+    timelinePoll_->setInterval(50);
+    connect(timelinePoll_, &QTimer::timeout, this, [this] {
+        // Lo stato vero del pulsante principale (fisico: con i pulsanti scambiati è il destro).
         const bool down = (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) != 0 ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
-        if (down && timelineDock_->isFloating())
-            timelineMoved_->start();  // si sta ancora trascinando
-        else
-            redockTimelineIfDroppedLow(QCursor::pos(), false);
+        timelinePollStep(down, QCursor::pos());
     });
     connect(timelineDock_, &QDockWidget::topLevelChanged, this, [this](bool floating) {
+        if (floating) {
+            if (fullScreenDock_ == nullptr) {
+                // Staccata (di solito trascinandola, quindi con il pulsante ancora premuto): da qui si controlla.
+                pollButtonDown_ = (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) != 0 ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
+                pollPressPos_ = timelineDock_->pos();
+                timelinePoll_->start();
+            }
+            return;
+        }
+        timelinePoll_->stop();
         // Riagganciata da Qt (doppio clic sul titolo, trascinamento): sempre in basso, a tutta larghezza e con
         // un'altezza che si veda (Qt la rimette alta pochi pixel).
-        if (floating || fullScreenDock_ != nullptr)
+        if (fullScreenDock_ != nullptr)
             return;
         timelineRedocking_ = true;
         QTimer::singleShot(0, this, [this] {
@@ -370,6 +416,14 @@ MainWindow::MainWindow(QWidget* parent)
     });
     for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_})
         dock->setAllowedAreas(Qt::TopDockWidgetArea | Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    // Il titolo di un pannello agganciato si evidenzia con il mouse sopra (cursore a mano: da lì si trascina). I pannelli
+    // staccati tengono il titolo di Windows, con la sua cornice (e il ridimensionamento dagli angoli).
+    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+        dock->setAttribute(Qt::WA_Hover);
+        dock->installEventFilter(this);
+        dock->setStyleSheet(QStringLiteral("QDockWidget[titoloEvidenziato=\"true\"]::title { background: palette(highlight); }"
+                                           "QDockWidget[titoloEvidenziato=\"true\"] { color: palette(highlighted-text); }"));
+    }
     setMouseTracking(true);  // per il cursore sugli incroci fra separatori
     resetLayout();
 
@@ -387,6 +441,7 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
+    qApp->removeNativeEventFilter(titleDoubleClick_.get());
     // Se un'analisi è ancora in corso la interrompiamo e aspettiamo che il thread finisca.
     if (probeThread_ != nullptr) {
         cancelProbe_ = true;
@@ -1103,9 +1158,18 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
-    // La linea del tempo staccata che si sposta: a spostamento finito si guarda dove è stata lasciata.
-    if (watched == timelineDock_ && event->type() == QEvent::Move && timelineDock_->isFloating() && fullScreenDock_ == nullptr)
-        timelineMoved_->start();
+    // Linea del tempo staccata: il doppio clic sul titolo la riaggancia sempre. Il titolo di una finestra staccata è
+    // quello di Windows, che col doppio clic la ingrandirebbe: lo si intercetta prima.
+    if (watched == timelineDock_ && timelineDock_->isFloating() && fullScreenDock_ == nullptr
+        && (event->type() == QEvent::NonClientAreaMouseButtonDblClick
+            || (event->type() == QEvent::MouseButtonDblClick && timelineDock_->widget() != nullptr
+                && static_cast<QMouseEvent*>(event)->position().y() < timelineDock_->widget()->geometry().top()))) {
+        QTimer::singleShot(0, this, [this] { redockTimeline(); });
+        return true;
+    }
+    // Titolo dei pannelli agganciati evidenziato con il mouse sopra.
+    if (auto* hovered = qobject_cast<QDockWidget*>(watched); hovered != nullptr && updateTitleHover(hovered, event))
+        return false;
     // L'altezza della linea del tempo agganciata, da riprendere quando la si riaggancia dopo averla staccata.
     if (watched == timelineDock_ && event->type() == QEvent::Resize && !timelineDock_->isFloating()
         && !timelineRedocking_ && fullScreenDock_ == nullptr && timelineDock_->isVisible())
@@ -1947,10 +2011,13 @@ void MainWindow::redockTimeline()
 {
     if (fullScreenDock_ == timelineDock_)
         exitFullScreen();
-    timelineMoved_->stop();
+    timelinePoll_->stop();
+    showDockPreview(false);
     timelineRedocking_ = true;
+    // Sempre la stessa sequenza, qualunque sia lo stato di prima: tolta, aggiunta in basso, agganciata, visibile.
+    removeDockWidget(timelineDock_);
+    addDockWidget(Qt::BottomDockWidgetArea, timelineDock_, Qt::Horizontal);
     timelineDock_->setFloating(false);
-    addDockWidget(Qt::BottomDockWidgetArea, timelineDock_);
     timelineDock_->show();
     // L'altezza si sistema dopo che Qt ha rifatto la disposizione: subito verrebbe ignorata.
     QTimer::singleShot(0, this, [this] { applyTimelineHeight(); });
@@ -1978,6 +2045,99 @@ void MainWindow::applyTimelineHeight()
     }
     timelineRedocking_ = false;
     timelineHeight_ = timelineDock_->height();
+}
+
+bool MainWindow::isTitleHighlighted(QDockWidget* dock) const
+{
+    return dock->property("titoloEvidenziato").toBool();
+}
+
+void MainWindow::setTitleHighlight(QDockWidget* dock, bool highlighted)
+{
+    if (isTitleHighlighted(dock) == highlighted)
+        return;
+    dock->setProperty("titoloEvidenziato", highlighted);
+    // Il foglio di stile guarda la proprietà: va riapplicato.
+    dock->style()->unpolish(dock);
+    dock->style()->polish(dock);
+    dock->update();
+    if (highlighted)
+        dock->setCursor(Qt::OpenHandCursor);
+    else
+        dock->unsetCursor();
+}
+
+bool MainWindow::updateTitleHover(QDockWidget* dock, QEvent* event)
+{
+    const auto inTitle = [dock](const QPointF& pos) {
+        // Il titolo è la striscia sopra il contenuto del pannello.
+        return !dock->isFloating() && dock->widget() != nullptr && pos.y() >= 0 && pos.y() < dock->widget()->geometry().top();
+    };
+    switch (event->type()) {
+    case QEvent::HoverEnter:
+    case QEvent::HoverMove:
+        setTitleHighlight(dock, inTitle(static_cast<QHoverEvent*>(event)->position()));
+        return true;
+    case QEvent::HoverLeave:
+        setTitleHighlight(dock, false);
+        return true;
+    case QEvent::MouseButtonPress:
+        if (isTitleHighlighted(dock) && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton)
+            dock->setCursor(Qt::ClosedHandCursor);  // si trascina
+        return true;
+    case QEvent::MouseButtonRelease:
+        if (isTitleHighlighted(dock))
+            dock->setCursor(Qt::OpenHandCursor);
+        return true;
+    default:
+        return false;
+    }
+}
+
+void MainWindow::timelinePollStep(bool buttonDown, const QPoint& cursor)
+{
+    if (!timelineDock_->isFloating() || fullScreenDock_ != nullptr) {
+        timelinePoll_->stop();
+        showDockPreview(false);
+        return;
+    }
+    if (buttonDown && !pollButtonDown_)
+        pollPressPos_ = timelineDock_->pos();  // inizio di un trascinamento (o di un clic qualsiasi)
+    const QRect window = frameGeometry();
+    const bool low = window.contains(cursor) && cursor.y() >= window.top() + window.height() / 2;
+    const bool moved = timelineDock_->pos() != pollPressPos_;
+    // Durante il trascinamento, con il cursore nella metà bassa: si vede dove andrà.
+    showDockPreview(buttonDown && moved && low);
+    // Rilasciato dopo averla spostata: è stata lasciata lì.
+    const bool released = !buttonDown && pollButtonDown_ && moved;
+    pollButtonDown_ = buttonDown;
+    if (released)
+        redockTimelineIfDroppedLow(cursor, false);
+}
+
+void MainWindow::showDockPreview(bool visible)
+{
+    if (!visible) {
+        if (dockPreview_ != nullptr)
+            dockPreview_->hide();
+        return;
+    }
+    if (dockPreview_ == nullptr) {
+        dockPreview_ = new QWidget(this);
+        dockPreview_->setAttribute(Qt::WA_TransparentForMouseEvents);
+        dockPreview_->setAttribute(Qt::WA_StyledBackground);
+        QColor color = palette().color(QPalette::Highlight);
+        dockPreview_->setStyleSheet(QStringLiteral("background: rgba(%1, %2, %3, 90); border: 3px solid rgb(%1, %2, %3);")
+                                        .arg(color.red())
+                                        .arg(color.green())
+                                        .arg(color.blue()));
+    }
+    // La striscia in basso, a tutta larghezza, alta quanto sarà la linea del tempo.
+    const int bottom = statusBar()->isVisible() ? statusBar()->geometry().top() : height();
+    const int h = std::clamp(timelineHeight_, 230, std::max(230, height() / 2));
+    dockPreview_->setGeometry(0, std::max(0, bottom - h), width(), std::min(h, bottom));
+    dockPreview_->raise();
+    dockPreview_->show();
 }
 
 bool MainWindow::redockTimelineIfDroppedLow(const QPoint& cursor, bool buttonDown)
