@@ -584,8 +584,14 @@ int runDockTest(QApplication& app)
     MainWindow window;
     window.setTimelinePollAutomatic(false);  // i passi li dà la prova
     window.setAttribute(Qt::WA_ShowWithoutActivating);
-    window.resize(1200, 800);
-    window.show();
+    // EDITORVIDEO_DOCK_TEST_SAVED=1: con la disposizione salvata dall'utente e la finestra ingrandita (come la usa lui).
+    if (qEnvironmentVariableIntValue("EDITORVIDEO_DOCK_TEST_SAVED") != 0) {
+        window.restoreLayout();
+        window.showMaximized();
+    } else {
+        window.resize(1200, 800);
+        window.show();
+    }
     QDockWidget* timeline = window.timelineDock();
     // Aspetta davvero (i riagganci partono da timer): processEvents da solo ritorna appena non c'è niente da fare.
     const auto settle = [&](int ms = 250) {
@@ -604,6 +610,14 @@ int runDockTest(QApplication& app)
     const auto windowsMove = [&](void* hwnd, QPoint) {
         const auto h = static_cast<HWND>(hwnd);
         window.setTestCursor(frame.center());
+        // Come con il mouse vero: Qt riceve la pressione sul titolo di Windows (e avvierebbe il suo trascinamento dei
+        // pannelli, che poi non vede mai finire perché il rilascio se lo prende lo spostamento di Windows).
+        {
+            const QPoint grab = timeline->mapToGlobal(QPoint(timeline->width() / 2, -8));
+            QMouseEvent press(QEvent::NonClientAreaMouseButtonPress, QPointF(timeline->mapFromGlobal(grab)), QPointF(grab),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(timeline, &press);
+        }
         SendMessageW(h, WM_ENTERSIZEMOVE, 0, 0);
         settle(60);
         window.setTestCursor(dropAt);
@@ -676,6 +690,13 @@ int runDockTest(QApplication& app)
     }
     std::printf("  lasciata in alto resta staccata: %d su 5; anteprima giusta durante lo spostamento: %d su 15\n", stays,
                 previews);
+    // Finestra > Ripristina disposizione dopo tutti questi sganci e riagganci: torna quella iniziale, senza sovrapposizioni.
+    window.resetLayout();
+    const bool resetOk = docked("Ripristina disposizione", 0);
+    good += resetOk ? 1 : 0;
+    // Con EDITORVIDEO_DOCK_TEST_CAPTURE=immagine.png un'immagine della finestra alla fine.
+    if (const QString capture = qEnvironmentVariable("EDITORVIDEO_DOCK_TEST_CAPTURE"); !capture.isEmpty())
+        window.grab().save(capture);
 
     // Il titolo di un pannello agganciato con il mouse sopra: disegnato davvero con il colore di evidenziazione.
     QDockWidget* source = window.sourceDock();
@@ -690,8 +711,8 @@ int runDockTest(QApplication& app)
                       && std::abs(got.green() - wanted.green()) < 30 && std::abs(got.blue() - wanted.blue()) < 30;
     std::printf("  titolo evidenziato: colore %s, atteso %s: %s\n", qPrintable(got.name()), qPrintable(wanted.name()),
                 titleOk ? "OK" : "NO");
-    const bool ok = good == 20 && stays == 5 && previews == 15 && titleOk;
-    std::printf("%s (%d su 20)\n", ok ? "Controllo dei pannelli: OK" : "Controllo dei pannelli: NON RIUSCITO", good);
+    const bool ok = good == 21 && stays == 5 && previews == 15 && titleOk;
+    std::printf("%s (%d su 21)\n", ok ? "Controllo dei pannelli: OK" : "Controllo dei pannelli: NON RIUSCITO", good);
     return ok ? 0 : 3;
 }
 
