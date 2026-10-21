@@ -5,8 +5,10 @@ namespace editor::core {
 // Zoom orizzontale di una linea del tempo: quanti pixel per secondo e da quale secondo parte la parte visibile.
 // Le x sono in pixel dal bordo sinistro della traccia (la parte della linea del tempo che rappresenta il tempo).
 //
-// "Adatta" (fit) mostra tutta la durata nella larghezza: è anche lo zoom minimo, e resta tale se cambiano larghezza
-// o durata. Lo zoom massimo è dato da setMaxPixelsPerSecond (es. 12 pixel per fotogramma).
+// "Adatta" (fit) mostra tutta la durata esattamente nella larghezza, e resta tale se cambiano larghezza o durata.
+// Si può anche rimpicciolire oltre "Adatta": allora tutto il contenuto sta a sinistra e a destra resta spazio vuoto,
+// fino a occupare un decimo della larghezza (zoom minimo). Lo zoom massimo è dato da setMaxPixelsPerSecond (es. 12
+// pixel per fotogramma).
 class TimelineZoom
 {
 public:
@@ -18,6 +20,7 @@ public:
     double width() const { return width_; }
 
     double fitPixelsPerSecond() const;  // tutta la durata nella larghezza
+    double minPixelsPerSecond() const;  // tutta la durata in un decimo della larghezza
     double maxPixelsPerSecond() const;  // mai meno di fitPixelsPerSecond()
     double pixelsPerSecond() const;
     bool isFit() const;
@@ -30,12 +33,15 @@ public:
     double xForTime(double seconds) const;  // può uscire da [0, width] se il tempo non è visibile
     double timeForX(double x) const;        // sempre dentro [0, durata]
 
-    // Moltiplica i pixel per secondo per `factor` tenendo fermo il tempo che sta in `x` (es. sotto il mouse).
-    // Sotto lo zoom minimo diventa "Adatta", sopra il massimo si ferma al massimo.
+    // Moltiplica i pixel per secondo per `factor` tenendo fermo il tempo che sta in `x` (es. sotto il mouse), entro
+    // lo zoom minimo e massimo. Quando tutto il contenuto sta nella larghezza parte sempre dal bordo sinistro: lì il
+    // tempo sotto il mouse può spostarsi (prima di 0 non c'è niente).
     void zoomAt(double factor, double x);
     void fit();
     void scrollTo(double offsetSeconds);  // limitato a [0, maxOffset]
     void scrollBy(double pixels);
+
+    bool canScroll() const { return maxOffset() > 0; }  // il contenuto è più largo della larghezza
 
     // Riproduzione: se `seconds` non è visibile, si passa alla "pagina" che lo contiene (il tempo finisce poco dopo
     // il bordo sinistro), così la vista salta di una larghezza alla volta invece di scorrere a ogni fotogramma.

@@ -107,7 +107,7 @@ La finestra è divisa così:
 
 ### Zoom della linea del tempo
 
-- Le linee del tempo della Sorgente e del Montaggio si possono ingrandire fino a circa 12 pixel per fotogramma: **Ctrl+rotellina** ingrandisce o riduce tenendo fermo il punto sotto il mouse, **+** e **-** fanno lo stesso sulla linea del tempo dell'anteprima attiva (centrando sul cursore). Il pulsante **Adatta**, in basso a destra di ogni linea del tempo, torna a mostrare tutto.
+- Le linee del tempo della Sorgente e del Montaggio si possono ingrandire fino a circa 12 pixel per fotogramma: **Ctrl+rotellina** ingrandisce o riduce tenendo fermo il punto sotto il mouse, **+** e **-** fanno lo stesso sulla linea del tempo dell'anteprima attiva (centrando sul cursore). Si può anche rimpicciolire oltre: i pezzi occupano solo una parte della barra (fino a un decimo) e a destra resta spazio vuoto. Il pulsante **Adatta**, in basso a destra di ogni linea del tempo, torna a mostrare tutto esattamente nella larghezza.
 - Quando la linea del tempo è ingrandita compare una barra di scorrimento; si scorre anche con la rotellina (o Maiusc+rotellina).
 - Durante la riproduzione la vista segue il cursore, una pagina alla volta. Se si scorre a mano smette di seguirlo, finché la riproduzione non riparte o si preme Adatta.
 

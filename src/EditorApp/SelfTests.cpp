@@ -694,12 +694,18 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                                       Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
                     QCoreApplication::sendEvent(timeline, &wheel);
                     timeline->grab();
+                    // Oltre "Adatta": tutto in un decimo della larghezza, senza barra di scorrimento.
+                    for (int i = 0; i < 80; ++i)
+                        timeline->zoomOut();
+                    const bool atMin = zoom.duration() <= 0
+                                    || (std::abs(zoom.contentWidth() - zoom.width() * 0.1) < 1.0 && !zoom.canScroll());
+                    timeline->grab();
                     timeline->fitAll();
                     timeline->grab();
-                    zoomOk = zoomOk && atMax && timeline->zoom().isFit();
+                    zoomOk = zoomOk && atMax && atMin && timeline->zoom().isFit();
                 }
                 QCoreApplication::processEvents();
-                std::printf("Zoom delle linee del tempo: massimo e Adatta %s, miniature in attesa %d\n", zoomOk ? "OK" : "NON riusciti",
+                std::printf("Zoom delle linee del tempo: massimo, minimo e Adatta %s, miniature in attesa %d\n", zoomOk ? "OK" : "NON riusciti",
                             window->pendingThumbnails());
                 std::fflush(stdout);
                 ok = ok && zoomOk && window->pendingThumbnails() < 200;

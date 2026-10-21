@@ -12,8 +12,9 @@ namespace editor::app {
 // Base comune delle linee del tempo con lo zoom orizzontale (Sorgente e Montaggio).
 // - Ctrl+rotellina ingrandisce o riduce tenendo fermo il tempo sotto il mouse; la rotellina da sola (o con Maiusc)
 //   scorre in orizzontale.
-// - In basso una riga con la barra di scorrimento (solo quando la vista è ingrandita) e il pulsante "Adatta", che
-//   torna a mostrare tutto.
+// - Si può anche rimpicciolire oltre "Adatta": tutto il contenuto sta a sinistra e il resto è vuoto.
+// - In basso una riga con la barra di scorrimento (solo quando il contenuto è più largo della vista) e il pulsante
+//   "Adatta", che torna a mostrare tutto esattamente nella larghezza.
 // - Durante la riproduzione la vista segue il cursore una pagina alla volta; se l'utente scorre a mano smette di
 //   seguirlo finché la riproduzione non riparte o si preme "Adatta".
 // La classe derivata dice dove sta l'asse del tempo (timeAxis), ridisegna quando la vista cambia (viewChanged) e

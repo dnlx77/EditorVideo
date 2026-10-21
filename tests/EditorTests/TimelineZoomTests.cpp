@@ -76,8 +76,17 @@ TEST(TimelineZoom, Limits)
     EXPECT_DOUBLE_EQ(zoom.pixelsPerSecond(), 300.0);  // 12 px per fotogramma
     for (int i = 0; i < 100; ++i)
         zoom.zoomAt(0.5, 500.0);
-    EXPECT_TRUE(zoom.isFit());  // sotto il minimo: si torna ad "Adatta"
+    // Oltre "Adatta": tutto in un decimo della larghezza, a sinistra, senza scorrimento.
+    EXPECT_FALSE(zoom.isFit());
+    EXPECT_DOUBLE_EQ(zoom.pixelsPerSecond(), 1.0);
+    EXPECT_DOUBLE_EQ(zoom.contentWidth(), 100.0);
     EXPECT_DOUBLE_EQ(zoom.offset(), 0.0);
+    EXPECT_FALSE(zoom.canScroll());
+    EXPECT_DOUBLE_EQ(zoom.xForTime(100.0), 100.0);
+    EXPECT_DOUBLE_EQ(zoom.timeForX(600.0), 100.0);  // nello spazio vuoto a destra: la fine
+    zoom.scrollTo(30.0);
+    EXPECT_DOUBLE_EQ(zoom.offset(), 0.0);
+    zoom.fit();
 
     zoom.zoomAt(4.0, 0.0);
     zoom.scrollTo(-5.0);
@@ -96,6 +105,8 @@ TEST(TimelineZoom, Limits)
     shortClip.zoomAt(2.0, 100.0);
     EXPECT_TRUE(shortClip.isFit());
     EXPECT_DOUBLE_EQ(shortClip.pixelsPerSecond(), 2000.0);
+    shortClip.zoomAt(0.5, 100.0);  // ma si può rimpicciolire
+    EXPECT_DOUBLE_EQ(shortClip.pixelsPerSecond(), 1000.0);
 
     // Una durata a zero non deve dare divisioni per zero.
     TimelineZoom empty;
@@ -111,13 +122,41 @@ TEST(TimelineZoom, ResizeAndDurationChanges)
     zoom.setWidth(2000.0);  // più largo: stessi pixel per secondo, più secondi visibili
     EXPECT_DOUBLE_EQ(zoom.pixelsPerSecond(), 40.0);
     EXPECT_DOUBLE_EQ(zoom.offset(), 50.0);  // limitato perché la fine resti in fondo
-    zoom.setWidth(5000.0);                  // ora tutto ci sta largamente: torna ad "Adatta"
-    EXPECT_TRUE(zoom.isFit());
+    zoom.setWidth(5000.0);  // ora tutto ci sta largamente: stesso zoom, spazio vuoto a destra, niente scorrimento
+    EXPECT_FALSE(zoom.isFit());
+    EXPECT_DOUBLE_EQ(zoom.pixelsPerSecond(), 40.0);
+    EXPECT_FALSE(zoom.canScroll());
+    EXPECT_DOUBLE_EQ(zoom.offset(), 0.0);
 
     TimelineZoom fit = sample();
     fit.setDuration(200.0);  // con "Adatta" si resta ad "Adatta"
     EXPECT_TRUE(fit.isFit());
     EXPECT_DOUBLE_EQ(fit.pixelsPerSecond(), 5.0);
+}
+
+TEST(TimelineZoom, ZoomingOutBeyondFit)
+{
+    TimelineZoom zoom = sample();
+    zoom.zoomAt(0.5, 700.0);  // metà: 50 s in 500 px, il resto vuoto
+    EXPECT_FALSE(zoom.isFit());
+    EXPECT_DOUBLE_EQ(zoom.pixelsPerSecond(), 5.0);
+    EXPECT_DOUBLE_EQ(zoom.contentWidth(), 500.0);
+    EXPECT_DOUBLE_EQ(zoom.offset(), 0.0);
+    EXPECT_FALSE(zoom.canScroll());
+    EXPECT_DOUBLE_EQ(zoom.xForTime(50.0), 250.0);
+    // Il contenuto parte dal bordo sinistro: lì il tempo sotto il mouse resta fermo anche rimpicciolendo.
+    zoom.zoomAt(0.5, 0.0);
+    EXPECT_DOUBLE_EQ(zoom.timeForX(0.0), 0.0);
+    EXPECT_FALSE(zoom.follow(90.0));  // tutto visibile: niente pagine
+    // Riingrandendo oltre "Adatta" il tempo sotto il mouse torna a restare fermo.
+    zoom.zoomAt(8.0, 0.0);  // 20 px/s: più largo della vista
+    EXPECT_TRUE(zoom.canScroll());
+    const double before = zoom.timeForX(300.0);
+    zoom.zoomAt(1.5, 300.0);
+    EXPECT_NEAR(zoom.timeForX(300.0), before, 1e-9);
+    zoom.fit();
+    EXPECT_TRUE(zoom.isFit());
+    EXPECT_DOUBLE_EQ(zoom.pixelsPerSecond(), 10.0);
 }
 
 TEST(TimelineZoom, FollowTurnsPages)
