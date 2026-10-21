@@ -52,6 +52,7 @@ public:
 
     PlayerWidget* player() const { return player_; }  // anteprima di partenza (Sorgente)
     ProgramMonitor* programMonitor() const { return program_; }
+    SequenceTimeline* sequenceTimeline() const { return timeline_; }
     QString currentFile() const { return currentPath_; }
     const core::Project& project() const { return project_; }
     int currentClipId() const { return currentClipId_; }
@@ -133,6 +134,8 @@ private:
     void afterHistoryChange(const QString& message);
     // Comandi di spostamento: vanno all'anteprima attiva.
     void stepFrame(int direction);
+    // Zoom della linea del tempo dell'anteprima attiva (factor > 1 ingrandisce, 0 = Adatta).
+    void zoomTimeline(double factor);
     void stepToMark(int direction);  // Sorgente: fotogramma chiave; Montaggio: inizio dei pezzi
     void seekEnd();
     void setPlaying(bool playing);

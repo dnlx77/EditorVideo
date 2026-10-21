@@ -54,6 +54,7 @@
     <ClInclude Include="SequenceTimeline.h" />
     <ClInclude Include="TimelineWidget.h" />
     <ClInclude Include="UiText.h" />
+    <ClInclude Include="ZoomableTimeline.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AudioOutput.cpp" />
@@ -64,6 +65,7 @@
     <ClCompile Include="SelfTests.cpp" />
     <ClCompile Include="SequenceTimeline.cpp" />
     <ClCompile Include="TimelineWidget.cpp" />
+    <ClCompile Include="ZoomableTimeline.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\EditorCore\EditorCore.vcxproj">

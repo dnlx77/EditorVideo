@@ -1,10 +1,10 @@
 #pragma once
 
+#include "EditorApp/ZoomableTimeline.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <QtGui/QImage>
 #include <QtGui/QPixmap>
-#include <QtWidgets/QWidget>
 
 #include <functional>
 #include <memory>
@@ -23,7 +23,8 @@ namespace editor::app {
 // il pezzo nell'anteprima di partenza.
 // Audio: la forma d'onda di ogni pezzo (o della traccia sostitutiva), i tratti senza audio barrati e il tratto
 // selezionato. Trascinando si seleziona un tratto; la traccia sostitutiva si sposta trascinando la sua maniglia.
-class SequenceTimeline : public QWidget
+// Si può ingrandire (vedi ZoomableTimeline).
+class SequenceTimeline : public ZoomableTimeline
 {
 public:
     struct Block
@@ -84,6 +85,9 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    QRectF timeAxis() const override { return videoLane(); }
+    void viewChanged() override { invalidate(); }
+    double playheadTime() const override { return playhead_; }
 
 private:
     // Tutto tranne il cursore (blocchi, miniature, forme d'onda, tratti) si disegna in cache_ e si rifà solo quando
@@ -96,8 +100,8 @@ private:
     std::vector<QRectF> blockRects(const QRectF& lane) const;  // il riquadro di ogni blocco nella corsia
     QRectF replacementHandle() const;  // maniglia della traccia sostitutiva (vuoto se non c'è)
     double total() const { return total_; }
-    double xForTime(double seconds) const;
-    double timeForX(double x) const;
+    // La parte visibile di `r` (con un po' di margine): con lo zoom un blocco può essere largo milioni di pixel.
+    QRectF visiblePart(const QRectF& r) const;
     int blockAt(double x) const;     // indice del blocco sotto x, -1 se nessuno
     int dropIndexAt(double x) const;  // dove finirebbe il blocco trascinato
     void paintAudio(QPainter& p);

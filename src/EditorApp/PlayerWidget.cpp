@@ -204,6 +204,7 @@ void PlayerWidget::openFile(const QString& path)
     position_ = 0.0;
     displayedTime_ = 0.0;
     frameDuration_ = video_ && video_->frameRate() > 0 ? 1.0 / video_->frameRate() : 0.04;
+    timeline_->setFrameDuration(frameDuration_);
     // Per un video i fotogrammi chiave arrivano dall'analisi del file (setKeyframes); senza video non servono.
     segment_.reset({}, duration_);
     ranges_.clear();
@@ -312,6 +313,7 @@ void PlayerWidget::play()
         position_ = 0.0;  // alla fine: si ricomincia dall'inizio
     startWorkers(position_);
     playing_ = true;
+    timeline_->resumeFollowing();  // la linea del tempo torna a seguire il cursore
     updateControls();
 }
 

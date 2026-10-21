@@ -54,6 +54,7 @@ La finestra è divisa così:
 | Sorgente: fotogramma chiave precedente / successivo · Montaggio: inizio del pezzo precedente / successivo | Maiusc+← / Maiusc+→ |
 | Indietro / avanti di 5 secondi | Ctrl+← / Ctrl+→ (J indietro) |
 | Inizio / fine | Home / Fine |
+| Ingrandisci / riduci la linea del tempo dell'anteprima attiva | + / - (oppure Ctrl+rotellina sulla linea del tempo) |
 | Segna IN / OUT (Sorgente; con il Montaggio attivo: inizio e fine del tratto audio) | I / O |
 | Vai a IN / OUT | Maiusc+I / Maiusc+O |
 | Cancella IN e OUT | menu Segmento |
@@ -97,6 +98,12 @@ La finestra è divisa così:
 
 - **Modifica > Annulla** (Ctrl+Z) torna indietro di una modifica; la voce del menu dice quale (es. "Annulla Dividi pezzo"). **Ripeti** (Ctrl+Y o Ctrl+Maiusc+Z) la rifà. Valgono per tutto ciò che cambia il progetto: aggiungere o togliere file, aggiungere, togliere (anche con X), spostare, dividere ed eliminare pezzi, svuotare il montaggio, togliere e rimettere l'audio, sostituirlo, spostarlo e tornare all'originale. IN e OUT della Sorgente no: si rimettono con un tasto.
 - L'asterisco nel titolo segue Annulla e Ripeti: tornando allo stato salvato sparisce.
+
+### Zoom della linea del tempo
+
+- Le linee del tempo della Sorgente e del Montaggio si possono ingrandire fino a circa 12 pixel per fotogramma: **Ctrl+rotellina** ingrandisce o riduce tenendo fermo il punto sotto il mouse, **+** e **-** fanno lo stesso sulla linea del tempo dell'anteprima attiva (centrando sul cursore). Il pulsante **Adatta**, in basso a destra di ogni linea del tempo, torna a mostrare tutto.
+- Quando la linea del tempo è ingrandita compare una barra di scorrimento; si scorre anche con la rotellina (o Maiusc+rotellina).
+- Durante la riproduzione la vista segue il cursore, una pagina alla volta. Se si scorre a mano smette di seguirlo, finché la riproduzione non riparte o si preme Adatta.
 
 ### Miniature
 
