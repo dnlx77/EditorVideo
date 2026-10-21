@@ -26,6 +26,8 @@ struct ExportResult
     // Audio nei tratti silenziati: pacchetti col contenuto sostituito dal silenzio (o PCM azzerato) e pacchetti tolti.
     int silencedPackets = 0;
     int droppedPackets = 0;
+    // I pezzi hanno parametri di codifica diversi (H.264/HEVC): ripetuti nel flusso davanti a ogni fotogramma chiave.
+    bool parametersInStream = false;
 };
 
 // Come togliere l'audio nei tratti silenziati, per l'audio compresso (il PCM viene sempre azzerato al campione).
@@ -59,14 +61,20 @@ ExportResult exportSegments(const std::string& inputPath, const std::string& out
                             const std::vector<TimeRange>& ranges, const ExportProgress& progress = {});
 
 // Come sopra, con i tratti di più file uniti uno dopo l'altro (anche di contenitori diversi). I file devono avere
-// gli stessi codec e parametri (vedi checkCompatibility), altrimenti MediaError con l'elenco delle differenze.
+// gli stessi codec e parametri del formato del progetto (`format`; senza, quello del primo file), altrimenti
+// MediaError con l'elenco delle differenze (vedi classifyClip).
+// Fanno eccezione i parametri di codifica di H.264 e HEVC (es. un altro numero di fotogrammi di riferimento): in quel
+// caso i parametri di ogni file (SPS e PPS, per HEVC anche VPS) si ripetono nel flusso davanti a ogni suo fotogramma
+// chiave, e nei file MP4 il video si dichiara "avc3"/"hev1" (parametri nel flusso). Se tutti i file hanno gli stessi
+// parametri il file creato è come prima ("avc1"/"hvc1"), il più compatibile.
 // Il contenitore del file creato si ricava dall'estensione di outputPath (di solito quella del primo file).
 // Con le modifiche all'audio (AudioEdit{} se non ce ne sono): tratti silenziati (tempi della sequenza, cioè del file
 // creato) e traccia sostitutiva. Con la traccia sostitutiva l'audio dei file non si copia: il file creato ha il video
 // dei file e l'audio del file sostitutivo (copiato senza ricodifica, spostato di `offset` e tagliato alla fine del
 // video).
 ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,
-                         const ExportProgress& progress = {}, MuteMethod muteMethod = MuteMethod::Silence);
+                         const ExportProgress& progress = {}, MuteMethod muteMethod = MuteMethod::Silence,
+                         const ProjectFormat* format = nullptr);
 
 // Problema che impedisce di usare `audioPath` come traccia sostitutiva in un file come `outputPath` (dall'estensione),
 // in italiano; vuoto se va bene. Es. audio PCM in un MP4.

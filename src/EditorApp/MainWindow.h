@@ -218,6 +218,11 @@ private:
     void refreshClipList();
     void sequenceChanged();
     void refreshTimeline();
+    // Formato del progetto: se non c'è ancora e il montaggio ha dei pezzi, quello del file del primo pezzo.
+    void ensureProjectFormat();
+    // Caratteristiche dei flussi di un file (lette una volta e tenute da parte); nullptr se il file non si legge.
+    const core::MediaSignature* signatureFor(const std::string& path);
+    void projectSettingsDialog();  // Montaggio > Impostazioni del progetto
     void updateSourceBands();
     void requestWaveform(const std::string& path);
     void startNextWaveform();
@@ -293,6 +298,7 @@ private:
 
     core::Project project_;
     std::map<int, core::MediaInfo> clipInfo_;  // analisi dei file del progetto, per id
+    std::map<std::string, std::optional<core::MediaSignature>> signatures_;  // vedi signatureFor (per percorso)
     int currentClipId_ = 0;                    // file mostrato nella Sorgente (0 = nessuno)
     QString currentPath_;                      // il suo percorso (nativo)
     bool updatingList_ = false;                // mentre si ricostruisce l'elenco dei file

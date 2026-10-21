@@ -40,6 +40,10 @@ struct Mismatch
 {
     int clipIndex = 0;     // 0 = primo file
     std::string message;   // es. "Clip 3 (nome.mp4): risoluzione 1280x720 invece di 1920x1080"
+    // Solo i parametri di codifica di un video H.264 o HEVC (SPS/PPS, profilo): stessi codec, misure e fotogrammi al
+    // secondo, quindi i pacchetti si possono copiare lo stesso, ripetendo i parametri giusti nel flusso (vedi
+    // exportClips). Le altre differenze richiedono la ricodifica.
+    bool parametersOnly = false;
 };
 
 // Legge le caratteristiche dei flussi (veloce: non legge tutto il file). Lancia MediaError se il file non si apre.
@@ -51,5 +55,36 @@ std::vector<Mismatch> checkCompatibility(const std::vector<MediaSignature>& clip
 
 // Tutte le differenze, una per riga.
 std::string describeMismatches(const std::vector<Mismatch>& mismatches);
+
+// Formato del progetto: codec, misure, fotogrammi al secondo e audio del file che si esporta. Lo dà un file del
+// progetto (di solito quello del primo pezzo messo nel montaggio); i pezzi degli altri file si confrontano con questo.
+struct ProjectFormat
+{
+    std::string sourceName;  // nome del file da cui è stato preso (per mostrarlo)
+    std::vector<StreamSignature> streams;  // come in MediaSignature, con i parametri di codifica
+
+    bool empty() const { return streams.empty(); }
+    const StreamSignature* video() const;  // nullptr se non c'è
+    const StreamSignature* audio() const;
+};
+
+ProjectFormat formatOf(const MediaSignature& signature);
+
+// Come può entrare nel file esportato un pezzo di un file, rispetto al formato del progetto.
+enum class ClipFit
+{
+    Copy,                // si copia così com'è
+    CopyWithParameters,  // si copia, con i suoi parametri di codifica ripetuti nel flusso (vedi Mismatch)
+    Reencode,            // diverso: senza ricodifica non si può unire
+};
+
+struct ClipFitResult
+{
+    ClipFit fit = ClipFit::Copy;
+    std::vector<std::string> reasons;  // le differenze, in italiano (vuoto per Copy)
+};
+
+// withAudio = false: l'audio non conta (es. con una traccia audio sostitutiva l'audio dei file non si copia).
+ClipFitResult classifyClip(const MediaSignature& clip, const ProjectFormat& format, bool withAudio = true);
 
 }  // namespace editor::core
