@@ -766,6 +766,30 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 QCoreApplication::processEvents();
                 const bool fullWidth = window->dockWidgetArea(timelineDock) == Qt::BottomDockWidgetArea
                                     && timelineDock->width() >= window->width() - 30;
+
+                // Staccata e lasciata dall'utente: nella metà alta della finestra resta staccata, nella metà bassa
+                // (a pulsante rilasciato) si riaggancia sotto a tutto; il comando del menu la riaggancia sempre.
+                timelineDock->setFloating(true);
+                QCoreApplication::processEvents();
+                const QRect frame = window->frameGeometry();
+                const bool highStays = !window->redockTimelineIfDroppedLow(frame.center() - QPoint(0, frame.height() / 4), false)
+                                    && timelineDock->isFloating();
+                const bool heldStays = !window->redockTimelineIfDroppedLow(frame.center() + QPoint(0, frame.height() / 4), true)
+                                    && timelineDock->isFloating();
+                const bool lowDocks = window->redockTimelineIfDroppedLow(frame.center() + QPoint(0, frame.height() / 4), false)
+                                   && !timelineDock->isFloating()
+                                   && window->dockWidgetArea(timelineDock) == Qt::BottomDockWidgetArea;
+                QCoreApplication::processEvents();
+                const bool lowFull = timelineDock->width() >= window->width() - 30;
+                timelineDock->setFloating(true);
+                window->redockTimeline();
+                QCoreApplication::processEvents();
+                const bool menuDocks = !timelineDock->isFloating() && timelineDock->width() >= window->width() - 30;
+                std::printf("  linea del tempo lasciata in alto: %s, trascinata: %s, lasciata in basso: %s, dal menu: %s\n",
+                            highStays ? "resta staccata" : "AGGANCIATA", heldStays ? "resta staccata" : "AGGANCIATA",
+                            lowDocks && lowFull ? "riagganciata a tutta larghezza" : "NON riagganciata",
+                            menuDocks ? "riagganciata" : "NON riagganciata");
+                const bool redockOk = highStays && heldStays && lowDocks && lowFull && menuDocks;
                 window->resetLayout();
                 QCoreApplication::processEvents();
 
@@ -815,7 +839,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 QCoreApplication::processEvents();
                 std::printf("  linea del tempo riagganciata a tutta larghezza %s, incrocio %s, pannelli piccoli %s\n",
                             fullWidth ? "OK" : "NO", cornerOk ? "OK" : "NO", smallOk ? "OK" : "NO");
-                docksOk = docksOk && fullWidth && cornerOk && smallOk;
+                docksOk = docksOk && fullWidth && redockOk && cornerOk && smallOk;
                 std::printf("Pannelli: staccati e riagganciati %s, disposizione salvata e ripristinata %s, ripristino iniziale %s\n",
                             docksOk ? "OK" : "NON riuscito", changed && restored ? "OK" : "NON riuscita",
                             reset ? "OK" : "NON riuscito");

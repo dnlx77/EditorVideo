@@ -48,7 +48,7 @@ La finestra è divisa così:
 ### Pannelli
 
 - File del progetto, Sorgente, Montaggio e la linea del tempo del montaggio sono **pannelli**: si ridimensionano trascinando i bordi, si spostano trascinando il titolo (anche uno accanto all'altro o uno sopra l'altro, o come schede) e si **staccano** come finestre a sé con il pulsante sul titolo o un doppio clic sul titolo, per esempio per mettere il Montaggio su un secondo monitor. Doppio clic sul titolo di una finestra staccata per riagganciarla.
-- La linea del tempo del montaggio si aggancia sempre in basso, a tutta larghezza: staccata e riagganciata (o con un doppio clic sul suo titolo) torna sotto a tutto.
+- La linea del tempo del montaggio si aggancia sempre in basso, a tutta larghezza. Staccata, si riaggancia lasciandola in un punto qualsiasi della metà bassa della finestra, con un doppio clic sul suo titolo o con **Finestra > Riaggancia la linea del tempo**.
 - Dove un bordo verticale e uno orizzontale fra i pannelli si incrociano il cursore diventa una croce: trascinando l'incrocio si cambiano insieme larghezza e altezza. I pannelli staccati si ridimensionano anche dagli angoli della loro finestra.
 - I pannelli possono diventare piccoli (circa 120x100): quando lo spazio è poco nascondono le righe secondarie (nella Sorgente prima le scritte sotto, poi la linea del tempo; nei file le schede Informazioni e Fotogrammi chiave).
 - **Doppio clic sull'immagine** della Sorgente o del Montaggio: quell'anteprima a schermo intero; **Esc** o un altro doppio clic per uscire. Spazio, frecce e gli altri tasti funzionano anche a schermo intero e nei pannelli staccati.

@@ -60,6 +60,12 @@ public:
     void resetLayout();    // Finestra > Ripristina disposizione
     // Schermo intero di un pannello (doppio clic sull'immagine di un'anteprima); di nuovo, o Esc, per uscire.
     void toggleFullScreen(QDockWidget* dock);
+    // La linea del tempo del montaggio di nuovo agganciata in basso, a tutta larghezza (menu Finestra, doppio clic sul
+    // titolo quando è staccata, o lasciandola nella metà bassa della finestra).
+    void redockTimeline();
+    // Pannello della linea del tempo staccato e appena spostato: se il pulsante del mouse è stato rilasciato con il
+    // cursore (coordinate dello schermo) nella metà bassa della finestra, si riaggancia in basso. true se l'ha fatto.
+    bool redockTimelineIfDroppedLow(const QPoint& cursor, bool buttonDown);
     bool isPanelFullScreen() const { return fullScreenDock_ != nullptr; }
     QDockWidget* sourceDock() const { return sourceDock_; }
     QDockWidget* programDock() const { return programDock_; }
@@ -216,6 +222,7 @@ private:
     QDockWidget* fullScreenDock_ = nullptr;
     QByteArray layoutBeforeFullScreen_;  // disposizione da ritrovare uscendo dallo schermo intero
     std::optional<CornerDrag> cornerDrag_;  // si sta trascinando un incrocio fra separatori
+    QTimer* timelineMoved_ = nullptr;       // la linea del tempo staccata si è appena spostata (vedi eventFilter)
     bool cornerCursor_ = false;
     QListWidget* clipList_ = nullptr;
     QTreeWidget* infoTree_ = nullptr;
