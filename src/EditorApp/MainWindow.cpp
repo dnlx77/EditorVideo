@@ -18,6 +18,7 @@
 
 #include <QtCore/QAbstractNativeEventFilter>
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QFileInfo>
 #include <QtCore/QSettings>
 #include <QtCore/QThread>
@@ -36,6 +37,7 @@
 #include <QtGui/QScreen>
 #include <QtWidgets/QToolTip>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QDialog>
 #include <QtWidgets/QDialogButtonBox>
@@ -851,8 +853,8 @@ void MainWindow::refreshTimeline()
                                                "file esportato (diversi da quelli del formato del progetto):")
                               + reasons;
             else if (fit.fit == core::ClipFit::Reencode)
-                block.fitNote = QStringLiteral("Diverso dal formato del progetto (%1): andrà ricodificato, per ora non si "
-                                               "può esportare.")
+                block.fitNote = QStringLiteral("Diverso dal formato del progetto (%1): all'esportazione sarà ricodificato "
+                                               "in quel formato.")
                                     .arg(QString::fromStdString(project_.format().sourceName))
                               + reasons;
         }
@@ -1179,6 +1181,8 @@ void MainWindow::exportDialog()
             != QMessageBox::Yes)
             return;
     }
+    if (!project_.sequence().empty() && !exportOptionsDialog())
+        return;
     QString target = QFileDialog::getSaveFileName(
         this, QStringLiteral("Esporta"), suggested, QStringLiteral("File %1 (*.%2)").arg(extension.toUpper(), extension));
     if (target.isEmpty())
@@ -1197,6 +1201,7 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     const core::AudioEdit audio = project_.sequence().empty() ? core::AudioEdit{} : project_.audioEdit();
     // Il formato del progetto vale per il montaggio (il taglio veloce copia il file com'è).
     const core::ProjectFormat format = project_.sequence().empty() ? core::ProjectFormat{} : project_.format();
+    const core::ReencodeOptions reencode = project_.sequence().empty() ? core::ReencodeOptions{} : reencodeOptions_;
 
     auto outcome = std::make_shared<ExportOutcome>();
     auto progress = std::make_shared<std::atomic<double>>(0.0);
@@ -1215,7 +1220,7 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
                         std::this_thread::sleep_for(slowDown);
                     return !cancel->load();
                 },
-                core::MuteMethod::Silence, format.empty() ? nullptr : &format);
+                core::MuteMethod::Silence, format.empty() ? nullptr : &format, reencode);
         } catch (const core::ExportCancelled&) {
             outcome->cancelled = true;
         } catch (const std::exception& e) {
@@ -1233,7 +1238,21 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     dialog->setAutoReset(false);
     connect(dialog, &QProgressDialog::canceled, this, [this] { cancelExport_ = true; });
     auto* poll = new QTimer(dialog);
-    connect(poll, &QTimer::timeout, dialog, [dialog, progress] { dialog->setValue(static_cast<int>(*progress * 1000)); });
+    // Tempo che manca, stimato da quanto si è fatto finora (dopo qualche secondo, quando la stima è affidabile).
+    auto elapsed = std::make_shared<QElapsedTimer>();
+    elapsed->start();
+    const QString label = dialog->labelText();
+    connect(poll, &QTimer::timeout, dialog, [dialog, progress, elapsed, label] {
+        const double done = *progress;
+        dialog->setValue(static_cast<int>(done * 1000));
+        const double seconds = elapsed->elapsed() / 1000.0;
+        if (seconds > 3 && done > 0.02 && done < 1.0) {
+            const int left = static_cast<int>(std::ceil(seconds * (1.0 - done) / done));
+            dialog->setLabelText(label + QStringLiteral("\nTempo rimanente: circa %1")
+                                             .arg(left < 60 ? QStringLiteral("%1 s").arg(left)
+                                                            : QStringLiteral("%1 min %2 s").arg(left / 60).arg(left % 60)));
+        }
+    });
     poll->start(100);
 
     connect(exportThread_, &QThread::finished, this, [this, outcome, dialog, poll, target, showResult] {
@@ -1260,6 +1279,69 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
 
     updateExportAction();
     exportThread_->start();
+    return true;
+}
+
+bool MainWindow::exportOptionsDialog()
+{
+    const std::vector<core::ClipRanges> plan = exportPlan();
+    const core::AudioEdit audio = project_.audioEdit();
+    const core::ProjectFormat& format = project_.format();
+    // Quanti tratti si copiano e quanti si ricodificano (la prima volta prova anche gli encoder: qualche secondo).
+    const auto preview = [&](bool all) {
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        const core::ExportPreview result =
+            core::previewExport(plan, audio, format.empty() ? nullptr : &format, core::ReencodeOptions{reencodeOptions_.quality, all});
+        QApplication::restoreOverrideCursor();
+        return result;
+    };
+    const core::ExportPreview first = preview(false);
+    if (!first.problem.empty()) {
+        QMessageBox::warning(this, QStringLiteral("Esportazione non possibile"), QString::fromStdString(first.problem));
+        return false;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Esporta il montaggio"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* summary = new QLabel;
+    summary->setWordWrap(true);
+    layout->addWidget(summary);
+    auto* form = new QFormLayout;
+    auto* quality = new QComboBox;
+    quality->addItem(QStringLiteral("Alta (quasi uguale all'originale)"));
+    quality->addItem(QStringLiteral("Media (file più piccolo)"));
+    quality->setCurrentIndex(reencodeOptions_.quality == core::QualityPreset::Medium ? 1 : 0);
+    form->addRow(QStringLiteral("Qualità della ricodifica:"), quality);
+    layout->addLayout(form);
+    auto* all = new QCheckBox(QStringLiteral("Ricodifica tutto (massima compatibilità con i lettori, più lento)"));
+    all->setChecked(reencodeOptions_.all);
+    layout->addWidget(all);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Esporta..."));
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    const auto describe = [&](const core::ExportPreview& p) {
+        QString text = QStringLiteral("<b>%1 pezzi copiati</b> così come sono (%2)").arg(p.copiedSegments).arg(timeText(p.copiedSeconds));
+        if (p.reencodedSegments > 0)
+            text += QStringLiteral(", <b>%1 ricodificati</b> nel formato del progetto (%2)")
+                        .arg(p.reencodedSegments)
+                        .arg(timeText(p.reencodedSeconds));
+        text += QStringLiteral(".");
+        if (p.reencodedSegments > 0 && p.copiedSegments > 0)
+            text += QStringLiteral("<br>I pezzi copiati non perdono niente; quelli ricodificati sono quasi uguali "
+                                   "all'originale con la qualità alta.");
+        summary->setText(text);
+        quality->setEnabled(p.reencodedSegments > 0);
+    };
+    describe(first);
+    connect(all, &QCheckBox::toggled, &dialog, [&](bool checked) { describe(checked ? preview(true) : first); });
+    if (dialog.exec() != QDialog::Accepted)
+        return false;
+    reencodeOptions_.quality = quality->currentIndex() == 1 ? core::QualityPreset::Medium : core::QualityPreset::High;
+    reencodeOptions_.all = all->isChecked();
     return true;
 }
 
@@ -2790,7 +2872,7 @@ void MainWindow::projectSettingsDialog()
     auto* intro = new QLabel(QStringLiteral(
         "Il formato del file esportato. Lo dà un file del progetto: all'inizio quello del primo pezzo messo nel montaggio.\n"
         "I pezzi di file con parametri di codifica diversi (segno P sul blocco) si copiano lo stesso; quelli con codec, "
-        "misure o fotogrammi al secondo diversi (segno !) andranno ricodificati e per ora non si possono esportare."));
+        "misure o fotogrammi al secondo diversi (segno R) si ricodificano nel formato del progetto all'esportazione."));
     intro->setWordWrap(true);
     layout->addWidget(intro);
 
@@ -2806,8 +2888,8 @@ void MainWindow::projectSettingsDialog()
     form->addRow(QStringLiteral("Video:"), video);
     form->addRow(QStringLiteral("Audio:"), audio);
     layout->addLayout(form);
-    auto* note = new QLabel(QStringLiteral("Codec, risoluzione e fotogrammi al secondo si potranno scegliere liberamente "
-                                           "con la ricodifica. Ora si può scegliere da quale file prenderli."));
+    auto* note = new QLabel(QStringLiteral("Per ora codec, risoluzione e fotogrammi al secondo si prendono da un file del "
+                                           "progetto: scegli quale."));
     note->setWordWrap(true);
     note->setStyleSheet(QStringLiteral("color: palette(placeholder-text);"));
     layout->addWidget(note);

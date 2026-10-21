@@ -492,7 +492,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
         p.setPen(b.fragmentId == selected_ ? QPen(pal.color(QPalette::Highlight), 3) : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(r, 3, 3);
-        // Segno in alto a destra: P = si copia con i suoi parametri, ! = da ricodificare.
+        // Segno in alto a destra: P = si copia con i suoi parametri, R = si ricodifica.
         if (b.fit != 0 && r.width() > 22) {
             const QRectF badge(QPointF(r.right() - 17, r.top() + 3), QSizeF(14, 14));
             p.setPen(Qt::NoPen);
@@ -503,7 +503,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
             p.save();
             p.setFont(bold);
             p.setPen(b.fit == 1 ? Qt::black : Qt::white);
-            p.drawText(badge, Qt::AlignCenter, b.fit == 1 ? QStringLiteral("P") : QStringLiteral("!"));
+            p.drawText(badge, Qt::AlignCenter, b.fit == 1 ? QStringLiteral("P") : QStringLiteral("R"));
             p.restore();
         }
         if (thumbnails && r.width() > 30) {

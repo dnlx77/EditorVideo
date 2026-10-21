@@ -72,20 +72,15 @@ int guarded(const std::function<int()>& test)
     }
 }
 
-// Come l'esportazione: le differenze rispetto al primo file che richiedono la ricodifica, una per riga; vuoto = si
-// possono unire (anche ripetendo i parametri di codifica nel flusso).
-std::string refusal(const std::vector<core::MediaSignature>& signatures)
+// Come l'esportazione (formato del primo file): perché non si può esportare (vuoto = si può, copiando o
+// ricodificando). Scrive anche quanti tratti si copiano e quanti si ricodificano.
+std::string refusal(const core::Project& project)
 {
-    std::string text;
-    const core::ProjectFormat format = core::formatOf(signatures.front());
-    for (std::size_t c = 1; c < signatures.size(); ++c) {
-        const core::ClipFitResult fit = core::classifyClip(signatures[c], format);
-        if (fit.fit != core::ClipFit::Reencode)
-            continue;
-        for (const std::string& reason : fit.reasons)
-            text += "Clip " + std::to_string(c + 1) + " (" + signatures[c].fileName + "): " + reason + "\n";
-    }
-    return text;
+    const core::ExportPreview preview = core::previewExport(project.exportPlan(), core::AudioEdit{}, nullptr);
+    if (preview.problem.empty())
+        std::printf("Tratti copiati: %d (%.3f s), ricodificati: %d (%.3f s)\n", preview.copiedSegments,
+                    preview.copiedSeconds, preview.reencodedSegments, preview.reencodedSeconds);
+    return preview.problem.empty() ? std::string() : preview.problem + "\n";
 }
 
 // Decodifica tutto il video del file con il decoder software di FFmpeg, attento agli errori: quanti fotogrammi escono
@@ -182,7 +177,7 @@ int runJoinTest(const QStringList& args, qsizetype at)
             signatures.push_back(core::readMediaSignature(path));
             project.sequence().insert(-1, clip.id, 0.0, clip.info.durationSeconds, project.snapper());  // file intero
         }
-        if (const std::string problems = refusal(signatures); !problems.empty()) {
+        if (const std::string problems = refusal(project); !problems.empty()) {
             std::printf("Non si possono unire:\n%s", problems.c_str());
             return 4;
         }
@@ -247,7 +242,7 @@ int runSequenceTest(const QStringList& args, qsizetype at)
             if (project.sequence().insert(-1, ids[path], args[i + 1].toDouble(), args[i + 2].toDouble(), project.snapper()) == 0)
                 throw core::MediaError("Pezzo vuoto: OUT deve stare dopo IN.");
         }
-        if (const std::string problems = refusal(signatures); !problems.empty()) {
+        if (const std::string problems = refusal(project); !problems.empty()) {
             std::printf("Non si possono unire:\n%s", problems.c_str());
             return 4;
         }
