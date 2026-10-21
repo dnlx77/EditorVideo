@@ -30,6 +30,7 @@
 #include <QtGui/QDropEvent>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QWheelEvent>
+#include <QtGui/QWindow>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMessageBox>
@@ -614,10 +615,18 @@ int runDockTest(QApplication& app)
     window.setNativeDragForTest(windowsMove);
     const auto docked = [&](const char* how, int round) {
         settle();
+        // I pannelli di sopra devono finire sopra la linea del tempo (non restare alti fino in fondo, coprendola).
+        int overlap = 0;
+        for (QDockWidget* dock : {window.filesDock(), window.sourceDock(), window.programDock()}) {
+            if (dock->isVisible() && !dock->isFloating())
+                overlap = std::max(overlap, dock->geometry().bottom() - timeline->geometry().top() + 1);
+        }
         const bool ok = !timeline->isFloating() && window.dockWidgetArea(timeline) == Qt::BottomDockWidgetArea
-                     && timeline->width() >= window.width() - 30 && timeline->height() >= 225;
-        std::printf("  %s, giro %d: %s (staccata %s, larga %d su %d, alta %d)\n", how, round, ok ? "OK" : "NON riuscito",
-                    timeline->isFloating() ? "sì" : "no", timeline->width(), window.width(), timeline->height());
+                     && timeline->width() >= window.width() - 30 && timeline->height() >= 225 && overlap <= 0
+                     && timeline->isVisible() && !timeline->testAttribute(Qt::WA_NativeWindow);
+        std::printf("  %s, giro %d: %s (staccata %s, larga %d su %d, alta %d, sovrapposta %d px)\n", how, round,
+                    ok ? "OK" : "NON riuscito", timeline->isFloating() ? "sì" : "no", timeline->width(), window.width(),
+                    timeline->height(), overlap);
         return ok;
     };
     const auto undock = [&] {
@@ -651,13 +660,13 @@ int runDockTest(QApplication& app)
         stays += timeline->isFloating() ? 1 : 0;
         if (timeline->isFloating()) {
             dropAt = low;
-            windowsMove(reinterpret_cast<void*>(timeline->winId()), QPoint());
+            windowsMove(reinterpret_cast<void*>(timeline->windowHandle()->winId()), QPoint());
         }
         good += docked("staccata, poi trascinata di nuovo e lasciata in basso", round) ? 1 : 0;
         // 3. Doppio clic sul titolo di Windows della finestra staccata.
         if (undock()) {
             const QPoint title = timeline->mapToGlobal(QPoint(timeline->width() / 2, -8));
-            PostMessageW(reinterpret_cast<HWND>(timeline->winId()), WM_NCLBUTTONDBLCLK, HTCAPTION, MAKELPARAM(title.x(), title.y()));
+            PostMessageW(reinterpret_cast<HWND>(timeline->windowHandle()->winId()), WM_NCLBUTTONDBLCLK, HTCAPTION, MAKELPARAM(title.x(), title.y()));
         }
         good += docked("doppio clic sul titolo", round) ? 1 : 0;
         // 4. Menu.
