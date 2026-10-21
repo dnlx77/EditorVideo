@@ -55,6 +55,7 @@ void Project::clear()
     clips_.clear();
     sequence_.clear();
     replacement_.reset();
+    format_ = {};
 }
 
 const Clip* Project::find(int id) const
@@ -127,6 +128,7 @@ void Project::restoreEdits(const Project& snapshot)
     clips_ = std::move(clips);
     sequence_ = snapshot.sequence_;
     replacement_ = snapshot.replacement_;
+    format_ = snapshot.format_;
     nextId_ = std::max(nextId_, snapshot.nextId_);  // un file aggiunto dopo non riprende l'id di uno tolto
 }
 

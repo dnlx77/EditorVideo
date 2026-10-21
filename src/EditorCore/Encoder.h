@@ -88,6 +88,8 @@ struct VideoEncoderSettings
     bool inBandParameters = false;
     // Un encoder preciso invece del primo funzionante (es. per le prove).
     std::optional<EncoderBackend> backend;
+    // Fotogrammi di riferimento (0 = quelli scelti dall'encoder). Non tutti gli encoder lo rispettano.
+    int referenceFrames = 0;
 };
 
 // Riceve ogni pacchetto prodotto. Il pacchetto appartiene all'encoder: va usato (o copiato) durante la chiamata. I tempi

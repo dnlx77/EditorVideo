@@ -7,11 +7,13 @@
 #include <QtCore/QMimeData>
 #include <QtCore/QUrl>
 #include <QtGui/QDragEnterEvent>
+#include <QtGui/QHelpEvent>
 #include <QtGui/QDropEvent>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QResizeEvent>
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
+#include <QtWidgets/QToolTip>
 
 #include <algorithm>
 #include <cmath>
@@ -323,6 +325,25 @@ double SequenceTimeline::dragTarget(double x) const
     return freeStart ? freeStart(dragged.fragmentId, desired) : desired;
 }
 
+bool SequenceTimeline::event(QEvent* event)
+{
+    // Sul blocco di un pezzo con un segno: la spiegazione; altrove il suggerimento generale.
+    if (event->type() == QEvent::ToolTip) {
+        const auto* help = static_cast<QHelpEvent*>(event);
+        const QRectF lane = videoLane();
+        const int index = lane.contains(help->pos()) ? blockAt(help->pos().x()) : -1;
+        if (index >= 0) {
+            const std::vector<QRectF> rects = blockRects(lane);
+            const Block& b = blocks_[static_cast<std::size_t>(index)];
+            if (!b.fitNote.isEmpty() && rects[static_cast<std::size_t>(index)].contains(help->pos())) {
+                QToolTip::showText(help->globalPos(), QStringLiteral("%1\n%2").arg(b.label, b.fitNote), this);
+                return true;
+            }
+        }
+    }
+    return ZoomableTimeline::event(event);
+}
+
 void SequenceTimeline::paintEvent(QPaintEvent*)
 {
     const qreal ratio = devicePixelRatioF();
@@ -471,6 +492,20 @@ void SequenceTimeline::paintStatic(QPainter& p)
         p.setPen(b.fragmentId == selected_ ? QPen(pal.color(QPalette::Highlight), 3) : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(r, 3, 3);
+        // Segno in alto a destra: P = si copia con i suoi parametri, ! = da ricodificare.
+        if (b.fit != 0 && r.width() > 22) {
+            const QRectF badge(QPointF(r.right() - 17, r.top() + 3), QSizeF(14, 14));
+            p.setPen(Qt::NoPen);
+            p.setBrush(b.fit == 1 ? QColor(232, 176, 44) : QColor(222, 62, 52));
+            p.drawEllipse(badge);
+            QFont bold = p.font();
+            bold.setBold(true);
+            p.save();
+            p.setFont(bold);
+            p.setPen(b.fit == 1 ? Qt::black : Qt::white);
+            p.drawText(badge, Qt::AlignCenter, b.fit == 1 ? QStringLiteral("P") : QStringLiteral("!"));
+            p.restore();
+        }
         if (thumbnails && r.width() > 30) {
             // Sopra le miniature: nome e durata su una striscia scura, nel colore del file.
             const QRectF band(QPointF(r.left() + 1, r.bottom() - p.fontMetrics().height() - 3), QPointF(r.right() - 1, r.bottom() - 1));

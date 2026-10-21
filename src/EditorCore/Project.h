@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EditorCore/Compatibility.h"
 #include "EditorCore/Sequence.h"
 
 #include <optional>
@@ -90,6 +91,11 @@ public:
     // trattati come dice `gaps`).
     AudioEdit audioEdit(GapExport gaps = GapExport::Close) const;
 
+    // Formato del progetto (vedi ProjectFormat): vuoto finché non lo si decide, di solito al primo pezzo messo nel
+    // montaggio. Fa parte delle modifiche (Annulla e Ripeti lo riportano com'era).
+    const ProjectFormat& format() const { return format_; }
+    void setFormat(ProjectFormat format) { format_ = std::move(format); }
+
     // Torna allo stato di `snapshot` (Annulla / Ripeti): file, sequenza e audio. L'analisi dei file già fatta qui
     // (fotogrammi chiave e durata) resta, anche se nell'istantanea il file non era ancora analizzato.
     void restoreEdits(const Project& snapshot);
@@ -97,6 +103,7 @@ public:
 private:
     std::vector<Clip> clips_;
     std::optional<AudioReplacement> replacement_;
+    ProjectFormat format_;
     Sequence sequence_;
     int nextId_ = 1;
 };

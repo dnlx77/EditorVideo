@@ -4,6 +4,7 @@
 #include "EditorCore/H264Params.h"
 #include "EditorCore/PathUtil.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -32,11 +33,20 @@ int countOf(const MediaSignature& m, StreamKind kind)
     return count;
 }
 
+bool parametersInStream(const StreamSignature& s)
+{
+    return s.kind == StreamKind::Video && (s.codec == "h264" || s.codec == "hevc");
+}
+
 // Differenze fra un flusso e quello corrispondente del primo file.
 void compareStream(const StreamSignature& s, const StreamSignature& ref, const std::string& prefix,
                    int clipIndex, std::vector<Mismatch>& out)
 {
     const auto add = [&](const std::string& what) { out.push_back({clipIndex, prefix + what}); };
+    // Una differenza dei soli parametri di codifica: per H.264 e HEVC i pacchetti si copiano lo stesso.
+    const auto addParameters = [&](const std::string& what) {
+        out.push_back({clipIndex, prefix + what, parametersInStream(s)});
+    };
     const std::string kind = kindName(s.kind);
     const std::size_t before = out.size();
 
@@ -45,7 +55,7 @@ void compareStream(const StreamSignature& s, const StreamSignature& ref, const s
         return;  // con un codec diverso il resto non conta
     }
     if (!s.profile.empty() && !ref.profile.empty() && s.profile != ref.profile)
-        add("profilo " + kind + " " + s.profile + " invece di " + ref.profile);
+        addParameters("profilo " + kind + " " + s.profile + " invece di " + ref.profile);
 
     if (s.kind == StreamKind::Video) {
         if (s.width != ref.width || s.height != ref.height)
@@ -65,18 +75,51 @@ void compareStream(const StreamSignature& s, const StreamSignature& ref, const s
 
     // Stessi codec e misure ma parametri di codifica diversi: il decoder del file unito userebbe quelli del primo
     // file anche per gli altri. Lo si segnala solo se tutto il resto coincide (altrimenti è una conseguenza delle
-    // differenze già dette).
-    if (out.size() != before || s.extradata == ref.extradata)
+    // differenze già dette), a parte il profilo.
+    const bool onlyProfile = std::all_of(out.begin() + static_cast<std::ptrdiff_t>(before), out.end(),
+                                         [](const Mismatch& m) { return m.parametersOnly; });
+    if (!onlyProfile || s.extradata == ref.extradata)
         return;
     if (s.codec == "h264") {
         // Per H.264 si guarda cosa cambia davvero: livello e informazioni sui tempi non contano, perché i
-        // fotogrammi si decodificano allo stesso modo con i parametri del primo file.
-        for (const std::string& difference : compareH264(parseH264Config(s.extradata), parseH264Config(ref.extradata)))
-            add(difference);
+        // fotogrammi si decodificano allo stesso modo con i parametri del primo file. Formato e profondità del
+        // colore, interlacciamento e proporzioni dei pixel cambiano l'immagine: quelli no.
+        for (const std::string& difference : compareH264(parseH264Config(s.extradata), parseH264Config(ref.extradata))) {
+            const bool picture = difference.starts_with("formato colore") || difference.starts_with("profondità colore")
+                              || difference.starts_with("uno è interlacciato") || difference.starts_with("proporzioni")
+                              || difference.find("non leggibili") != std::string::npos;
+            if (picture)
+                add(difference);
+            else
+                addParameters(difference);
+        }
         return;
     }
-    add(s.kind == StreamKind::Video ? "impostazioni dell'encoder video diverse"
-                                    : "impostazioni dell'encoder audio diverse");
+    if (s.kind == StreamKind::Video)
+        addParameters("impostazioni dell'encoder video diverse");
+    else
+        add("impostazioni dell'encoder audio diverse");
+}
+
+// Differenze di un file rispetto a un altro (il riferimento): flussi presenti e, flusso per flusso, compareStream.
+void compareFile(const MediaSignature& clip, const MediaSignature& ref, const std::string& prefix, int index,
+                 std::vector<Mismatch>& out)
+{
+    const int refVideo = countOf(ref, StreamKind::Video);
+    const int refAudio = countOf(ref, StreamKind::Audio);
+    const int video = countOf(clip, StreamKind::Video);
+    const int audio = countOf(clip, StreamKind::Audio);
+    bool sameLayout = video == refVideo && audio == refAudio;
+    for (std::size_t s = 0; sameLayout && s < clip.streams.size(); ++s)
+        sameLayout = clip.streams[s].kind == ref.streams[s].kind;
+    if (!sameLayout) {
+        out.push_back({index, prefix + std::to_string(video) + " flussi video e " + std::to_string(audio)
+                                  + " audio invece di " + std::to_string(refVideo) + " video e " + std::to_string(refAudio)
+                                  + " audio"});
+        return;
+    }
+    for (std::size_t s = 0; s < clip.streams.size(); ++s)
+        compareStream(clip.streams[s], ref.streams[s], prefix, index, out);
 }
 
 }  // namespace
@@ -111,29 +154,50 @@ std::vector<Mismatch> checkCompatibility(const std::vector<MediaSignature>& clip
     std::vector<Mismatch> result;
     if (clips.size() < 2)
         return result;
-    const MediaSignature& ref = clips.front();
-    const int refVideo = countOf(ref, StreamKind::Video);
-    const int refAudio = countOf(ref, StreamKind::Audio);
-
     for (std::size_t c = 1; c < clips.size(); ++c) {
         const MediaSignature& clip = clips[c];
-        const int index = static_cast<int>(c);
-        const std::string prefix = "Clip " + std::to_string(c + 1) + " (" + clip.fileName + "): ";
-
-        const int video = countOf(clip, StreamKind::Video);
-        const int audio = countOf(clip, StreamKind::Audio);
-        bool sameLayout = video == refVideo && audio == refAudio;
-        for (std::size_t s = 0; sameLayout && s < clip.streams.size(); ++s)
-            sameLayout = clip.streams[s].kind == ref.streams[s].kind;
-        if (!sameLayout) {
-            result.push_back({index, prefix + std::to_string(video) + " flussi video e " + std::to_string(audio)
-                                         + " audio invece di " + std::to_string(refVideo) + " video e "
-                                         + std::to_string(refAudio) + " audio"});
-            continue;
-        }
-        for (std::size_t s = 0; s < clip.streams.size(); ++s)
-            compareStream(clip.streams[s], ref.streams[s], prefix, index, result);
+        compareFile(clip, clips.front(), "Clip " + std::to_string(c + 1) + " (" + clip.fileName + "): ",
+                    static_cast<int>(c), result);
     }
+    return result;
+}
+
+const StreamSignature* ProjectFormat::video() const
+{
+    const auto it = std::find_if(streams.begin(), streams.end(), [](const StreamSignature& s) { return s.kind == StreamKind::Video; });
+    return it == streams.end() ? nullptr : &*it;
+}
+
+const StreamSignature* ProjectFormat::audio() const
+{
+    const auto it = std::find_if(streams.begin(), streams.end(), [](const StreamSignature& s) { return s.kind == StreamKind::Audio; });
+    return it == streams.end() ? nullptr : &*it;
+}
+
+ProjectFormat formatOf(const MediaSignature& signature)
+{
+    return {signature.fileName, signature.streams};
+}
+
+ClipFitResult classifyClip(const MediaSignature& clip, const ProjectFormat& format, bool withAudio)
+{
+    MediaSignature ref{"", format.sourceName, format.streams};
+    MediaSignature other = clip;
+    if (!withAudio) {
+        std::erase_if(ref.streams, [](const StreamSignature& s) { return s.kind == StreamKind::Audio; });
+        std::erase_if(other.streams, [](const StreamSignature& s) { return s.kind == StreamKind::Audio; });
+    }
+    std::vector<Mismatch> mismatches;
+    compareFile(other, ref, "", 1, mismatches);
+    ClipFitResult result;
+    for (const Mismatch& m : mismatches)
+        result.reasons.push_back(m.message);
+    if (mismatches.empty())
+        result.fit = ClipFit::Copy;
+    else if (std::all_of(mismatches.begin(), mismatches.end(), [](const Mismatch& m) { return m.parametersOnly; }))
+        result.fit = ClipFit::CopyWithParameters;
+    else
+        result.fit = ClipFit::Reencode;
     return result;
 }
 

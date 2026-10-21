@@ -41,6 +41,10 @@ public:
         int clipId = 0;            // file di origine (per le miniature)
         std::shared_ptr<const core::Waveform> waveform;  // nullptr = in calcolo
         double gap = 0.0;          // spazio vuoto prima del pezzo
+        // Come entra nel file esportato (valori di core::ClipFit): 0 copia, 1 copia con i suoi parametri, 2 da
+        // ricodificare. Con 1 e 2 un segno sul blocco, e fitNote nel suggerimento.
+        int fit = 0;
+        QString fitNote;
     };
 
     // La traccia audio sostitutiva, nella sequenza.
@@ -96,6 +100,7 @@ public:
     double videoLaneCenter() const { return videoLane().center().y(); }
 
 protected:
+    bool event(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void changeEvent(QEvent* event) override;

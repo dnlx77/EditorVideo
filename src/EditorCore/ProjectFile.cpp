@@ -53,6 +53,65 @@ std::optional<std::string> locate(const std::filesystem::path& dir, const std::s
     return std::nullopt;
 }
 
+std::string hexOf(const std::vector<std::uint8_t>& bytes)
+{
+    static const char digits[] = "0123456789abcdef";
+    std::string text;
+    for (const std::uint8_t b : bytes) {
+        text += digits[b >> 4];
+        text += digits[b & 15];
+    }
+    return text;
+}
+
+std::vector<std::uint8_t> bytesOf(const std::string& hex)
+{
+    const auto value = [](char c) {
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F')
+            return c - 'A' + 10;
+        return -1;
+    };
+    std::vector<std::uint8_t> bytes;
+    for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
+        const int hi = value(hex[i]);
+        const int lo = value(hex[i + 1]);
+        if (hi < 0 || lo < 0)
+            return {};
+        bytes.push_back(static_cast<std::uint8_t>(hi * 16 + lo));
+    }
+    return bytes;
+}
+
+// Il formato del progetto: un oggetto per flusso, con i parametri di codifica in esadecimale.
+JsonValue formatToJson(const ProjectFormat& format)
+{
+    if (format.empty())
+        return {};
+    JsonValue::Array streams;
+    for (const StreamSignature& s : format.streams) {
+        JsonValue::Object stream{{"tipo", s.kind == StreamKind::Video ? "video" : "audio"},
+                                 {"codec", s.codec},
+                                 {"profilo", s.profile},
+                                 {"parametri", hexOf(s.extradata)}};
+        if (s.kind == StreamKind::Video) {
+            stream["larghezza"] = s.width;
+            stream["altezza"] = s.height;
+            stream["formatoPixel"] = s.pixelFormat;
+            stream["fotogrammiAlSecondo"] = s.frameRate;
+        } else {
+            stream["frequenza"] = s.sampleRate;
+            stream["canali"] = s.channels;
+            stream["disposizioneCanali"] = s.channelLayout;
+        }
+        streams.emplace_back(std::move(stream));
+    }
+    return JsonValue::Object{{"daFile", format.sourceName}, {"flussi", std::move(streams)}};
+}
+
 JsonValue ticks(double seconds)
 {
     return secondsToTicks(seconds);
@@ -122,6 +181,7 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         {"formato", kFormatName},
         // Senza spazi vuoti il file resta quello della versione 1, che si apre anche con i programmi di prima.
         {"versione", project.sequence().gapCount() > 0 ? kProjectFormatVersion : 1},
+        {"formatoProgetto", formatToJson(project.format())},
         {"unitaDiTempo", JsonValue::Object{{"tickAlSecondo", kProjectTicksPerSecond},
                                            {"nota", "i tempi sono numeri interi di tick (1/705600000 di secondo)"}}},
         {"file", std::move(files)},
@@ -244,6 +304,34 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                                  r["durata"].isInteger() ? ticksToSeconds(r["durata"].asInteger()) : 0.0});
             if (!found)
                 loaded.missing.push_back({0, absolute, fileNameOf(absolute)});
+        }
+
+        // Formato del progetto. I progetti di prima non ce l'hanno: lo si ricava poi dal primo pezzo.
+        if (const JsonValue& f = root["formatoProgetto"]; f.isObject() && f["flussi"].isArray()) {
+            ProjectFormat format;
+            format.sourceName = text(f["daFile"]);
+            for (const JsonValue& s : f["flussi"].asArray()) {
+                StreamSignature stream;
+                stream.kind = text(s["tipo"]) == "video" ? StreamKind::Video : StreamKind::Audio;
+                stream.codec = text(s["codec"]);
+                stream.profile = text(s["profilo"]);
+                stream.extradata = bytesOf(text(s["parametri"]));
+                const auto number = [&](const char* key) { return s[key].isNumber() ? s[key].asNumber() : 0.0; };
+                if (stream.kind == StreamKind::Video) {
+                    stream.width = static_cast<int>(number("larghezza"));
+                    stream.height = static_cast<int>(number("altezza"));
+                    stream.pixelFormat = text(s["formatoPixel"]);
+                    stream.frameRate = number("fotogrammiAlSecondo");
+                } else {
+                    stream.sampleRate = static_cast<int>(number("frequenza"));
+                    stream.channels = static_cast<int>(number("canali"));
+                    stream.channelLayout = text(s["disposizioneCanali"]);
+                }
+                if (stream.codec.empty())
+                    throw ProjectFileError(name + " è rovinato: un flusso del formato del progetto non ha il codec.");
+                format.streams.push_back(std::move(stream));
+            }
+            loaded.project.setFormat(std::move(format));
         }
 
         const JsonValue& source = root["sorgente"];

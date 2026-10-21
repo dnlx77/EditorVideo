@@ -6,6 +6,7 @@
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
+#include "EditorCore/Compatibility.h"
 #include "EditorCore/FileDrop.h"
 #include "EditorCore/Encoder.h"
 #include "EditorCore/LibraryInfo.h"
@@ -35,7 +36,11 @@
 #include <QtGui/QScreen>
 #include <QtWidgets/QToolTip>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QComboBox>
+#include <QtWidgets/QDialog>
+#include <QtWidgets/QDialogButtonBox>
 #include <QtWidgets/QDockWidget>
+#include <QtWidgets/QFormLayout>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLabel>
@@ -789,6 +794,7 @@ void MainWindow::sequenceChanged()
 {
     if (!loading_)
         setModified(true);
+    ensureProjectFormat();
     refreshTimeline();
     program_->sequenceChanged();
     updateSourceBands();
@@ -796,14 +802,60 @@ void MainWindow::sequenceChanged()
     updateExportAction();
 }
 
+const core::MediaSignature* MainWindow::signatureFor(const std::string& path)
+{
+    auto known = signatures_.find(path);
+    if (known == signatures_.end()) {
+        std::optional<core::MediaSignature> signature;
+        try {
+            signature = core::readMediaSignature(path);
+        } catch (const std::exception&) {
+            // File mancante o non leggibile: niente segno sul blocco (lo dice già l'elenco dei file).
+        }
+        known = signatures_.emplace(path, std::move(signature)).first;
+    }
+    return known->second ? &*known->second : nullptr;
+}
+
+void MainWindow::ensureProjectFormat()
+{
+    if (!project_.format().empty() || project_.sequence().empty())
+        return;
+    const core::Clip* clip = project_.find(project_.sequence().fragments().front().clipId);
+    if (clip == nullptr)
+        return;
+    if (const core::MediaSignature* signature = signatureFor(clip->path))
+        project_.setFormat(core::formatOf(*signature));
+}
+
 void MainWindow::refreshTimeline()
 {
     const core::Sequence& sequence = project_.sequence();
     std::vector<SequenceTimeline::Block> blocks;
+    const bool withAudio = !project_.audioReplacement().has_value();
     for (const core::Fragment& f : sequence.fragments()) {
         const core::Clip* clip = project_.find(f.clipId);
         blocks.push_back({f.id, project_.indexOf(f.clipId), clip ? fileNameOf(clip->path) : QString(), f.length(), f.start,
                           f.clipId, clip ? waveformFor(clip->path) : nullptr, f.gap});
+        // Come entra nel file esportato, rispetto al formato del progetto: segno sul blocco e spiegazione.
+        const core::MediaSignature* signature = clip != nullptr ? signatureFor(clip->path) : nullptr;
+        if (signature != nullptr && !project_.format().empty()) {
+            const core::ClipFitResult fit = core::classifyClip(*signature, project_.format(), withAudio);
+            SequenceTimeline::Block& block = blocks.back();
+            block.fit = static_cast<int>(fit.fit);
+            QString reasons;
+            for (const std::string& reason : fit.reasons)
+                reasons += QStringLiteral("\n• ") + QString::fromStdString(reason);
+            if (fit.fit == core::ClipFit::CopyWithParameters)
+                block.fitNote = QStringLiteral("Si copia senza ricodifica, con i suoi parametri di codifica ripetuti nel "
+                                               "file esportato (diversi da quelli del formato del progetto):")
+                              + reasons;
+            else if (fit.fit == core::ClipFit::Reencode)
+                block.fitNote = QStringLiteral("Diverso dal formato del progetto (%1): andrà ricodificato, per ora non si "
+                                               "può esportare.")
+                                    .arg(QString::fromStdString(project_.format().sourceName))
+                              + reasons;
+        }
     }
     timeline_->setBlocks(std::move(blocks));
     // Zoom massimo: 12 pixel per fotogramma del primo file con un video (30 fps se non si sa ancora).
@@ -1143,6 +1195,8 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
         return false;
     // L'audio modificato vale per il montaggio; il taglio veloce (sequenza vuota) copia l'audio così com'è.
     const core::AudioEdit audio = project_.sequence().empty() ? core::AudioEdit{} : project_.audioEdit();
+    // Il formato del progetto vale per il montaggio (il taglio veloce copia il file com'è).
+    const core::ProjectFormat format = project_.sequence().empty() ? core::ProjectFormat{} : project_.format();
 
     auto outcome = std::make_shared<ExportOutcome>();
     auto progress = std::make_shared<std::atomic<double>>(0.0);
@@ -1152,13 +1206,16 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     exportThread_ = QThread::create([=, cancel = &cancelExport_] {
         const auto started = std::chrono::steady_clock::now();
         try {
-            outcome->result = core::exportClips(plan, outputPath, audio, [=](double fraction) {
-                *progress = fraction;
-                // Rallentamento solo per le prove, e solo all'inizio: quanto basta perché compaia la finestra.
-                if (slowDown.count() > 0 && std::chrono::steady_clock::now() - started < std::chrono::milliseconds(1500))
-                    std::this_thread::sleep_for(slowDown);
-                return !cancel->load();
-            });
+            outcome->result = core::exportClips(
+                plan, outputPath, audio,
+                [=](double fraction) {
+                    *progress = fraction;
+                    // Rallentamento solo per le prove, e solo all'inizio: quanto basta perché compaia la finestra.
+                    if (slowDown.count() > 0 && std::chrono::steady_clock::now() - started < std::chrono::milliseconds(1500))
+                        std::this_thread::sleep_for(slowDown);
+                    return !cancel->load();
+                },
+                core::MuteMethod::Silence, format.empty() ? nullptr : &format);
         } catch (const core::ExportCancelled&) {
             outcome->cancelled = true;
         } catch (const std::exception& e) {
@@ -1552,6 +1609,9 @@ void MainWindow::createMenus()
     remove->setShortcut(QKeySequence(QKeySequence::Delete));
     editMenu->addSeparator();
     editMenu->addAction(QStringLiteral("&Svuota il montaggio"), this, [this] { clearSequence(); });
+    editMenu->addSeparator();
+    editMenu->addAction(QStringLiteral("&Impostazioni del progetto..."), this, [this] { projectSettingsDialog(); })
+        ->setStatusTip(QStringLiteral("Il formato del file esportato: codec, risoluzione, fotogrammi al secondo, audio"));
 
     QMenu* audioMenu = menuBar()->addMenu(QStringLiteral("A&udio"));
     QAction* mute = audioMenu->addAction(QStringLiteral("&Togli l'audio dal tratto selezionato"), this, [this] { muteSelection(); });
@@ -2700,6 +2760,90 @@ void MainWindow::showShortcuts()
     QMessageBox box(QMessageBox::NoIcon, QStringLiteral("Scorciatoie da tastiera"), html, QMessageBox::Close, this);
     box.setTextFormat(Qt::RichText);
     box.exec();
+}
+
+namespace {
+
+QString describeStream(const core::StreamSignature& s)
+{
+    if (s.kind == core::StreamKind::Video) {
+        return QStringLiteral("%1%2, %3x%4, %5 fotogrammi al secondo, pixel %6")
+            .arg(QString::fromStdString(s.codec), s.profile.empty() ? QString() : QStringLiteral(" (%1)").arg(QString::fromStdString(s.profile)))
+            .arg(s.width)
+            .arg(s.height)
+            .arg(QString::fromStdString(core::formatFrameRate(s.frameRate)), QString::fromStdString(s.pixelFormat));
+    }
+    return QStringLiteral("%1, %2 Hz, %3 canali%4")
+        .arg(QString::fromStdString(s.codec))
+        .arg(s.sampleRate)
+        .arg(s.channels)
+        .arg(s.channelLayout.empty() ? QString() : QStringLiteral(" (%1)").arg(QString::fromStdString(s.channelLayout)));
+}
+
+}  // namespace
+
+void MainWindow::projectSettingsDialog()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Impostazioni del progetto"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* intro = new QLabel(QStringLiteral(
+        "Il formato del file esportato. Lo dà un file del progetto: all'inizio quello del primo pezzo messo nel montaggio.\n"
+        "I pezzi di file con parametri di codifica diversi (segno P sul blocco) si copiano lo stesso; quelli con codec, "
+        "misure o fotogrammi al secondo diversi (segno !) andranno ricodificati e per ora non si possono esportare."));
+    intro->setWordWrap(true);
+    layout->addWidget(intro);
+
+    auto* form = new QFormLayout;
+    auto* source = new QComboBox;
+    for (const core::Clip& clip : project_.clips())
+        source->addItem(fileNameOf(clip.path), clip.id);
+    auto* video = new QLabel;
+    auto* audio = new QLabel;
+    video->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    audio->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    form->addRow(QStringLiteral("Formato preso da:"), source);
+    form->addRow(QStringLiteral("Video:"), video);
+    form->addRow(QStringLiteral("Audio:"), audio);
+    layout->addLayout(form);
+    auto* note = new QLabel(QStringLiteral("Codec, risoluzione e fotogrammi al secondo si potranno scegliere liberamente "
+                                           "con la ricodifica. Ora si può scegliere da quale file prenderli."));
+    note->setWordWrap(true);
+    note->setStyleSheet(QStringLiteral("color: palette(placeholder-text);"));
+    layout->addWidget(note);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    // Il formato mostrato: quello del progetto finché non si sceglie un altro file.
+    core::ProjectFormat shown = project_.format();
+    const auto show = [&] {
+        const core::StreamSignature* v = shown.video();
+        const core::StreamSignature* a = shown.audio();
+        video->setText(v != nullptr ? describeStream(*v) : QStringLiteral("nessuno"));
+        audio->setText(a != nullptr ? describeStream(*a) : QStringLiteral("nessuno"));
+        if (shown.empty())
+            video->setText(QStringLiteral("non ancora deciso (lo darà il primo pezzo messo nel montaggio)"));
+    };
+    const int current = source->findText(QString::fromStdString(project_.format().sourceName));
+    source->setCurrentIndex(current);  // -1 (nessuno) se il formato non viene da un file di adesso
+    bool chosen = false;
+    connect(source, &QComboBox::currentIndexChanged, &dialog, [&](int index) {
+        const core::Clip* clip = project_.find(source->itemData(index).toInt());
+        const core::MediaSignature* signature = clip != nullptr ? signatureFor(clip->path) : nullptr;
+        if (signature == nullptr)
+            return;
+        shown = core::formatOf(*signature);
+        chosen = true;
+        show();
+    });
+    show();
+    if (dialog.exec() != QDialog::Accepted || !chosen)
+        return;
+    const core::Project before = project_;
+    project_.setFormat(shown);
+    recordEdit(QStringLiteral("Formato del progetto"), before);
 }
 
 void MainWindow::showAbout()

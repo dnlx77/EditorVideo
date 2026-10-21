@@ -115,6 +115,105 @@ void shiftPacket(AVPacket* pkt, std::int64_t shift)
         pkt->dts -= shift;
 }
 
+// Parametri di codifica di un file H.264 o HEVC, da ripetere nel flusso: i NAL (SPS e PPS, per HEVC anche VPS) e quanti
+// byte misura la lunghezza davanti a ogni NAL nei pacchetti.
+struct ParameterSets
+{
+    int lengthSize = 4;
+    std::vector<std::vector<std::uint8_t>> nals;
+};
+
+// Dai "dati extra" in formato avcC / hvcC (MP4, MKV). std::nullopt se sono in un altro formato (es. Annex B).
+std::optional<ParameterSets> parameterSetsOf(AVCodecID codec, const std::vector<std::uint8_t>& extra)
+{
+    ParameterSets out;
+    std::size_t pos = 0;
+    const auto be16 = [&](std::size_t at) { return static_cast<std::size_t>(extra[at] << 8 | extra[at + 1]); };
+    // Un NAL preceduto da 2 byte di lunghezza; `keep` = da tenere.
+    const auto takeNal = [&](bool keep) {
+        if (pos + 2 > extra.size())
+            return false;
+        const std::size_t length = be16(pos);
+        pos += 2;
+        if (pos + length > extra.size())
+            return false;
+        if (keep)
+            out.nals.emplace_back(extra.begin() + static_cast<std::ptrdiff_t>(pos),
+                                  extra.begin() + static_cast<std::ptrdiff_t>(pos + length));
+        pos += length;
+        return true;
+    };
+    if (codec == AV_CODEC_ID_H264) {
+        if (extra.size() < 7 || extra[0] != 1)
+            return std::nullopt;
+        out.lengthSize = (extra[4] & 3) + 1;
+        pos = 5;
+        for (int list = 0; list < 2; ++list) {  // prima gli SPS, poi i PPS
+            if (pos >= extra.size())
+                return std::nullopt;
+            const int count = list == 0 ? (extra[pos++] & 0x1f) : extra[pos++];
+            for (int i = 0; i < count; ++i) {
+                if (!takeNal(true))
+                    return std::nullopt;
+            }
+        }
+        return out;
+    }
+    if (codec == AV_CODEC_ID_HEVC) {
+        if (extra.size() < 23 || extra[0] != 1)
+            return std::nullopt;
+        out.lengthSize = (extra[21] & 3) + 1;
+        const int arrays = extra[22];
+        pos = 23;
+        for (int a = 0; a < arrays; ++a) {
+            if (pos + 3 > extra.size())
+                return std::nullopt;
+            const int type = extra[pos] & 0x3f;
+            const std::size_t count = be16(pos + 1);
+            pos += 3;
+            for (std::size_t i = 0; i < count; ++i) {
+                if (!takeNal(type == 32 || type == 33 || type == 34))  // VPS, SPS, PPS
+                    return std::nullopt;
+            }
+        }
+        return out;
+    }
+    return std::nullopt;
+}
+
+// Riscrive il pacchetto (NAL con la lunghezza davanti, su `fromSize` byte) con le lunghezze su `toSize` byte e, davanti,
+// i NAL di `prefix`. false se il pacchetto non si capisce.
+bool rewriteNals(AVPacket* pkt, int fromSize, int toSize, const std::vector<std::vector<std::uint8_t>>& prefix)
+{
+    std::vector<std::uint8_t> data;
+    data.reserve(static_cast<std::size_t>(pkt->size) + 256);
+    const auto putLength = [&](std::size_t length) {
+        for (int b = toSize - 1; b >= 0; --b)
+            data.push_back(static_cast<std::uint8_t>(length >> (8 * b)));
+    };
+    for (const auto& nal : prefix) {
+        putLength(nal.size());
+        data.insert(data.end(), nal.begin(), nal.end());
+    }
+    std::size_t pos = 0;
+    const auto size = static_cast<std::size_t>(pkt->size);
+    while (pos < size) {
+        if (pos + static_cast<std::size_t>(fromSize) > size)
+            return false;
+        std::size_t length = 0;
+        for (int b = 0; b < fromSize; ++b)
+            length = length << 8 | pkt->data[pos + static_cast<std::size_t>(b)];
+        pos += static_cast<std::size_t>(fromSize);
+        if (pos + length > size || (toSize < 4 && length >> (8 * toSize) != 0))
+            return false;
+        putLength(length);
+        data.insert(data.end(), pkt->data + pos, pkt->data + pos + length);
+        pos += length;
+    }
+    replacePacketData(pkt, data.data(), data.size());
+    return true;
+}
+
 bool samePath(const std::string& a, const std::string& b)
 {
     std::error_code ec;
@@ -487,7 +586,7 @@ std::string replacementAudioProblem(const std::string& audioPath, const std::str
 }
 
 ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,
-                         const ExportProgress& progress, MuteMethod muteMethod)
+                         const ExportProgress& progress, MuteMethod muteMethod, const ProjectFormat* format)
 {
     double totalLength = 0.0;
     int rangeCount = 0;
@@ -521,10 +620,13 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             throw MediaError(problem);
     }
 
-    // Più file: devono avere gli stessi codec e parametri, altrimenti senza ricodifica non si uniscono. Con una
-    // traccia sostitutiva l'audio dei file non si copia, quindi conta solo il video.
+    // Più file (o un formato del progetto da rispettare): devono avere gli stessi codec e parametri, altrimenti senza
+    // ricodifica non si uniscono. Con una traccia sostitutiva l'audio dei file non si copia, quindi conta solo il video.
     std::vector<MediaSignature> signatures;
-    if (clips.size() > 1) {
+    bool parametersInStream = false;  // vedi ExportResult::parametersInStream
+    std::vector<ParameterSets> clipParameters;  // per ogni file della lista, se parametersInStream
+    const bool checkFormat = format != nullptr && !format->empty();
+    if (clips.size() > 1 || checkFormat) {
         // Lo stesso file può tornare più volte (montaggio A, B, A, B): lo si legge una volta sola.
         std::map<std::string, MediaSignature> read;
         for (const ClipRanges& clip : clips) {
@@ -535,8 +637,34 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             if (replaced)
                 std::erase_if(signatures.back().streams, [](const StreamSignature& s) { return s.kind == StreamKind::Audio; });
         }
-        if (const auto mismatches = checkCompatibility(signatures); !mismatches.empty())
-            throw MediaError("Questi file non si possono unire senza ricodifica:\n" + describeMismatches(mismatches));
+        // Rispetto al formato del progetto: le differenze che richiedono la ricodifica fermano l'esportazione.
+        const ProjectFormat reference = checkFormat ? *format : formatOf(signatures.front());
+        std::string problems;
+        for (std::size_t c = 0; c < signatures.size(); ++c) {
+            const ClipFitResult fit = classifyClip(signatures[c], reference, !replaced);
+            if (fit.fit != ClipFit::Reencode)
+                continue;
+            for (const std::string& reason : fit.reasons)
+                problems += "\nClip " + std::to_string(c + 1) + " (" + signatures[c].fileName + "): " + reason;
+        }
+        if (!problems.empty())
+            throw MediaError("Questi file non si possono unire senza ricodifica:" + problems);
+        // Il file creato ha i parametri del primo file: se un altro ne ha di diversi, ognuno ripete i suoi nel flusso.
+        const ProjectFormat first = formatOf(signatures.front());
+        for (std::size_t c = 1; c < signatures.size() && !parametersInStream; ++c)
+            parametersInStream = classifyClip(signatures[c], first, !replaced).fit == ClipFit::CopyWithParameters;
+        if (parametersInStream) {
+            for (const MediaSignature& signature : signatures) {
+                const auto video = std::find_if(signature.streams.begin(), signature.streams.end(),
+                                                [](const StreamSignature& s) { return s.kind == StreamKind::Video; });
+                const AVCodecID codec = video->codec == "hevc" ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264;
+                const auto sets = parameterSetsOf(codec, video->extradata);
+                if (!sets)
+                    throw MediaError("Il file " + signature.fileName + " ha parametri di codifica diversi dagli altri, in un "
+                                     "formato che senza ricodifica non si sa ripetere nel flusso (Annex B).");
+                clipParameters.push_back(*sets);
+            }
+        }
     }
 
     InputFile first = openClip(clips.front().path, !replaced);
@@ -579,6 +707,12 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 out->codecpar->extradata_size = static_cast<int>(raised.size());
                 out->codecpar->level = level;
             }
+        }
+        // Parametri nel flusso: in un MP4 il video lo dichiara (avc3 / hev1 invece di avc1 / hvc1).
+        if (parametersInStream && par->codec_type == AVMEDIA_TYPE_VIDEO && output->oformat->codec_tag != nullptr) {
+            const unsigned tag = par->codec_id == AV_CODEC_ID_HEVC ? MKTAG('h', 'e', 'v', '1') : MKTAG('a', 'v', 'c', '3');
+            if (av_codec_get_id(output->oformat->codec_tag, tag) == par->codec_id)
+                out->codecpar->codec_tag = tag;
         }
         out->time_base = in->time_base;
         out->disposition = in->disposition;
@@ -729,6 +863,17 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 double audioEnd = outputPosition;  // fine dell'audio compresso come uscirà dal decoder
 
                 const auto write = [&](AVPacket* pkt, StreamCopy& copy, const AVStream* in) {
+                    // Parametri nel flusso: davanti a ogni fotogramma chiave quelli di questo file (con la lunghezza dei
+                    // NAL del file creato, se diversa).
+                    if (parametersInStream && copy.video) {
+                        const ParameterSets& mine = clipParameters[c];
+                        const int target = clipParameters.front().lengthSize;
+                        const bool key = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
+                        if ((key || mine.lengthSize != target)
+                            && !rewriteNals(pkt, mine.lengthSize, target,
+                                            key ? mine.nals : std::vector<std::vector<std::uint8_t>>{}))
+                            throw MediaError("Un fotogramma di " + clips[c].path + " non si legge: impossibile copiarlo.");
+                    }
                     shiftPacket(pkt, std::llround(shiftSeconds / av_q2d(in->time_base)));
                     const AVStream* out = output->streams[copy.output];
                     av_packet_rescale_ts(pkt, in->time_base, out->time_base);
@@ -881,6 +1026,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
         result.streamCount = streamCount;
         result.segmentCount = rangeCount;
         result.clipCount = static_cast<int>(clips.size());
+        result.parametersInStream = parametersInStream;
         return result;
     } catch (...) {
         removePartial();

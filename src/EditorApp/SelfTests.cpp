@@ -39,6 +39,11 @@
 #include <algorithm>
 
 #include <windows.h>
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+}
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -65,6 +70,79 @@ int guarded(const std::function<int()>& test)
         std::printf("Errore: %s\n", e.what());
         return 2;
     }
+}
+
+// Come l'esportazione: le differenze rispetto al primo file che richiedono la ricodifica, una per riga; vuoto = si
+// possono unire (anche ripetendo i parametri di codifica nel flusso).
+std::string refusal(const std::vector<core::MediaSignature>& signatures)
+{
+    std::string text;
+    const core::ProjectFormat format = core::formatOf(signatures.front());
+    for (std::size_t c = 1; c < signatures.size(); ++c) {
+        const core::ClipFitResult fit = core::classifyClip(signatures[c], format);
+        if (fit.fit != core::ClipFit::Reencode)
+            continue;
+        for (const std::string& reason : fit.reasons)
+            text += "Clip " + std::to_string(c + 1) + " (" + signatures[c].fileName + "): " + reason + "\n";
+    }
+    return text;
+}
+
+// Decodifica tutto il video del file con il decoder software di FFmpeg, attento agli errori: quanti fotogrammi escono
+// e quanti errori segnala (es. alle giunzioni, se i parametri di codifica non sono quelli giusti).
+struct DecodeCheck
+{
+    int frames = 0;
+    int errors = 0;
+};
+
+DecodeCheck decodeAllVideo(const std::string& path)
+{
+    DecodeCheck check;
+    AVFormatContext* fmt = nullptr;
+    if (avformat_open_input(&fmt, path.c_str(), nullptr, nullptr) < 0) {
+        check.errors = 1;
+        return check;
+    }
+    avformat_find_stream_info(fmt, nullptr);
+    const int video = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    if (video < 0) {
+        avformat_close_input(&fmt);
+        return check;
+    }
+    const AVCodec* codec = avcodec_find_decoder(fmt->streams[video]->codecpar->codec_id);
+    AVCodecContext* ctx = avcodec_alloc_context3(codec);
+    avcodec_parameters_to_context(ctx, fmt->streams[video]->codecpar);
+    ctx->err_recognition = AV_EF_EXPLODE | AV_EF_BITSTREAM;
+    ctx->thread_count = 0;  // tutti i processori: i file veri sono lunghi
+    if (codec == nullptr || avcodec_open2(ctx, codec, nullptr) < 0) {
+        check.errors = 1;
+    } else {
+        AVPacket* pkt = av_packet_alloc();
+        AVFrame* frame = av_frame_alloc();
+        const auto drain = [&] {
+            while (avcodec_receive_frame(ctx, frame) >= 0) {
+                ++check.frames;
+                check.errors += (frame->decode_error_flags != 0 || (frame->flags & AV_FRAME_FLAG_CORRUPT) != 0) ? 1 : 0;
+                av_frame_unref(frame);
+            }
+        };
+        while (av_read_frame(fmt, pkt) >= 0) {
+            if (pkt->stream_index == video) {
+                if (avcodec_send_packet(ctx, pkt) < 0)
+                    ++check.errors;
+                drain();
+            }
+            av_packet_unref(pkt);
+        }
+        avcodec_send_packet(ctx, nullptr);
+        drain();
+        av_frame_free(&frame);
+        av_packet_free(&pkt);
+    }
+    avcodec_free_context(&ctx);
+    avformat_close_input(&fmt);
+    return check;
 }
 
 struct AnalyzedClip
@@ -104,11 +182,13 @@ int runJoinTest(const QStringList& args, qsizetype at)
             signatures.push_back(core::readMediaSignature(path));
             project.sequence().insert(-1, clip.id, 0.0, clip.info.durationSeconds, project.snapper());  // file intero
         }
-        if (const auto mismatches = core::checkCompatibility(signatures); !mismatches.empty()) {
-            std::printf("Non si possono unire:\n%s\n", core::describeMismatches(mismatches).c_str());
+        if (const std::string problems = refusal(signatures); !problems.empty()) {
+            std::printf("Non si possono unire:\n%s", problems.c_str());
             return 4;
         }
         const core::ExportResult result = core::exportClips(project.exportPlan(), output, core::AudioEdit{});
+        if (result.parametersInStream)
+            std::printf("Parametri di codifica diversi: ripetuti nel flusso davanti a ogni fotogramma chiave\n");
         const core::MediaInfo joined = core::probeFile(output);
         const double expected = project.sequence().totalLength();
         std::printf("Uniti %d file: durata attesa %.3f s, ottenuta %.3f s, %d flussi\n", result.clipCount, expected,
@@ -121,6 +201,11 @@ int runJoinTest(const QStringList& args, qsizetype at)
             ok = joined.streams[s].codec == sources.front().streams[s].codec;
         if (joined.keyframeStreamIndex >= 0)
             ok = ok && !joined.keyframeTimes.empty() && std::abs(joined.keyframeTimes.front()) < 0.001;
+        if (joined.keyframeStreamIndex >= 0) {
+            const DecodeCheck decoded = decodeAllVideo(output);
+            std::printf("Decodifica completa: %d fotogrammi, %d errori\n", decoded.frames, decoded.errors);
+            ok = ok && decoded.frames > 0 && decoded.errors == 0;
+        }
         std::printf("%s\n", ok ? "Controllo del file unito: OK" : "Controllo del file unito: NON RIUSCITO");
         return ok ? 0 : 3;
     });
@@ -162,16 +247,21 @@ int runSequenceTest(const QStringList& args, qsizetype at)
             if (project.sequence().insert(-1, ids[path], args[i + 1].toDouble(), args[i + 2].toDouble(), project.snapper()) == 0)
                 throw core::MediaError("Pezzo vuoto: OUT deve stare dopo IN.");
         }
-        if (const auto mismatches = core::checkCompatibility(signatures); !mismatches.empty()) {
-            std::printf("Non si possono unire:\n%s\n", core::describeMismatches(mismatches).c_str());
+        if (const std::string problems = refusal(signatures); !problems.empty()) {
+            std::printf("Non si possono unire:\n%s", problems.c_str());
             return 4;
         }
         const core::Sequence& sequence = project.sequence();
         const core::ExportResult result = core::exportClips(project.exportPlan(), output, core::AudioEdit{});
+        if (result.parametersInStream)
+            std::printf("Parametri di codifica diversi: ripetuti nel flusso davanti a ogni fotogramma chiave\n");
+        const DecodeCheck decoded = decodeAllVideo(output);
+        std::printf("Decodifica completa: %d fotogrammi, %d errori\n", decoded.frames, decoded.errors);
         const double length = core::probeFile(output).durationSeconds;
         std::printf("Montaggio di %d pezzi: durata attesa %.3f s, ottenuta %.3f s\n", result.segmentCount,
                     sequence.totalLength(), length);
         bool ok = std::abs(length - sequence.totalLength()) < 0.1 + 0.03 * static_cast<double>(result.segmentCount);
+        ok = ok && decoded.frames > 0 && decoded.errors == 0;
 
         // Ordine: subito dopo l'inizio di ogni pezzo, stesso fotogramma dell'originale.
         double start = 0.0;  // inizio del pezzo nel montaggio
@@ -213,10 +303,16 @@ int runCodecInfo(const QStringList& args, qsizetype at)
             }
             signatures.push_back(s);
         }
-        if (signatures.size() > 1) {
-            const auto mismatches = core::checkCompatibility(signatures);
-            std::printf("%s\n", mismatches.empty() ? "Si possono unire."
-                                                   : ("Non si possono unire:\n" + core::describeMismatches(mismatches)).c_str());
+        // Ogni file rispetto al primo (il formato del progetto, se fosse il primo pezzo del montaggio).
+        const core::ProjectFormat format = core::formatOf(signatures.front());
+        for (std::size_t c = 1; c < signatures.size(); ++c) {
+            const core::ClipFitResult fit = core::classifyClip(signatures[c], format);
+            const char* verdict = fit.fit == core::ClipFit::Copy ? "si copia"
+                                : fit.fit == core::ClipFit::CopyWithParameters ? "si copia con i suoi parametri nel flusso"
+                                                                               : "DA RICODIFICARE";
+            std::printf("%s: %s\n", signatures[c].fileName.c_str(), verdict);
+            for (const std::string& reason : fit.reasons)
+                std::printf("  - %s\n", reason.c_str());
         }
         return 0;
     });
