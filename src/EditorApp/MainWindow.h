@@ -66,6 +66,7 @@ public:
     // Pannello della linea del tempo staccato e appena spostato: se il pulsante del mouse è stato rilasciato con il
     // cursore (coordinate dello schermo) nella metà bassa della finestra, si riaggancia in basso. true se l'ha fatto.
     bool redockTimelineIfDroppedLow(const QPoint& cursor, bool buttonDown);
+    int timelineHeight() const { return timelineHeight_; }  // altezza da agganciata, da riprendere riagganciandola
     bool isPanelFullScreen() const { return fullScreenDock_ != nullptr; }
     QDockWidget* sourceDock() const { return sourceDock_; }
     QDockWidget* programDock() const { return programDock_; }
@@ -223,6 +224,9 @@ private:
     QByteArray layoutBeforeFullScreen_;  // disposizione da ritrovare uscendo dallo schermo intero
     std::optional<CornerDrag> cornerDrag_;  // si sta trascinando un incrocio fra separatori
     QTimer* timelineMoved_ = nullptr;       // la linea del tempo staccata si è appena spostata (vedi eventFilter)
+    int timelineHeight_ = 230;              // ultima altezza della linea del tempo agganciata
+    bool timelineRedocking_ = false;        // riagganciata da poco: l'altezza giusta arriva dopo (vedi redockTimeline)
+    void applyTimelineHeight();
     bool cornerCursor_ = false;
     QListWidget* clipList_ = nullptr;
     QTreeWidget* infoTree_ = nullptr;

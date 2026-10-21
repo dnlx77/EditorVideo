@@ -341,13 +341,21 @@ MainWindow::MainWindow(QWidget* parent)
             redockTimelineIfDroppedLow(QCursor::pos(), false);
     });
     connect(timelineDock_, &QDockWidget::topLevelChanged, this, [this](bool floating) {
-        // Riagganciata da Qt (doppio clic sul titolo, trascinamento): sempre in basso, a tutta larghezza.
-        if (!floating && fullScreenDock_ == nullptr)
-            QTimer::singleShot(0, this, [this] {
-                if (!timelineDock_->isFloating()
-                    && (dockWidgetArea(timelineDock_) != Qt::BottomDockWidgetArea || timelineDock_->width() < width() - 40))
-                    redockTimeline();
-            });
+        // Riagganciata da Qt (doppio clic sul titolo, trascinamento): sempre in basso, a tutta larghezza e con
+        // un'altezza che si veda (Qt la rimette alta pochi pixel).
+        if (floating || fullScreenDock_ != nullptr)
+            return;
+        timelineRedocking_ = true;
+        QTimer::singleShot(0, this, [this] {
+            if (timelineDock_->isFloating()) {
+                timelineRedocking_ = false;
+                return;
+            }
+            if (dockWidgetArea(timelineDock_) != Qt::BottomDockWidgetArea || timelineDock_->width() < width() - 40)
+                redockTimeline();
+            else
+                applyTimelineHeight();
+        });
     });
     for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_})
         dock->setAllowedAreas(Qt::TopDockWidgetArea | Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
@@ -1087,6 +1095,10 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     // La linea del tempo staccata che si sposta: a spostamento finito si guarda dove è stata lasciata.
     if (watched == timelineDock_ && event->type() == QEvent::Move && timelineDock_->isFloating() && fullScreenDock_ == nullptr)
         timelineMoved_->start();
+    // L'altezza della linea del tempo agganciata, da riprendere quando la si riaggancia dopo averla staccata.
+    if (watched == timelineDock_ && event->type() == QEvent::Resize && !timelineDock_->isFloating()
+        && !timelineRedocking_ && fullScreenDock_ == nullptr && timelineDock_->isVisible())
+        timelineHeight_ = timelineDock_->height();
 
     // Pannelli piccoli: si nasconde quello che non ci sta (le schede sotto i file, la riga sopra le corsie).
     if (event->type() == QEvent::Resize) {
@@ -1683,6 +1695,7 @@ void MainWindow::saveLayout()
     QSettings s = settings();
     s.setValue(QStringLiteral("finestra/geometria"), saveGeometry());
     s.setValue(QStringLiteral("finestra/disposizione"), saveState());
+    s.setValue(QStringLiteral("finestra/altezzaLineaDelTempo"), timelineHeight_);
 }
 
 void MainWindow::restoreLayout()
@@ -1690,6 +1703,7 @@ void MainWindow::restoreLayout()
     QSettings s = settings();
     const QByteArray geometry = s.value(QStringLiteral("finestra/geometria")).toByteArray();
     const QByteArray state = s.value(QStringLiteral("finestra/disposizione")).toByteArray();
+    timelineHeight_ = std::max(230, s.value(QStringLiteral("finestra/altezzaLineaDelTempo"), 230).toInt());
     if (!geometry.isEmpty())
         restoreGeometry(geometry);
     if (!state.isEmpty() && !restoreState(state))
@@ -1827,10 +1841,36 @@ void MainWindow::redockTimeline()
     if (fullScreenDock_ == timelineDock_)
         exitFullScreen();
     timelineMoved_->stop();
+    timelineRedocking_ = true;
     timelineDock_->setFloating(false);
     addDockWidget(Qt::BottomDockWidgetArea, timelineDock_);
     timelineDock_->show();
-    resizeDocks({timelineDock_}, {std::max(160, timelineDock_->sizeHint().height())}, Qt::Vertical);
+    // L'altezza si sistema dopo che Qt ha rifatto la disposizione: subito verrebbe ignorata.
+    QTimer::singleShot(0, this, [this] { applyTimelineHeight(); });
+}
+
+void MainWindow::applyTimelineHeight()
+{
+    // L'ultima altezza da agganciata, almeno quella iniziale e al massimo metà della finestra.
+    const int maximum = std::max(230, height() / 2);
+    const int wanted = std::clamp(timelineHeight_, 230, maximum);
+    // Con il solo pannello in basso Qt non sa da chi togliere lo spazio: gli si dà anche un pannello di sopra, che
+    // prende il resto.
+    QDockWidget* above = nullptr;
+    for (QDockWidget* dock : {sourceDock_, programDock_, filesDock_}) {
+        if (dock->isVisible() && !dock->isFloating()) {
+            above = dock;
+            break;
+        }
+    }
+    if (above != nullptr) {
+        const int total = above->height() + timelineDock_->height();
+        resizeDocks({above, timelineDock_}, {std::max(1, total - wanted), wanted}, Qt::Vertical);
+    } else {
+        resizeDocks({timelineDock_}, {wanted}, Qt::Vertical);
+    }
+    timelineRedocking_ = false;
+    timelineHeight_ = timelineDock_->height();
 }
 
 bool MainWindow::redockTimelineIfDroppedLow(const QPoint& cursor, bool buttonDown)
