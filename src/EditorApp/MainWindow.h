@@ -279,7 +279,6 @@ private:
     QTreeWidget* infoTree_ = nullptr;
     QLabel* keyframeTitle_ = nullptr;
     QTreeWidget* keyframeList_ = nullptr;
-    QLabel* sourceTitle_ = nullptr;
     PlayerWidget* player_ = nullptr;
     ProgramMonitor* program_ = nullptr;
     SequenceTimeline* timeline_ = nullptr;

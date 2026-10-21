@@ -31,7 +31,9 @@
 #include <QtWidgets/QStyle>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QKeyEvent>
+#include <QtGui/QHelpEvent>
 #include <QtGui/QScreen>
+#include <QtWidgets/QToolTip>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QFileDialog>
@@ -143,11 +145,10 @@ const QString kProjectFilter = QStringLiteral("Progetto EditorVideo (*%1)").arg(
 constexpr int kRecentProjects = 5;
 const QString kRecentProjectsKey = QStringLiteral("progettiRecenti");  // impostazione con i progetti recenti
 
-// Titolo della Sorgente; con il triangolo quando l'anteprima attiva è il Montaggio (vedi setProgramActive).
-QString sourceTitle(bool sourceActive)
+// Titolo del pannello di un'anteprima: con il triangolo se è quella attiva (lì vanno Spazio e frecce).
+QString previewTitle(const QString& name, bool active)
 {
-    return (sourceActive ? QStringLiteral("<b>Sorgente</b>") : QStringLiteral("<b>▶ Sorgente</b>"))
-         + QStringLiteral(" (segna I e O, poi A per metterlo nel montaggio)");
+    return active ? QStringLiteral("▶ ") + name : name;
 }
 
 QSettings settings()
@@ -269,9 +270,6 @@ MainWindow::MainWindow(QWidget* parent)
     auto* clipPanel = new QWidget;
     auto* clipLayout = new QVBoxLayout(clipPanel);
     clipLayout->setContentsMargins(0, 0, 0, 0);
-    auto* clipTitle = new QLabel(QStringLiteral("<b>File del progetto</b>"));
-    clipTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    clipLayout->addWidget(clipTitle);
     clipLayout->addWidget(clipList_);
     leftPanel->addWidget(clipPanel);
     leftPanel->addWidget(tabs);
@@ -289,12 +287,9 @@ MainWindow::MainWindow(QWidget* parent)
     player_->onSegmentChanged = [this] { updateExportAction(); };
     player_->onVideoDoubleClicked = [this] { toggleFullScreen(sourceDock_); };
     player_->installEventFilter(this);  // un clic sulla Sorgente la rende l'anteprima attiva
-    sourceTitle_ = new QLabel(sourceTitle(true));
-    sourceTitle_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* sourcePanel = new QWidget;
     auto* sourceLayout = new QVBoxLayout(sourcePanel);
     sourceLayout->setContentsMargins(0, 0, 0, 0);
-    sourceLayout->addWidget(sourceTitle_);
     sourceLayout->addWidget(player_, 1);
 
     program_ = new ProgramMonitor(project_);
@@ -375,6 +370,11 @@ MainWindow::MainWindow(QWidget* parent)
     programDock_ = makeDock(QStringLiteral("Montaggio"), QStringLiteral("pannelloMontaggio"), program_);
     timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),
                              sequencePanel);
+    // Spiegazioni, nel suggerimento sul titolo del pannello (vedi eventFilter).
+    filesDock_->setProperty("spiegazione", QStringLiteral("I file del progetto: clic per mostrarne uno nella Sorgente, "
+                                                          "Canc per toglierlo; si aggiungono anche trascinandoli qui"));
+    sourceDock_->setProperty("spiegazione", QStringLiteral("Il file scelto: segna I e O, poi A per metterlo nel montaggio"));
+    programDock_->setProperty("spiegazione", QStringLiteral("Il risultato: i pezzi del montaggio uno dopo l'altro"));
     auto* center = new QWidget(this);
     center->hide();
     setCentralWidget(center);
@@ -514,8 +514,12 @@ MainWindow::~MainWindow()
 void MainWindow::setProgramActive(bool active)
 {
     programActive_ = active;
-    // Il titolo dice a quale anteprima vanno Spazio e frecce.
-    sourceTitle_->setText(sourceTitle(active));
+    // Il titolo del pannello dice a quale anteprima vanno Spazio e frecce (▶). Cambiare il titolo cambierebbe anche la
+    // voce del menu Finestra: quella resta il nome del pannello.
+    sourceDock_->setWindowTitle(previewTitle(QStringLiteral("Sorgente"), !active));
+    programDock_->setWindowTitle(previewTitle(QStringLiteral("Montaggio"), active));
+    sourceDock_->toggleViewAction()->setText(QStringLiteral("Pannello Sorgente"));
+    programDock_->toggleViewAction()->setText(QStringLiteral("Pannello Montaggio"));
 }
 
 void MainWindow::togglePlay()
@@ -1241,7 +1245,18 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     if (watched == timelineDock_ && timelineDock_->isFloating()
         && (event->type() == QEvent::NonClientAreaMouseButtonPress || event->type() == QEvent::NonClientAreaMouseMove
             || event->type() == QEvent::NonClientAreaMouseButtonRelease))
-        return true;    // Linea del tempo staccata: il doppio clic sul titolo la riaggancia sempre. Il titolo di una finestra staccata è
+        return true;
+    // Suggerimento sul titolo di un pannello agganciato (solo sul titolo: dentro valgono quelli del contenuto).
+    if (auto* dock = qobject_cast<QDockWidget*>(watched); dock != nullptr && event->type() == QEvent::ToolTip
+        && !dock->isFloating() && dock->widget() != nullptr) {
+        const auto* help = static_cast<QHelpEvent*>(event);
+        const QString text = dock->property("spiegazione").toString();
+        if (help->pos().y() < dock->widget()->geometry().top() && !text.isEmpty()) {
+            QToolTip::showText(help->globalPos(), text, dock);
+            return true;
+        }
+    }
+    // Linea del tempo staccata: il doppio clic sul titolo la riaggancia sempre. Il titolo di una finestra staccata è
     // quello di Windows, che col doppio clic la ingrandirebbe: lo si intercetta prima.
     if (watched == timelineDock_ && timelineDock_->isFloating() && fullScreenDock_ == nullptr
         && (event->type() == QEvent::NonClientAreaMouseButtonDblClick

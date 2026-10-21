@@ -65,7 +65,7 @@ La finestra è divisa così:
 
 | Comando | Tasto |
 |---|---|
-| Riproduci / Pausa (l'anteprima usata per ultima, segnata con ▶ se è la Sorgente) | Spazio (oppure L / K) |
+| Riproduci / Pausa (l'anteprima usata per ultima, segnata con ▶ nel titolo del suo pannello) | Spazio (oppure L / K) |
 | Fotogramma precedente / successivo | ← / → (oppure `,` / `.`) |
 | Sorgente: fotogramma chiave precedente / successivo · Montaggio: inizio del pezzo precedente / successivo | Maiusc+← / Maiusc+→ |
 | Indietro / avanti di 5 secondi | Ctrl+← / Ctrl+→ (J indietro) |

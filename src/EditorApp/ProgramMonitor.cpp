@@ -49,12 +49,9 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     controls->addSpacing(12);
     controls->addWidget(fragmentLabel_, 5);
 
-    title_ = new QLabel(QStringLiteral("<b>Montaggio</b> (il risultato)"));
-    title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSizeConstraint(QLayout::SetNoConstraint);  // la misura minima la decide minimumSizeHint
-    layout->addWidget(title_);
     layout->addWidget(player_, 1);
     layout->addLayout(controls);
 
@@ -63,12 +60,6 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     connect(poll_, &QTimer::timeout, this, [this] { updatePosition(); });
 
     updateLabels();
-}
-
-void ProgramMonitor::resizeEvent(QResizeEvent* event)
-{
-    QWidget::resizeEvent(event);
-    title_->setVisible(height() >= 150);  // in poco spazio basta il titolo del pannello
 }
 
 void ProgramMonitor::mousePressEvent(QMouseEvent* event)
