@@ -91,6 +91,7 @@ public:
     void stepToKeyframe(int direction);  // fotogramma chiave successivo (+1) o precedente (-1)
     void seekToEnd();                    // ultimo fotogramma
     double frameDuration() const { return frameDuration_; }
+    TimelineWidget* timeline() const { return timeline_; }  // per lo zoom (menu e prove)
     const core::CutSegment& segment() const;
 
     // Tratti del file che sono nel montaggio (bande verdi), in ordine e già uniti. Va chiamato dopo setKeyframes(),

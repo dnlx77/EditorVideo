@@ -51,6 +51,7 @@
     <ClCompile Include="ProjectTests.cpp" />
     <ClCompile Include="SampleMedia.cpp" />
     <ClCompile Include="SequenceTests.cpp" />
+    <ClCompile Include="TimelineZoomTests.cpp" />
     <ClCompile Include="TimeUtilTests.cpp" />
   </ItemGroup>
   <ItemGroup>

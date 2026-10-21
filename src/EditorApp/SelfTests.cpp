@@ -3,6 +3,8 @@
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
+#include "EditorApp/SequenceTimeline.h"
+#include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/CutSegment.h"
@@ -22,6 +24,7 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtGui/QGuiApplication>
+#include <QtGui/QWheelEvent>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressDialog>
@@ -672,6 +675,43 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 std::printf("Miniature: %d pronte, %d in attesa\n", window->readyThumbnails(), window->pendingThumbnails());
                 std::fflush(stdout);
                 ok = ok && window->pendingThumbnails() == 0 && (!hasVideo || window->readyThumbnails() > 0);
+            }
+
+            // Zoom delle due linee del tempo: al massimo (12 pixel per fotogramma), disegnate, scorse fino in fondo e
+            // di nuovo "Adatta". Con lo zoom al massimo si chiedono solo le miniature visibili.
+            {
+                bool zoomOk = true;
+                for (ZoomableTimeline* timeline :
+                     {static_cast<ZoomableTimeline*>(window->sequenceTimeline()), static_cast<ZoomableTimeline*>(window->player()->timeline())}) {
+                    for (int i = 0; i < 80; ++i)
+                        timeline->zoomIn();
+                    const auto& zoom = timeline->zoom();
+                    const bool atMax = zoom.duration() <= 0
+                                    || std::abs(zoom.pixelsPerSecond() - zoom.maxPixelsPerSecond()) < 1e-6;
+                    timeline->grab();
+                    QWheelEvent wheel(QPointF(10, 10), timeline->mapToGlobal(QPointF(10, 10)), QPoint(), QPoint(0, -120 * 50),
+                                      Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+                    QCoreApplication::sendEvent(timeline, &wheel);
+                    timeline->grab();
+                    // Oltre "Adatta": tutto in un decimo della larghezza, senza barra di scorrimento.
+                    for (int i = 0; i < 80; ++i)
+                        timeline->zoomOut();
+                    const bool atMin = zoom.duration() <= 0
+                                    || (std::abs(zoom.contentWidth() - zoom.width() * 0.1) < 1.0 && !zoom.canScroll());
+                    timeline->grab();
+                    timeline->fitAll();
+                    timeline->grab();
+                    zoomOk = zoomOk && atMax && atMin && timeline->zoom().isFit();
+                }
+                QCoreApplication::processEvents();
+                std::printf("Zoom delle linee del tempo: massimo, minimo e Adatta %s, miniature in attesa %d\n", zoomOk ? "OK" : "NON riusciti",
+                            window->pendingThumbnails());
+                std::fflush(stdout);
+                ok = ok && zoomOk && window->pendingThumbnails() < 200;
+                QElapsedTimer thumbs;
+                thumbs.start();
+                while (window->pendingThumbnails() > 0 && thumbs.elapsed() < 20000)
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
             }
 
             // Progetto: salvato e riaperto, con gli stessi pezzi e lo stesso audio tolto (e senza modifiche

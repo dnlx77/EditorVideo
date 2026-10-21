@@ -9,8 +9,11 @@ jobs:
   windows:
     runs-on: windows-2025-vs2026
     env:
-      VCPKG_ROOT: ${{ github.workspace }}\..\vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\..\vcpkg-cache
+      # Fuori dalla cartella del repository ma senza ".." nel percorso: actions/cache non accetta percorsi
+      # relativi (con "..\vcpkg-cache" il salvataggio della cache falliva e ogni CI ricompilava tutto). Il contesto
+      # "runner" qui non si può usare: i percorsi completi si impostano nel primo passo, da RUNNER_WORKSPACE.
+      VCPKG_ROOT_NAME: vcpkg
+      VCPKG_CACHE_NAME: vcpkg-cache
       # In CI compiliamo solo Release: il triplet "release" evita di costruire anche le librerie Debug.
       VCPKG_TRIPLET: x64-windows-release
       # Commit di vcpkg (script e strumento) usato dalla CI. È fisso perché gli hash dei pacchetti dipendono anche da
@@ -20,6 +23,13 @@ jobs:
       VCPKG_COMMIT: 469a0504e4a6ebf6173d1c0f51a7fa34c382fd43
     steps:
       - uses: actions/checkout@v4
+
+      - name: Percorsi di vcpkg
+        shell: pwsh
+        run: |
+          # RUNNER_WORKSPACE è la cartella che contiene il repository (es. D:\a\EditorVideo): assoluta, senza "..".
+          "VCPKG_ROOT=$env:RUNNER_WORKSPACE\$env:VCPKG_ROOT_NAME" >> $env:GITHUB_ENV
+          "VCPKG_DEFAULT_BINARY_CACHE=$env:RUNNER_WORKSPACE\$env:VCPKG_CACHE_NAME" >> $env:GITHUB_ENV
 
       - name: Installa vcpkg
         shell: pwsh

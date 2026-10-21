@@ -20,9 +20,10 @@ constexpr double kVideoHeight = 54;
 constexpr double kLaneGap = 4;
 constexpr double kHandleHeight = 14;  // maniglia della traccia sostitutiva
 
-// Forma d'onda di [sourceFrom, sourceTo) di un file, disegnata in `r` (una linea verticale per pixel).
+// Forma d'onda di [sourceFrom, sourceTo) di un file, disegnata in `r` (una linea verticale per pixel), solo fra
+// visibleLeft e visibleRight: con lo zoom `r` può essere molto più largo della parte che si vede.
 void drawWave(QPainter& p, const QRectF& r, const core::Waveform& wave, double sourceFrom, double sourceTo,
-              const QColor& color)
+              const QColor& color, double visibleLeft, double visibleRight)
 {
     if (r.width() < 1 || sourceTo <= sourceFrom)
         return;
@@ -30,7 +31,9 @@ void drawWave(QPainter& p, const QRectF& r, const core::Waveform& wave, double s
     const double middle = r.center().y();
     const double half = r.height() / 2 - 1;
     const double perPixel = (sourceTo - sourceFrom) / r.width();
-    for (double x = std::ceil(r.left()); x < r.right(); x += 1) {
+    const double first = std::ceil(std::max(r.left(), visibleLeft - 1));
+    const double last = std::min(r.right(), visibleRight + 1);
+    for (double x = first; x < last; x += 1) {
         const double t = sourceFrom + (x - r.left()) * perPixel;
         // Radice quadrata: i suoni deboli si vedono comunque.
         const double h = std::max(0.5, std::sqrt(wave.peak(t, t + perPixel)) * half);
@@ -48,24 +51,25 @@ QColor blockColor(int colorIndex)
 }
 
 SequenceTimeline::SequenceTimeline(QWidget* parent)
-    : QWidget(parent)
+    : ZoomableTimeline(parent)
 {
     setFocusPolicy(Qt::ClickFocus);
     setMouseTracking(true);
     setToolTip(QStringLiteral("Video: clic per andare lì · trascina per spostare il pezzo · doppio clic per riaprirlo "
                               "a sinistra · Canc: togli · S: dividi al cursore\n"
                               "Audio: trascina per selezionare un tratto (o I e O nel Montaggio) · M: togli l'audio · "
-                              "Maiusc+M: rimettilo · la traccia sostitutiva si sposta trascinando la sua maniglia"));
+                              "Maiusc+M: rimettilo · la traccia sostitutiva si sposta trascinando la sua maniglia\n"
+                              "Ctrl+rotellina (o + e -): ingrandisci e riduci · rotellina: scorri"));
 }
 
 QSize SequenceTimeline::sizeHint() const
 {
-    return {800, 142};
+    return {800, 142 + kControlsHeight};
 }
 
 QSize SequenceTimeline::minimumSizeHint() const
 {
-    return {200, 122};
+    return {200, 122 + kControlsHeight};
 }
 
 void SequenceTimeline::setBlocks(std::vector<Block> blocks)
@@ -76,6 +80,7 @@ void SequenceTimeline::setBlocks(std::vector<Block> blocks)
         total_ += b.length;
     if (std::none_of(blocks_.begin(), blocks_.end(), [this](const Block& b) { return b.fragmentId == selected_; }))
         selected_ = 0;
+    setTimelineDuration(total_);
     invalidate();
 }
 
@@ -86,6 +91,7 @@ void SequenceTimeline::setPlayhead(double seconds)
     update(cursorRect(playhead_));
     playhead_ = seconds;
     update(cursorRect(playhead_));
+    followPlayhead(seconds);
 }
 
 QRect SequenceTimeline::cursorRect(double seconds) const
@@ -109,7 +115,7 @@ void SequenceTimeline::invalidate()
 void SequenceTimeline::resizeEvent(QResizeEvent* event)
 {
     cacheValid_ = false;
-    QWidget::resizeEvent(event);
+    ZoomableTimeline::resizeEvent(event);
 }
 
 void SequenceTimeline::changeEvent(QEvent* event)
@@ -155,7 +161,12 @@ QRectF SequenceTimeline::videoLane() const
 QRectF SequenceTimeline::audioLane() const
 {
     const double top = kTop + kVideoHeight + kLaneGap;
-    return QRectF(6, top, std::max(1, width() - 12), std::max(20.0, height() - top - 6));
+    return QRectF(6, top, std::max(1, width() - 12), std::max(20.0, height() - top - 6 - kControlsHeight));
+}
+
+QRectF SequenceTimeline::visiblePart(const QRectF& r) const
+{
+    return QRectF(QPointF(std::max(r.left(), visibleLeft() - 4), r.top()), QPointF(std::min(r.right(), visibleRight() + 4), r.bottom()));
 }
 
 std::vector<QRectF> SequenceTimeline::blockRects(const QRectF& lane) const
@@ -180,19 +191,6 @@ QRectF SequenceTimeline::replacementHandle() const
     if (right <= left)
         return {};
     return QRectF(QPointF(left, lane.top()), QPointF(right, lane.top() + kHandleHeight));
-}
-
-double SequenceTimeline::xForTime(double seconds) const
-{
-    const QRectF a = videoLane();
-    const double t = total();
-    return t <= 0 ? a.left() : a.left() + std::clamp(seconds / t, 0.0, 1.0) * a.width();
-}
-
-double SequenceTimeline::timeForX(double x) const
-{
-    const QRectF a = videoLane();
-    return std::clamp((x - a.left()) / a.width(), 0.0, 1.0) * total();
 }
 
 int SequenceTimeline::blockAt(double x) const
@@ -247,6 +245,8 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
     const QRectF a = videoLane();
     const QRectF audio = audioLane();
     const double x = xForTime(playhead_);
+    if (x < a.left() - 1 || x > a.right() + 1)
+        return;  // con lo zoom il cursore può stare fuori dalla parte visibile
     const QColor head = palette().color(QPalette::Text);
     p.setPen(QPen(head, 2));
     p.drawLine(QPointF(x, a.top()), QPointF(x, audio.bottom() + 3));
@@ -283,11 +283,16 @@ void SequenceTimeline::paintStatic(QPainter& p)
         return;
     }
 
-    // Blocchi
+    // Blocchi: solo quelli che si vedono, e di ognuno solo la parte visibile.
     const std::vector<QRectF> rects = blockRects(a);
+    p.save();
+    p.setClipRect(a.adjusted(-1, -4, 1, 4));
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
         const Block& b = blocks_[i];
-        const QRectF& r = rects[i];
+        const QRectF& full = rects[i];
+        if (full.right() < visibleLeft() - 4 || full.left() > visibleRight() + 4)
+            continue;
+        const QRectF r = visiblePart(full);
         QColor color = blockColor(b.colorIndex);
         if (dragging_ && static_cast<int>(i) == dragIndex_)
             color.setAlpha(110);
@@ -297,19 +302,23 @@ void SequenceTimeline::paintStatic(QPainter& p)
 
         // Miniature: una all'inizio del pezzo e altre a distanza regolare se il blocco è largo.
         bool thumbnails = false;
-        if (thumbnailFor && r.width() > 24) {
-            const double slot = r.height() * 16.0 / 9.0;
-            const int count = std::max(1, static_cast<int>(r.width() / slot));
+        if (thumbnailFor && full.width() > 24) {
+            // Le posizioni si contano su tutto il blocco (così non cambiano scorrendo), ma si chiedono solo
+            // quelle visibili.
+            const double slot = full.height() * 16.0 / 9.0;
+            const int count = std::max(1, static_cast<int>(full.width() / slot));
+            const int first = std::clamp(static_cast<int>(std::floor((r.left() - full.left()) / slot)), 0, count - 1);
+            const int last = std::clamp(static_cast<int>(std::floor((r.right() - full.left()) / slot)), 0, count - 1);
             p.save();
             QPainterPath clip;
             clip.addRoundedRect(r, 3, 3);
-            p.setClipPath(clip);
-            for (int k = 0; k < count; ++k) {
+            p.setClipPath(clip, Qt::IntersectClip);
+            for (int k = first; k <= last; ++k) {
                 const QImage image = thumbnailFor(b.clipId, b.sourceStart + k * b.length / count);
                 if (image.isNull())
                     continue;
-                const QSizeF size = QSizeF(image.size()).scaled(QSizeF(slot, r.height()), Qt::KeepAspectRatioByExpanding);
-                const QRectF target(QPointF(r.left() + k * slot, r.top()), size);
+                const QSizeF size = QSizeF(image.size()).scaled(QSizeF(slot, full.height()), Qt::KeepAspectRatioByExpanding);
+                const QRectF target(QPointF(full.left() + k * slot, full.top()), size);
                 p.drawImage(target, image);
                 thumbnails = true;
             }
@@ -339,6 +348,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
         }
     }
 
+    p.restore();
     paintAudio(p);
 
     // Dove finirebbe il blocco trascinato
@@ -347,7 +357,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
         double at = 0.0;
         for (int i = 0; i < drop && i < static_cast<int>(blocks_.size()); ++i)
             at += blocks_[i].length;
-        const double x = xForTime(at);
+        const double x = std::clamp(xForTime(at), a.left(), a.right());
         p.setPen(QPen(pal.color(QPalette::Highlight), 3));
         p.drawLine(QPointF(x, a.top() - 4), QPointF(x, a.bottom() + 4));
     }
@@ -365,7 +375,10 @@ void SequenceTimeline::paintAudio(QPainter& p)
         const std::vector<QRectF> rects = blockRects(lane);
         for (std::size_t i = 0; i < blocks_.size(); ++i) {
             const Block& b = blocks_[i];
-            const QRectF& r = rects[i];
+            const QRectF& full = rects[i];
+            if (full.right() < visibleLeft() - 4 || full.left() > visibleRight() + 4)
+                continue;
+            const QRectF r = visiblePart(full);
             const QColor color = blockColor(b.colorIndex);
             p.setPen(Qt::NoPen);
             p.setBrush(QColor(color.red(), color.green(), color.blue(), 45));
@@ -379,24 +392,25 @@ void SequenceTimeline::paintAudio(QPainter& p)
                 if (r.width() > 60)
                     p.drawText(r, Qt::AlignCenter, QStringLiteral("senza audio"));
             } else {
-                drawWave(p, r, *b.waveform, b.sourceStart, b.sourceStart + b.length, color.darker(110));
+                drawWave(p, full, *b.waveform, b.sourceStart, b.sourceStart + b.length, color.darker(110), visibleLeft(),
+                         visibleRight());
             }
         }
     } else {
         // Traccia sostitutiva: un solo blocco, con la maniglia per spostarlo; l'audio dei file è escluso.
         p.setPen(pal.color(QPalette::PlaceholderText));
-        const QRectF handle = replacementHandle();
+        const QRectF handle = visiblePart(replacementHandle());
         const double left = xForTime(std::max(0.0, replacement_->offset));
         const double right = xForTime(std::min(total(), replacement_->offset + replacement_->duration));
         if (left > lane.left() + 40)
-            p.drawText(QRectF(QPointF(lane.left(), lane.top()), QPointF(left, lane.bottom())), Qt::AlignCenter,
-                       QStringLiteral("silenzio"));
-        if (right > left) {
+            p.drawText(QRectF(QPointF(lane.left(), lane.top()), QPointF(std::min(left, lane.right()), lane.bottom())),
+                       Qt::AlignCenter, QStringLiteral("silenzio"));
+        if (right > left && right > visibleLeft() && left < visibleRight()) {
             const QColor color(214, 160, 40);
             const QRectF body(QPointF(left + 1, lane.top() + kHandleHeight), QPointF(right - 1, lane.bottom() - 2));
             p.setPen(Qt::NoPen);
             p.setBrush(QColor(color.red(), color.green(), color.blue(), 50));
-            p.drawRect(body);
+            p.drawRect(visiblePart(body));
             p.setBrush(color);
             p.drawRoundedRect(handle.adjusted(1, 1, -1, 0), 3, 3);
             p.setPen(Qt::black);
@@ -407,17 +421,17 @@ void SequenceTimeline::paintAudio(QPainter& p)
                 // La parte della traccia che si vede: dal tempo 0 della sequenza (o dall'inizio della traccia).
                 const double from = std::max(0.0, -replacement_->offset);
                 const double to = std::min(replacement_->duration, total() - replacement_->offset);
-                drawWave(p, body, *replacement_->waveform, from, to, color.darker(130));
+                drawWave(p, body, *replacement_->waveform, from, to, color.darker(130), visibleLeft(), visibleRight());
             } else if (!replacement_->waveform) {
                 p.setPen(pal.color(QPalette::PlaceholderText));
-                p.drawText(body, Qt::AlignCenter, QStringLiteral("forma d'onda..."));
+                p.drawText(visiblePart(body), Qt::AlignCenter, QStringLiteral("forma d'onda..."));
             }
         }
     }
 
     // Tratti senza audio: barrati.
     for (const core::TimeRange& m : muted_) {
-        const QRectF r(QPointF(xForTime(m.start), lane.top() + 1), QPointF(xForTime(m.end), lane.bottom() - 1));
+        const QRectF r = visiblePart(QRectF(QPointF(xForTime(m.start), lane.top() + 1), QPointF(xForTime(m.end), lane.bottom() - 1)));
         if (r.width() < 1)
             continue;
         p.setPen(Qt::NoPen);
@@ -435,7 +449,7 @@ void SequenceTimeline::paintAudio(QPainter& p)
 
     // Tratto selezionato
     if (hasAudioSelection()) {
-        const QRectF r(QPointF(xForTime(selectionFrom_), lane.top()), QPointF(xForTime(selectionTo_), lane.bottom()));
+        const QRectF r = visiblePart(QRectF(QPointF(xForTime(selectionFrom_), lane.top()), QPointF(xForTime(selectionTo_), lane.bottom())));
         QColor highlight = pal.color(QPalette::Highlight);
         highlight.setAlpha(70);
         p.setPen(QPen(pal.color(QPalette::Highlight), 2));
@@ -454,7 +468,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
 
     if (event->position().y() >= audioLane().top() - kLaneGap / 2) {
         // Corsia audio: maniglia della traccia sostitutiva, oppure inizio di una selezione.
-        if (replacementHandle().contains(event->position())) {
+        if (visiblePart(replacementHandle()).contains(event->position())) {
             movingReplacement_ = true;
             replacementStart_ = replacement_->offset;
             setCursor(Qt::ClosedHandCursor);
@@ -487,12 +501,11 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
     const double x = event->position().x();
     if (!(event->buttons() & Qt::LeftButton)) {
         // Sulla maniglia della traccia sostitutiva il cursore diventa una mano.
-        setCursor(replacementHandle().contains(event->position()) ? Qt::OpenHandCursor : Qt::ArrowCursor);
+        setCursor(visiblePart(replacementHandle()).contains(event->position()) ? Qt::OpenHandCursor : Qt::ArrowCursor);
         return;
     }
     if (movingReplacement_) {
-        const double perPixel = total() / std::max(1.0, videoLane().width());
-        replacement_->offset = replacementStart_ + (x - pressX_) * perPixel;
+        replacement_->offset = replacementStart_ + (x - pressX_) / zoom().pixelsPerSecond();
         invalidate();
         return;
     }

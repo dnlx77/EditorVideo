@@ -4,6 +4,7 @@
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/UiText.h"
 #include "EditorApp/SequenceTimeline.h"
+#include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/LibraryInfo.h"
 #include "EditorCore/MediaProbe.h"
@@ -225,6 +226,7 @@ MainWindow::MainWindow(QWidget* parent)
     program_ = new ProgramMonitor(project_);
     program_->onActivated = [this] { setProgramActive(true); };
     program_->onPositionChanged = [this](double seconds) { timeline_->setPlayhead(seconds); };
+    program_->onPlaybackStarted = [this] { timeline_->resumeFollowing(); };
 
     auto* monitors = new QSplitter;
     monitors->addWidget(leftPanel);
@@ -353,6 +355,17 @@ void MainWindow::seekRelative(double seconds)
         program_->seekRelative(seconds);
     else
         player_->seekRelative(seconds);
+}
+
+void MainWindow::zoomTimeline(double factor)
+{
+    ZoomableTimeline* target = programActive_ ? static_cast<ZoomableTimeline*>(timeline_) : player_->timeline();
+    if (factor <= 0)
+        target->fitAll();
+    else if (factor > 1)
+        target->zoomIn();
+    else
+        target->zoomOut();
 }
 
 void MainWindow::stepFrame(int direction)
@@ -610,6 +623,21 @@ void MainWindow::refreshTimeline()
                           f.clipId, clip ? waveformFor(clip->path) : nullptr});
     }
     timeline_->setBlocks(std::move(blocks));
+    // Zoom massimo: 12 pixel per fotogramma del primo file con un video (30 fps se non si sa ancora).
+    double frame = 1.0 / 30;
+    for (const core::Fragment& f : sequence.fragments()) {
+        const auto info = clipInfo_.find(f.clipId);
+        if (info == clipInfo_.end())
+            continue;
+        const auto video = std::find_if(info->second.streams.begin(), info->second.streams.end(), [](const core::StreamInfo& st) {
+            return st.kind == core::StreamKind::Video && !st.attachedPicture && st.frameRate > 0;
+        });
+        if (video != info->second.streams.end()) {
+            frame = 1.0 / video->frameRate;
+            break;
+        }
+    }
+    timeline_->setFrameDuration(frame);
     const std::vector<core::TimeRange> muted = sequence.mutedRanges();
     timeline_->setMuted(muted);
     const auto& replacement = project_.audioReplacement();
@@ -1015,7 +1043,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         static const int commandKeys[] = {Qt::Key_Space, Qt::Key_Left, Qt::Key_Right, Qt::Key_Home, Qt::Key_End,
                                           Qt::Key_Comma, Qt::Key_Period, Qt::Key_I, Qt::Key_O, Qt::Key_A, Qt::Key_X,
                                           Qt::Key_S, Qt::Key_M, Qt::Key_J, Qt::Key_K, Qt::Key_L, Qt::Key_Z,
-                                          Qt::Key_Y, Qt::Key_Delete};
+                                          Qt::Key_Y, Qt::Key_Plus, Qt::Key_Minus, Qt::Key_Equal, Qt::Key_Delete};
         const bool commandKey = std::find(std::begin(commandKeys), std::end(commandKeys), key->key())
                              != std::end(commandKeys);
         const auto modifiers = key->modifiers() & ~Qt::KeypadModifier;
@@ -1092,6 +1120,13 @@ void MainWindow::createMenus()
     startAction->setShortcut(QKeySequence(Qt::Key_Home));
     QAction* endAction = playMenu->addAction(QStringLiteral("Vai alla &fine"), this, [this] { seekEnd(); });
     endAction->setShortcut(QKeySequence(Qt::Key_End));
+    playMenu->addSeparator();
+    // Zoom della linea del tempo dell'anteprima attiva (anche Ctrl+rotellina sulla linea del tempo).
+    playMenu->addAction(QStringLiteral("Ingrandisci la linea del tempo"), this, [this] { zoomTimeline(1.25); })
+        ->setShortcuts({QKeySequence(Qt::Key_Plus), QKeySequence(Qt::Key_Equal)});
+    playMenu->addAction(QStringLiteral("Riduci la linea del tempo"), this, [this] { zoomTimeline(1.0 / 1.25); })
+        ->setShortcut(QKeySequence(Qt::Key_Minus));
+    playMenu->addAction(QStringLiteral("Adatta la linea del tempo (mostra tutto)"), this, [this] { zoomTimeline(0.0); });
 
     QMenu* segmentMenu = menuBar()->addMenu(QStringLiteral("&Segmento"));
     // Con il Montaggio attivo, I e O segnano il tratto della corsia audio.
@@ -1799,6 +1834,8 @@ void MainWindow::showShortcuts()
         {"Maiusc+← / Maiusc+→", "Sorgente: fotogramma chiave precedente / successivo · Montaggio: inizio del pezzo"},
         {"Ctrl+← / Ctrl+→  (J indietro)", "Indietro / avanti di 5 secondi"},
         {"Home / Fine", "Inizio / fine"},
+        {"+ / -  (Ctrl+rotellina)", "Ingrandisci / riduci la linea del tempo dell'anteprima attiva (pulsante Adatta: tutto)"},
+        {"Rotellina", "Scorri la linea del tempo ingrandita"},
         {"I / O", "Sorgente: segna IN / OUT · Montaggio: inizio / fine del tratto audio"},
         {"Maiusc+I / Maiusc+O", "Vai a IN / OUT"},
         {"A", "Aggiungi IN-OUT (o il file intero) al montaggio"},

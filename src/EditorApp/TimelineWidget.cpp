@@ -21,26 +21,28 @@ const QColor kRemovedColor(0, 0, 0, 110);
 }  // namespace
 
 TimelineWidget::TimelineWidget(QWidget* parent)
-    : QWidget(parent)
+    : ZoomableTimeline(parent)
 {
     setMouseTracking(false);
     setCursor(Qt::PointingHandCursor);
-    setToolTip(QStringLiteral("Clic o trascinamento per spostarsi. Le tacche sono i fotogrammi chiave."));
+    setToolTip(QStringLiteral("Clic o trascinamento per spostarsi. Le tacche sono i fotogrammi chiave.\n"
+                              "Ctrl+rotellina (o + e -): ingrandisci e riduci · rotellina: scorri"));
 }
 
 QSize TimelineWidget::sizeHint() const
 {
-    return {400, 46};
+    return {400, 46 + kControlsHeight};
 }
 
 QSize TimelineWidget::minimumSizeHint() const
 {
-    return {120, 46};
+    return {120, 46 + kControlsHeight};
 }
 
 void TimelineWidget::setDuration(double seconds)
 {
     duration_ = std::max(0.0, seconds);
+    setTimelineDuration(duration_);
     invalidate();
 }
 
@@ -70,6 +72,7 @@ void TimelineWidget::setPlayhead(double seconds)
     if (dragging_ || std::abs(seconds - playhead_) < 1e-6)
         return;
     movePlayhead(seconds);
+    followPlayhead(seconds);
 }
 
 void TimelineWidget::movePlayhead(double seconds)
@@ -95,7 +98,7 @@ void TimelineWidget::invalidate()
 void TimelineWidget::resizeEvent(QResizeEvent* event)
 {
     cacheValid_ = false;
-    QWidget::resizeEvent(event);
+    ZoomableTimeline::resizeEvent(event);
 }
 
 void TimelineWidget::changeEvent(QEvent* event)
@@ -110,23 +113,8 @@ void TimelineWidget::changeEvent(QEvent* event)
 QRectF TimelineWidget::trackRect() const
 {
     // Margini laterali per non tagliare i marcatori agli estremi; spazio in alto per le etichette IN/OUT.
-    return QRectF(8, 14, std::max(1, width() - 16), height() - 20);
-}
-
-double TimelineWidget::xForTime(double seconds) const
-{
-    const QRectF track = trackRect();
-    if (duration_ <= 0)
-        return track.left();
-    return track.left() + std::clamp(seconds / duration_, 0.0, 1.0) * track.width();
-}
-
-double TimelineWidget::timeForX(double x) const
-{
-    const QRectF track = trackRect();
-    if (duration_ <= 0 || track.width() <= 0)
-        return 0.0;
-    return std::clamp((x - track.left()) / track.width(), 0.0, 1.0) * duration_;
+    // In basso la riga della barra di scorrimento e di "Adatta".
+    return QRectF(8, 14, std::max(1, width() - 16), height() - 20 - kControlsHeight);
 }
 
 void TimelineWidget::paintEvent(QPaintEvent*)
@@ -164,13 +152,20 @@ void TimelineWidget::paintStatic(QPainter& p)
     if (!enabled)
         return;
 
+    // Con lo zoom l'asse del tempo è più largo del widget: si disegna solo la parte visibile (le x si limitano a poco
+    // oltre i bordi, così anche un rettangolo lunghissimo resta piccolo) e non oltre i bordi della traccia.
+    const auto clampX = [&](double x) { return std::clamp(x, track.left() - 4, track.right() + 4); };
+    const auto visible = [&](double x) { return x >= track.left() - 1 && x <= track.right() + 1; };
+    p.save();
+    p.setClipRect(QRectF(track.left() - 1, 0, track.width() + 2, height()));
+
     // Tratti tenuti: bande verdi; quello che non verrà esportato è scurito.
     if (!kept_.empty()) {
         p.setBrush(kRemovedColor);
         p.drawRect(track);
         p.setBrush(kKeptColor);
         for (const core::TimeRange& r : kept_)
-            p.drawRect(QRectF(QPointF(xForTime(r.start), track.top()), QPointF(xForTime(r.end), track.bottom())));
+            p.drawRect(QRectF(QPointF(clampX(xForTime(r.start)), track.top()), QPointF(clampX(xForTime(r.end)), track.bottom())));
     }
 
     // Segmento IN-OUT (solo se almeno uno dei due è segnato)
@@ -178,7 +173,7 @@ void TimelineWidget::paintStatic(QPainter& p)
     const double outX = xForTime(out_);
     if (hasIn_ || hasOut_) {
         p.setBrush(kSegmentColor);
-        p.drawRect(QRectF(QPointF(inX, track.top() + track.height() * 0.5), QPointF(outX, track.bottom())));
+        p.drawRect(QRectF(QPointF(clampX(inX), track.top() + track.height() * 0.5), QPointF(clampX(outX), track.bottom())));
     }
 
     // Fotogrammi chiave: una tacca per pixel al massimo (con migliaia di fotogrammi chiave basta così).
@@ -187,9 +182,13 @@ void TimelineWidget::paintStatic(QPainter& p)
     p.setRenderHint(QPainter::Antialiasing, false);
     p.setPen(QPen(tick, 1));
     int lastX = -1;
-    for (const double t : keyframes_) {
-        const int x = static_cast<int>(std::lround(xForTime(t)));
-        if (x == lastX)
+    const double firstVisible = timeForX(track.left());
+    for (auto it = std::lower_bound(keyframes_.begin(), keyframes_.end(), firstVisible - 1.0); it != keyframes_.end(); ++it) {
+        const double tx = xForTime(*it);
+        if (tx > track.right() + 1)
+            break;
+        const int x = static_cast<int>(std::lround(tx));
+        if (x == lastX || !visible(tx))
             continue;
         lastX = x;
         p.drawLine(QPointF(x, track.top() + 2), QPointF(x, track.top() + track.height() * 0.45));
@@ -207,10 +206,11 @@ void TimelineWidget::paintStatic(QPainter& p)
         const QRectF textRect = labelOnLeft ? QRectF(x - 40, 0, 38, 13) : QRectF(x + 2, 0, 38, 13);
         p.drawText(textRect, (labelOnLeft ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter, label);
     };
-    if (hasIn_)
+    if (hasIn_ && visible(inX))
         marker(inX, kInColor, QStringLiteral("IN"), false);
-    if (hasOut_)
+    if (hasOut_ && visible(outX))
         marker(outX, kOutColor, QStringLiteral("OUT"), true);
+    p.restore();
 }
 
 void TimelineWidget::paintCursor(QPainter& p)
@@ -220,6 +220,8 @@ void TimelineWidget::paintCursor(QPainter& p)
     const QRectF track = trackRect();
     const QPalette pal = palette();
     const double x = xForTime(playhead_);
+    if (x < track.left() - 1 || x > track.right() + 1)
+        return;  // con lo zoom il cursore può stare fuori dalla parte visibile
     const QColor head = pal.color(QPalette::Text);
     p.setPen(QPen(head, 2));
     p.drawLine(QPointF(x, track.top()), QPointF(x, track.bottom() + 3));

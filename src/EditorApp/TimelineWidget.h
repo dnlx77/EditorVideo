@@ -1,9 +1,9 @@
 #pragma once
 
+#include "EditorApp/ZoomableTimeline.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <QtGui/QPixmap>
-#include <QtWidgets/QWidget>
 
 #include <functional>
 #include <vector>
@@ -11,8 +11,8 @@
 namespace editor::app {
 
 // Linea del tempo di un file: fotogrammi chiave (tacche), segmento IN-OUT evidenziato e cursore di riproduzione.
-// Un clic o un trascinamento sposta il cursore.
-class TimelineWidget : public QWidget
+// Un clic o un trascinamento sposta il cursore. Si può ingrandire (vedi ZoomableTimeline).
+class TimelineWidget : public ZoomableTimeline
 {
 public:
     explicit TimelineWidget(QWidget* parent = nullptr);
@@ -35,6 +35,9 @@ protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void changeEvent(QEvent* event) override;
+    QRectF timeAxis() const override { return trackRect(); }
+    void viewChanged() override { invalidate(); }
+    double playheadTime() const override { return playhead_; }
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -48,8 +51,6 @@ private:
     void movePlayhead(double seconds);           // ridisegna solo dove era e dove va il cursore
     QRect cursorRect(double seconds) const;
     QRectF trackRect() const;
-    double xForTime(double seconds) const;
-    double timeForX(double x) const;
 
     double duration_ = 0.0;
     std::vector<double> keyframes_;

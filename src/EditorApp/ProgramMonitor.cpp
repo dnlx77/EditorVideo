@@ -131,6 +131,8 @@ void ProgramMonitor::togglePlayPause()
     else if (index_ < 0)
         seekTo(position_);
     playing_ = true;
+    if (onPlaybackStarted)
+        onPlaybackStarted();
     player_->play();
     poll_->start();
     updateLabels();
