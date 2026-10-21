@@ -821,16 +821,24 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
         QTimer::singleShot(0, &app, &QApplication::quit);
     } else {
         PlayerWidget* player = window.player();
-        QTimer::singleShot(0, &app, [player] { player->togglePlayPause(); });
-        QTimer::singleShot(kSmokePlayMilliseconds, &app, [&app, player, window = &window] {
+        // Il tempo vero dall'inizio della riproduzione: su un PC lento il controllo può arrivare più tardi dei 2 s.
+        auto playStart = std::make_shared<QElapsedTimer>();
+        QTimer::singleShot(0, &app, [player, playStart] {
+            player->togglePlayPause();
+            playStart->start();
+        });
+        QTimer::singleShot(kSmokePlayMilliseconds, &app, [&app, player, playStart, window = &window] {
             const double position = player->currentPosition();
-            std::printf("Riproduzione: %s, posizione %.3f s dopo %.1f s, %s\n",
-                        player->isPlaying() ? "in corso" : "ferma", position, kSmokePlayMilliseconds / 1000.0,
+            const double expected = playStart->isValid() ? playStart->elapsed() / 1000.0 : kSmokePlayMilliseconds / 1000.0;
+            std::printf("Riproduzione: %s, posizione %.3f s dopo %.1f s (passati davvero %.3f s), %s\n",
+                        player->isPlaying() ? "in corso" : "ferma", position, kSmokePlayMilliseconds / 1000.0, expected,
                         qPrintable(player->statusText()));
             std::fflush(stdout);
             // Codice di uscita 2 se la riproduzione non è partita o non avanza col tempo giusto (±25%).
-            const double expected = kSmokePlayMilliseconds / 1000.0;
             bool ok = player->isPlaying() && std::abs(position - expected) < expected * 0.25;
+            if (!ok)
+                std::printf("  NON riuscito: la riproduzione %s\n",
+                            player->isPlaying() ? "non avanza col tempo giusto" : "non è partita o si è fermata");
 
             // Segmento: IN qui (agganciato al fotogramma chiave), 5 fotogrammi avanti, OUT.
             player->markIn();
@@ -846,8 +854,11 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                         segment.length(), inOnKeyframe ? "" : " (IN non su un fotogramma chiave!)");
             std::fflush(stdout);
             // IN non dopo la posizione letta sopra (con margine: la pausa arriva qualche istante dopo).
-            ok = ok && segment.hasIn() && segment.hasOut() && inOnKeyframe && segment.in() <= position + 0.1
-              && segment.length() > 0;
+            const bool segmentOk = segment.hasIn() && segment.hasOut() && inOnKeyframe && segment.in() <= position + 0.1
+                                && segment.length() > 0;
+            if (!segmentOk)
+                std::printf("  NON riuscito: segmento IN-OUT non valido\n");
+            ok = ok && segmentOk;
 
             const auto finish = [&app, window](bool success) {
                 // Con EDITORVIDEO_SMOKE_SCREENSHOT=percorso.png salva anche un'immagine della finestra.

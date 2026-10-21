@@ -339,7 +339,6 @@ private:
     std::atomic<bool> cancelWave_{false};
 
     QThread* exportThread_ = nullptr;
-    QThread* encoderProbeThread_ = nullptr;  // prova degli encoder all'avvio (vedi core::availableVideoEncoders)
     std::atomic<bool> cancelExport_{false};
     bool lastExportOk_ = false;
     QString lastExportProblem_;
