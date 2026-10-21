@@ -365,7 +365,9 @@ MainWindow::MainWindow(QWidget* parent)
     center->hide();
     setCentralWidget(center);
     setDockNestingEnabled(true);
-    setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks);
+    // Senza animazioni: i pannelli si sistemano subito (con il riaggancio a fine spostamento della finestra un'animazione
+    // poteva restare a metà, con la linea del tempo senza spazio finché un altro pannello non si muoveva).
+    setDockOptions(QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks);
     // La zona in basso occupa tutta la larghezza (anche sotto le zone laterali) ed è della linea del tempo, che si
     // aggancia solo lì: riagganciandola torna sempre sotto a tutto, mai sotto uno degli altri pannelli.
     setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
@@ -1988,6 +1990,8 @@ void MainWindow::redockTimeline()
     showDockPreview(false);
     timelineRedocking_ = true;
     // Sempre la stessa sequenza, qualunque sia lo stato di prima: tolta, aggiunta in basso, agganciata, visibile.
+    // Mai una finestra nativa da agganciata (vedi startTimelineDrag).
+    timelineDock_->setAttribute(Qt::WA_NativeWindow, false);
     removeDockWidget(timelineDock_);
     addDockWidget(Qt::BottomDockWidgetArea, timelineDock_, Qt::Horizontal);
     timelineDock_->setFloating(false);
@@ -1998,6 +2002,11 @@ void MainWindow::redockTimeline()
 
 void MainWindow::applyTimelineHeight()
 {
+    // La disposizione si ricalcola subito, prima di dare l'altezza (e dopo si ridisegna tutto).
+    if (layout() != nullptr) {
+        layout()->invalidate();
+        layout()->activate();
+    }
     // L'ultima altezza da agganciata, almeno quella iniziale e al massimo metà della finestra.
     const int maximum = std::max(230, height() / 2);
     const int wanted = std::clamp(timelineHeight_, 230, maximum);
@@ -2016,6 +2025,9 @@ void MainWindow::applyTimelineHeight()
     } else {
         resizeDocks({timelineDock_}, {wanted}, Qt::Vertical);
     }
+    if (layout() != nullptr)
+        layout()->activate();
+    update();
     timelineRedocking_ = false;
     timelineHeight_ = timelineDock_->height();
 }
@@ -2112,7 +2124,12 @@ void MainWindow::startTimelineDrag(const QPoint& global, const QPoint& local)
     timelineDock_->move(global - QPoint(grabX, 12));
     timelineDock_->show();
     QCoreApplication::processEvents();  // la finestra nativa deve esistere ed essere al suo posto
-    void* hwnd = reinterpret_cast<void*>(timelineDock_->winId());
+    // L'handle della finestra (staccata, quindi di primo livello) senza QWidget::winId(), che renderebbe il pannello una
+    // finestra nativa per sempre: riagganciato resterebbe una finestra figlia di Windows, ridisegnata e messa al suo posto
+    // solo quando la finestra principale si riorganizza.
+    if (timelineDock_->windowHandle() == nullptr)
+        return;
+    void* hwnd = reinterpret_cast<void*>(timelineDock_->windowHandle()->winId());
     if (nativeDragForTest_) {
         nativeDragForTest_(hwnd, global);
         return;
