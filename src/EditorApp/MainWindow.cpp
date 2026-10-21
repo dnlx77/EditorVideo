@@ -23,6 +23,7 @@
 #include <QtGui/QCloseEvent>
 #include <QtGui/QDragEnterEvent>
 #include <QtGui/QDropEvent>
+#include <QtGui/QCursor>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QScreen>
@@ -43,6 +44,8 @@
 #include <QtWidgets/QVBoxLayout>
 
 #include <algorithm>
+
+#include <windows.h>
 #include <cmath>
 #include <cstdio>
 #include <iterator>
@@ -333,6 +336,30 @@ MainWindow::MainWindow(QWidget* parent)
     setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
     setCorner(Qt::BottomRightCorner, Qt::BottomDockWidgetArea);
     timelineDock_->setAllowedAreas(Qt::BottomDockWidgetArea);
+    // Qt la riaggancia solo se la si porta a filo del bordo inferiore della finestra (la zona in basso, vuota, è
+    // sottilissima): troppo difficile. Quindi: lasciata ovunque nella metà bassa della finestra si riaggancia da sola;
+    // con il doppio clic sul titolo (o in qualsiasi altro modo) torna sempre in basso a tutta larghezza.
+    timelineDock_->installEventFilter(this);
+    timelineMoved_ = new QTimer(this);
+    timelineMoved_->setSingleShot(true);
+    timelineMoved_->setInterval(200);
+    connect(timelineMoved_, &QTimer::timeout, this, [this] {
+        // Lo stato vero del pulsante: durante lo spostamento della finestra (fatto da Windows) Qt non lo vede.
+        const bool down = (GetAsyncKeyState(GetSystemMetrics(SM_SWAPBUTTON) != 0 ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
+        if (down && timelineDock_->isFloating())
+            timelineMoved_->start();  // si sta ancora trascinando
+        else
+            redockTimelineIfDroppedLow(QCursor::pos(), false);
+    });
+    connect(timelineDock_, &QDockWidget::topLevelChanged, this, [this](bool floating) {
+        // Riagganciata da Qt (doppio clic sul titolo, trascinamento): sempre in basso, a tutta larghezza.
+        if (!floating && fullScreenDock_ == nullptr)
+            QTimer::singleShot(0, this, [this] {
+                if (!timelineDock_->isFloating()
+                    && (dockWidgetArea(timelineDock_) != Qt::BottomDockWidgetArea || timelineDock_->width() < width() - 40))
+                    redockTimeline();
+            });
+    });
     for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_})
         dock->setAllowedAreas(Qt::TopDockWidgetArea | Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     setMouseTracking(true);  // per il cursore sugli incroci fra separatori
@@ -1068,6 +1095,10 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    // La linea del tempo staccata che si sposta: a spostamento finito si guarda dove è stata lasciata.
+    if (watched == timelineDock_ && event->type() == QEvent::Move && timelineDock_->isFloating() && fullScreenDock_ == nullptr)
+        timelineMoved_->start();
+
     // Pannelli piccoli: si nasconde quello che non ci sta (le schede sotto i file, la riga sopra le corsie).
     if (event->type() == QEvent::Resize) {
         if (watched == filesPanel_)
@@ -1335,6 +1366,7 @@ void MainWindow::createMenus()
     QAction* exitFull = windowMenu->addAction(QStringLiteral("Esci dallo schermo intero"), this, [this] { exitFullScreen(); });
     exitFull->setShortcut(QKeySequence(Qt::Key_Escape));
     windowMenu->addSeparator();
+    windowMenu->addAction(QStringLiteral("Riaggancia la &linea del tempo"), this, [this] { redockTimeline(); });
     windowMenu->addAction(QStringLiteral("&Ripristina disposizione"), this, [this] { resetLayout(); });
 
     QMenu* helpMenu = menuBar()->addMenu(QStringLiteral("&Aiuto"));
@@ -1769,6 +1801,9 @@ void MainWindow::restoreLayout()
         restoreGeometry(geometry);
     if (!state.isEmpty() && !restoreState(state))
         resetLayout();
+    // Una disposizione salvata prima che la linea del tempo potesse stare solo in basso: la si rimette lì.
+    if (!timelineDock_->isFloating() && dockWidgetArea(timelineDock_) != Qt::BottomDockWidgetArea)
+        redockTimeline();
     // Il monitor dove stava la finestra (o un pannello staccato) potrebbe non esserci più.
     keepOnScreen(this);
     for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
@@ -1892,6 +1927,29 @@ bool MainWindow::event(QEvent* event)
         break;
     }
     return QMainWindow::event(event);
+}
+
+void MainWindow::redockTimeline()
+{
+    if (fullScreenDock_ == timelineDock_)
+        exitFullScreen();
+    timelineMoved_->stop();
+    timelineDock_->setFloating(false);
+    addDockWidget(Qt::BottomDockWidgetArea, timelineDock_);
+    timelineDock_->show();
+    resizeDocks({timelineDock_}, {std::max(160, timelineDock_->sizeHint().height())}, Qt::Vertical);
+}
+
+bool MainWindow::redockTimelineIfDroppedLow(const QPoint& cursor, bool buttonDown)
+{
+    if (buttonDown || !timelineDock_->isFloating() || fullScreenDock_ != nullptr)
+        return false;
+    const QRect window = frameGeometry();
+    if (!window.contains(cursor) || cursor.y() < window.top() + window.height() / 2)
+        return false;
+    redockTimeline();
+    statusBar()->showMessage(QStringLiteral("Linea del tempo riagganciata in basso."), 4000);
+    return true;
 }
 
 void MainWindow::toggleFullScreen(QDockWidget* dock)
