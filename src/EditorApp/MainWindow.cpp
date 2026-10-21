@@ -19,6 +19,7 @@
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtGui/QCloseEvent>
+#include <QtGui/QMouseEvent>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QScreen>
 #include <QtWidgets/QApplication>
@@ -175,6 +176,7 @@ MainWindow::MainWindow(QWidget* parent)
     infoTree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
 
     keyframeTitle_ = new QLabel;
+    keyframeTitle_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     keyframeList_ = new QTreeWidget;
     keyframeList_->setColumnCount(2);
     keyframeList_->setHeaderLabels({QStringLiteral("#"), QStringLiteral("Tempo")});
@@ -197,6 +199,10 @@ MainWindow::MainWindow(QWidget* parent)
     keyframeList_->installEventFilter(this);
 
     auto* tabs = new QTabWidget;
+    tabs->setUsesScrollButtons(true);  // le schede non impongono una larghezza minima
+    tabs->setElideMode(Qt::ElideRight);
+    for (QWidget* list : std::initializer_list<QWidget*>{clipList_, infoTree_, keyframeList_})
+        list->setMinimumSize(40, 24);
     tabs->addTab(infoTree_, QStringLiteral("Informazioni"));
     tabs->addTab(keyframePanel, QStringLiteral("Fotogrammi chiave"));
 
@@ -204,12 +210,19 @@ MainWindow::MainWindow(QWidget* parent)
     auto* clipPanel = new QWidget;
     auto* clipLayout = new QVBoxLayout(clipPanel);
     clipLayout->setContentsMargins(0, 0, 0, 0);
-    clipLayout->addWidget(new QLabel(QStringLiteral("<b>File del progetto</b>")));
+    auto* clipTitle = new QLabel(QStringLiteral("<b>File del progetto</b>"));
+    clipTitle->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    clipLayout->addWidget(clipTitle);
     clipLayout->addWidget(clipList_);
     leftPanel->addWidget(clipPanel);
     leftPanel->addWidget(tabs);
     leftPanel->setStretchFactor(0, 1);
     leftPanel->setStretchFactor(1, 2);
+    // Il pannello può diventare piccolo: sotto una certa altezza resta solo l'elenco dei file (vedi eventFilter).
+    leftPanel->setMinimumSize(120, 60);
+    leftPanel->installEventFilter(this);
+    filesPanel_ = leftPanel;
+    filesTabs_ = tabs;
 
     // --- Centro: Sorgente (il file scelto) e Montaggio (il risultato)
     player_ = new PlayerWidget;
@@ -218,6 +231,7 @@ MainWindow::MainWindow(QWidget* parent)
     player_->onVideoDoubleClicked = [this] { toggleFullScreen(sourceDock_); };
     player_->installEventFilter(this);  // un clic sulla Sorgente la rende l'anteprima attiva
     sourceTitle_ = new QLabel(sourceTitle(true));
+    sourceTitle_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* sourcePanel = new QWidget;
     auto* sourceLayout = new QVBoxLayout(sourcePanel);
     sourceLayout->setContentsMargins(0, 0, 0, 0);
@@ -273,11 +287,16 @@ MainWindow::MainWindow(QWidget* parent)
         sequenceChanged();
     };
     sequenceLabel_ = new QLabel;
+    sequenceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* sequencePanel = new QWidget;
     auto* sequenceLayout = new QVBoxLayout(sequencePanel);
     sequenceLayout->setContentsMargins(0, 0, 0, 0);
     sequenceLayout->addWidget(sequenceLabel_);
     sequenceLayout->addWidget(timeline_);
+    // Anche questo può diventare basso: sotto una certa altezza la riga sopra le corsie si nasconde (vedi eventFilter).
+    sequencePanel->setMinimumSize(100, 76);
+    sequencePanel->installEventFilter(this);
+    sequencePanel_ = sequencePanel;
 
     // --- Pannelli: tutto sta in pannelli spostabili; al centro non resta niente.
     const auto makeDock = [this](const QString& title, const QString& name, QWidget* content) {
@@ -298,6 +317,14 @@ MainWindow::MainWindow(QWidget* parent)
     setCentralWidget(center);
     setDockNestingEnabled(true);
     setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks);
+    // La zona in basso occupa tutta la larghezza (anche sotto le zone laterali) ed è della linea del tempo, che si
+    // aggancia solo lì: riagganciandola torna sempre sotto a tutto, mai sotto uno degli altri pannelli.
+    setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::BottomDockWidgetArea);
+    timelineDock_->setAllowedAreas(Qt::BottomDockWidgetArea);
+    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_})
+        dock->setAllowedAreas(Qt::TopDockWidgetArea | Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    setMouseTracking(true);  // per il cursore sugli incroci fra separatori
     resetLayout();
 
     // Un clic in qualsiasi punto di un'anteprima (anche sulla sua linea del tempo) la rende quella attiva.
@@ -1030,6 +1057,14 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    // Pannelli piccoli: si nasconde quello che non ci sta (le schede sotto i file, la riga sopra le corsie).
+    if (event->type() == QEvent::Resize) {
+        if (watched == filesPanel_)
+            filesTabs_->setVisible(filesPanel_->height() >= 170);
+        else if (watched == sequencePanel_)
+            sequenceLabel_->setVisible(sequencePanel_->height() >= 110);
+    }
+
     // Un clic su un'anteprima la rende quella attiva (Spazio e frecce vanno lì).
     if (event->type() == QEvent::MouseButtonPress) {
         auto* widget = qobject_cast<QWidget*>(watched);
@@ -1646,6 +1681,110 @@ void MainWindow::keepOnScreen(QWidget* window)
     QSize size = window->size().boundedTo(available.size() - QSize(40, 60));
     window->resize(size);
     window->move(available.center() - QPoint(size.width() / 2, size.height() / 2));
+}
+
+QDockWidget* MainWindow::dockedPanelAt(const QPoint& pos) const
+{
+    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+        if (dock->isVisible() && !dock->isFloating() && dock->geometry().contains(pos))
+            return dock;
+    }
+    return nullptr;
+}
+
+bool MainWindow::findCorner(const QPoint& pos, CornerDrag& corner) const
+{
+    // Un incrocio è un punto fra i pannelli (non dentro uno) con pannelli diversi a sinistra e a destra (separatore
+    // verticale) e sopra e sotto (separatore orizzontale), entro qualche pixel.
+    constexpr int d = 7;
+    if (dockedPanelAt(pos) != nullptr)
+        return false;
+    QDockWidget* tl = dockedPanelAt(pos + QPoint(-d, -d));
+    QDockWidget* tr = dockedPanelAt(pos + QPoint(d, -d));
+    QDockWidget* bl = dockedPanelAt(pos + QPoint(-d, d));
+    QDockWidget* br = dockedPanelAt(pos + QPoint(d, d));
+    CornerDrag found;
+    if (tl != nullptr && tr != nullptr && tl != tr) {
+        found.left = tl;
+        found.right = tr;
+    } else if (bl != nullptr && br != nullptr && bl != br) {
+        found.left = bl;
+        found.right = br;
+    }
+    if (tl != nullptr && bl != nullptr && tl != bl) {
+        found.top = tl;
+        found.bottom = bl;
+    } else if (tr != nullptr && br != nullptr && tr != br) {
+        found.top = tr;
+        found.bottom = br;
+    }
+    if (found.left == nullptr || found.top == nullptr)
+        return false;
+    found.start = pos;
+    found.leftWidth = found.left->width();
+    found.rightWidth = found.right->width();
+    found.topHeight = found.top->height();
+    found.bottomHeight = found.bottom->height();
+    corner = found;
+    return true;
+}
+
+bool MainWindow::event(QEvent* event)
+{
+    // Incroci fra separatori: QMainWindow sposta un separatore alla volta; qui, trascinando il punto in cui due si
+    // incrociano, si spostano tutti e due (larghezza e altezza insieme).
+    switch (event->type()) {
+    case QEvent::MouseMove: {
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        const QPoint pos = mouse->position().toPoint();
+        if (cornerDrag_) {
+            const QPoint delta = pos - cornerDrag_->start;
+            resizeDocks({cornerDrag_->left, cornerDrag_->right},
+                        {std::max(1, cornerDrag_->leftWidth + delta.x()), std::max(1, cornerDrag_->rightWidth - delta.x())},
+                        Qt::Horizontal);
+            resizeDocks({cornerDrag_->top, cornerDrag_->bottom},
+                        {std::max(1, cornerDrag_->topHeight + delta.y()), std::max(1, cornerDrag_->bottomHeight - delta.y())},
+                        Qt::Vertical);
+            return true;
+        }
+        CornerDrag corner;
+        const bool onCorner = mouse->buttons() == Qt::NoButton && findCorner(pos, corner);
+        if (onCorner != cornerCursor_) {
+            cornerCursor_ = onCorner;
+            if (onCorner)
+                setCursor(Qt::SizeAllCursor);
+            else
+                unsetCursor();
+        }
+        if (onCorner)
+            return true;
+        break;
+    }
+    case QEvent::MouseButtonPress: {
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        CornerDrag corner;
+        if (mouse->button() == Qt::LeftButton && findCorner(mouse->position().toPoint(), corner)) {
+            cornerDrag_ = corner;
+            return true;
+        }
+        break;
+    }
+    case QEvent::MouseButtonRelease:
+        if (cornerDrag_) {
+            cornerDrag_.reset();
+            return true;
+        }
+        break;
+    case QEvent::Leave:
+        if (cornerCursor_ && !cornerDrag_) {
+            cornerCursor_ = false;
+            unsetCursor();
+        }
+        break;
+    default:
+        break;
+    }
+    return QMainWindow::event(event);
 }
 
 void MainWindow::toggleFullScreen(QDockWidget* dock)

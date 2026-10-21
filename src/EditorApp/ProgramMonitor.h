@@ -42,8 +42,11 @@ public:
     std::function<void()> onPlaybackStarted;
     std::function<void()> onVideoDoubleClicked;  // doppio clic sull'immagine (schermo intero)
 
+    QSize minimumSizeHint() const override { return {120, 60}; }
+
 protected:
     void mousePressEvent(QMouseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     void load(int index, double offset);
@@ -54,6 +57,7 @@ private:
     const core::Project& project_;
     PlayerWidget* player_ = nullptr;
     QToolButton* playButton_ = nullptr;
+    QLabel* title_ = nullptr;
     QLabel* timeLabel_ = nullptr;
     QLabel* fragmentLabel_ = nullptr;
     QTimer* poll_ = nullptr;
