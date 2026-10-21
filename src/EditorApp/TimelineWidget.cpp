@@ -36,7 +36,7 @@ QSize TimelineWidget::sizeHint() const
 
 QSize TimelineWidget::minimumSizeHint() const
 {
-    return {120, 46 + kControlsHeight};
+    return {60, 46 + kControlsHeight};
 }
 
 void TimelineWidget::setDuration(double seconds)

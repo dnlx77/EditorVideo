@@ -28,6 +28,7 @@
 #include <QtGui/QGuiApplication>
 #include <QtGui/QDragEnterEvent>
 #include <QtGui/QDropEvent>
+#include <QtGui/QMouseEvent>
 #include <QtGui/QWheelEvent>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QApplication>
@@ -698,12 +699,18 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                                       Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
                     QCoreApplication::sendEvent(timeline, &wheel);
                     timeline->grab();
+                    // Oltre "Adatta": tutto in un decimo della larghezza, senza barra di scorrimento.
+                    for (int i = 0; i < 80; ++i)
+                        timeline->zoomOut();
+                    const bool atMin = zoom.duration() <= 0
+                                    || (std::abs(zoom.contentWidth() - zoom.width() * 0.1) < 1.0 && !zoom.canScroll());
+                    timeline->grab();
                     timeline->fitAll();
                     timeline->grab();
-                    zoomOk = zoomOk && atMax && timeline->zoom().isFit();
+                    zoomOk = zoomOk && atMax && atMin && timeline->zoom().isFit();
                 }
                 QCoreApplication::processEvents();
-                std::printf("Zoom delle linee del tempo: massimo e Adatta %s, miniature in attesa %d\n", zoomOk ? "OK" : "NON riusciti",
+                std::printf("Zoom delle linee del tempo: massimo, minimo e Adatta %s, miniature in attesa %d\n", zoomOk ? "OK" : "NON riusciti",
                             window->pendingThumbnails());
                 std::fflush(stdout);
                 ok = ok && zoomOk && window->pendingThumbnails() < 200;
@@ -753,6 +760,66 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 window->timelineDock()->hide();
                 window->resetLayout();
                 const bool reset = window->timelineDock()->isVisible() && !window->sourceDock()->isFloating();
+
+                // La linea del tempo staccata e riagganciata torna sotto a tutto, larga quanto la finestra.
+                QDockWidget* timelineDock = window->timelineDock();
+                timelineDock->setFloating(true);
+                QCoreApplication::processEvents();
+                timelineDock->setFloating(false);
+                window->addDockWidget(Qt::BottomDockWidgetArea, timelineDock);
+                QCoreApplication::processEvents();
+                const bool fullWidth = window->dockWidgetArea(timelineDock) == Qt::BottomDockWidgetArea
+                                    && timelineDock->width() >= window->width() - 30;
+                window->resetLayout();
+                QCoreApplication::processEvents();
+
+                // Incrocio fra il separatore verticale (file | Sorgente) e quello orizzontale (sopra | linea del tempo):
+                // trascinandolo cambiano insieme la larghezza dei file e l'altezza della linea del tempo.
+                QDockWidget* files = window->filesDock();
+                const QRect fg = files->geometry();
+                const QRect sg = window->sourceDock()->geometry();
+                const QRect tg = timelineDock->geometry();
+                const QPoint corner((fg.right() + sg.left()) / 2 + 1, (fg.bottom() + tg.top()) / 2 + 1);
+                const int filesWidth = files->width();
+                const int timelineHeight = timelineDock->height();
+                const auto mouse = [&](QEvent::Type type, QPoint at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+                    QMouseEvent e(type, QPointF(at), window->mapToGlobal(QPointF(at)), button, buttons, Qt::NoModifier);
+                    QCoreApplication::sendEvent(window, &e);
+                };
+                mouse(QEvent::MouseButtonPress, corner, Qt::LeftButton, Qt::LeftButton);
+                mouse(QEvent::MouseMove, corner + QPoint(40, -30), Qt::NoButton, Qt::LeftButton);
+                mouse(QEvent::MouseButtonRelease, corner + QPoint(40, -30), Qt::LeftButton, Qt::NoButton);
+                QCoreApplication::processEvents();
+                const int widthChange = files->width() - filesWidth;
+                const int heightChange = timelineDock->height() - timelineHeight;
+                const bool cornerOk = std::abs(widthChange - 40) <= 4 && std::abs(heightChange - 30) <= 4;
+                std::printf("  incrocio dei separatori in (%d, %d): file %+d px, linea del tempo %+d px (attesi +40 e +30)\n",
+                            corner.x(), corner.y(), widthChange, heightChange);
+                window->resetLayout();
+
+                // Pannelli piccoli: la misura minima di ognuno e, con EDITORVIDEO_SMOKE_SCREENSHOT, un'immagine di ognuno
+                // staccato a 170x120.
+                bool smallOk = true;
+                const QString shots = qEnvironmentVariable("EDITORVIDEO_SMOKE_SCREENSHOT");
+                for (QDockWidget* dock : {window->filesDock(), window->sourceDock(), window->programDock(), timelineDock}) {
+                    const QSize minimum = dock->minimumSizeHint().expandedTo(dock->minimumSize());
+                    std::printf("  pannello %s: misura minima %dx%d\n", qPrintable(dock->windowTitle()), minimum.width(),
+                                minimum.height());
+                    smallOk = smallOk && minimum.width() <= 170 && minimum.height() <= 140;
+                    if (!shots.isEmpty()) {
+                        dock->setFloating(true);
+                        dock->resize(170, 120);
+                        QCoreApplication::processEvents();
+                        dock->grab().save(QString(shots).replace(QStringLiteral(".png"),
+                                                                  QStringLiteral("_%1.png").arg(dock->objectName())));
+                        dock->setFloating(false);
+                    }
+                }
+                window->resetLayout();
+                QCoreApplication::processEvents();
+                std::printf("  linea del tempo riagganciata a tutta larghezza %s, incrocio %s, pannelli piccoli %s\n",
+                            fullWidth ? "OK" : "NO", cornerOk ? "OK" : "NO", smallOk ? "OK" : "NO");
+                docksOk = docksOk && fullWidth && cornerOk && smallOk;
                 std::printf("Pannelli: staccati e riagganciati %s, disposizione salvata e ripristinata %s, ripristino iniziale %s\n",
                             docksOk ? "OK" : "NON riuscito", changed && restored ? "OK" : "NON riuscita",
                             reset ? "OK" : "NON riuscito");
@@ -771,6 +838,9 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 const std::size_t clips = window->project().clips().size();
                 QMimeData mime;
                 mime.setUrls({QUrl::fromLocalFile(file)});
+                // Linea del tempo rimpicciolita oltre "Adatta": lo spazio vuoto a destra vale come "in fondo".
+                for (int i = 0; i < 20; ++i)
+                    timeline->zoomOut();
                 const QPointF end(timeline->width() - 12, 30);
                 QDragEnterEvent enter(end.toPoint(), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
                 QCoreApplication::sendEvent(timeline, &enter);
@@ -779,6 +849,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 const bool inserted = enter.isAccepted() && drop.isAccepted() && seq.fragments().size() == pieces + 1
                                    && seq.fragments().back().clipId == seq.fragments().front().clipId
                                    && window->project().clips().size() == clips;
+                timeline->fitAll();
                 const QString label = window->undoText();
                 const bool undone = window->undo() && seq.fragments().size() == pieces;
 

@@ -55,6 +55,9 @@ La finestra è divisa così:
 ### Pannelli
 
 - File del progetto, Sorgente, Montaggio e la linea del tempo del montaggio sono **pannelli**: si ridimensionano trascinando i bordi, si spostano trascinando il titolo (anche uno accanto all'altro o uno sopra l'altro, o come schede) e si **staccano** come finestre a sé con il pulsante sul titolo o un doppio clic sul titolo, per esempio per mettere il Montaggio su un secondo monitor. Doppio clic sul titolo di una finestra staccata per riagganciarla.
+- La linea del tempo del montaggio si aggancia sempre in basso, a tutta larghezza: staccata e riagganciata (o con un doppio clic sul suo titolo) torna sotto a tutto.
+- Dove un bordo verticale e uno orizzontale fra i pannelli si incrociano il cursore diventa una croce: trascinando l'incrocio si cambiano insieme larghezza e altezza. I pannelli staccati si ridimensionano anche dagli angoli della loro finestra.
+- I pannelli possono diventare piccoli (circa 120x100): quando lo spazio è poco nascondono le righe secondarie (nella Sorgente prima le scritte sotto, poi la linea del tempo; nei file le schede Informazioni e Fotogrammi chiave).
 - **Doppio clic sull'immagine** della Sorgente o del Montaggio: quell'anteprima a schermo intero; **Esc** o un altro doppio clic per uscire. Spazio, frecce e gli altri tasti funzionano anche a schermo intero e nei pannelli staccati.
 - La disposizione viene salvata chiudendo il programma e ritrovata alla riapertura (se un monitor non c'è più, la finestra torna su quello principale). Il menu **Finestra** mostra o nasconde ogni pannello e ha **Ripristina disposizione** per tornare a quella iniziale.
 
@@ -114,7 +117,7 @@ La finestra è divisa così:
 
 ### Zoom della linea del tempo
 
-- Le linee del tempo della Sorgente e del Montaggio si possono ingrandire fino a circa 12 pixel per fotogramma: **Ctrl+rotellina** ingrandisce o riduce tenendo fermo il punto sotto il mouse, **+** e **-** fanno lo stesso sulla linea del tempo dell'anteprima attiva (centrando sul cursore). Il pulsante **Adatta**, in basso a destra di ogni linea del tempo, torna a mostrare tutto.
+- Le linee del tempo della Sorgente e del Montaggio si possono ingrandire fino a circa 12 pixel per fotogramma: **Ctrl+rotellina** ingrandisce o riduce tenendo fermo il punto sotto il mouse, **+** e **-** fanno lo stesso sulla linea del tempo dell'anteprima attiva (centrando sul cursore). Si può anche rimpicciolire oltre: i pezzi occupano solo una parte della barra (fino a un decimo) e a destra resta spazio vuoto. Il pulsante **Adatta**, in basso a destra di ogni linea del tempo, torna a mostrare tutto esattamente nella larghezza.
 - Quando la linea del tempo è ingrandita compare una barra di scorrimento; si scorre anche con la rotellina (o Maiusc+rotellina).
 - Durante la riproduzione la vista segue il cursore, una pagina alla volta. Se si scorre a mano smette di seguirlo, finché la riproduzione non riparte o si preme Adatta.
 

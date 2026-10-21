@@ -39,17 +39,22 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     });
     timeLabel_ = new QLabel;
     fragmentLabel_ = new QLabel;
+    // Le scritte non impongono una larghezza minima: in un pannello stretto si tagliano.
+    timeLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    fragmentLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
     auto* controls = new QHBoxLayout;
     controls->addWidget(playButton_);
-    controls->addWidget(timeLabel_);
+    controls->addWidget(timeLabel_, 2);
     controls->addSpacing(12);
-    controls->addWidget(fragmentLabel_, 1);
+    controls->addWidget(fragmentLabel_, 5);
 
-    auto* title = new QLabel(QStringLiteral("<b>Montaggio</b> (il risultato)"));
+    title_ = new QLabel(QStringLiteral("<b>Montaggio</b> (il risultato)"));
+    title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(title);
+    layout->setSizeConstraint(QLayout::SetNoConstraint);  // la misura minima la decide minimumSizeHint
+    layout->addWidget(title_);
     layout->addWidget(player_, 1);
     layout->addLayout(controls);
 
@@ -58,6 +63,12 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     connect(poll_, &QTimer::timeout, this, [this] { updatePosition(); });
 
     updateLabels();
+}
+
+void ProgramMonitor::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    title_->setVisible(height() >= 150);  // in poco spazio basta il titolo del pannello
 }
 
 void ProgramMonitor::mousePressEvent(QMouseEvent* event)

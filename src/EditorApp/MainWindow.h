@@ -133,6 +133,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    bool event(QEvent* event) override;
 
 private:
     void createMenus();
@@ -144,6 +145,23 @@ private:
     void exitFullScreen();
     // Un pannello staccato (o la finestra) che non sta su nessuno schermo torna su quello principale.
     void keepOnScreen(QWidget* window);
+
+    // Incrocio fra un separatore verticale e uno orizzontale dei pannelli: trascinandolo si cambiano insieme larghezza
+    // e altezza. findCorner dice quali pannelli stanno ai lati dell'incrocio in `pos` (false se lì non c'è).
+    struct CornerDrag
+    {
+        QDockWidget* left = nullptr;
+        QDockWidget* right = nullptr;
+        QDockWidget* top = nullptr;
+        QDockWidget* bottom = nullptr;
+        QPoint start;
+        int leftWidth = 0;
+        int rightWidth = 0;
+        int topHeight = 0;
+        int bottomHeight = 0;
+    };
+    bool findCorner(const QPoint& pos, CornerDrag& corner) const;
+    QDockWidget* dockedPanelAt(const QPoint& pos) const;
     void showInfo(const core::MediaInfo& info);
     void replaceAudioDialog();
     void openProjectDialog();
@@ -200,12 +218,17 @@ private:
     };
     void showExportResult(const ExportOutcome& outcome, const QString& target);
 
+    QWidget* filesPanel_ = nullptr;     // contenuto del pannello dei file
+    QWidget* filesTabs_ = nullptr;      // Informazioni / Fotogrammi chiave
+    QWidget* sequencePanel_ = nullptr;  // contenuto del pannello della linea del tempo
     QDockWidget* filesDock_ = nullptr;
     QDockWidget* sourceDock_ = nullptr;
     QDockWidget* programDock_ = nullptr;
     QDockWidget* timelineDock_ = nullptr;
     QDockWidget* fullScreenDock_ = nullptr;
     QByteArray layoutBeforeFullScreen_;  // disposizione da ritrovare uscendo dallo schermo intero
+    std::optional<CornerDrag> cornerDrag_;  // si sta trascinando un incrocio fra separatori
+    bool cornerCursor_ = false;
     QListWidget* clipList_ = nullptr;
     QTreeWidget* infoTree_ = nullptr;
     QLabel* keyframeTitle_ = nullptr;

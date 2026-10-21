@@ -21,7 +21,7 @@ namespace editor::app {
 namespace {
 
 constexpr double kTop = 16;          // spazio per il triangolo del cursore
-constexpr double kVideoHeight = 54;
+constexpr double kVideoHeight = 54;    // corsia video quando c'è spazio; con poco spazio si stringe
 constexpr double kLaneGap = 4;
 constexpr double kHandleHeight = 14;  // maniglia della traccia sostitutiva
 
@@ -87,7 +87,7 @@ QSize SequenceTimeline::sizeHint() const
 
 QSize SequenceTimeline::minimumSizeHint() const
 {
-    return {200, 122 + kControlsHeight};
+    return {100, 58 + kControlsHeight};
 }
 
 void SequenceTimeline::setBlocks(std::vector<Block> blocks)
@@ -171,15 +171,22 @@ void SequenceTimeline::setAudioSelection(double from, double to)
     invalidate();
 }
 
+double SequenceTimeline::videoHeight() const
+{
+    // Le due corsie si dividono lo spazio: la video fino a kVideoHeight, poi tutto il resto all'audio.
+    const double lanes = height() - kTop - kLaneGap - 6 - kControlsHeight;
+    return std::clamp(lanes * 0.55, 18.0, kVideoHeight);
+}
+
 QRectF SequenceTimeline::videoLane() const
 {
-    return QRectF(6, kTop, std::max(1, width() - 12), kVideoHeight);
+    return QRectF(6, kTop, std::max(1, width() - 12), videoHeight());
 }
 
 QRectF SequenceTimeline::audioLane() const
 {
-    const double top = kTop + kVideoHeight + kLaneGap;
-    return QRectF(6, top, std::max(1, width() - 12), std::max(20.0, height() - top - 6 - kControlsHeight));
+    const double top = kTop + videoHeight() + kLaneGap;
+    return QRectF(6, top, std::max(1, width() - 12), std::max(14.0, height() - top - 6 - kControlsHeight));
 }
 
 QRectF SequenceTimeline::visiblePart(const QRectF& r) const

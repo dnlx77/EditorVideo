@@ -104,6 +104,7 @@ private:
     void invalidate();
     void paintStatic(QPainter& p);
     QRect cursorRect(double seconds) const;
+    double videoHeight() const;
     QRectF videoLane() const;
     QRectF audioLane() const;
     std::vector<QRectF> blockRects(const QRectF& lane) const;  // il riquadro di ogni blocco nella corsia
