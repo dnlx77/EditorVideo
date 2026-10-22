@@ -1105,7 +1105,7 @@ void MainWindow::updateSourceBands()
 std::vector<core::ClipRanges> MainWindow::exportPlan() const
 {
     if (!project_.sequence().empty())
-        return project_.exportPlan();
+        return project_.exportPlan(core::GapExport::Black);  // con gli spazi vuoti (neri o chiusi lo decide l'esportazione)
     // Sequenza vuota: il solo IN-OUT della Sorgente, per un taglio veloce (come allo step 4).
     const core::Clip* clip = project_.find(currentClipId_);
     const core::CutSegment& segment = player_->segment();
@@ -1132,7 +1132,7 @@ double MainWindow::exportLength() const
 {
     // Come l'esportazione: senza taglio preciso possibile IN va al fotogramma chiave prima (il file è più lungo).
     const core::ProjectFormat format = project_.sequence().empty() ? core::ProjectFormat{} : project_.format();
-    const core::AudioEdit audio = project_.sequence().empty() ? core::AudioEdit{} : project_.audioEdit();
+    const core::AudioEdit audio = project_.sequence().empty() ? core::AudioEdit{} : project_.audioEdit(core::GapExport::Black);
     return core::previewExport(exportPlan(), audio, format.empty() ? nullptr : &format, reencodeOptions_).outputSeconds;
 }
 
@@ -1162,23 +1162,6 @@ void MainWindow::exportDialog()
     const QString extension = source.suffix();
     const QString suffix = project_.sequence().empty() ? QStringLiteral("_taglio.") : QStringLiteral("_montaggio.");
     const QString suggested = source.dir().filePath(source.completeBaseName() + suffix + extension);
-    // Spazi vuoti: senza ricodifica non si può fare un tratto nero, quindi nel file si chiudono (core::GapExport).
-    if (const int gaps = project_.sequence().gapCount(); gaps > 0) {
-        core::Sequence closed = project_.sequence();
-        closed.closeAllGaps();
-        QString text = QStringLiteral("Il montaggio ha %1. Senza ricodifica non si può esportare un tratto nero: nel file "
-                                      "esportato gli spazi vuoti vengono tolti e i pezzi si susseguono uno dopo l'altro "
-                                      "(durata %2 invece di %3).")
-                           .arg(gaps == 1 ? QStringLiteral("1 spazio vuoto") : QStringLiteral("%1 spazi vuoti").arg(gaps),
-                                timeText(closed.totalLength()), timeText(project_.sequence().totalLength()));
-        if (project_.audioReplacement())
-            text += QStringLiteral("\n\nL'audio sostitutivo resta continuo: dopo uno spazio tolto non è più allineato al "
-                                   "video come nell'anteprima.");
-        if (QMessageBox::question(this, QStringLiteral("Spazi vuoti"), text + QStringLiteral("\n\nEsportare lo stesso?"),
-                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes)
-            != QMessageBox::Yes)
-            return;
-    }
     if (!project_.sequence().empty() && !exportOptionsDialog())
         return;
     QString target = QFileDialog::getSaveFileName(
@@ -1196,7 +1179,7 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     if (plan.empty() || exportThread_ != nullptr)
         return false;
     // L'audio modificato vale per il montaggio; il taglio veloce (sequenza vuota) copia l'audio così com'è.
-    const core::AudioEdit audio = project_.sequence().empty() ? core::AudioEdit{} : project_.audioEdit();
+    const core::AudioEdit audio = project_.sequence().empty() ? core::AudioEdit{} : project_.audioEdit(core::GapExport::Black);
     // Il formato del progetto vale per il montaggio (il taglio veloce copia il file com'è).
     const core::ProjectFormat format = project_.sequence().empty() ? core::ProjectFormat{} : project_.format();
     const core::ReencodeOptions reencode = project_.sequence().empty() ? core::ReencodeOptions{} : reencodeOptions_;
@@ -1283,17 +1266,17 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
 bool MainWindow::exportOptionsDialog()
 {
     const std::vector<core::ClipRanges> plan = exportPlan();
-    const core::AudioEdit audio = project_.audioEdit();
+    const core::AudioEdit audio = project_.audioEdit(core::GapExport::Black);
     const core::ProjectFormat& format = project_.format();
     // Quanti tratti si copiano e quanti si ricodificano (la prima volta prova anche gli encoder: qualche secondo).
-    const auto preview = [&](bool all) {
+    const auto preview = [&](bool all, bool closeGaps) {
         QApplication::setOverrideCursor(Qt::WaitCursor);
-        const core::ExportPreview result =
-            core::previewExport(plan, audio, format.empty() ? nullptr : &format, core::ReencodeOptions{reencodeOptions_.quality, all});
+        const core::ExportPreview result = core::previewExport(plan, audio, format.empty() ? nullptr : &format,
+                                                               core::ReencodeOptions{reencodeOptions_.quality, all, closeGaps});
         QApplication::restoreOverrideCursor();
         return result;
     };
-    const core::ExportPreview first = preview(false);
+    const core::ExportPreview first = preview(reencodeOptions_.all, reencodeOptions_.closeGaps);
     if (!first.problem.empty()) {
         QMessageBox::warning(this, QStringLiteral("Esportazione non possibile"), QString::fromStdString(first.problem));
         return false;
@@ -1315,6 +1298,11 @@ bool MainWindow::exportOptionsDialog()
     auto* all = new QCheckBox(QStringLiteral("Ricodifica tutto (massima compatibilità con i lettori, più lento)"));
     all->setChecked(reencodeOptions_.all);
     layout->addWidget(all);
+    // Spazi vuoti: di solito diventano nero e silenzio; si possono anche chiudere (i pezzi uno dopo l'altro).
+    auto* closeGaps = new QCheckBox(QStringLiteral("Chiudi gli spazi vuoti (i pezzi uno dopo l'altro, senza nero)"));
+    closeGaps->setChecked(reencodeOptions_.closeGaps);
+    closeGaps->setVisible(project_.sequence().gapCount() > 0);
+    layout->addWidget(closeGaps);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Esporta..."));
     layout->addWidget(buttons);
@@ -1331,21 +1319,29 @@ bool MainWindow::exportOptionsDialog()
             text += QStringLiteral(", <b>%1 tagli precisi</b> (%2 ricodificati ai bordi, fra il taglio e il fotogramma chiave più vicino)")
                         .arg(p.preciseCuts)
                         .arg(timeText(p.preciseSeconds));
-        text += QStringLiteral(".");
+        if (p.blackGaps > 0)
+            text += p.blackGaps == 1 ? QStringLiteral(", <b>1 spazio nero</b> (%1)").arg(timeText(p.blackSeconds))
+                                     : QStringLiteral(", <b>%1 spazi neri</b> (%2)").arg(p.blackGaps).arg(timeText(p.blackSeconds));
+        text += QStringLiteral(".<br>Durata del file: <b>%1</b>.").arg(timeText(p.outputSeconds));
+        if (!p.closedGaps.empty())
+            text += QStringLiteral("<br><span style='color:#d08a1a'>%1</span>").arg(QString::fromStdString(p.closedGaps).toHtmlEscaped());
         if (!p.impreciseCuts.empty())
             text += QStringLiteral("<br><span style='color:#d08a1a'>%1</span>").arg(QString::fromStdString(p.impreciseCuts).toHtmlEscaped());
         if (p.reencodedSegments > 0 && p.copiedSegments > 0)
             text += QStringLiteral("<br>I pezzi copiati non perdono niente; quelli ricodificati sono quasi uguali "
                                    "all'originale con la qualità alta.");
         summary->setText(text);
-        quality->setEnabled(p.reencodedSegments > 0 || p.preciseCuts > 0);
+        quality->setEnabled(p.reencodedSegments > 0 || p.preciseCuts > 0 || p.blackGaps > 0);
     };
     describe(first);
-    connect(all, &QCheckBox::toggled, &dialog, [&](bool checked) { describe(checked ? preview(true) : first); });
+    const auto update = [&] { describe(preview(all->isChecked(), closeGaps->isChecked())); };
+    connect(all, &QCheckBox::toggled, &dialog, update);
+    connect(closeGaps, &QCheckBox::toggled, &dialog, update);
     if (dialog.exec() != QDialog::Accepted)
         return false;
     reencodeOptions_.quality = quality->currentIndex() == 1 ? core::QualityPreset::Medium : core::QualityPreset::High;
     reencodeOptions_.all = all->isChecked();
+    reencodeOptions_.closeGaps = closeGaps->isChecked();
     return true;
 }
 

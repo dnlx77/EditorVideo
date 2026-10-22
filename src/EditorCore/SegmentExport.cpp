@@ -20,6 +20,7 @@
 
 extern "C" {
 #include <libavutil/channel_layout.h>
+#include <libavutil/imgutils.h>
 #include <libavutil/samplefmt.h>
 }
 
@@ -356,13 +357,22 @@ struct PlanAnalysis
     std::vector<bool> copyAudio;                // per file: l'audio si copia (uguale a quello del formato)
     std::vector<std::vector<std::vector<Piece>>> pieces;  // per file e per tratto: le parti, copiate o ricodificate
     std::string impreciseCuts;                  // vedi ExportPreview
+    bool blackGaps = false;                     // gli spazi vuoti diventano nero e silenzio
+    std::string closedGaps;                     // vedi ExportPreview
     ProjectFormat reference;                    // il formato da rispettare
     bool parametersInStream = false;            // vedi ExportResult
     std::vector<ParameterSets> clipParameters;  // per file copiato, se parametersInStream
     std::string problem;                        // perché non si può esportare; vuoto = si può
 };
 
-PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectFormat* format, bool replaced, bool reencodeAll)
+// Spazio vuoto prima del tratto `r` del file `c` (0 se il piano non ne ha).
+double gapBefore(const ClipRanges& clip, std::size_t r)
+{
+    return r < clip.gapsBefore.size() ? std::max(0.0, clip.gapsBefore[r]) : 0.0;
+}
+
+PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectFormat* format, bool replaced, bool reencodeAll,
+                         bool closeGaps)
 {
     PlanAnalysis plan;
     plan.reencode.assign(clips.size(), reencodeAll);
@@ -485,6 +495,23 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
         const ProjectFormat first = formatOf(plan.signatures.front());
         for (std::size_t c = 1; c < clips.size() && !plan.parametersInStream; ++c)
             plan.parametersInStream = classifyClip(plan.signatures[c], first, !replaced).fit == ClipFit::CopyWithParameters;
+    }
+    // Spazi vuoti: nero e silenzio nel formato del progetto (con l'encoder, come la ricodifica), se si può.
+    bool anyGap = false;
+    for (const ClipRanges& clip : clips) {
+        for (std::size_t r = 0; r < clip.ranges.size(); ++r)
+            anyGap = anyGap || gapBefore(clip, r) > kTimeEpsilon;
+    }
+    if (anyGap && !closeGaps && plan.problem.empty()) {
+        const StreamSignature* audio = replaced ? nullptr : plan.reference.audio();
+        if (!cannotReencode.empty())
+            plan.closedGaps = "Gli spazi vuoti si chiudono (i pezzi uno dopo l'altro) perché il nero non si può creare: " + cannotReencode;
+        else if (audio != nullptr && audio->codec != "aac")
+            plan.closedGaps = "Gli spazi vuoti si chiudono (i pezzi uno dopo l'altro): il silenzio per ora si crea solo in AAC e "
+                              "l'audio del formato del progetto è " + audio->codec + ".";
+        else
+            plan.blackGaps = true;
+        plan.parametersInStream = plan.parametersInStream || plan.blackGaps;
     }
     if (plan.parametersInStream && plan.problem.empty()) {
         plan.clipParameters.resize(clips.size());
@@ -879,13 +906,14 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                          const ExportProgress& progress, MuteMethod muteMethod, const ProjectFormat* format,
                          const ReencodeOptions& reencode)
 {
-    double totalLength = 0.0;
+    double totalLength = 0.0;  // del montaggio, spazi vuoti compresi
     int rangeCount = 0;
     for (const ClipRanges& clip : clips) {
-        for (const TimeRange& range : clip.ranges) {
+        for (std::size_t r = 0; r < clip.ranges.size(); ++r) {
+            const TimeRange& range = clip.ranges[r];
             if (!(range.end > range.start + kTimeEpsilon))
                 throw MediaError("OUT deve stare dopo IN.");
-            totalLength += range.length();
+            totalLength += range.length() + gapBefore(clip, r);
             ++rangeCount;
         }
         if (samePath(clip.path, outputPath))
@@ -912,7 +940,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
     }
 
     // Che cosa succede a ogni file: si copia (con i suoi parametri nel flusso, se diversi) o si ricodifica.
-    const PlanAnalysis plan = analyzePlan(clips, format, replaced, reencode.all);
+    const PlanAnalysis plan = analyzePlan(clips, format, replaced, reencode.all, reencode.closeGaps);
     if (!plan.problem.empty())
         throw ClipsNotJoinable(plan.problem);
     const std::vector<MediaSignature>& signatures = plan.signatures;
@@ -1453,6 +1481,119 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             return {outputPosition + frames * frameSeconds, audioEnd};
         };
 
+        // Uno spazio vuoto: nero (nel formato del progetto, come i tratti ricodificati: fotogrammi al secondo costanti,
+        // primo fotogramma chiave, parametri nel flusso) e silenzio (AAC nel formato dell'audio del progetto), dalla
+        // posizione attuale del file creato. Restituisce dove finiscono video e audio. Uno spazio più corto di mezzo
+        // fotogramma non lascia niente.
+        const auto writeBlack = [&](double seconds) -> std::pair<double, double> {
+            const StreamSignature& format = *plan.reference.video();
+            const AVRational fps = av_d2q(format.frameRate > 0 ? format.frameRate : 30.0, 1001000);
+            const double frameSeconds = av_q2d(av_inv_q(fps));
+            const int frames = static_cast<int>(std::llround(seconds / frameSeconds));
+            if (frames <= 0)
+                return {outputPosition, outputPosition};
+            // Tempi in 1/90000 s: il nero parte esattamente dove finisce il pezzo prima (non arrotondato ai fotogrammi).
+            constexpr int kTicks = 90000;
+            const std::int64_t frameTicks = std::llround(frameSeconds * kTicks);
+            AVStream* outV = output->streams[outVideo];
+            VideoEncoderSettings settings;
+            settings.codec = format.codec == "hevc" ? VideoCodec::Hevc : VideoCodec::H264;
+            settings.width = format.width;
+            settings.height = format.height;
+            settings.frameRate = {fps.num, fps.den};
+            settings.timeBase = {1, kTicks};
+            settings.quality = reencode.quality;
+            VideoEncoder encoder(settings);
+            ParameterSets encoderParameters;
+            {
+                AVCodecParameters* par = avcodec_parameters_alloc();
+                encoder.copyParameters(par);
+                const auto sets = parameterNalsOf(par->codec_id, std::vector<std::uint8_t>(par->extradata, par->extradata + par->extradata_size));
+                avcodec_parameters_free(&par);
+                if (!sets)
+                    throw MediaError("L'encoder " + encoder.info().ffmpegName + " non ha dato i parametri di codifica.");
+                encoderParameters = *sets;
+            }
+            const Rational encoderTb = encoder.timeBase();
+            const PacketSink videoSink = [&](AVPacket* p) {
+                const bool key = (p->flags & AV_PKT_FLAG_KEY) != 0;
+                if (!encodedToLengthPrefixed(p, outLength, key ? encoderParameters.nals : std::vector<std::vector<std::uint8_t>>{}))
+                    throw MediaError("Un pacchetto dell'encoder non si legge.");
+                if (p->duration <= 0)
+                    p->duration = frameTicks;
+                av_packet_rescale_ts(p, {encoderTb.num, encoderTb.den}, outV->time_base);
+                keepDtsIncreasing(p, outVideo);
+                const double t = p->pts * av_q2d(outV->time_base);
+                firstTime = std::min(firstTime, t);
+                lastEnd = std::max(lastEnd, t + frameSeconds);
+                pumpReplacement(std::min(t + 0.3, totalLength - 0.1), totalLength);
+                p->stream_index = outVideo;
+                p->pos = -1;
+                if (const int ret = av_interleaved_write_frame(output.get(), p); ret < 0)
+                    throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
+            };
+            // Il fotogramma nero (gamma TV: luminanza 16, colore 128), sempre lo stesso.
+            FramePtr black(av_frame_alloc());
+            black->format = AV_PIX_FMT_YUV420P;
+            black->width = format.width;
+            black->height = format.height;
+            if (!black || av_frame_get_buffer(black.get(), 0) < 0)
+                throw MediaError(kOutOfMemory);
+            const std::ptrdiff_t linesizes[4] = {black->linesize[0], black->linesize[1], black->linesize[2], black->linesize[3]};
+            av_image_fill_black(black->data, linesizes, AV_PIX_FMT_YUV420P, AVCOL_RANGE_MPEG, format.width, format.height);
+            for (int k = 0; k < frames; ++k) {
+                black->pts = std::llround((outputPosition + k * frameSeconds) * kTicks);
+                encoder.encode(black.get(), k == 0, videoSink);
+                if (progress && !progress(std::clamp((doneLength + (k + 1) * frameSeconds) / totalLength, 0.0, 1.0)))
+                    throw ExportCancelled();
+            }
+            encoder.finish(videoSink);
+
+            // Silenzio, lungo quanto il nero.
+            double audioEnd = outputPosition;
+            if (outAudio >= 0) {
+                AVStream* outA = output->streams[outAudio];
+                const int rate = std::max(1, outA->codecpar->sample_rate);
+                AudioEncoder silenceEncoder(AudioEncoderSettings{rate, outA->codecpar->ch_layout.nb_channels});
+                const PacketSink audioSink = [&](AVPacket* p) {
+                    if (p->pts < 0)
+                        return;  // il ritardo iniziale dell'encoder
+                    const double time = outputPosition + static_cast<double>(p->pts) / rate;
+                    const double duration = std::max<std::int64_t>({p->duration, 0, outA->codecpar->frame_size}) / static_cast<double>(rate);
+                    const std::int64_t shift = std::llround(outputPosition * rate);
+                    p->pts += shift;
+                    if (p->dts != AV_NOPTS_VALUE)
+                        p->dts += shift;
+                    av_packet_rescale_ts(p, {1, rate}, outA->time_base);
+                    keepDtsIncreasing(p, outAudio);
+                    firstTime = std::min(firstTime, time);
+                    lastEnd = std::max(lastEnd, time + duration);
+                    audioEnd = std::max(audioEnd, time + duration);
+                    p->stream_index = outAudio;
+                    p->pos = -1;
+                    if (const int ret = av_interleaved_write_frame(output.get(), p); ret < 0)
+                        throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
+                };
+                std::int64_t remaining = std::llround(frames * frameSeconds * rate);
+                while (remaining > 0) {
+                    FramePtr silence(av_frame_alloc());
+                    silence->format = AV_SAMPLE_FMT_FLTP;
+                    silence->sample_rate = rate;
+                    silence->nb_samples = static_cast<int>(std::min<std::int64_t>(remaining, 1024));
+                    av_channel_layout_default(&silence->ch_layout, std::max(1, outA->codecpar->ch_layout.nb_channels));
+                    if (av_frame_get_buffer(silence.get(), 0) < 0)
+                        throw MediaError(kOutOfMemory);
+                    av_samples_set_silence(silence->extended_data, 0, silence->nb_samples, silence->ch_layout.nb_channels,
+                                           AV_SAMPLE_FMT_FLTP);
+                    silenceEncoder.encode(silence.get(), audioSink);
+                    remaining -= silence->nb_samples;
+                }
+                silenceEncoder.finish(audioSink);
+            }
+            ++result.blackGaps;
+            return {outputPosition + frames * frameSeconds, audioEnd};
+        };
+
         for (std::size_t c = 0; c < clips.size(); ++c) {
             InputFile current = c == 0 ? std::move(first) : openClip(clips[c].path, !replaced);
             if (!plan.reencode[c] && current.copied != clipStreams && !plan.reencode.front())
@@ -1461,6 +1602,15 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             const double start = current.start;
 
             for (std::size_t r = 0; r < clips[c].ranges.size(); ++r) {
+              // Lo spazio vuoto prima del tratto: nero e silenzio, oppure (chiuso) solo il tempo del montaggio che passa
+              // (i tratti senza audio sono nei tempi del montaggio, spazi compresi).
+              if (const double gap = gapBefore(clips[c], r); gap > kTimeEpsilon) {
+                  if (plan.blackGaps && outVideo >= 0) {
+                      const auto [videoEnd, audioEnd] = writeBlack(gap);
+                      outputPosition = std::max({outputPosition, videoEnd, audioEnd});
+                  }
+                  doneLength += gap;
+              }
               for (const Piece& piece : plan.pieces[c][r]) {
                 const TimeRange& range = piece.range;
                 if (piece.reencode) {
@@ -1662,13 +1812,20 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
     if (clips.empty())
         return preview;
     try {
-        const PlanAnalysis plan = analyzePlan(clips, format, audio.replacement.has_value(), reencode.all);
+        const PlanAnalysis plan =
+            analyzePlan(clips, format, audio.replacement.has_value(), reencode.all, reencode.closeGaps);
         preview.problem = plan.problem;
         preview.impreciseCuts = plan.impreciseCuts;
+        preview.closedGaps = plan.closedGaps;
         for (std::size_t c = 0; c < clips.size(); ++c) {
             for (std::size_t r = 0; r < clips[c].ranges.size(); ++r) {
                 const std::vector<Piece>& pieces = plan.pieces[c][r];
                 preview.effectiveRanges.push_back({pieces.front().range.start, pieces.back().range.end});
+                if (const double gap = gapBefore(clips[c], r); gap > kTimeEpsilon && plan.blackGaps) {
+                    ++preview.blackGaps;
+                    preview.blackSeconds += gap;
+                    preview.outputSeconds += gap;
+                }
                 if (plan.reencode[c]) {
                     ++preview.reencodedSegments;
                     preview.reencodedSeconds += clips[c].ranges[r].length();

@@ -180,11 +180,13 @@ jobs:
         run: |
           # Quattro pezzi in ordine sparso (lo stesso file più volte): durata e ordine controllati fotogramma per
           # fotogramma all'inizio di ogni pezzo. Un montaggio con un file di codec diverso viene rifiutato (codice 4).
+          # Con due spazi vuoti: l'MPEG-2 non si sa ricodificare, quindi niente nero, gli spazi si chiudono (codice 0).
           $demo = "$env:TEMP\EditorVideoDemo"
           $v = "`"$demo\demo_mpeg2_gpu.mkv`""
           $prove = @(
             @{ atteso = 0; pezzi = @($v, '6.0', '7.0', $v, '1.0', '2.52', $v, '4.3', '4.92', $v, '8.0', '9.0') },
-            @{ atteso = 4; pezzi = @($v, '6.0', '7.0', "`"$demo\demo_mpeg4_software.mkv`"", '0', '1') }
+            @{ atteso = 4; pezzi = @($v, '6.0', '7.0', "`"$demo\demo_mpeg4_software.mkv`"", '0', '1') },
+            @{ atteso = 0; pezzi = @('spazio:0.5', $v, '6.0', '7.0', 'spazio:1.2', $v, '1.0', '2.52') }
           )
           foreach ($prova in $prove) {
             $argomenti = @('--sequence-test', "`"$demo\montaggio.mkv`"") + $prova.pezzi

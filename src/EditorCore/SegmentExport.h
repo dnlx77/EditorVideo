@@ -38,6 +38,7 @@ struct ExportResult
     bool parametersInStream = false;
     int reencodedSegments = 0;  // tratti ricodificati (gli altri sono copiati)
     int preciseCuts = 0;        // bordi ricodificati per il taglio preciso (da IN al fotogramma chiave, ...)
+    int blackGaps = 0;          // spazi vuoti diventati nero e silenzio
 };
 
 // Ricodifica all'esportazione (vedi exportClips).
@@ -45,6 +46,7 @@ struct ReencodeOptions
 {
     QualityPreset quality = QualityPreset::High;
     bool all = false;  // "Ricodifica tutto": anche i pezzi che si potrebbero copiare
+    bool closeGaps = false;  // "Chiudi gli spazi": i pezzi uno dopo l'altro invece del nero negli spazi vuoti
 };
 
 // Che cosa farà l'esportazione, senza farla: quanti tratti si copiano e quanti si ricodificano (e quanto durano), o
@@ -61,6 +63,12 @@ struct ExportPreview
     // Il taglio preciso servirebbe ma non si può (nessun encoder per il formato del progetto): IN va al fotogramma chiave
     // prima, come senza ricodifica. Il motivo, in italiano; vuoto = nessun problema.
     std::string impreciseCuts;
+    // Spazi vuoti del montaggio (ClipRanges::gapsBefore) che diventano nero e silenzio, e quanto durano.
+    int blackGaps = 0;
+    double blackSeconds = 0.0;
+    // Gli spazi vuoti ci sono ma si chiudono perché il nero non si sa fare (formato del progetto che non si sa
+    // ricodificare): il motivo, in italiano; vuoto = nessun problema (o chiusi per scelta, ReencodeOptions::closeGaps).
+    std::string closedGaps;
     double outputSeconds = 0.0;  // durata del file che si crea (più lunga dei tratti se IN va al fotogramma chiave prima)
     // I tratti come li esporterà davvero, uno per tratto del piano e nello stesso ordine: uguali a quelli chiesti, salvo
     // l'inizio al fotogramma chiave prima quando il taglio preciso non è possibile.
@@ -112,6 +120,9 @@ ExportResult exportSegments(const std::string& inputPath, const std::string& out
 // si ricodifica (il resto si copia); se il file ha B-frame e OUT non cade su un fotogramma chiave, anche la parte
 // dall'ultimo fotogramma chiave a OUT. Se fra IN e OUT non c'è un fotogramma chiave si ricodifica tutto il tratto. Senza
 // un encoder per il formato del progetto IN va al fotogramma chiave prima (ExportPreview::impreciseCuts).
+// Spazi vuoti (ClipRanges::gapsBefore, anche prima del primo tratto): diventano nero e silenzio nel formato del
+// progetto, lunghi quanto nel montaggio (arrotondati ai fotogrammi), salvo reencode.closeGaps; se il formato non si sa
+// ricodificare si chiudono (ExportPreview::closedGaps). I tempi di `audio.muted` sono quelli del montaggio, spazi compresi.
 // Con reencode.all si ricodifica tutto. Se tutti i file si copiano con gli stessi parametri il file creato è come
 // prima ("avc1"/"hvc1"), il più compatibile. ClipsNotJoinable se non si può (es. il formato non è H.264 o HEVC, o non
 // c'è un encoder).
