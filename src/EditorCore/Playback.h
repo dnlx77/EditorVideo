@@ -1,5 +1,9 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+
 namespace editor::core {
 
 // Stato della riproduzione in un istante, visto dal timer dell'interfaccia.
@@ -19,5 +23,12 @@ struct PlaybackState
 // senza una scheda audio utilizzabile) la riproduzione va avanti con l'orologio di sistema fino alla durata del file:
 // non deve finire subito.
 bool playbackFinished(const PlaybackState& state);
+
+// Manda `frames` campioni (per canale) di silenzio a `write`, a blocchi di ~100 ms sempre uguali: anche un'attesa
+// lunga (audio esterno che comincia molto più avanti) non occupa memoria. `write` riceve campioni interlacciati e il
+// loro numero (frames * channels), e restituisce false se bisogna fermarsi; in quel caso anche la funzione restituisce
+// false.
+bool writeSilence(std::size_t frames, int channels, int sampleRate,
+                  const std::function<bool(const std::int16_t* samples, std::size_t count)>& write);
 
 }  // namespace editor::core

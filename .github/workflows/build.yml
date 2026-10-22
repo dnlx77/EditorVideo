@@ -148,8 +148,7 @@ jobs:
       - name: Prova dell'esportazione
         shell: pwsh
         run: |
-          # Taglia dai file dimostrativi un tratto e poi tre tratti uniti (ogni IN viene agganciato al fotogramma
-          # chiave) e controlla i file creati.
+          # Taglia dai file dimostrativi un tratto e poi tre tratti uniti e controlla i file creati.
           $demo = "$env:TEMP\EditorVideoDemo"
           $prove = @(
             @('demo_mpeg2_gpu.mkv', 'taglio_video.mkv', '2.5', '6.3'),
@@ -228,9 +227,13 @@ jobs:
         run: |
           # Con la finestra vera: la linea del tempo staccata e riagganciata 5 volte per ogni modo (doppio clic sul titolo
           # di Windows, lasciata nella metà bassa, menu), ogni volta in basso, a tutta larghezza e alta abbastanza.
-          $p = Start-Process bin\x64\Release\EditorVideo.exe -PassThru -ArgumentList '--dock-test' `
-                 -RedirectStandardOutput pannelli.txt -RedirectStandardError pannelli-err.txt
-          $null = $p.Handle  # necessario per leggere ExitCode
-          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "prova dei pannelli bloccata" }
-          Get-Content pannelli.txt, pannelli-err.txt
-          if ($p.ExitCode -ne 0) { throw "pannelli: codice $($p.ExitCode)" }
+          & ci\run-editorvideo.ps1 -Name pannelli -Arguments '--dock-test'
+
+      - name: Prova dell'esportazione dalla finestra
+        shell: pwsh
+        run: |
+          # Il progetto dimostrativo (due pezzi, audio tolto in un tratto) aperto nella finestra vera ed esportato come
+          # dal comando Esporta, senza le finestre di dialogo. Codice 3 se l'esportazione si blocca.
+          $demo = "$env:TEMP\EditorVideoDemo"
+          & ci\run-editorvideo.ps1 -Name 'esportazione dalla finestra' -TimeoutSeconds 420 `
+            -Arguments '--project-export-test', "`"$demo\demo_progetto.evproj`"", "`"$demo\progetto_esportato.mkv`""

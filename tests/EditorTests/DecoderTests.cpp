@@ -1,4 +1,7 @@
 #include "EditorCore/AudioDecoder.h"
+#include "EditorCore/MediaProbe.h"
+#include "EditorCore/Project.h"
+#include "EditorCore/ProjectFile.h"
 #include "EditorCore/VideoDecoder.h"
 #include "SampleMedia.h"
 
@@ -249,7 +252,8 @@ TEST_F(DecoderTest, AudioDecoderRejectsVideoOnlyFile)
 }
 
 // Non è un vero test: genera file dimostrativi da 10 secondi (audio muto) in %TEMP%\EditorVideoDemo
-// per provare l'anteprima a mano. Si lancia con:
+// per provare l'anteprima a mano, e un progetto (demo_progetto.evproj: due pezzi del primo file, audio tolto in un
+// tratto) per --project-export-test. Si lancia con:
 //   EditorTests.exe --gtest_also_run_disabled_tests --gtest_filter=*GeneraVideoDimostrativi*
 TEST(DemoFiles, DISABLED_GeneraVideoDimostrativi)
 {
@@ -265,6 +269,16 @@ TEST(DemoFiles, DISABLED_GeneraVideoDimostrativi)
     writeSampleFile(dir / "demo_mpeg4_software.mkv", spec);
     spec.video = false;
     writeSampleFile(dir / "demo_solo_audio.wav", spec);
+
+    Project project;
+    const std::string video = utf8FromPath(dir / "demo_mpeg2_gpu.mkv");
+    const int id = project.add(video);
+    const MediaInfo info = probeFile(video);
+    project.setAnalysis(id, info.keyframeTimes, info.durationSeconds);
+    project.sequence().insert(-1, id, 6.0, 8.0, project.snapper());
+    project.sequence().insert(-1, id, 1.0, 3.0, project.snapper());
+    project.sequence().muteRange(0.5, 1.5);
+    saveProjectFile(utf8FromPath(dir / "demo_progetto.evproj"), project, {});
     std::cout << "[ INFO     ] File creati in " << utf8FromPath(dir) << '\n';
 }
 

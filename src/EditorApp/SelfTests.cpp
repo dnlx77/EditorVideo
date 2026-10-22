@@ -1035,7 +1035,11 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 std::printf("  NON riuscito: la riproduzione %s\n",
                             player->isPlaying() ? "non avanza col tempo giusto" : "non è partita o si è fermata");
 
-            // Segmento: IN qui (agganciato al fotogramma chiave), 5 fotogrammi avanti, OUT.
+            // Segmento: pausa, IN qui, 5 fotogrammi avanti, OUT. La posizione si rilegge dopo la pausa: fra la lettura
+            // di sopra e questo punto la riproduzione va ancora avanti (con un file solo audio anche più di 0,1 s).
+            if (player->isPlaying())
+                player->togglePlayPause();
+            const double pausedAt = player->currentPosition();
             player->markIn();
             for (int i = 0; i < 5; ++i)
                 player->stepFrame(+1);
@@ -1048,9 +1052,8 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
             std::printf("Segmento: IN %.3f s, OUT %.3f s, durata %.3f s%s\n", segment.in(), segment.out(),
                         segment.length(), inOnKeyframe ? "" : " (IN fra due fotogrammi chiave: taglio preciso)");
             std::fflush(stdout);
-            // IN non dopo la posizione letta sopra (con margine: la pausa arriva qualche istante dopo).
-            // IN resta dove lo si mette (taglio preciso), non oltre la posizione letta sopra.
-            const bool segmentOk = segment.hasIn() && segment.hasOut() && segment.in() <= position + 0.1
+            // IN resta dove lo si mette (taglio preciso): non oltre la posizione della pausa.
+            const bool segmentOk = segment.hasIn() && segment.hasOut() && segment.in() <= pausedAt + 0.1
                                 && segment.length() > 0;
             if (!segmentOk)
                 std::printf("  NON riuscito: segmento IN-OUT non valido\n");
