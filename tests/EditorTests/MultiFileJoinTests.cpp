@@ -169,12 +169,11 @@ TEST_F(MultiFileJoinTest, SequenceOutOfOrderWithRepeatedFile)
         project.setAnalysis(ids.back(), info.keyframeTimes, info.durationSeconds);
     }
     Sequence& s = project.sequence();
-    // Agganciati ai fotogrammi chiave come senza ricodifica (questi file MPEG-4 non si ricodificano).
-    const auto snap = [&project](int id, double t) { return project.find(id)->snapToKeyframe(t); };
-    s.insert(-1, ids[2], 1.3, 2.0, snap);              // c 1,0 .. 2,0 (agganciato)
-    const int b = s.insert(-1, ids[1], 0.0, 0.4, snap);  // b 0 .. 0,4
-    s.insert(-1, ids[0], 1.0, 1.6, snap);              // a 1,0 .. 1,6
-    s.insert(-1, ids[2], 0.0, 0.8, snap);              // c di nuovo, 0 .. 0,8
+    // Tutti i pezzi iniziano su un fotogramma chiave (questi file MPEG-4 non si ricodificano).
+    s.insert(-1, ids[2], 1.0, 2.0);              // c 1,0 .. 2,0
+    const int b = s.insert(-1, ids[1], 0.0, 0.4);  // b 0 .. 0,4
+    s.insert(-1, ids[0], 1.0, 1.6);              // a 1,0 .. 1,6
+    s.insert(-1, ids[2], 0.0, 0.8);              // c di nuovo, 0 .. 0,8
     s.move(b, 3);                                      // b in fondo
 
     const std::string out = path("montaggio.mkv");

@@ -11,7 +11,7 @@
 
 namespace editor::app {
 
-// Tempo per l'utente, es. "1:02.500" (vedi core::formatDuration).
+// Tempo per l'utente, es. "00:01:02.500" (vedi core::formatDuration).
 inline QString timeText(double seconds)
 {
     return QString::fromStdString(core::formatDuration(seconds));

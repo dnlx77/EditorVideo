@@ -8,15 +8,6 @@ using namespace editor::core;
 
 namespace {
 
-// File 1: fotogrammi chiave ogni 2 s; file 2: ogni secondo; file 3: nessuno (solo audio).
-double snap(int clipId, double t)
-{
-    if (clipId == 3)
-        return t;
-    const double step = clipId == 1 ? 2.0 : 1.0;
-    return std::floor(t / step + 1e-6) * step;
-}
-
 struct Piece
 {
     int clip;
@@ -45,42 +36,43 @@ void expectPieces(const Sequence& s, std::initializer_list<Piece> expected)
     }
 }
 
-TEST(Sequence, InsertSnapsStartAndAcceptsAnyOrderAndRepeats)
+TEST(Sequence, InsertKeepsTheTimesAndAcceptsAnyOrderAndRepeats)
 {
     Sequence s;
-    EXPECT_NE(s.insert(-1, 1, 4.7, 6.0, snap), 0);  // -> 4.0 .. 6.0
-    EXPECT_NE(s.insert(-1, 2, 0.5, 1.5, snap), 0);  // -> 0.0 .. 1.5
-    EXPECT_NE(s.insert(-1, 1, 0.0, 1.0, snap), 0);  // lo stesso file di nuovo, prima nel tempo
-    expectPieces(s, {{1, 4.0, 6.0}, {2, 0.0, 1.5}, {1, 0.0, 1.0}});
-    EXPECT_NEAR(s.totalLength(), 4.5, 1e-9);
+    EXPECT_NE(s.insert(-1, 1, 4.7, 6.0), 0);
+    EXPECT_NE(s.insert(-1, 2, 0.5, 1.5), 0);
+    EXPECT_NE(s.insert(-1, 1, 0.0, 1.0), 0);   // lo stesso file di nuovo, prima nel tempo
+    EXPECT_NE(s.insert(-1, 3, -0.5, 1.0), 0);  // prima dell'inizio del file: da 0
+    expectPieces(s, {{1, 4.7, 6.0}, {2, 0.5, 1.5}, {1, 0.0, 1.0}, {3, 0.0, 1.0}});
+    EXPECT_NEAR(s.totalLength(), 4.3, 1e-9);
 }
 
 TEST(Sequence, InsertAtPosition)
 {
     Sequence s;
-    s.insert(-1, 1, 0.0, 2.0, snap);
-    s.insert(-1, 1, 4.0, 6.0, snap);
-    s.insert(1, 2, 3.0, 3.5, snap);   // in mezzo
-    s.insert(0, 2, 5.0, 6.0, snap);   // in testa
-    s.insert(99, 3, 1.0, 2.0, snap);  // oltre la fine: in fondo
+    s.insert(-1, 1, 0.0, 2.0);
+    s.insert(-1, 1, 4.0, 6.0);
+    s.insert(1, 2, 3.0, 3.5);   // in mezzo
+    s.insert(0, 2, 5.0, 6.0);   // in testa
+    s.insert(99, 3, 1.0, 2.0);  // oltre la fine: in fondo
     expectPieces(s, {{2, 5.0, 6.0}, {1, 0.0, 2.0}, {2, 3.0, 3.5}, {1, 4.0, 6.0}, {3, 1.0, 2.0}});
 }
 
 TEST(Sequence, EmptyOrInvertedPieceIsRejected)
 {
     Sequence s;
-    EXPECT_EQ(s.insert(-1, 1, 3.0, 3.0, snap), 0);
-    EXPECT_EQ(s.insert(-1, 1, 3.0, 2.0, snap), 0);
-    EXPECT_EQ(s.insert(-1, 1, 3.0, 3.0005, snap), 0);  // l'aggancio lo allungherebbe all'indietro: rifiutato
+    EXPECT_EQ(s.insert(-1, 1, 3.0, 3.0), 0);
+    EXPECT_EQ(s.insert(-1, 1, 3.0, 2.0), 0);
+    EXPECT_EQ(s.insert(-1, 1, 3.0, 3.0005), 0);  // più corto di kTimeEpsilon
     EXPECT_TRUE(s.empty());
 }
 
 TEST(Sequence, PositionsInTheSequence)
 {
     Sequence s;
-    s.insert(-1, 1, 0.0, 2.0, snap);  // 0 .. 2
-    s.insert(-1, 2, 1.0, 1.5, snap);  // 2 .. 2.5
-    s.insert(-1, 1, 4.0, 7.0, snap);  // 2.5 .. 5.5
+    s.insert(-1, 1, 0.0, 2.0);  // 0 .. 2
+    s.insert(-1, 2, 1.0, 1.5);  // 2 .. 2.5
+    s.insert(-1, 1, 4.0, 7.0);  // 2.5 .. 5.5
     EXPECT_NEAR(s.startOf(2), 2.5, 1e-9);
     EXPECT_EQ(s.indexAt(0.0), 0);
     EXPECT_EQ(s.indexAt(2.0), 1);
@@ -92,9 +84,9 @@ TEST(Sequence, PositionsInTheSequence)
 TEST(Sequence, MoveAndRemove)
 {
     Sequence s;
-    const int a = s.insert(-1, 1, 0.0, 1.0, snap);
-    const int b = s.insert(-1, 2, 0.0, 1.0, snap);
-    const int c = s.insert(-1, 3, 0.0, 1.0, snap);
+    const int a = s.insert(-1, 1, 0.0, 1.0);
+    const int b = s.insert(-1, 2, 0.0, 1.0);
+    const int c = s.insert(-1, 3, 0.0, 1.0);
     s.move(c, 0);
     expectPieces(s, {{3, 0.0, 1.0}, {1, 0.0, 1.0}, {2, 0.0, 1.0}});
     s.move(c, 99);
@@ -109,54 +101,62 @@ TEST(Sequence, MoveAndRemove)
 TEST(Sequence, RemoveClipTakesAllItsPieces)
 {
     Sequence s;
-    s.insert(-1, 1, 0.0, 1.0, snap);
-    s.insert(-1, 2, 0.0, 1.0, snap);
-    s.insert(-1, 1, 4.0, 5.0, snap);
+    s.insert(-1, 1, 0.0, 1.0);
+    s.insert(-1, 2, 0.0, 1.0);
+    s.insert(-1, 1, 4.0, 5.0);
     s.removeClip(1);
     expectPieces(s, {{2, 0.0, 1.0}});
 }
 
-TEST(Sequence, SplitAtKeyframeBeforePlayhead)
+TEST(Sequence, SplitAtThePlayhead)
 {
     Sequence s;
-    s.insert(-1, 2, 0.0, 1.0, snap);  // 0 .. 1 nella sequenza
-    s.insert(-1, 1, 0.0, 8.0, snap);  // 1 .. 9 nella sequenza
-    // A 5,3 s della sequenza siamo a 4,3 s del file 1: si divide al fotogramma chiave di 4 s.
-    const int second = s.split(5.3, snap);
+    s.insert(-1, 2, 0.0, 1.0);  // 0 .. 1 nella sequenza
+    s.insert(-1, 1, 0.0, 8.0);  // 1 .. 9 nella sequenza
+    // A 5,3 s della sequenza siamo a 4,3 s del file 1: si divide proprio lì.
+    const int second = s.split(5.3);
     EXPECT_NE(second, 0);
-    expectPieces(s, {{2, 0.0, 1.0}, {1, 0.0, 4.0}, {1, 4.0, 8.0}});
+    expectPieces(s, {{2, 0.0, 1.0}, {1, 0.0, 4.3}, {1, 4.3, 8.0}});
     EXPECT_EQ(s.indexOf(second), 2);
     EXPECT_NEAR(s.totalLength(), 9.0, 1e-9);  // niente perso né ripetuto
 }
 
-TEST(Sequence, SplitImpossibleWithoutKeyframeInside)
+TEST(Sequence, SplitImpossibleOnTheEdgeOrOutside)
 {
     Sequence s;
-    s.insert(-1, 1, 2.0, 3.5, snap);           // nessun fotogramma chiave dopo l'inizio
-    EXPECT_EQ(s.split(1.0, snap), 0);
-    EXPECT_EQ(s.split(10.0, snap), 0);         // oltre la fine
+    s.insert(-1, 1, 2.0, 3.5);
+    EXPECT_EQ(s.split(0.0), 0);          // sul bordo: non resterebbe niente prima
+    EXPECT_EQ(s.split(0.0005), 0);       // a meno di kTimeEpsilon dal bordo
+    EXPECT_EQ(s.split(10.0), 0);         // oltre la fine
     expectPieces(s, {{1, 2.0, 3.5}});
 }
 
 TEST(Sequence, RemoveSourceRangeFromPieces)
 {
     Sequence s;
-    s.insert(-1, 1, 0.0, 10.0, snap);
-    s.insert(-1, 2, 0.0, 3.0, snap);
-    s.insert(-1, 1, 0.0, 10.0, snap);  // lo stesso file due volte: il pezzo tolto sparisce da entrambi
-    EXPECT_EQ(s.removeSourceRange(1, 3.0, 6.0, snap), Sequence::RemoveResult::Removed);
+    s.insert(-1, 1, 0.0, 10.0);
+    s.insert(-1, 2, 0.0, 3.0);
+    s.insert(-1, 1, 0.0, 10.0);  // lo stesso file due volte: il pezzo tolto sparisce da entrambi
+    EXPECT_EQ(s.removeSourceRange(1, 3.0, 6.0), Sequence::RemoveResult::Removed);
     expectPieces(s, {{1, 0.0, 3.0}, {1, 6.0, 10.0}, {2, 0.0, 3.0}, {1, 0.0, 3.0}, {1, 6.0, 10.0}});
 }
 
 TEST(Sequence, RemoveSourceRangeReasons)
 {
     Sequence s;
-    s.insert(-1, 1, 0.0, 4.0, snap);
-    EXPECT_EQ(s.removeSourceRange(1, 2.0, 2.0, snap), Sequence::RemoveResult::Empty);
-    EXPECT_EQ(s.removeSourceRange(1, 6.0, 8.0, snap), Sequence::RemoveResult::OutsideKept);  // fuori dai pezzi
-    EXPECT_EQ(s.removeSourceRange(2, 0.0, 1.0, snap), Sequence::RemoveResult::OutsideKept);  // file non usato
-    EXPECT_EQ(s.removeSourceRange(1, 2.5, 3.5, snap), Sequence::RemoveResult::NoKeyframeInside);
+    s.insert(-1, 1, 0.0, 4.0);
+    EXPECT_EQ(s.removeSourceRange(1, 2.0, 2.0), Sequence::RemoveResult::Empty);
+    EXPECT_EQ(s.removeSourceRange(1, 6.0, 8.0), Sequence::RemoveResult::OutsideKept);  // fuori dai pezzi
+    EXPECT_EQ(s.removeSourceRange(2, 0.0, 1.0), Sequence::RemoveResult::OutsideKept);  // file non usato
     expectPieces(s, {{1, 0.0, 4.0}});
+}
+
+TEST(Sequence, RemoveSourceRangeCutsExactly)
+{
+    Sequence s;
+    s.insert(-1, 1, 0.0, 4.0);
+    EXPECT_EQ(s.removeSourceRange(1, 2.5, 3.5), Sequence::RemoveResult::Removed);  // la parte dopo riparte da 3,5
+    expectPieces(s, {{1, 0.0, 2.5}, {1, 3.5, 4.0}});
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -172,9 +172,9 @@ struct ThreePieces
 
     ThreePieces()
     {
-        a = s.insert(-1, 2, 0.0, 1.0, snap);
-        b = s.insert(-1, 2, 2.0, 4.0, snap);
-        c = s.insert(-1, 2, 5.0, 6.0, snap);
+        a = s.insert(-1, 2, 0.0, 1.0);
+        b = s.insert(-1, 2, 2.0, 4.0);
+        c = s.insert(-1, 2, 5.0, 6.0);
     }
 };
 
@@ -232,12 +232,12 @@ TEST(SequenceGaps, InsertingFillsTheGapFromItsStart)
     ThreePieces p;
     ASSERT_TRUE(p.s.moveTo(p.c, 6.0));  // spazio di 3 s prima di C
     // Un pezzo da 2 s nello spazio: parte dall'inizio dello spazio, C non si muove.
-    p.s.insert(2, 2, 0.0, 2.0, snap);
+    p.s.insert(2, 2, 0.0, 2.0);
     EXPECT_NEAR(p.s.startOf(2), 3.0, 1e-9);
     EXPECT_NEAR(p.s.startOf(3), 6.0, 1e-9);
     EXPECT_NEAR(p.s.fragments()[3].gap, 1.0, 1e-9);
     // Un altro da 2 s: nello spazio rimasto (1 s) non ci sta, C va avanti di quanto serve.
-    p.s.insert(3, 2, 0.0, 2.0, snap);
+    p.s.insert(3, 2, 0.0, 2.0);
     EXPECT_NEAR(p.s.startOf(3), 5.0, 1e-9);
     EXPECT_NEAR(p.s.startOf(4), 7.0, 1e-9);
     EXPECT_EQ(p.s.gapCount(), 0);
@@ -263,11 +263,11 @@ TEST(SequenceGaps, ClosingAndRemoving)
 TEST(SequenceGaps, SplitCutAndMuteKeepTheGaps)
 {
     Sequence s;
-    s.insert(-1, 2, 0.0, 1.0, snap);              // 0 .. 1
-    const int long_ = s.insert(-1, 2, 0.0, 4.0, snap);
+    s.insert(-1, 2, 0.0, 1.0);              // 0 .. 1
+    const int long_ = s.insert(-1, 2, 0.0, 4.0);
     ASSERT_TRUE(s.moveTo(long_, 3.0));            // spazio 1 .. 3, pezzo 3 .. 7
-    EXPECT_EQ(s.split(2.0, snap), 0);             // nello spazio non si divide
-    EXPECT_NE(s.split(5.5, snap), 0);             // il pezzo: 3 .. 5 e 5 .. 7
+    EXPECT_EQ(s.split(2.0), 0);             // nello spazio non si divide
+    EXPECT_NE(s.split(5.0), 0);             // il pezzo: 3 .. 5 e 5 .. 7
     EXPECT_NEAR(s.startOf(1), 3.0, 1e-9);
     EXPECT_NEAR(s.startOf(2), 5.0, 1e-9);
     EXPECT_EQ(s.gapCount(), 1);
@@ -280,7 +280,7 @@ TEST(SequenceGaps, SplitCutAndMuteKeepTheGaps)
     EXPECT_NEAR(s.fragments()[1].muted[0].end, 0.5, 1e-9);  // nei tempi del file
 
     // Togliendo dal file tutto il primo pezzo dopo lo spazio, lo spazio passa al pezzo dopo.
-    ASSERT_EQ(s.removeSourceRange(2, 0.0, 2.0, snap), Sequence::RemoveResult::Removed);
+    ASSERT_EQ(s.removeSourceRange(2, 0.0, 2.0), Sequence::RemoveResult::Removed);
     // Del file 2 resta solo la seconda metà (2 .. 4): il primo pezzo (0 .. 1) è tolto anche lui.
     expectPieces(s, {{2, 2.0, 4.0}});
     EXPECT_NEAR(s.fragments()[0].gap, 2.0, 1e-9);  // lo spazio che c'era prima del pezzo tolto

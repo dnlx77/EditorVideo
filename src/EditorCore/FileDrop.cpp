@@ -121,11 +121,10 @@ std::vector<int> applyDrop(Project& project, const std::vector<DroppedMedia>& me
         ids.push_back(id);
         if (sequenceIndex < 0)
             continue;
-        // Il file intero, dal suo primo fotogramma chiave (se l'analisi non c'è ancora, dall'inizio).
+        // Il file intero.
         const Clip* clip = project.find(id);
         const double duration = clip != nullptr && clip->analyzed ? clip->duration : m.duration;
-        const double start = clip != nullptr ? clip->snapToKeyframe(0.0) : 0.0;
-        const int fragment = project.sequence().insert(at, id, start, duration, project.snapper());
+        const int fragment = project.sequence().insert(at, id, 0.0, duration);
         if (fragment != 0) {
             if (fragments != nullptr)
                 fragments->push_back(fragment);

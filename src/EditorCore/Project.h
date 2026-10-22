@@ -81,10 +81,6 @@ public:
 
     Sequence& sequence() { return sequence_; }
     const Sequence& sequence() const { return sequence_; }
-    // Per le operazioni sulla sequenza: con il taglio preciso i tempi restano esattamente quelli scelti (le parti fra
-    // un fotogramma chiave e un taglio si ricodificano all'esportazione), quindi nessun aggancio.
-    Sequence::SnapFunction snapper() const;
-
     // La sequenza come elenco di file e tratti da esportare (pezzi consecutivi dello stesso file insieme), con lo spazio
     // vuoto prima di ogni tratto (ClipRanges::gapsBefore; con GapExport::Close nessuno).
     std::vector<ClipRanges> exportPlan(GapExport gaps = GapExport::Close) const;

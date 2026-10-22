@@ -65,8 +65,6 @@ public:
     // Imposta IN e OUT (es. per riprendere un pezzo della sequenza) e una nota sotto la linea del tempo.
     void setInOut(double in, double out);
     void showNote(const QString& note);
-    // IN come l'ha segnato l'utente, prima dell'aggancio al fotogramma chiave (serve per togliere un pezzo).
-    double wantedIn() const { return wantedIn_; }
 
     // Audio dell'anteprima del montaggio (da chiamare a riproduzione ferma):
     // tratti senza audio, nei tempi del file aperto (lì si sente silenzio)...
@@ -82,8 +80,8 @@ public:
     double currentPosition();  // secondi
     QString statusText() const;  // es. "Decodifica: GPU (D3D11VA)"
 
-    // Segmento da tenere. IN si aggancia al fotogramma chiave nello stesso punto o prima (taglio senza
-    // ricodifica); OUT comprende il fotogramma visibile. Si lavora sul fotogramma che si vede.
+    // Segmento da tenere. IN resta dove lo si mette (taglio preciso), anche prima che arrivino i fotogrammi chiave;
+    // OUT comprende il fotogramma visibile. Si lavora sul fotogramma che si vede.
     void setKeyframes(const std::vector<double>& keyframes);  // dall'analisi del file
     void markIn();
     void markOut();
@@ -172,8 +170,6 @@ private:
 
     core::CutSegment segment_;
     std::vector<core::TimeRange> ranges_;  // vedi setRanges()
-    double wantedIn_ = 0.0;  // IN come l'ha segnato l'utente, prima dell'aggancio (serve per togliere un tratto)
-    bool keyframesKnown_ = false;
     QString segmentNote_;  // spiegazione dell'ultima operazione su IN/OUT (es. IN agganciato)
     bool noteIsOutError_ = false;
 

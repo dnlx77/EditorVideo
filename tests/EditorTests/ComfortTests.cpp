@@ -54,14 +54,14 @@ TEST(EditHistory, EveryActionUndoesAndRedoesExactly)
         labels.push_back(label);
     };
     Sequence& s = project.sequence();
-    apply("Aggiungi pezzo", [&] { s.insert(-1, 1, 0.5, 3.5, project.snapper()); });
-    apply("Aggiungi pezzo", [&] { s.insert(-1, 2, 2.0, 6.0, project.snapper()); });
+    apply("Aggiungi pezzo", [&] { s.insert(-1, 1, 0.5, 3.5); });
+    apply("Aggiungi pezzo", [&] { s.insert(-1, 2, 2.0, 6.0); });
     apply("Sposta pezzo", [&] { s.move(s.fragments()[1].id, 0); });
     apply("Sposta pezzo", [&] { s.moveTo(s.fragments()[1].id, s.startOf(1) + 2.0); });  // lascia uno spazio vuoto
     apply("Chiudi spazio vuoto", [&] { s.closeGap(1); });
     apply("Sposta pezzo", [&] { s.moveTo(s.fragments()[1].id, s.startOf(1) + 0.1); });  // (il pezzo si divide ancora a 5,2)
-    apply("Dividi pezzo", [&] { s.split(5.2, project.snapper()); });
-    apply("Togli IN-OUT", [&] { s.removeSourceRange(1, 1.2, 2.5, project.snapper()); });
+    apply("Dividi pezzo", [&] { s.split(5.2); });
+    apply("Togli IN-OUT", [&] { s.removeSourceRange(1, 1.2, 2.5); });
     apply("Togli audio", [&] { s.muteRange(0.5, 1.5); });
     apply("Rimetti audio", [&] { s.unmuteRange(0.8, 1.0); });
     apply("Sostituisci audio", [&] { project.setAudioReplacement(AudioReplacement{"C:\\musica.mp3", 0.0, 90.0}); });
@@ -108,7 +108,7 @@ TEST(EditHistory, CleanStateFollowsSaving)
     EXPECT_TRUE(history.isClean());
     const auto edit = [&](double at) {
         const Project before = project;
-        project.sequence().insert(-1, 1, at, at + 1.0, project.snapper());
+        project.sequence().insert(-1, 1, at, at + 1.0);
         history.record("Aggiungi pezzo", before);
     };
     edit(0.0);
@@ -137,7 +137,7 @@ TEST(EditHistory, LimitDropsTheOldestSteps)
     EditHistory history(3);
     for (int i = 0; i < 5; ++i) {
         const Project before = project;
-        project.sequence().insert(-1, 1, 0.0, 1.0, project.snapper());
+        project.sequence().insert(-1, 1, 0.0, 1.0);
         history.record("Aggiungi pezzo", before);
     }
     int undone = 0;
@@ -157,7 +157,7 @@ TEST(EditHistory, UndoKeepsTheAnalysisDoneMeanwhile)
     const int id = project.add("C:\\video\\a.mp4");
     history.record("Aggiungi file", before);
     before = project;
-    project.sequence().insert(-1, id, 0.0, 2.0, project.snapper());
+    project.sequence().insert(-1, id, 0.0, 2.0);
     history.record("Aggiungi pezzo", before);
     project.setAnalysis(id, {0.0, 1.0}, 4.0);  // l'analisi finisce adesso
 

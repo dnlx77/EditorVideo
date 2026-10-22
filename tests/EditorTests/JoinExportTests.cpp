@@ -149,8 +149,8 @@ TEST_F(JoinExportTest, CuttingAwayMiddlePart)
     Project project;
     const int id = project.add(source);
     project.setAnalysis(id, info.keyframeTimes, info.durationSeconds);
-    project.sequence().insert(-1, id, 0.0, info.durationSeconds, project.snapper());
-    ASSERT_EQ(project.sequence().removeSourceRange(id, 1.5, 3.0, project.snapper()), Sequence::RemoveResult::Removed);
+    project.sequence().insert(-1, id, 0.0, info.durationSeconds);
+    ASSERT_EQ(project.sequence().removeSourceRange(id, 1.5, 3.0), Sequence::RemoveResult::Removed);
     const std::vector<ClipRanges> plan = project.exportPlan();
     ASSERT_EQ(plan.size(), 1u);
     ASSERT_EQ(plan.front().ranges.size(), 2u);

@@ -62,15 +62,12 @@ std::vector<TimeRange> clipRanges(const std::vector<TimeRange>& ranges, double f
 
 }  // namespace
 
-int Sequence::insert(int index, int clipId, double start, double end, const SnapFunction& snap)
+int Sequence::insert(int index, int clipId, double start, double end)
 {
-    // Un pezzo vuoto o al contrario si rifiuta prima dell'aggancio, che altrimenti lo allungherebbe all'indietro.
+    start = std::max(0.0, start);
     if (end <= start + kTimeEpsilon)
         return 0;
-    const double snapped = snap(clipId, std::max(0.0, start));
-    if (end <= snapped + kTimeEpsilon)
-        return 0;
-    Fragment fragment{nextId_++, clipId, snapped, end};
+    Fragment fragment{nextId_++, clipId, start, end};
     const int count = static_cast<int>(fragments_.size());
     const int at = index < 0 || index > count ? count : index;
     // Subito dopo il precedente: lo spazio vuoto che c'era lì (prima del pezzo che ora viene dopo) si riempie.
@@ -225,16 +222,15 @@ void Sequence::restore(std::vector<Fragment> fragments)
     }
 }
 
-int Sequence::split(double seconds, const SnapFunction& snap)
+int Sequence::split(double seconds)
 {
     const int index = indexAt(seconds);
     if (index < 0)
         return 0;
     Fragment& f = fragments_[index];
-    const double source = f.start + (seconds - startOf(index));
-    const double cut = snap(f.clipId, source);
+    const double cut = f.start + (seconds - startOf(index));
     if (cut <= f.start + kTimeEpsilon || cut >= f.end - kTimeEpsilon)
-        return 0;  // nessun fotogramma chiave dentro il pezzo prima del cursore
+        return 0;  // sul bordo del pezzo: non resterebbe niente da una parte
     Fragment second{nextId_++, f.clipId, cut, f.end, clipRanges(f.muted, cut, f.end)};
     f.end = cut;
     f.muted = clipRanges(f.muted, f.start, cut);
@@ -242,7 +238,7 @@ int Sequence::split(double seconds, const SnapFunction& snap)
     return second.id;
 }
 
-Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, double to, const SnapFunction& snap)
+Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, double to)
 {
     if (to <= from + kTimeEpsilon)
         return RemoveResult::Empty;
@@ -261,11 +257,9 @@ Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, doub
         const std::size_t before = result.size();
         if (f.start < from - kTimeEpsilon)
             result.push_back({f.id, f.clipId, f.start, from, clipRanges(f.muted, f.start, from)});
-        // La parte dopo il pezzo tolto deve ripartire da un fotogramma chiave.
-        const double restart = std::max(f.start, snap(clipId, to));
-        if (f.end > to + kTimeEpsilon && f.end > restart + kTimeEpsilon) {
+        if (f.end > to + kTimeEpsilon) {
             const bool firstPartKept = f.start < from - kTimeEpsilon;
-            result.push_back({firstPartKept ? nextId_++ : f.id, f.clipId, restart, f.end, clipRanges(f.muted, restart, f.end)});
+            result.push_back({firstPartKept ? nextId_++ : f.id, f.clipId, to, f.end, clipRanges(f.muted, to, f.end)});
         }
         if (result.size() > before) {
             result[before].gap = f.gap + carriedGap;
@@ -276,16 +270,6 @@ Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, doub
     }
     if (!touched)
         return RemoveResult::OutsideKept;
-
-    // Se la parte dopo riparte da prima del pezzo da togliere, non si toglie niente.
-    double before = 0.0;
-    double after = 0.0;
-    for (const Fragment& f : fragments_)
-        before += f.length();
-    for (const Fragment& f : result)
-        after += f.length();
-    if (after >= before - kTimeEpsilon)
-        return RemoveResult::NoKeyframeInside;
 
     fragments_ = std::move(result);
     return RemoveResult::Removed;

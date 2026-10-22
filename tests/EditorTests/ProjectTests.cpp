@@ -33,10 +33,10 @@ TEST(Project, ExportPlanFollowsTheSequence)
 
     Sequence& s = project.sequence();
     // Taglio preciso: i tempi restano quelli scelti, anche fra due fotogrammi chiave.
-    s.insert(-1, b, 1.5, 2.5, project.snapper());
-    s.insert(-1, a, 4.0, 6.0, project.snapper());
-    s.insert(-1, a, 0.5, 1.0, project.snapper());  // stesso file del precedente: stesso blocco
-    s.insert(-1, b, 0.0, 1.0, project.snapper());
+    s.insert(-1, b, 1.5, 2.5);
+    s.insert(-1, a, 4.0, 6.0);
+    s.insert(-1, a, 0.5, 1.0);  // stesso file del precedente: stesso blocco
+    s.insert(-1, b, 0.0, 1.0);
 
     const auto plan = project.exportPlan();
     ASSERT_EQ(plan.size(), 3u);
@@ -56,8 +56,8 @@ TEST(Project, RemovingClipRemovesItsPieces)
     const int b = project.add("b.mp4");
     project.setAnalysis(a, {0.0}, 6.0);
     project.setAnalysis(b, {0.0}, 3.0);
-    project.sequence().insert(-1, a, 0.0, 1.0, project.snapper());
-    project.sequence().insert(-1, b, 0.0, 1.0, project.snapper());
+    project.sequence().insert(-1, a, 0.0, 1.0);
+    project.sequence().insert(-1, b, 0.0, 1.0);
     project.remove(a);
     ASSERT_EQ(project.sequence().fragments().size(), 1u);
     EXPECT_EQ(project.sequence().fragments()[0].clipId, b);

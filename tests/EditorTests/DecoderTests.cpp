@@ -275,8 +275,8 @@ TEST(DemoFiles, DISABLED_GeneraVideoDimostrativi)
     const int id = project.add(video);
     const MediaInfo info = probeFile(video);
     project.setAnalysis(id, info.keyframeTimes, info.durationSeconds);
-    project.sequence().insert(-1, id, 6.0, 8.0, project.snapper());
-    project.sequence().insert(-1, id, 1.0, 3.0, project.snapper());
+    project.sequence().insert(-1, id, 6.0, 8.0);
+    project.sequence().insert(-1, id, 1.0, 3.0);
     project.sequence().muteRange(0.5, 1.5);
     saveProjectFile(utf8FromPath(dir / "demo_progetto.evproj"), project, {});
     std::cout << "[ INFO     ] File creati in " << utf8FromPath(dir) << '\n';

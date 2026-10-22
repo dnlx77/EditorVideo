@@ -14,6 +14,8 @@ class CutSegment
 public:
     // Nuovo file: azzera IN e OUT. `keyframes` in ordine crescente; vuoto = nessun aggancio (es. file solo audio).
     void reset(std::vector<double> keyframes, double duration);
+    // I fotogrammi chiave arrivati dopo (dall'analisi del file): IN e OUT restano dove sono.
+    void setKeyframes(std::vector<double> keyframes);
 
     // Imposta IN (dentro il file) e restituisce il tempo effettivo. Se OUT non sta più dopo il nuovo IN, OUT viene tolto.
     double setIn(double seconds);
