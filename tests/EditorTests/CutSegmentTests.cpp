@@ -24,42 +24,46 @@ TEST(CutSegment, WithoutMarkersCoversWholeFile)
     EXPECT_DOUBLE_EQ(segment.length(), 10.0);
 }
 
-TEST(CutSegment, InSnapsToKeyframeAtOrBefore)
+TEST(CutSegment, InStaysWhereItIsPut)
 {
+    // Taglio preciso: IN non si aggancia più ai fotogrammi chiave (all'esportazione si ricodifica il pezzo fino al
+    // fotogramma chiave dopo).
     CutSegment segment = makeSegment();
-    EXPECT_DOUBLE_EQ(segment.setIn(4.52), 4.0);   // in mezzo: fotogramma chiave precedente
-    EXPECT_DOUBLE_EQ(segment.setIn(6.0), 6.0);    // esattamente su un fotogramma chiave
-    EXPECT_DOUBLE_EQ(segment.setIn(5.9996), 6.0); // differenze di arrotondamento: resta su 6
-    EXPECT_DOUBLE_EQ(segment.setIn(9.9), 8.0);    // dopo l'ultimo: l'ultimo
-    EXPECT_DOUBLE_EQ(segment.setIn(0.0), 0.04);   // prima del primo: il primo
+    EXPECT_DOUBLE_EQ(segment.setIn(4.52), 4.52);
+    EXPECT_DOUBLE_EQ(segment.setIn(6.0), 6.0);
+    EXPECT_DOUBLE_EQ(segment.setIn(0.0), 0.0);
     EXPECT_TRUE(segment.hasIn());
-    EXPECT_DOUBLE_EQ(segment.in(), 0.04);
+    // Il fotogramma chiave nello stesso punto o prima resta a disposizione (per l'esportazione senza ricodifica).
+    EXPECT_DOUBLE_EQ(segment.snapToKeyframe(4.52), 4.0);
+    EXPECT_DOUBLE_EQ(segment.snapToKeyframe(5.9996), 6.0);  // differenze di arrotondamento: resta su 6
+    EXPECT_DOUBLE_EQ(segment.snapToKeyframe(9.9), 8.0);
+    EXPECT_DOUBLE_EQ(segment.snapToKeyframe(0.0), 0.04);    // prima del primo: il primo
 }
 
 TEST(CutSegment, InIsClampedToFile)
 {
     CutSegment segment = makeSegment();
-    EXPECT_DOUBLE_EQ(segment.setIn(-3.0), 0.04);
-    EXPECT_DOUBLE_EQ(segment.setIn(25.0), 8.0);
+    EXPECT_DOUBLE_EQ(segment.setIn(-3.0), 0.0);
+    EXPECT_DOUBLE_EQ(segment.setIn(25.0), 10.0);
 }
 
 TEST(CutSegment, OutCanBeAnyPointAfterIn)
 {
     CutSegment segment = makeSegment();
-    segment.setIn(4.52);  // -> 4.0
+    segment.setIn(4.52);
     EXPECT_TRUE(segment.setOut(7.36));
     EXPECT_DOUBLE_EQ(segment.out(), 7.36);  // OUT non viene agganciato
-    EXPECT_NEAR(segment.length(), 3.36, 1e-9);
+    EXPECT_NEAR(segment.length(), 2.84, 1e-9);
 }
 
 TEST(CutSegment, OutBeforeOrAtInIsRejected)
 {
     CutSegment segment = makeSegment();
-    segment.setIn(4.52);  // -> 4.0
+    segment.setIn(4.52);
     ASSERT_TRUE(segment.setOut(7.0));
 
     EXPECT_FALSE(segment.setOut(3.0));
-    EXPECT_FALSE(segment.setOut(4.0));
+    EXPECT_FALSE(segment.setOut(4.52));
     EXPECT_DOUBLE_EQ(segment.out(), 7.0);  // invariato
 
     // Senza IN, OUT deve solo stare dopo l'inizio del file.
@@ -78,16 +82,16 @@ TEST(CutSegment, OutIsClampedToDuration)
 TEST(CutSegment, MovingInPastOutRemovesOut)
 {
     CutSegment segment = makeSegment();
-    segment.setIn(2.5);  // -> 2.0
+    segment.setIn(2.5);
     ASSERT_TRUE(segment.setOut(5.0));
-    segment.setIn(7.0);  // -> 6.0, dopo OUT
+    segment.setIn(7.0);  // dopo OUT
     EXPECT_FALSE(segment.hasOut());
     EXPECT_DOUBLE_EQ(segment.out(), 10.0);
-    EXPECT_DOUBLE_EQ(segment.length(), 4.0);
+    EXPECT_DOUBLE_EQ(segment.length(), 3.0);
 
     // Se OUT resta dopo il nuovo IN, non si tocca.
     ASSERT_TRUE(segment.setOut(9.0));
-    segment.setIn(3.0);  // -> 2.0
+    segment.setIn(3.0);
     EXPECT_TRUE(segment.hasOut());
     EXPECT_DOUBLE_EQ(segment.out(), 9.0);
 }

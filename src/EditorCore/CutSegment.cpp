@@ -29,7 +29,7 @@ double CutSegment::snapToKeyframe(double seconds) const
 
 double CutSegment::setIn(double seconds)
 {
-    in_ = snapToKeyframe(clampToFile(seconds));
+    in_ = clampToFile(seconds);
     hasIn_ = true;
     if (hasOut_ && out_ <= in_ + kTimeEpsilon)
         hasOut_ = false;

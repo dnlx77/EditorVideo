@@ -80,10 +80,7 @@ bool Project::allAnalyzed() const
 
 Sequence::SnapFunction Project::snapper() const
 {
-    return [this](int clipId, double seconds) {
-        const Clip* clip = find(clipId);
-        return clip != nullptr ? clip->snapToKeyframe(seconds) : seconds;
-    };
+    return [](int, double seconds) { return seconds; };
 }
 
 std::vector<ClipRanges> Project::exportPlan(GapExport) const
@@ -96,7 +93,7 @@ std::vector<ClipRanges> Project::exportPlan(GapExport) const
         if (clip == nullptr)
             continue;
         if (plan.empty() || f.clipId != previousClip)
-            plan.push_back({clip->path, {}});
+            plan.push_back({clip->path, {}, clip->keyframes});
         plan.back().ranges.push_back({f.start, f.end});
         previousClip = f.clipId;
     }

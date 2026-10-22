@@ -90,6 +90,9 @@ struct VideoEncoderSettings
     std::optional<EncoderBackend> backend;
     // Fotogrammi di riferimento (0 = quelli scelti dall'encoder). Non tutti gli encoder lo rispettano.
     int referenceFrames = 0;
+    // B-frame fra un fotogramma e l'altro (0 = nessuno: l'ordine dei pacchetti è quello dei fotogrammi, più semplice da
+    // unire ai pezzi copiati). Per le prove con file che li hanno.
+    int bFrames = 0;
 };
 
 // Riceve ogni pacchetto prodotto. Il pacchetto appartiene all'encoder: va usato (o copiato) durante la chiamata. I tempi

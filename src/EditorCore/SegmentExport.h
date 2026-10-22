@@ -37,6 +37,7 @@ struct ExportResult
     // I pezzi hanno parametri di codifica diversi (H.264/HEVC): ripetuti nel flusso davanti a ogni fotogramma chiave.
     bool parametersInStream = false;
     int reencodedSegments = 0;  // tratti ricodificati (gli altri sono copiati)
+    int preciseCuts = 0;        // bordi ricodificati per il taglio preciso (da IN al fotogramma chiave, ...)
 };
 
 // Ricodifica all'esportazione (vedi exportClips).
@@ -54,6 +55,16 @@ struct ExportPreview
     int reencodedSegments = 0;
     double copiedSeconds = 0.0;
     double reencodedSeconds = 0.0;
+    // Taglio preciso: IN e OUT che non cadono su un fotogramma chiave. Quanti bordi si ricodificano e quanto durano.
+    int preciseCuts = 0;
+    double preciseSeconds = 0.0;
+    // Il taglio preciso servirebbe ma non si può (nessun encoder per il formato del progetto): IN va al fotogramma chiave
+    // prima, come senza ricodifica. Il motivo, in italiano; vuoto = nessun problema.
+    std::string impreciseCuts;
+    double outputSeconds = 0.0;  // durata del file che si crea (più lunga dei tratti se IN va al fotogramma chiave prima)
+    // I tratti come li esporterà davvero, uno per tratto del piano e nello stesso ordine: uguali a quelli chiesti, salvo
+    // l'inizio al fotogramma chiave prima quando il taglio preciso non è possibile.
+    std::vector<TimeRange> effectiveRanges;
     std::string problem;  // vuoto = si può esportare
 };
 
@@ -97,6 +108,10 @@ ExportResult exportSegments(const std::string& inputPath, const std::string& out
 //   l'encoder della scheda video (vedi VideoEncoder), con bande nere se le proporzioni sono diverse e i fotogrammi
 //   ripetuti o saltati per arrivare ai fotogrammi al secondo del progetto; l'audio si copia se è uguale a quello del
 //   formato, altrimenti si ricodifica in AAC. Anche questi tratti hanno i parametri nel flusso.
+// Taglio preciso: in un tratto copiato, se IN non cade su un fotogramma chiave la parte da IN al primo fotogramma chiave
+// si ricodifica (il resto si copia); se il file ha B-frame e OUT non cade su un fotogramma chiave, anche la parte
+// dall'ultimo fotogramma chiave a OUT. Se fra IN e OUT non c'è un fotogramma chiave si ricodifica tutto il tratto. Senza
+// un encoder per il formato del progetto IN va al fotogramma chiave prima (ExportPreview::impreciseCuts).
 // Con reencode.all si ricodifica tutto. Se tutti i file si copiano con gli stessi parametri il file creato è come
 // prima ("avc1"/"hvc1"), il più compatibile. ClipsNotJoinable se non si può (es. il formato non è H.264 o HEVC, o non
 // c'è un encoder).
