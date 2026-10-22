@@ -83,9 +83,8 @@ Sequence::SnapFunction Project::snapper() const
     return [](int, double seconds) { return seconds; };
 }
 
-std::vector<ClipRanges> Project::exportPlan(GapExport) const
+std::vector<ClipRanges> Project::exportPlan(GapExport gaps) const
 {
-    // GapExport::Close: i tratti dei pezzi uno dopo l'altro, senza gli spazi vuoti.
     std::vector<ClipRanges> plan;
     int previousClip = 0;
     for (const Fragment& f : sequence_.fragments()) {
@@ -95,6 +94,7 @@ std::vector<ClipRanges> Project::exportPlan(GapExport) const
         if (plan.empty() || f.clipId != previousClip)
             plan.push_back({clip->path, {}, clip->keyframes});
         plan.back().ranges.push_back({f.start, f.end});
+        plan.back().gapsBefore.push_back(gaps == GapExport::Black ? f.gap : 0.0);
         previousClip = f.clipId;
     }
     return plan;
@@ -129,8 +129,10 @@ void Project::restoreEdits(const Project& snapshot)
     nextId_ = std::max(nextId_, snapshot.nextId_);  // un file aggiunto dopo non riprende l'id di uno tolto
 }
 
-AudioEdit Project::audioEdit(GapExport) const
+AudioEdit Project::audioEdit(GapExport gaps) const
 {
+    if (gaps == GapExport::Black)
+        return {sequence_.mutedRanges(), replacement_};  // i tempi della sequenza, spazi compresi
     // GapExport::Close: i tempi della sequenza senza gli spazi vuoti, come nel file esportato.
     Sequence closed = sequence_;
     closed.closeAllGaps();

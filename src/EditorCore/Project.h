@@ -29,6 +29,8 @@ struct ClipRanges
     std::vector<TimeRange> ranges;
     // Fotogrammi chiave del file (in ordine), per il taglio preciso; vuoto = da leggere dal file.
     std::vector<double> keyframes;
+    // Spazio vuoto nel montaggio prima di ogni tratto, in secondi (stesso ordine di `ranges`; vuoto = nessuno).
+    std::vector<double> gapsBefore;
 };
 
 // Un file audio (MP3, AAC, M4A, WAV...) che prende il posto dell'audio originale di tutta la sequenza.
@@ -50,12 +52,12 @@ struct AudioEdit
     bool empty() const { return muted.empty() && !replacement; }
 };
 
-// Cosa diventano gli spazi vuoti del montaggio nel file esportato. Senza ricodifica non si può creare un tratto nero:
-// gli spazi si chiudono e i pezzi si uniscono uno dopo l'altro. Con la ricodifica si potrà aggiungere qui un modo che
-// li riempie di nero e silenzio.
+// Cosa diventano gli spazi vuoti del montaggio nel file esportato: nero e silenzio (lunghi come nel montaggio,
+// ricodificati nel formato del progetto), oppure si chiudono e i pezzi si uniscono uno dopo l'altro.
 enum class GapExport
 {
     Close,
+    Black,
 };
 
 // Progetto: i file di partenza e la sequenza (il montaggio) fatta con pezzi di quei file.
@@ -83,7 +85,8 @@ public:
     // un fotogramma chiave e un taglio si ricodificano all'esportazione), quindi nessun aggancio.
     Sequence::SnapFunction snapper() const;
 
-    // La sequenza come elenco di file e tratti da esportare (pezzi consecutivi dello stesso file insieme).
+    // La sequenza come elenco di file e tratti da esportare (pezzi consecutivi dello stesso file insieme), con lo spazio
+    // vuoto prima di ogni tratto (ClipRanges::gapsBefore; con GapExport::Close nessuno).
     std::vector<ClipRanges> exportPlan(GapExport gaps = GapExport::Close) const;
 
     // Traccia audio sostitutiva (vedi AudioReplacement); std::nullopt = audio originale.

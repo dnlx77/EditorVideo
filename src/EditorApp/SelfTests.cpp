@@ -80,7 +80,7 @@ int guarded(const std::function<int()>& test)
 // ricodificando). Scrive anche quanti tratti si copiano e quanti si ricodificano.
 std::string refusal(const core::Project& project)
 {
-    const core::ExportPreview preview = core::previewExport(project.exportPlan(), core::AudioEdit{}, nullptr);
+    const core::ExportPreview preview = core::previewExport(project.exportPlan(core::GapExport::Black), core::AudioEdit{}, nullptr);
     if (preview.problem.empty())
         std::printf("Tratti copiati: %d (%.3f s), ricodificati: %d (%.3f s), tagli precisi: %d (%.3f s ricodificati ai bordi)\n",
                     preview.copiedSegments, preview.copiedSeconds, preview.reencodedSegments, preview.reencodedSeconds,
@@ -229,8 +229,8 @@ double meanBrightness(const std::string& file, double seconds)
 // pezzo il file creato deve mostrare lo stesso fotogramma del file di origine. Codici come --join-test.
 int runSequenceTest(const QStringList& args, qsizetype at)
 {
-    if (at + 4 >= args.size() || (args.size() - at - 2) % 3 != 0) {
-        std::printf("Uso: EditorVideo.exe --sequence-test <destinazione> <file> <IN> <OUT> [<file> <IN> <OUT> ...]\n");
+    if (at + 4 >= args.size()) {
+        std::printf("Uso: EditorVideo.exe --sequence-test <destinazione> [spazio:<s>] <file> <IN> <OUT> [[spazio:<s>] <file> <IN> <OUT> ...]\n");
         return 1;
     }
     const std::string output = args[at + 1].toStdString();
@@ -238,7 +238,16 @@ int runSequenceTest(const QStringList& args, qsizetype at)
         core::Project project;
         std::map<std::string, int> ids;
         std::vector<core::MediaSignature> signatures;
-        for (qsizetype i = at + 2; i + 2 < args.size(); i += 3) {
+        std::vector<double> gaps;  // spazio vuoto prima di ogni pezzo ("spazio:<secondi>" prima del file)
+        double gap = 0.0;
+        for (qsizetype i = at + 2; i < args.size();) {
+            if (args[i].startsWith(QStringLiteral("spazio:"))) {
+                gap = args[i].mid(7).toDouble();
+                ++i;
+                continue;
+            }
+            if (i + 2 >= args.size())
+                throw core::MediaError("Ogni pezzo vuole file, IN e OUT.");
             const std::string path = args[i].toStdString();
             if (!ids.contains(path)) {
                 ids[path] = addAnalyzedClip(project, path).id;
@@ -246,6 +255,22 @@ int runSequenceTest(const QStringList& args, qsizetype at)
             }
             if (project.sequence().insert(-1, ids[path], args[i + 1].toDouble(), args[i + 2].toDouble(), project.snapper()) == 0)
                 throw core::MediaError("Pezzo vuoto: OUT deve stare dopo IN.");
+            gaps.push_back(gap);
+            gap = 0.0;
+            i += 3;
+        }
+        // Gli spazi: ogni pezzo spostato più avanti, dall'ultimo al primo (così non si sovrappone a nessuno).
+        {
+            core::Sequence& s = project.sequence();
+            std::vector<double> targets;
+            double position = 0.0;
+            for (std::size_t k = 0; k < s.fragments().size(); ++k) {
+                position += gaps[k];
+                targets.push_back(position);
+                position += s.fragments()[k].length();
+            }
+            for (std::size_t k = s.fragments().size(); k-- > 0;)
+                s.moveTo(s.fragments()[k].id, targets[k]);
         }
         if (const std::string problems = refusal(project); !problems.empty()) {
             std::printf("Non si possono unire:\n%s", problems.c_str());
@@ -254,12 +279,17 @@ int runSequenceTest(const QStringList& args, qsizetype at)
         const core::Sequence& sequence = project.sequence();
         // I tratti come li esporterà davvero: con il taglio preciso quelli chiesti, altrimenti (formato che non si sa
         // ricodificare) con l'inizio al fotogramma chiave prima. Su questi si controllano durata e fotogrammi.
-        const core::ExportPreview preview = core::previewExport(project.exportPlan(), core::AudioEdit{}, nullptr);
+        const std::vector<core::ClipRanges> plan = project.exportPlan(core::GapExport::Black);
+        const core::ExportPreview preview = core::previewExport(plan, core::AudioEdit{}, nullptr);
         if (!preview.impreciseCuts.empty())
             std::printf("%s\n", preview.impreciseCuts.c_str());
+        if (!preview.closedGaps.empty())
+            std::printf("%s\n", preview.closedGaps.c_str());
         if (preview.effectiveRanges.size() != sequence.fragments().size())
             throw core::MediaError("Il piano dell'esportazione non corrisponde ai pezzi del montaggio.");
-        const core::ExportResult result = core::exportClips(project.exportPlan(), output, core::AudioEdit{});
+        const core::ExportResult result = core::exportClips(plan, output, core::AudioEdit{});
+        if (result.blackGaps > 0)
+            std::printf("Spazi neri: %d (%.3f s)\n", result.blackGaps, preview.blackSeconds);
         if (result.parametersInStream)
             std::printf("Parametri di codifica diversi: ripetuti nel flusso davanti a ogni fotogramma chiave\n");
         const DecodeCheck decoded = decodeAllVideo(output);
@@ -271,10 +301,25 @@ int runSequenceTest(const QStringList& args, qsizetype at)
         ok = ok && decoded.frames > 0 && decoded.errors == 0;
 
         // Ordine: subito dopo l'inizio di ogni pezzo, lo stesso fotogramma dell'originale all'inizio esportato davvero.
+        // Negli spazi neri, a metà, un fotogramma nero.
+        const double fps = signatures.front().streams.empty() || signatures.front().streams.front().frameRate <= 0
+                               ? 30.0
+                               : signatures.front().streams.front().frameRate;
         double start = 0.0;  // inizio del pezzo nel montaggio
         for (std::size_t k = 0; k < sequence.fragments().size(); ++k) {
             const core::Fragment& f = sequence.fragments()[k];
             const core::TimeRange& exported = preview.effectiveRanges[k];
+            if (f.gap > core::kTimeEpsilon && result.blackGaps > 0) {
+                const double black = std::llround(f.gap * fps) / fps;  // arrotondato ai fotogrammi, come l'esportazione
+                if (black > 0) {
+                    const double inBlack = meanBrightness(output, start + black / 2);
+                    const bool dark = inBlack >= 0 && inBlack < 8.0;
+                    std::printf("  spazio prima del pezzo %d (%.3f s): luminosità %.1f%s\n", static_cast<int>(k) + 1, black,
+                                inBlack, dark ? "" : "  <-- NON NERO");
+                    ok = ok && dark;
+                }
+                start += black;
+            }
             const double inOutput = meanBrightness(output, start + 0.01);
             start += exported.length();
             const double inSource = meanBrightness(project.find(f.clipId)->path, exported.start + 0.01);
