@@ -122,12 +122,11 @@ protected:
         const int b = project.add(file("video/città.mkv"));
         project.setAnalysis(a, {0.0, 2.002, 4.004}, 1001.0 * 300 / 30000);
         project.setAnalysis(b, {0.0, 1.0}, 12.48);
-        const auto snap = project.snapper();
         Sequence& s = project.sequence();
-        s.insert(-1, a, 2.002, 3.5035, snap);
-        s.insert(-1, b, 0.0, 0.96, snap);
-        const int third = s.insert(-1, a, 0.0, 1.001, snap);
-        s.insert(-1, b, 1.0, 5.0 + 1.0 / 48000, snap);
+        s.insert(-1, a, 2.002, 3.5035);
+        s.insert(-1, b, 0.0, 0.96);
+        const int third = s.insert(-1, a, 0.0, 1.001);
+        s.insert(-1, b, 1.0, 5.0 + 1.0 / 48000);
         s.muteRange(1.0, 2.0);
         s.muteRange(3.1, 3.3);
         s.move(third, 0);
@@ -325,8 +324,8 @@ TEST(GapExport, GapsAreClosedInTheExportedFile)
     const int a = project.add("C:\\video\\a.mp4");
     project.setAnalysis(a, {0.0, 1.0, 2.0, 3.0}, 4.0);
     Sequence& s = project.sequence();
-    s.insert(-1, a, 0.0, 1.0, project.snapper());
-    const int second = s.insert(-1, a, 2.0, 4.0, project.snapper());
+    s.insert(-1, a, 0.0, 1.0);
+    const int second = s.insert(-1, a, 2.0, 4.0);
     ASSERT_TRUE(s.moveTo(second, 3.0));  // spazio 1 .. 3
     s.muteRange(3.5, 4.0);               // nel secondo pezzo, nei tempi della sequenza
 

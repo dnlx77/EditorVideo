@@ -180,7 +180,7 @@ int runJoinTest(const QStringList& args, qsizetype at)
             const AnalyzedClip clip = addAnalyzedClip(project, path);
             sources.push_back(clip.info);
             signatures.push_back(core::readMediaSignature(path));
-            project.sequence().insert(-1, clip.id, 0.0, clip.info.durationSeconds, project.snapper());  // file intero
+            project.sequence().insert(-1, clip.id, 0.0, clip.info.durationSeconds);  // file intero
         }
         if (const std::string problems = refusal(project); !problems.empty()) {
             std::printf("Non si possono unire:\n%s", problems.c_str());
@@ -253,7 +253,7 @@ int runSequenceTest(const QStringList& args, qsizetype at)
                 ids[path] = addAnalyzedClip(project, path).id;
                 signatures.push_back(core::readMediaSignature(path));
             }
-            if (project.sequence().insert(-1, ids[path], args[i + 1].toDouble(), args[i + 2].toDouble(), project.snapper()) == 0)
+            if (project.sequence().insert(-1, ids[path], args[i + 1].toDouble(), args[i + 2].toDouble()) == 0)
                 throw core::MediaError("Pezzo vuoto: OUT deve stare dopo IN.");
             gaps.push_back(gap);
             gap = 0.0;
@@ -411,7 +411,7 @@ int runAudioTest(const QStringList& args, qsizetype at)
     return guarded([&]() -> int {
         core::Project project;
         const AnalyzedClip clip = addAnalyzedClip(project, input);
-        project.sequence().insert(-1, clip.id, 0.0, clip.info.durationSeconds, project.snapper());
+        project.sequence().insert(-1, clip.id, 0.0, clip.info.durationSeconds);
         core::MuteMethod method = core::MuteMethod::Silence;
         for (qsizetype i = at + 3; i < args.size(); ++i) {
             if (args[i] == QStringLiteral("mute") && i + 2 < args.size()) {
@@ -528,8 +528,8 @@ int runProjectTest(const QStringList& args, qsizetype at)
             const fs::path copy = base / "originale" / "video" / source.filename();
             fs::copy_file(source, copy, fs::copy_options::overwrite_existing);
             const AnalyzedClip clip = addAnalyzedClip(project, core::utf8FromPath(copy));
-            project.sequence().insert(-1, clip.id, 0.0, clip.info.durationSeconds, project.snapper());
-            project.sequence().insert(-1, clip.id, 0.0, clip.info.durationSeconds / 2, project.snapper());
+            project.sequence().insert(-1, clip.id, 0.0, clip.info.durationSeconds);
+            project.sequence().insert(-1, clip.id, 0.0, clip.info.durationSeconds / 2);
         }
         const double total = project.sequence().totalLength();
         project.sequence().muteRange(total * 0.2, total * 0.3);
@@ -668,7 +668,7 @@ int runExportTest(const QStringList& args, qsizetype at)
         for (qsizetype i = 0; i < pairs; ++i) {
             const double in = core::clampTo(args[at + 3 + 2 * i].toDouble(), source.durationSeconds);
             const double out = core::clampTo(args[at + 4 + 2 * i].toDouble(), source.durationSeconds);
-            if (sequence.insert(-1, id, in, out, project.snapper()) == 0)
+            if (sequence.insert(-1, id, in, out) == 0)
                 throw core::MediaError("OUT deve stare dopo IN.");
         }
         for (const core::Fragment& f : sequence.fragments())
@@ -1608,6 +1608,25 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
             poll->start(50);
         });
     }
+}
+
+std::optional<int> runWindowTest(QApplication& app, const QStringList& arguments)
+{
+    // Posizione dell'opzione, se è seguita da progetto e destinazione; -1 altrimenti.
+    const auto withTwoArguments = [&arguments](const char* option) {
+        const qsizetype at = arguments.indexOf(QLatin1String(option));
+        return at >= 0 && at + 2 < arguments.size() ? at : qsizetype{-1};
+    };
+    std::optional<int> code;
+    if (const qsizetype at = withTwoArguments("--project-export-test"); at >= 0)
+        code = runProjectExportTest(app, arguments[at + 1], arguments[at + 2]);
+    else if (const qsizetype other = withTwoArguments("--export-dialog-test"); other >= 0)
+        code = runExportDialogTest(app, arguments[other + 1], arguments[other + 2]);
+    else if (arguments.contains(QStringLiteral("--dock-test")))
+        code = runDockTest(app);
+    if (code)
+        std::fflush(stdout);
+    return code;
 }
 
 }  // namespace editor::app

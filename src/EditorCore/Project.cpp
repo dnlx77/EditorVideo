@@ -78,11 +78,6 @@ bool Project::allAnalyzed() const
     return std::all_of(clips_.begin(), clips_.end(), [](const Clip& c) { return c.analyzed; });
 }
 
-Sequence::SnapFunction Project::snapper() const
-{
-    return [](int, double seconds) { return seconds; };
-}
-
 std::vector<ClipRanges> Project::exportPlan(GapExport gaps) const
 {
     std::vector<ClipRanges> plan;

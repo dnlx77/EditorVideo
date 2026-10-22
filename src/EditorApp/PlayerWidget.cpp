@@ -238,7 +238,6 @@ void PlayerWidget::openFile(const QString& path)
     // Per un video i fotogrammi chiave arrivano dall'analisi del file (setKeyframes); senza video non servono.
     segment_.reset({}, duration_);
     ranges_.clear();
-    keyframesKnown_ = video_ == nullptr;
     updateSegmentUi();
 
     if (video_) {
@@ -324,7 +323,6 @@ void PlayerWidget::closeFile()
     timeline_->setKeyframes({});
     segment_.reset({}, 0.0);
     ranges_.clear();
-    keyframesKnown_ = false;
     segmentNote_.clear();
     updateSegmentUi();
     view_->setMessage(idleMessage_);
@@ -647,13 +645,9 @@ void PlayerWidget::setKeyframes(const std::vector<double>& keyframes)
 {
     if (!hasMedia())
         return;
-    // Arrivano a file già aperto: IN e OUT eventualmente messi nel frattempo si perdono (non dovrebbero esserci,
-    // perché IN si può mettere solo conoscendo i fotogrammi chiave).
-    segment_.reset(keyframes, duration_);
-    ranges_.clear();
-    keyframesKnown_ = true;
+    // Arrivano a file già aperto: IN e OUT eventualmente messi nel frattempo restano (non si agganciano più).
+    segment_.setKeyframes(keyframes);
     timeline_->setKeyframes(keyframes);
-    segmentNote_.clear();
     updateSegmentUi();
 }
 
@@ -667,19 +661,12 @@ void PlayerWidget::markIn()
 {
     if (!hasMedia())
         return;
-    if (!keyframesKnown_) {
-        segmentNote_ = QStringLiteral("Attendi la fine dell'analisi dei fotogrammi chiave, poi riprova.");
-        updateSegmentUi();
-        return;
-    }
     if (playing_)
         pause();
-    const double wanted = markTime();
-    const double in = segment_.setIn(wanted);
-    wantedIn_ = in;
+    const double in = segment_.setIn(markTime());
     segmentNote_.clear();
     noteIsOutError_ = false;
-    // Fra due fotogrammi chiave: si può, la parte fino al fotogramma chiave dopo si ricodificherà.
+    // Fra due fotogrammi chiave (se già noti): si può, la parte fino al fotogramma chiave dopo si ricodificherà.
     if (std::abs(segment_.snapToKeyframe(in) - in) > 0.0005)
         segmentNote_ = QStringLiteral("IN fra due fotogrammi chiave: all'esportazione la parte da qui al fotogramma chiave "
                                       "dopo viene ricodificata (taglio preciso), il resto si copia.");
@@ -869,7 +856,6 @@ void PlayerWidget::updateCompact()
 void PlayerWidget::setInOut(double in, double out)
 {
     segment_.setIn(in);
-    wantedIn_ = in;
     segment_.setOut(out);
     segmentNote_.clear();
     noteIsOutError_ = false;

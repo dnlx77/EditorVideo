@@ -2,7 +2,6 @@
 
 #include "EditorCore/TimeUtil.h"
 
-#include <functional>
 #include <vector>
 
 namespace editor::core {
@@ -12,7 +11,7 @@ struct Fragment
 {
     int id = 0;      // identificativo stabile (non cambia spostando i pezzi)
     int clipId = 0;  // file di origine (vedi Project)
-    double start = 0.0;  // nel file di origine; sempre su un fotogramma chiave
+    double start = 0.0;  // nel file di origine (anche fra due fotogrammi chiave: all'esportazione si ricodifica)
     double end = 0.0;
     // Tratti in cui l'audio è tolto (silenzio), nei tempi del file di origine: in ordine, senza sovrapposizioni,
     // dentro [start, end). Stanno nel pezzo, così lo seguono se viene spostato.
@@ -24,21 +23,19 @@ struct Fragment
 };
 
 // Sequenza: i pezzi, nell'ordine in cui finiranno nel file esportato. Lo stesso file può comparire più volte,
-// in qualsiasi ordine. Come altrove, senza ricodifica ogni pezzo deve iniziare su un fotogramma chiave: la funzione
-// `snap` dice qual è il fotogramma chiave nello stesso punto o subito prima, per un file.
+// in qualsiasi ordine. I pezzi iniziano e finiscono dove li si mette (taglio preciso: all'esportazione si ricodifica
+// la parte fino al fotogramma chiave dopo).
 //
 // Fra un pezzo e l'altro (e prima del primo) ci può essere uno spazio vuoto (Fragment::gap): nell'anteprima è nero e
 // silenzio. Dopo l'ultimo pezzo non c'è spazio: la sequenza finisce lì.
 class Sequence
 {
 public:
-    using SnapFunction = std::function<double(int clipId, double seconds)>;
-
-    // Inserisce [start, end) del file in posizione `index` (-1 = in fondo); l'inizio viene agganciato al
-    // fotogramma chiave. Restituisce l'id del pezzo, 0 se il pezzo è vuoto.
+    // Inserisce [start, end) del file in posizione `index` (-1 = in fondo). Restituisce l'id del pezzo, 0 se il pezzo
+    // è vuoto.
     // Il pezzo va subito dopo il precedente: se lì c'era uno spazio vuoto lo riempie partendo dal suo inizio, senza
     // spostare gli altri pezzi; se non ci sta, quelli dopo vanno avanti quanto serve.
-    int insert(int index, int clipId, double start, double end, const SnapFunction& snap);
+    int insert(int index, int clipId, double start, double end);
     // Toglie il pezzo; quelli dopo scorrono indietro della sua durata (lo spazio vuoto prima di lui resta).
     bool remove(int fragmentId);
     void removeClip(int clipId);  // tutti i pezzi di un file (quando il file esce dal progetto)
@@ -61,10 +58,9 @@ public:
     void closeAllGaps();
     int gapCount() const;
 
-    // Divide il pezzo che si trova al tempo `seconds` della sequenza. La seconda parte deve iniziare su un
-    // fotogramma chiave: si divide al fotogramma chiave nello stesso punto o subito prima (nessun fotogramma perso
-    // o ripetuto). Restituisce l'id della seconda parte, 0 se lì non si può dividere.
-    int split(double seconds, const SnapFunction& snap);
+    // Divide il pezzo che si trova al tempo `seconds` della sequenza, proprio lì. Restituisce l'id della seconda
+    // parte, 0 se lì non si può dividere (fuori dai pezzi, in uno spazio vuoto o sul bordo di un pezzo).
+    int split(double seconds);
 
     // Esito di removeSourceRange(): se non è Removed la sequenza non cambia.
     enum class RemoveResult
@@ -72,12 +68,10 @@ public:
         Removed,
         Empty,             // [from, to) vuoto o al contrario
         OutsideKept,       // [from, to) non tocca nessun pezzo del file: è già escluso
-        NoKeyframeInside,  // tocca un pezzo, ma dentro non c'è un fotogramma chiave da cui far ripartire il resto
     };
 
-    // Toglie [from, to) del file `clipId` dai pezzi che lo contengono; la parte dopo riparte dal fotogramma chiave
-    // nello stesso punto di `to` o subito prima.
-    RemoveResult removeSourceRange(int clipId, double from, double to, const SnapFunction& snap);
+    // Toglie [from, to) del file `clipId` dai pezzi che lo contengono; la parte dopo riparte da `to`.
+    RemoveResult removeSourceRange(int clipId, double from, double to);
 
     // Audio: toglie (silenzio) o rimette l'audio in [from, to) della sequenza, nei pezzi che lo attraversano.
     // Restituiscono true se qualcosa è cambiato.

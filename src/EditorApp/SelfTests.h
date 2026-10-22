@@ -18,6 +18,10 @@ class MainWindow;
 // std::nullopt. Codici: 0 tutto giusto, 1 argomenti sbagliati, 2 errore, 3 controllo non riuscito, 4 file rifiutati.
 std::optional<int> runCommandLineTest(const QStringList& arguments);
 
+// Come runCommandLineTest, per le prove con la finestra vera: --dock-test, --project-export-test, --export-dialog-test
+// (descritte sotto).
+std::optional<int> runWindowTest(QApplication& app, const QStringList& arguments);
+
 // --dock-test: con la finestra vera (piattaforma di Windows, non "minimal"), stacca e riaggancia la linea del tempo del
 // montaggio 5 volte per ogni modo: doppio clic sul titolo di Windows (un vero messaggio WM_NCLBUTTONDBLCLK alla
 // finestra staccata, senza muovere il mouse), finestra spostata e lasciata nella metà bassa, menu. Ogni volta deve

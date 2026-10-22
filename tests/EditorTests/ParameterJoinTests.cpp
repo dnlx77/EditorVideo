@@ -115,7 +115,7 @@ TEST(ProjectFormat, SavedWithTheProjectAndUndone)
     project.setAnalysis(a, {0.0, 1.0}, 2.0);
     EXPECT_TRUE(project.format().empty());
     const Project before = project;
-    project.sequence().insert(-1, a, 0.0, 2.0, project.snapper());
+    project.sequence().insert(-1, a, 0.0, 2.0);
     StreamSignature v = videoSignature();
     v.extradata = {1, 100, 0, 40, 0xff, 0xe1};
     project.setFormat(formatOf(file("a.mp4", {v, audioSignature()})));

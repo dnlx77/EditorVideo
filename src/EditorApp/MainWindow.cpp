@@ -218,8 +218,6 @@ MainWindow::MainWindow(QWidget* parent)
     setWindowTitle(QStringLiteral("EditorVideo"));
     resize(1500, 900);
 
-
-
     // --- Sinistra: file del progetto, informazioni, fotogrammi chiave
     clipList_ = new QListWidget;
     clipList_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -605,7 +603,7 @@ void MainWindow::addToSequence()
     }
     // IN e OUT della Sorgente; senza, il file intero.
     const core::CutSegment& segment = player_->segment();
-    const double in = segment.hasIn() ? segment.in() : clip->snapToKeyframe(0.0);
+    const double in = segment.hasIn() ? segment.in() : 0.0;
     const double out = segment.hasOut() ? segment.out() : clip->duration;
 
     const core::Project before = project_;
@@ -614,7 +612,7 @@ void MainWindow::addToSequence()
     const int gap = sequence.indexOf(timeline_->selectedGap());
     // Nello spazio vuoto selezionato (dal suo inizio), dopo il pezzo selezionato, altrimenti in fondo.
     const int at = gap >= 0 ? gap : selected >= 0 ? selected + 1 : -1;
-    const int id = sequence.insert(at, clip->id, in, out, project_.snapper());
+    const int id = sequence.insert(at, clip->id, in, out);
     if (id == 0) {
         player_->showNote(QStringLiteral("Pezzo vuoto: OUT deve stare dopo IN."));
         return;
@@ -640,12 +638,12 @@ void MainWindow::cutFromSequence()
         player_->showNote(QStringLiteral("Segna con I e O il pezzo da togliere dal montaggio, poi premi X."));
         return;
     }
-    const double from = player_->wantedIn();
+    const double from = segment.in();
     const double to = segment.out();
     const core::Project before = project_;
     QString note;
     bool removed = false;
-    switch (project_.sequence().removeSourceRange(clip->id, from, to, project_.snapper())) {
+    switch (project_.sequence().removeSourceRange(clip->id, from, to)) {
     case core::Sequence::RemoveResult::Removed:
         note = QStringLiteral("Tolto %1 - %2 dal montaggio.")
                    .arg(timeText(from), timeText(to));
@@ -654,11 +652,6 @@ void MainWindow::cutFromSequence()
         break;
     case core::Sequence::RemoveResult::OutsideKept:
         note = QStringLiteral("Questo tratto (%1 - %2) non è nel montaggio.").arg(timeText(from), timeText(to));
-        break;
-    case core::Sequence::RemoveResult::NoKeyframeInside:
-        note = QStringLiteral("Non si può togliere %1 - %2 senza ricodifica: dentro non c'è un fotogramma chiave da "
-                              "cui far ripartire il video. Allarga il pezzo fino a comprendere una tacca.")
-                   .arg(timeText(from), timeText(to));
         break;
     case core::Sequence::RemoveResult::Empty:
         note = QStringLiteral("Tratto vuoto: OUT deve stare dopo IN.");
@@ -673,10 +666,10 @@ void MainWindow::splitAtPlayhead()
 {
     const double at = program_->position();
     const core::Project before = project_;
-    const int id = project_.sequence().split(at, project_.snapper());
+    const int id = project_.sequence().split(at);
     if (id == 0) {
-        statusBar()->showMessage(QStringLiteral("Qui non si può dividere: nel pezzo non c'è un fotogramma chiave prima "
-                                                "del cursore (senza ricodifica un pezzo deve iniziare da lì)."),
+        statusBar()->showMessage(QStringLiteral("Qui non si può dividere: porta il cursore dentro un pezzo, non su un "
+                                                "suo bordo né in uno spazio vuoto."),
                                  8000);
         return;
     }
@@ -1169,7 +1162,7 @@ void MainWindow::exportDialog()
     if (target.isEmpty())
         return;
     if (QFileInfo(target).suffix().compare(extension, Qt::CaseInsensitive) != 0)
-        target += QLatin1Char('.') + extension;  // senza ricodifica il formato resta quello dell'originale
+        target += QLatin1Char('.') + extension;  // il formato resta quello del progetto
     startExport(QDir::toNativeSeparators(target), true);
 }
 
@@ -1611,7 +1604,7 @@ void MainWindow::createMenus()
     fileMenu->addSeparator();
     exportAction_ = fileMenu->addAction(QStringLiteral("&Esporta..."), this, &MainWindow::exportDialog);
     exportAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
-    exportAction_->setStatusTip(QStringLiteral("Salva il montaggio in un nuovo file, senza ricodifica"));
+    exportAction_->setStatusTip(QStringLiteral("Salva il montaggio in un nuovo file, ricodificando solo dove serve"));
     fileMenu->addSeparator();
     QAction* exitAction = fileMenu->addAction(QStringLiteral("&Esci"), this, &QWidget::close);
     exitAction->setShortcut(QKeySequence(QStringLiteral("Alt+F4")));
@@ -2943,7 +2936,7 @@ void MainWindow::showAbout()
     if (encoders.isEmpty())
         encoders = QStringLiteral("<br>• nessuno (la ricodifica non sarà disponibile)");
     QMessageBox::about(this, QStringLiteral("Informazioni su EditorVideo"),
-                       QStringLiteral("<b>EditorVideo</b><br>Taglio e unione di video senza ricodifica.<br><br>")
+                       QStringLiteral("<b>EditorVideo</b><br>Taglio e unione di video, con ricodifica solo dove serve.<br><br>")
                            + versionSummary().toHtmlEscaped()
                            + QStringLiteral("<br><br>Encoder video funzionanti su questo PC:") + encoders
                            + QStringLiteral("<br>Audio: AAC (FFmpeg)"));

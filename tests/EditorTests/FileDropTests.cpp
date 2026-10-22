@@ -107,8 +107,8 @@ TEST_F(FileDropTest, InsertedWholeAtTheDropPosition)
     Project project;
     const int x = project.add(path("x.mp4"));
     project.setAnalysis(x, {0.0, 2.0}, 8.0);
-    project.sequence().insert(-1, x, 0.0, 4.0, project.snapper());
-    project.sequence().insert(-1, x, 4.0, 8.0, project.snapper());
+    project.sequence().insert(-1, x, 0.0, 4.0);
+    project.sequence().insert(-1, x, 4.0, 8.0);
 
     // Due file nuovi e x (già nel progetto) rilasciati fra i due pezzi: nell'ordine del trascinamento.
     const DropPlan plan = planDrop({path("b.mkv"), path("a.mp4")}, project, inspect);
@@ -142,7 +142,7 @@ TEST_F(FileDropTest, TheWholeDropIsOneUndo)
     Project project;
     const int x = project.add(path("x.mp4"));
     project.setAnalysis(x, {0.0}, 8.0);
-    project.sequence().insert(-1, x, 0.0, 8.0, project.snapper());
+    project.sequence().insert(-1, x, 0.0, 8.0);
     EditHistory history;
     const std::string before = projectToJson("C:\\p.evproj", project, {});
 

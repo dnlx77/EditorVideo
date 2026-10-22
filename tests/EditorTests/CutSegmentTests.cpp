@@ -129,4 +129,18 @@ TEST(CutSegment, ResetClearsMarkers)
     EXPECT_DOUBLE_EQ(segment.snapToKeyframe(2.5), 2.0);
 }
 
+TEST(CutSegment, KeyframesArrivingLaterKeepInAndOut)
+{
+    // IN e OUT messi prima della fine dell'analisi del file restano dove sono.
+    CutSegment segment;
+    segment.reset({}, 10.0);
+    segment.setIn(3.3);
+    ASSERT_TRUE(segment.setOut(7.7));
+    segment.setKeyframes({8.0, 0.0, 4.0});
+    EXPECT_DOUBLE_EQ(segment.in(), 3.3);
+    EXPECT_DOUBLE_EQ(segment.out(), 7.7);
+    EXPECT_DOUBLE_EQ(segment.snapToKeyframe(3.3), 0.0);  // ordinati
+    EXPECT_DOUBLE_EQ(segment.snapToKeyframe(5.0), 4.0);
+}
+
 }  // namespace

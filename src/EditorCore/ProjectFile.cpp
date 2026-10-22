@@ -1,6 +1,5 @@
 #include "EditorCore/ProjectFile.h"
 
-#include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/Json.h"
 #include "EditorCore/PathUtil.h"
 
@@ -12,8 +11,6 @@
 #include <sstream>
 
 namespace editor::core {
-
-using namespace detail;
 
 namespace {
 

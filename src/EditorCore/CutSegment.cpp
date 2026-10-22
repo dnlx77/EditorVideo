@@ -17,6 +17,12 @@ void CutSegment::reset(std::vector<double> keyframes, double duration)
     out_ = 0.0;
 }
 
+void CutSegment::setKeyframes(std::vector<double> keyframes)
+{
+    keyframes_ = std::move(keyframes);
+    std::sort(keyframes_.begin(), keyframes_.end());
+}
+
 double CutSegment::clampToFile(double seconds) const
 {
     return clampTo(seconds, duration_);

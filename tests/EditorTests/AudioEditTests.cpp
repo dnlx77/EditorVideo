@@ -34,13 +34,6 @@ constexpr int kMusicFirst = 300;  // il contenuto dei file audio sostitutivi par
 // ---------------------------------------------------------------------------------------------------------------
 // Modello: tratti silenziati nella sequenza
 
-// File 1: fotogrammi chiave ogni 2 s; file 2: ogni secondo.
-double snap(int clipId, double t)
-{
-    const double step = clipId == 1 ? 2.0 : 1.0;
-    return std::floor(t / step + 1e-6) * step;
-}
-
 void expectRanges(const std::vector<TimeRange>& actual, std::initializer_list<TimeRange> expected)
 {
     ASSERT_EQ(actual.size(), expected.size());
@@ -55,8 +48,8 @@ void expectRanges(const std::vector<TimeRange>& actual, std::initializer_list<Ti
 TEST(AudioMute, RangeAcrossPiecesIsStoredInEachPiece)
 {
     Sequence s;
-    const int first = s.insert(-1, 1, 4.0, 6.0, snap);   // sequenza 0 .. 2
-    const int second = s.insert(-1, 2, 0.0, 1.5, snap);  // sequenza 2 .. 3,5
+    const int first = s.insert(-1, 1, 4.0, 6.0);   // sequenza 0 .. 2
+    const int second = s.insert(-1, 2, 0.0, 1.5);  // sequenza 2 .. 3,5
     EXPECT_TRUE(s.muteRange(1.5, 2.5));
     expectRanges(s.find(first)->muted, {{5.5, 6.0}});   // tempi del file di origine
     expectRanges(s.find(second)->muted, {{0.0, 0.5}});
@@ -70,8 +63,8 @@ TEST(AudioMute, RangeAcrossPiecesIsStoredInEachPiece)
 TEST(AudioMute, MutedRangesFollowTheirPiece)
 {
     Sequence s;
-    s.insert(-1, 1, 4.0, 6.0, snap);                     // sequenza 0 .. 2
-    const int second = s.insert(-1, 2, 0.0, 1.5, snap);  // sequenza 2 .. 3,5
+    s.insert(-1, 1, 4.0, 6.0);                     // sequenza 0 .. 2
+    const int second = s.insert(-1, 2, 0.0, 1.5);  // sequenza 2 .. 3,5
     s.muteRange(1.5, 2.5);
     s.move(second, 0);  // ora il secondo pezzo è in testa: 0 .. 1,5, il primo 1,5 .. 3,5
     expectRanges(s.mutedRanges(), {{0.0, 0.5}, {3.0, 3.5}});
@@ -80,7 +73,7 @@ TEST(AudioMute, MutedRangesFollowTheirPiece)
 TEST(AudioMute, UnmutePartOfARange)
 {
     Sequence s;
-    s.insert(-1, 2, 0.0, 4.0, snap);
+    s.insert(-1, 2, 0.0, 4.0);
     s.muteRange(1.0, 3.0);
     EXPECT_TRUE(s.unmuteRange(1.5, 2.0));
     expectRanges(s.mutedRanges(), {{1.0, 1.5}, {2.0, 3.0}});
@@ -92,7 +85,7 @@ TEST(AudioMute, UnmutePartOfARange)
 TEST(AudioMute, TouchingRangesAreMerged)
 {
     Sequence s;
-    s.insert(-1, 2, 0.0, 4.0, snap);
+    s.insert(-1, 2, 0.0, 4.0);
     s.muteRange(1.0, 2.0);
     s.muteRange(2.0, 2.5);
     s.muteRange(0.5, 1.2);
@@ -102,9 +95,9 @@ TEST(AudioMute, TouchingRangesAreMerged)
 TEST(AudioMute, SplitShareTheRanges)
 {
     Sequence s;
-    const int id = s.insert(-1, 2, 0.0, 3.0, snap);
+    const int id = s.insert(-1, 2, 0.0, 3.0);
     s.muteRange(0.8, 1.3);
-    const int second = s.split(1.5, snap);  // divide al fotogramma chiave di 1 s
+    const int second = s.split(1.0);  // divide a 1 s
     ASSERT_NE(second, 0);
     expectRanges(s.find(id)->muted, {{0.8, 1.0}});
     expectRanges(s.find(second)->muted, {{1.0, 1.3}});
@@ -114,10 +107,10 @@ TEST(AudioMute, SplitShareTheRanges)
 TEST(AudioMute, CuttingAPieceTakesItsRangesAway)
 {
     Sequence s;
-    s.insert(-1, 2, 0.0, 4.0, snap);
+    s.insert(-1, 2, 0.0, 4.0);
     s.muteRange(0.5, 1.5);
     s.muteRange(2.5, 3.5);
-    ASSERT_EQ(s.removeSourceRange(2, 1.2, 3.0, snap), Sequence::RemoveResult::Removed);
+    ASSERT_EQ(s.removeSourceRange(2, 1.2, 3.0), Sequence::RemoveResult::Removed);
     // Restano 0 .. 1,2 e 3 .. 4, con il silenzio 0,5 .. 1,2 e 3 .. 3,5 (che nella sequenza parte da 1,2).
     ASSERT_EQ(s.fragments().size(), 2u);
     expectRanges(s.fragments()[0].muted, {{0.5, 1.2}});
@@ -130,7 +123,7 @@ TEST(AudioMute, ProjectAudioEdit)
     Project project;
     const int clip = project.add("video.mp4");
     project.setAnalysis(clip, {0.0, 1.0, 2.0}, 3.0);
-    project.sequence().insert(-1, clip, 0.0, 3.0, project.snapper());
+    project.sequence().insert(-1, clip, 0.0, 3.0);
     project.sequence().muteRange(1.0, 2.0);
     EXPECT_TRUE(project.audioEdit().replacement == std::nullopt);
     project.setAudioReplacement(AudioReplacement{"musica.mp3", 0.5, 60.0});
@@ -282,8 +275,8 @@ TEST_F(AudioExportTest, MutedRangeAcrossAJoin)
     const MediaInfo info = probeFile(file);
     const int id = project.add(file);
     project.setAnalysis(id, info.keyframeTimes, info.durationSeconds);
-    project.sequence().insert(-1, id, 1.0, 2.0, project.snapper());
-    project.sequence().insert(-1, id, 0.0, 1.0, project.snapper());
+    project.sequence().insert(-1, id, 1.0, 2.0);
+    project.sequence().insert(-1, id, 0.0, 1.0);
     project.sequence().muteRange(0.8, 1.2);
 
     const std::string out = path("silenzio_giunzione.mkv");

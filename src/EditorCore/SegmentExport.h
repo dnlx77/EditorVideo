@@ -92,14 +92,13 @@ enum class MuteMethod
 // Avanzamento da 0 a 1; restituire false per annullare.
 using ExportProgress = std::function<bool(double fraction)>;
 
-// Copia i tratti `ranges` di `inputPath`, uno dopo l'altro e nell'ordine dato, in un unico file `outputPath`,
-// senza ricodificare (stessi codec). Il contenitore si ricava dall'estensione di `outputPath`. Si copiano video e
-// audio (non sottotitoli e dati). I percorsi sono in UTF-8.
+// I tratti `ranges` di `inputPath`, uno dopo l'altro e nell'ordine dato, in un unico file `outputPath`: come
+// exportClips con un solo file (stessi codec, taglio preciso dove serve). Il contenitore si ricava dall'estensione di
+// `outputPath`. Si copiano video e audio (non sottotitoli e dati). I percorsi sono in UTF-8.
 //
-// Ogni tratto: il video parte dal fotogramma chiave in `start` (o dal primo dopo), l'audio dal primo pacchetto da lì
-// in poi e fino all'ultimo che finisce entro `end`. Nel file creato i tratti si susseguono senza buchi né
-// sovrapposizioni: ognuno viene spostato con lo stesso valore per video e audio, così la sincronia si ristabilisce
-// a ogni giunzione (al massimo un pacchetto audio di silenzio, ~20 ms, a ogni giunzione).
+// Nel file creato i tratti si susseguono senza buchi né sovrapposizioni: ognuno viene spostato con lo stesso valore
+// per video e audio, così la sincronia si ristabilisce a ogni giunzione (al massimo un pacchetto audio di silenzio,
+// ~20 ms, a ogni giunzione).
 //
 // Lancia MediaError (messaggio in italiano) se qualcosa non va, ExportCancelled se annullato: in entrambi i casi
 // non resta un file a metà.

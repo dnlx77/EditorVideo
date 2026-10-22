@@ -273,7 +273,7 @@ private:
     QPoint titlePressLocal_;
     void startTimelineDrag(const QPoint& global, const QPoint& local);
     bool nativeMoveLoop_ = false;
-    bool movedByWindows_ = false;           // da WM_ENTERSIZEMOVE fino al rilascio: la sta spostando Windows           // Windows sta spostando la finestra staccata (fra WM_ENTERSIZEMOVE e WM_EXITSIZEMOVE)
+    bool movedByWindows_ = false;  // Windows sta spostando la finestra staccata (da WM_ENTERSIZEMOVE fino al rilascio)
     // Rilasciata nella metà bassa: si riaggancia quando nessun trascinamento è più in corso (né quello di Qt, che riceve
     // il rilascio dopo che il pulsante si è alzato, né lo spostamento della finestra fatto da Windows).
     void finishTimelineDrop(const QPoint& cursor, int attempts);

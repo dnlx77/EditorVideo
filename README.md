@@ -1,6 +1,6 @@
 # EditorVideo
 
-Editor video per Windows: taglio e unione di video e audio **senza ricodifica** (l'output resta nel formato di partenza).
+Editor video per Windows: taglio e unione di video e audio. Si copia senza ricodificare dove si può; si ricodifica solo dove serve (tagli precisi, file con un formato diverso da quello del progetto, spazi neri), e l'output resta nel formato del progetto.
 
 Il piano di sviluppo per step è nel progetto Claude "Editor video".
 
