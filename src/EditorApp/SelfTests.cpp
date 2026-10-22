@@ -252,27 +252,37 @@ int runSequenceTest(const QStringList& args, qsizetype at)
             return 4;
         }
         const core::Sequence& sequence = project.sequence();
+        // I tratti come li esporterà davvero: con il taglio preciso quelli chiesti, altrimenti (formato che non si sa
+        // ricodificare) con l'inizio al fotogramma chiave prima. Su questi si controllano durata e fotogrammi.
+        const core::ExportPreview preview = core::previewExport(project.exportPlan(), core::AudioEdit{}, nullptr);
+        if (!preview.impreciseCuts.empty())
+            std::printf("%s\n", preview.impreciseCuts.c_str());
+        if (preview.effectiveRanges.size() != sequence.fragments().size())
+            throw core::MediaError("Il piano dell'esportazione non corrisponde ai pezzi del montaggio.");
         const core::ExportResult result = core::exportClips(project.exportPlan(), output, core::AudioEdit{});
         if (result.parametersInStream)
             std::printf("Parametri di codifica diversi: ripetuti nel flusso davanti a ogni fotogramma chiave\n");
         const DecodeCheck decoded = decodeAllVideo(output);
         std::printf("Decodifica completa: %d fotogrammi, %d errori\n", decoded.frames, decoded.errors);
         const double length = core::probeFile(output).durationSeconds;
-        std::printf("Montaggio di %d pezzi: durata attesa %.3f s, ottenuta %.3f s\n", result.segmentCount,
-                    sequence.totalLength(), length);
-        bool ok = std::abs(length - sequence.totalLength()) < 0.1 + 0.03 * static_cast<double>(result.segmentCount);
+        std::printf("Montaggio di %d pezzi (%d tagli precisi): durata attesa %.3f s, ottenuta %.3f s\n", result.segmentCount,
+                    result.preciseCuts, preview.outputSeconds, length);
+        bool ok = std::abs(length - preview.outputSeconds) < 0.1 + 0.03 * static_cast<double>(result.segmentCount);
         ok = ok && decoded.frames > 0 && decoded.errors == 0;
 
-        // Ordine: subito dopo l'inizio di ogni pezzo, stesso fotogramma dell'originale.
+        // Ordine: subito dopo l'inizio di ogni pezzo, lo stesso fotogramma dell'originale all'inizio esportato davvero.
         double start = 0.0;  // inizio del pezzo nel montaggio
         for (std::size_t k = 0; k < sequence.fragments().size(); ++k) {
             const core::Fragment& f = sequence.fragments()[k];
+            const core::TimeRange& exported = preview.effectiveRanges[k];
             const double inOutput = meanBrightness(output, start + 0.01);
-            start += f.length();
-            const double inSource = meanBrightness(project.find(f.clipId)->path, f.start + 0.01);
+            start += exported.length();
+            const double inSource = meanBrightness(project.find(f.clipId)->path, exported.start + 0.01);
             const bool same = inOutput >= 0 && std::abs(inOutput - inSource) < 3.0;
-            std::printf("  pezzo %d (%.3f - %.3f s): luminosità %.1f, originale %.1f%s\n", static_cast<int>(k) + 1,
-                        f.start, f.end, inOutput, inSource, same ? "" : "  <-- DIVERSO");
+            std::printf("  pezzo %d (%.3f - %.3f s%s): luminosità %.1f, originale %.1f%s\n", static_cast<int>(k) + 1,
+                        f.start, f.end,
+                        std::abs(exported.start - f.start) > 1e-6 ? qPrintable(QStringLiteral(", esportato da %1 s").arg(exported.start, 0, 'f', 3)) : "",
+                        inOutput, inSource, same ? "" : "  <-- DIVERSO");
             ok = ok && same;
         }
         std::printf("%s\n", ok ? "Controllo del montaggio: OK" : "Controllo del montaggio: NON RIUSCITO");

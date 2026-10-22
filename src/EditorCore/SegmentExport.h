@@ -62,6 +62,9 @@ struct ExportPreview
     // prima, come senza ricodifica. Il motivo, in italiano; vuoto = nessun problema.
     std::string impreciseCuts;
     double outputSeconds = 0.0;  // durata del file che si crea (più lunga dei tratti se IN va al fotogramma chiave prima)
+    // I tratti come li esporterà davvero, uno per tratto del piano e nello stesso ordine: uguali a quelli chiesti, salvo
+    // l'inizio al fotogramma chiave prima quando il taglio preciso non è possibile.
+    std::vector<TimeRange> effectiveRanges;
     std::string problem;  // vuoto = si può esportare
 };
 

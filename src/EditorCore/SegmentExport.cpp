@@ -1667,6 +1667,8 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
         preview.impreciseCuts = plan.impreciseCuts;
         for (std::size_t c = 0; c < clips.size(); ++c) {
             for (std::size_t r = 0; r < clips[c].ranges.size(); ++r) {
+                const std::vector<Piece>& pieces = plan.pieces[c][r];
+                preview.effectiveRanges.push_back({pieces.front().range.start, pieces.back().range.end});
                 if (plan.reencode[c]) {
                     ++preview.reencodedSegments;
                     preview.reencodedSeconds += clips[c].ranges[r].length();
