@@ -1360,6 +1360,8 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 if (end <= skip)
                     return;
                 FramePtr part(av_frame_alloc());
+                if (!part)
+                    throw MediaError(kOutOfMemory);
                 part->format = frame->format;
                 part->sample_rate = frame->sample_rate;
                 part->nb_samples = end - skip;
@@ -1462,6 +1464,8 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                     std::int64_t remaining = std::llround(range.length() * outRate);
                     while (remaining > 0) {
                         FramePtr silence(av_frame_alloc());
+                        if (!silence)
+                            throw MediaError(kOutOfMemory);
                         silence->format = AV_SAMPLE_FMT_FLTP;
                         silence->sample_rate = outRate;
                         silence->nb_samples = static_cast<int>(std::min<std::int64_t>(remaining, 1024));
@@ -1534,10 +1538,12 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             };
             // Il fotogramma nero (gamma TV: luminanza 16, colore 128), sempre lo stesso.
             FramePtr black(av_frame_alloc());
+            if (!black)
+                throw MediaError(kOutOfMemory);
             black->format = AV_PIX_FMT_YUV420P;
             black->width = format.width;
             black->height = format.height;
-            if (!black || av_frame_get_buffer(black.get(), 0) < 0)
+            if (av_frame_get_buffer(black.get(), 0) < 0)
                 throw MediaError(kOutOfMemory);
             const std::ptrdiff_t linesizes[4] = {black->linesize[0], black->linesize[1], black->linesize[2], black->linesize[3]};
             av_image_fill_black(black->data, linesizes, AV_PIX_FMT_YUV420P, AVCOL_RANGE_MPEG, format.width, format.height);
@@ -1577,6 +1583,8 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 std::int64_t remaining = std::llround(frames * frameSeconds * rate);
                 while (remaining > 0) {
                     FramePtr silence(av_frame_alloc());
+                    if (!silence)
+                        throw MediaError(kOutOfMemory);
                     silence->format = AV_SAMPLE_FMT_FLTP;
                     silence->sample_rate = rate;
                     silence->nb_samples = static_cast<int>(std::min<std::int64_t>(remaining, 1024));

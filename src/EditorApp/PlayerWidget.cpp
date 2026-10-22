@@ -488,16 +488,11 @@ void PlayerWidget::audioWorker()
                 const double gap = std::round((time - audioFrom_) * rate);
                 if (gap > 0 && gap < rate * 3600) {
                     audioStart_ = audioFrom_;
-                    // A blocchi di ~100 ms, sempre lo stesso: anche un'attesa lunga non occupa memoria. write()
-                    // restituisce false se bisogna fermarsi.
-                    const auto block = static_cast<std::size_t>(std::max(1.0, std::round(rate / 10)));
-                    const std::vector<std::int16_t> silence(block * channels, 0);
-                    bool written = true;
-                    for (auto left = static_cast<std::size_t>(gap); written && left > 0;) {
-                        const std::size_t frames = std::min(left, block);
-                        written = audioOut_.write(silence.data(), frames * channels, stopWorkers_);
-                        left -= frames;
-                    }
+                    const bool written = core::writeSilence(
+                        static_cast<std::size_t>(gap), channels, static_cast<int>(rate),
+                        [this](const std::int16_t* samples, std::size_t count) {
+                            return audioOut_.write(samples, count, stopWorkers_);
+                        });
                     if (!written)
                         break;
                 }
