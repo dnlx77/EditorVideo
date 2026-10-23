@@ -1,5 +1,6 @@
 #include "EditorApp/ZoomableTimeline.h"
 
+#include <QtGui/QFontMetricsF>
 #include <QtGui/QPainter>
 #include <QtGui/QResizeEvent>
 #include <QtGui/QWheelEvent>
@@ -7,6 +8,7 @@
 #include <QtWidgets/QToolButton>
 
 #include <algorithm>
+#include <iterator>
 #include <cmath>
 
 namespace editor::app {
@@ -51,7 +53,8 @@ void ZoomableTimeline::setTimelineDuration(double seconds)
 
 void ZoomableTimeline::setFrameDuration(double seconds)
 {
-    zoom_.setMaxPixelsPerSecond(kPixelsPerFrame / std::max(0.001, seconds > 0 ? seconds : 1.0 / 30));
+    frameDuration_ = std::max(0.001, seconds > 0 ? seconds : 1.0 / 30);
+    zoom_.setMaxPixelsPerSecond(kPixelsPerFrame / frameDuration_);
     syncControls();
     viewChanged();
 }
@@ -119,8 +122,95 @@ void ZoomableTimeline::setCacheRange(double from, double to)
 
 QRectF ZoomableTimeline::cacheStrip() const
 {
+    const QRectF ruler = rulerRect();
+    return QRectF(ruler.left(), ruler.bottom() - 4, ruler.width(), 3);
+}
+
+QRectF ZoomableTimeline::rulerRect() const
+{
     const QRectF axis = timeAxis();
-    return QRectF(axis.left(), axis.top() - 5, axis.width(), 3);
+    return QRectF(axis.left(), 0, axis.width(), kRulerHeight);
+}
+
+QString ZoomableTimeline::timecode(double seconds) const
+{
+    // Fotogrammi interi: il tempo di una tacca è un multiplo del fotogramma o del secondo, a meno degli arrotondamenti.
+    const double fps = 1.0 / frameDuration_;
+    const auto totalFrames = static_cast<long long>(std::floor(std::max(0.0, seconds) * fps + 0.001));
+    const auto framesPerSecond = std::max<long long>(1, std::llround(fps));
+    const long long secondsPart = static_cast<long long>(std::floor(totalFrames / fps + 0.001));
+    const long long frame = std::clamp<long long>(totalFrames - std::llround(secondsPart * fps), 0, framesPerSecond - 1);
+    return QStringLiteral("%1:%2:%3:%4")
+        .arg(secondsPart / 3600, 2, 10, QLatin1Char('0'))
+        .arg(secondsPart / 60 % 60, 2, 10, QLatin1Char('0'))
+        .arg(secondsPart % 60, 2, 10, QLatin1Char('0'))
+        .arg(frame, 2, 10, QLatin1Char('0'));
+}
+
+void ZoomableTimeline::paintRuler(QPainter& p) const
+{
+    const QRectF ruler = rulerRect();
+    const QPalette pal = palette();
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setPen(Qt::NoPen);
+    p.setBrush(pal.color(QPalette::Button));
+    p.drawRect(ruler);
+    QColor line = pal.color(QPalette::ButtonText);
+    line.setAlpha(140);
+    p.setPen(QPen(line, 1));
+    p.drawLine(QPointF(ruler.left(), ruler.bottom()), QPointF(ruler.right(), ruler.bottom()));
+    const double pps = zoom_.pixelsPerSecond();
+    if (pps <= 0 || !isEnabled()) {
+        p.restore();
+        return;
+    }
+
+    QFont font = p.font();
+    font.setPointSizeF(font.pointSizeF() * 0.75);
+    p.setFont(font);
+    const double labelWidth = QFontMetricsF(font).horizontalAdvance(QStringLiteral("00:00:00:00")) + 16;
+
+    // Passo fra le etichette: il più piccolo che le lascia distanziate quanto basta; in mezzo tacche più corte.
+    const double f = frameDuration_;
+    const double steps[] = {f, 2 * f, 5 * f, 10 * f, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 18000, 36000};
+    double major = steps[std::size(steps) - 1];
+    for (double s : steps) {
+        if (s * pps >= labelWidth) {
+            major = s;
+            break;
+        }
+    }
+    int divisions = 1;
+    for (int d : {10, 5, 4, 2}) {
+        const double minor = major / d;
+        // Sotto il secondo le tacche cadono su fotogrammi interi.
+        const bool wholeFrames = std::abs(minor / f - std::round(minor / f)) < 1e-6 && minor >= f - 1e-9;
+        if (minor * pps >= 7 && (major >= 1 || wholeFrames)) {
+            divisions = d;
+            break;
+        }
+    }
+    const double minor = major / divisions;
+
+    const double from = std::max(0.0, timeForX(ruler.left()));
+    const double to = timeForX(ruler.right());
+    p.setClipRect(ruler);
+    const QColor text = pal.color(QPalette::ButtonText);
+    for (auto k = static_cast<long long>(std::floor(from / minor)); k * minor <= to + 1e-9; ++k) {
+        const double t = k * minor;
+        const double x = std::round(xForTime(t)) + 0.5;
+        if (k % divisions == 0) {
+            p.setPen(QPen(line, 1));
+            p.drawLine(QPointF(x, ruler.top() + 3), QPointF(x, ruler.bottom()));
+            p.setPen(text);
+            p.drawText(QRectF(x + 3, ruler.top() + 1, labelWidth, ruler.height() - 7), Qt::AlignLeft | Qt::AlignVCenter, timecode(t));
+        } else {
+            p.setPen(QPen(line, 1));
+            p.drawLine(QPointF(x, ruler.bottom() - 5), QPointF(x, ruler.bottom()));
+        }
+    }
+    p.restore();
 }
 
 void ZoomableTimeline::paintCacheBar(QPainter& p) const

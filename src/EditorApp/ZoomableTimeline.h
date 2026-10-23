@@ -29,19 +29,20 @@ public:
     void zoomAtX(double factor, double widgetX);
     bool isZoomed() const { return !zoom_.isFit(); }
     const core::TimelineZoom& zoom() const { return zoom_; }
-    // Zoom massimo: circa 12 pixel per fotogramma.
+    // Zoom massimo: circa 12 pixel per fotogramma. Serve anche al righello, per i fotogrammi nelle etichette.
     void setFrameDuration(double seconds);
     // La riproduzione è (ri)partita: la vista torna a seguire il cursore.
     void resumeFollowing();
     bool isFollowing() const { return following_; }
     // Tratto già pronto in memoria per la riproduzione (vedi core::VideoDecoder::cachedRange), nei tempi di questa
-    // linea del tempo: una barretta celeste sopra l'asse. to <= from = niente.
+    // linea del tempo: una barretta celeste in fondo al righello. to <= from = niente.
     void setCacheRange(double from, double to);
 
 protected:
     explicit ZoomableTimeline(QWidget* parent = nullptr);
 
     static constexpr int kControlsHeight = 18;  // riga della barra di scorrimento e di "Adatta", in basso
+    static constexpr int kRulerHeight = 22;     // righello con i tempi, in alto
 
     // La parte del widget che rappresenta il tempo: conta solo la sua estensione orizzontale.
     virtual QRectF timeAxis() const = 0;
@@ -61,6 +62,10 @@ protected:
 
     void resizeEvent(QResizeEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    // Righello in cima al widget, largo quanto l'asse: tacche e tempi (ore:minuti:secondi:fotogrammi) con un passo che
+    // segue lo zoom. La classe derivata lo disegna con la parte fissa e lascia libera la striscia alta kRulerHeight.
+    void paintRuler(QPainter& p) const;
+    QRectF rulerRect() const;
     // Disegna la barretta della cache (la chiama la classe derivata in paintEvent, prima del cursore).
     void paintCacheBar(QPainter& p) const;
 
@@ -73,9 +78,11 @@ private:
     QToolButton* fit_ = nullptr;
     bool following_ = true;
     bool syncing_ = false;  // si sta aggiornando la barra: i suoi segnali non sono dell'utente
+    double frameDuration_ = 1.0 / 30;
     double cacheFrom_ = 0.0;
     double cacheTo_ = 0.0;
     QRectF cacheStrip() const;  // la riga in cui sta la barretta
+    QString timecode(double seconds) const;  // "hh:mm:ss:ff" per le etichette del righello
 };
 
 }  // namespace editor::app

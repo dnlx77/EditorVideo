@@ -22,7 +22,7 @@ namespace editor::app {
 
 namespace {
 
-constexpr double kTop = 16;          // spazio per il triangolo del cursore
+constexpr double kTop = 6;           // spazio fra il righello e la corsia video
 constexpr double kVideoHeight = 54;    // corsia video quando c'è spazio; con poco spazio si stringe
 constexpr double kLaneGap = 4;
 constexpr double kHandleHeight = 14;  // maniglia della traccia sostitutiva
@@ -85,12 +85,12 @@ SequenceTimeline::SequenceTimeline(QWidget* parent)
 
 QSize SequenceTimeline::sizeHint() const
 {
-    return {800, 142 + kControlsHeight};
+    return {800, 132 + kRulerHeight + kControlsHeight};
 }
 
 QSize SequenceTimeline::minimumSizeHint() const
 {
-    return {100, 58 + kControlsHeight};
+    return {100, 48 + kRulerHeight + kControlsHeight};
 }
 
 void SequenceTimeline::setBlocks(std::vector<Block> blocks)
@@ -204,18 +204,18 @@ void SequenceTimeline::setAudioSelection(double from, double to)
 double SequenceTimeline::videoHeight() const
 {
     // Le due corsie si dividono lo spazio: la video fino a kVideoHeight, poi tutto il resto all'audio.
-    const double lanes = height() - kTop - kLaneGap - 6 - kControlsHeight;
+    const double lanes = height() - kRulerHeight - kTop - kLaneGap - 6 - kControlsHeight;
     return std::clamp(lanes * 0.55, 18.0, kVideoHeight);
 }
 
 QRectF SequenceTimeline::videoLane() const
 {
-    return QRectF(6, kTop, std::max(1, width() - 12), videoHeight());
+    return QRectF(6, kRulerHeight + kTop, std::max(1, width() - 12), videoHeight());
 }
 
 QRectF SequenceTimeline::audioLane() const
 {
-    const double top = kTop + videoHeight() + kLaneGap;
+    const double top = kRulerHeight + kTop + videoHeight() + kLaneGap;
     return QRectF(6, top, std::max(1, width() - 12), std::max(14.0, height() - top - 6 - kControlsHeight));
 }
 
@@ -383,11 +383,11 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
         return;  // con lo zoom il cursore può stare fuori dalla parte visibile
     const QColor head = palette().color(QPalette::Text);
     p.setPen(QPen(head, 2));
-    p.drawLine(QPointF(x, a.top()), QPointF(x, audio.bottom() + 3));
-    QPainterPath triangle;
-    triangle.moveTo(x - 5, a.top() - 7);
-    triangle.lineTo(x + 5, a.top() - 7);
-    triangle.lineTo(x, a.top() - 1);
+    p.drawLine(QPointF(x, 0), QPointF(x, audio.bottom() + 3));
+    QPainterPath triangle;  // in cima al righello
+    triangle.moveTo(x - 5, 0);
+    triangle.lineTo(x + 5, 0);
+    triangle.lineTo(x, 7);
     triangle.closeSubpath();
     p.setPen(Qt::NoPen);
     p.setBrush(head);
@@ -400,6 +400,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
     const QRectF a = videoLane();
     const QRectF audio = audioLane();
     const QPalette pal = palette();
+    paintRuler(p);
     p.setPen(Qt::NoPen);
     p.setBrush(pal.color(QPalette::Base));
     p.drawRoundedRect(a, 4, 4);
@@ -645,6 +646,15 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
     pressX_ = event->position().x();
     const double t = timeForX(pressX_);
 
+    if (event->position().y() < videoLane().top() - 2) {
+        // Righello: sposta il cursore, anche trascinando.
+        scrubbing_ = true;
+        playhead_ = std::clamp(t, 0.0, total_);
+        update();
+        if (onSeek)
+            onSeek(playhead_);
+        return;
+    }
     if (event->position().y() >= audioLane().top() - kLaneGap / 2) {
         // Corsia audio: maniglia della traccia sostitutiva, oppure inizio di una selezione.
         if (visiblePart(replacementHandle()).contains(event->position())) {
@@ -691,6 +701,13 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         setCursor(visiblePart(replacementHandle()).contains(event->position()) ? Qt::OpenHandCursor : Qt::ArrowCursor);
         return;
     }
+    if (scrubbing_) {
+        playhead_ = std::clamp(timeForX(x), 0.0, total_);
+        update();
+        if (onSeek)
+            onSeek(playhead_);
+        return;
+    }
     if (movingReplacement_) {
         replacement_->offset = replacementStart_ + (x - pressX_) / zoom().pixelsPerSecond();
         invalidate();
@@ -717,6 +734,10 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
 {
     if (event->button() != Qt::LeftButton)
         return;
+    if (scrubbing_) {
+        scrubbing_ = false;
+        return;
+    }
     if (movingReplacement_) {
         movingReplacement_ = false;
         setCursor(Qt::OpenHandCursor);

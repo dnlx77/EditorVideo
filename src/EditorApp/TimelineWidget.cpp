@@ -31,12 +31,12 @@ TimelineWidget::TimelineWidget(QWidget* parent)
 
 QSize TimelineWidget::sizeHint() const
 {
-    return {400, 46 + kControlsHeight};
+    return {400, 46 + kRulerHeight + kControlsHeight};
 }
 
 QSize TimelineWidget::minimumSizeHint() const
 {
-    return {60, 46 + kControlsHeight};
+    return {60, 46 + kRulerHeight + kControlsHeight};
 }
 
 void TimelineWidget::setDuration(double seconds)
@@ -112,9 +112,9 @@ void TimelineWidget::changeEvent(QEvent* event)
 
 QRectF TimelineWidget::trackRect() const
 {
-    // Margini laterali per non tagliare i marcatori agli estremi; spazio in alto per le etichette IN/OUT.
-    // In basso la riga della barra di scorrimento e di "Adatta".
-    return QRectF(8, 14, std::max(1, width() - 16), height() - 20 - kControlsHeight);
+    // Margini laterali per non tagliare i marcatori agli estremi; in alto il righello e lo spazio per le etichette
+    // IN/OUT. In basso la riga della barra di scorrimento e di "Adatta".
+    return QRectF(8, kRulerHeight + 14, std::max(1, width() - 16), height() - 20 - kRulerHeight - kControlsHeight);
 }
 
 void TimelineWidget::paintEvent(QPaintEvent*)
@@ -146,6 +146,8 @@ void TimelineWidget::paintStatic(QPainter& p)
     const QRectF track = trackRect();
     const QPalette pal = palette();
     const bool enabled = isEnabled() && duration_ > 0;
+
+    paintRuler(p);
 
     // Traccia
     p.setPen(Qt::NoPen);
@@ -205,7 +207,7 @@ void TimelineWidget::paintStatic(QPainter& p)
     const auto marker = [&](double x, const QColor& color, const QString& label, bool labelOnLeft) {
         p.setPen(QPen(color, 2));
         p.drawLine(QPointF(x, track.top() - 2), QPointF(x, track.bottom()));
-        const QRectF textRect = labelOnLeft ? QRectF(x - 40, 0, 38, 13) : QRectF(x + 2, 0, 38, 13);
+        const QRectF textRect = labelOnLeft ? QRectF(x - 40, kRulerHeight, 38, 13) : QRectF(x + 2, kRulerHeight, 38, 13);
         p.drawText(textRect, (labelOnLeft ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter, label);
     };
     if (hasIn_ && visible(inX))
@@ -217,7 +219,7 @@ void TimelineWidget::paintStatic(QPainter& p)
 
 void TimelineWidget::paintCursor(QPainter& p)
 {
-    // Cursore di riproduzione: linea con un triangolino in alto
+    // Cursore di riproduzione: linea dal righello in giù, con un triangolino in alto
     p.setRenderHint(QPainter::Antialiasing);
     const QRectF track = trackRect();
     const QPalette pal = palette();
@@ -226,11 +228,11 @@ void TimelineWidget::paintCursor(QPainter& p)
         return;  // con lo zoom il cursore può stare fuori dalla parte visibile
     const QColor head = pal.color(QPalette::Text);
     p.setPen(QPen(head, 2));
-    p.drawLine(QPointF(x, track.top()), QPointF(x, track.bottom() + 3));
-    QPainterPath triangle;
-    triangle.moveTo(x - 5, track.top() - 6);
-    triangle.lineTo(x + 5, track.top() - 6);
-    triangle.lineTo(x, track.top());
+    p.drawLine(QPointF(x, 0), QPointF(x, track.bottom() + 3));
+    QPainterPath triangle;  // in cima al righello
+    triangle.moveTo(x - 5, 0);
+    triangle.lineTo(x + 5, 0);
+    triangle.lineTo(x, 7);
     triangle.closeSubpath();
     p.setPen(Qt::NoPen);
     p.setBrush(head);
