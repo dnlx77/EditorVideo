@@ -97,8 +97,12 @@ void SequenceTimeline::setBlocks(std::vector<Block> blocks)
 {
     blocks_ = std::move(blocks);
     total_ = 0.0;
-    for (const Block& b : blocks_)
+    starts_.clear();
+    starts_.reserve(blocks_.size());
+    for (const Block& b : blocks_) {
+        starts_.push_back(total_ + b.gap);
         total_ += b.gap + b.length;
+    }
     if (std::none_of(blocks_.begin(), blocks_.end(), [this](const Block& b) { return b.fragmentId == selected_; }))
         selected_ = 0;
     if (std::none_of(blocks_.begin(), blocks_.end(), [this](const Block& b) { return b.fragmentId == selectedGap_ && b.gap > 0; }))
@@ -180,6 +184,16 @@ void SequenceTimeline::setReplacement(std::optional<Replacement> replacement)
     invalidate();
 }
 
+void SequenceTimeline::setWaveforms(const std::function<std::shared_ptr<const core::Waveform>(int clipId)>& forClip,
+                                    const std::shared_ptr<const core::Waveform>& replacement)
+{
+    for (Block& b : blocks_)
+        b.waveform = forClip(b.clipId);
+    if (replacement_)
+        replacement_->waveform = replacement;
+    invalidate();
+}
+
 void SequenceTimeline::setAudioSelection(double from, double to)
 {
     selectionFrom_ = from;
@@ -214,11 +228,10 @@ std::vector<QRectF> SequenceTimeline::blockRects(const QRectF& lane) const
 {
     std::vector<QRectF> rects;
     rects.reserve(blocks_.size());
-    double start = 0.0;
-    for (const Block& b : blocks_) {
-        start += b.gap;
-        rects.emplace_back(QPointF(xForTime(start) + 1, lane.top() + 2), QPointF(xForTime(start + b.length) - 1, lane.bottom() - 2));
-        start += b.length;
+    for (std::size_t i = 0; i < blocks_.size(); ++i) {
+        const double start = starts_[i];
+        rects.emplace_back(QPointF(xForTime(start) + 1, lane.top() + 2),
+                           QPointF(xForTime(start + blocks_[i].length) - 1, lane.bottom() - 2));
     }
     return rects;
 }
@@ -238,14 +251,11 @@ QRectF SequenceTimeline::replacementHandle() const
 int SequenceTimeline::blockAt(double x) const
 {
     const double t = timeForX(x);
-    double start = 0.0;
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
-        if (t < start + blocks_[i].gap)
+        if (t < starts_[i])
             return -1;  // spazio vuoto
-        start += blocks_[i].gap;
-        if (t >= start && t < start + blocks_[i].length)
+        if (t < starts_[i] + blocks_[i].length)
             return static_cast<int>(i);
-        start += blocks_[i].length;
     }
     return blocks_.empty() ? -1 : static_cast<int>(blocks_.size()) - 1;
 }
@@ -253,25 +263,18 @@ int SequenceTimeline::blockAt(double x) const
 int SequenceTimeline::gapAt(double x) const
 {
     const double t = timeForX(x);
-    double start = 0.0;
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
-        if (blocks_[i].gap > 0 && t >= start && t < start + blocks_[i].gap)
+        if (blocks_[i].gap > 0 && t >= starts_[i] - blocks_[i].gap && t < starts_[i])
             return static_cast<int>(i);
-        start += blocks_[i].gap + blocks_[i].length;
     }
     return -1;
 }
 
 double SequenceTimeline::startOfBlock(int index) const
 {
-    double start = 0.0;
-    for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
-        start += blocks_[i].gap;
-        if (i == index)
-            break;
-        start += blocks_[i].length;
-    }
-    return start;
+    if (index < 0 || index >= static_cast<int>(starts_.size()))
+        return starts_.empty() ? 0.0 : starts_.back() + blocks_.back().length;
+    return starts_[static_cast<std::size_t>(index)];
 }
 
 int SequenceTimeline::dropIndexAt(double x) const
@@ -279,16 +282,11 @@ int SequenceTimeline::dropIndexAt(double x) const
     // I file vanno prima del primo blocco la cui metà sta a destra del punto (in uno spazio vuoto: prima del blocco
     // che lo segue, cioè all'inizio dello spazio).
     const double t = timeForX(x);
-    double start = 0.0;
-    int index = 0;
-    for (const Block& b : blocks_) {
-        start += b.gap;
-        if (t < start + b.length / 2)
-            return index;
-        start += b.length;
-        ++index;
+    for (std::size_t i = 0; i < blocks_.size(); ++i) {
+        if (t < starts_[i] + blocks_[i].length / 2)
+            return static_cast<int>(i);
     }
-    return index;
+    return static_cast<int>(blocks_.size());
 }
 
 double SequenceTimeline::dragTarget(double x) const
@@ -300,14 +298,11 @@ double SequenceTimeline::dragTarget(double x) const
     // Aggancio magnetico: l'inizio o la fine del blocco, se a meno di 10 pixel da un bordo di un altro blocco o
     // dall'inizio della sequenza. (Il cursore no: il clic per prendere il blocco lo porta proprio lì.)
     std::vector<double> edges{0.0};
-    double start = 0.0;
     for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
-        start += blocks_[i].gap;
         if (i != dragIndex_) {
-            edges.push_back(start);
-            edges.push_back(start + blocks_[i].length);
+            edges.push_back(starts_[static_cast<std::size_t>(i)]);
+            edges.push_back(starts_[static_cast<std::size_t>(i)] + blocks_[static_cast<std::size_t>(i)].length);
         }
-        start += blocks_[i].length;
     }
     const double reach = 10.0 / zoom().pixelsPerSecond();
     double best = reach;

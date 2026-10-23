@@ -185,6 +185,10 @@ TEST(SequenceGaps, MovingAPieceLeavesTheOthersWhereTheyAre)
     EXPECT_NEAR(p.s.startOf(0), 0.0, 1e-9);
     EXPECT_NEAR(p.s.startOf(1), 1.0, 1e-9);
     EXPECT_NEAR(p.s.startOf(2), 6.0, 1e-9);
+    const std::vector<double> starts = p.s.starts();  // tutti gli inizi in una volta, come startOf
+    ASSERT_EQ(starts.size(), 3u);
+    for (int i = 0; i < 3; ++i)
+        EXPECT_NEAR(starts[static_cast<std::size_t>(i)], p.s.startOf(i), 1e-9);
     EXPECT_NEAR(p.s.totalLength(), 7.0, 1e-9);
     EXPECT_EQ(p.s.gapCount(), 1);
     EXPECT_EQ(p.s.indexAt(4.5), -1);    // nello spazio non c'è nessun pezzo

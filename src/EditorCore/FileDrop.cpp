@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <map>
+#include <set>
 
 namespace editor::core {
 
@@ -58,16 +60,19 @@ DropPlan planDrop(const std::vector<std::string>& paths, const Project& project,
         files.push_back(path);
     }
 
-    std::vector<std::string> seen;
+    // La chiave di ogni file del progetto, calcolata una volta sola (tocca il disco).
+    std::map<std::string, const Clip*> inProject;
+    for (const Clip& clip : project.clips())
+        inProject.emplace(sameFileKey(clip.path), &clip);
+    std::set<std::string> seen;
     for (const std::string& file : files) {
         const std::string key = sameFileKey(file);
-        if (std::find(seen.begin(), seen.end(), key) != seen.end())
+        if (!seen.insert(key).second)
             continue;  // trascinato due volte (es. il file e la sua cartella)
-        seen.push_back(key);
 
-        const auto existing = std::find_if(project.clips().begin(), project.clips().end(),
-                                           [&](const Clip& clip) { return sameFileKey(clip.path) == key; });
-        if (existing != project.clips().end()) {
+        const auto found = inProject.find(key);
+        const auto existing = found != inProject.end() ? found->second : nullptr;
+        if (existing != nullptr) {
             // Già nel progetto: non si aggiunge, ma può andare nella sequenza.
             plan.media.push_back({existing->path, existing->analyzed ? existing->duration : inspect(existing->path).value_or(0.0),
                                   existing->id});

@@ -246,6 +246,10 @@ MainWindow::MainWindow(QWidget* parent)
     keyframeList_->setAlternatingRowColors(true);
     keyframeList_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     connect(keyframeList_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item) {
+        if (item->data(0, Qt::UserRole).toBool()) {  // "Mostra altri": la riga in fondo all'elenco parziale
+            addKeyframeRows();
+            return;
+        }
         setProgramActive(false);
         player_->seekTo(item->data(1, Qt::UserRole).toDouble());
     });
@@ -338,12 +342,10 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onReplacementMoved = [this](double offset) {
         const core::Project before = project_;
         project_.setAudioOffset(offset);
-        history_.record("Sposta l'audio", before);
-        updateUndoActions();
+        recordEdit(QStringLiteral("Sposta l'audio"), before);
         statusBar()->showMessage(offset >= 0 ? QStringLiteral("L'audio sostitutivo ora parte a %1 della sequenza.").arg(timeText(offset))
                                              : QStringLiteral("L'audio sostitutivo ora parte dal suo punto %1.").arg(timeText(-offset)),
                                  8000);
-        sequenceChanged();
     };
     sequenceLabel_ = new QLabel;
     sequenceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -381,7 +383,7 @@ MainWindow::MainWindow(QWidget* parent)
     setCentralWidget(center);
     // File trascinati da Esplora file: ovunque nella finestra e nei pannelli, anche staccati.
     setAcceptDrops(true);
-    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+    for (QDockWidget* dock : docks()) {
         dock->setAcceptDrops(true);
         dock->installEventFilter(this);
     }
@@ -463,7 +465,7 @@ MainWindow::MainWindow(QWidget* parent)
         dock->setAllowedAreas(Qt::TopDockWidgetArea | Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     // Il titolo di un pannello agganciato si evidenzia con il mouse sopra (cursore a mano: da lì si trascina). I pannelli
     // staccati tengono il titolo di Windows, con la sua cornice (e il ridimensionamento dagli angoli).
-    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+    for (QDockWidget* dock : docks()) {
         dock->setAttribute(Qt::WA_Hover);
         dock->installEventFilter(this);
         dock->setStyleSheet(QStringLiteral("QDockWidget[titoloEvidenziato=\"true\"]::title { background: palette(highlight); }"
@@ -523,18 +525,12 @@ void MainWindow::setProgramActive(bool active)
 
 void MainWindow::togglePlay()
 {
-    if (programActive_)
-        program_->togglePlayPause();
-    else
-        player_->togglePlayPause();
+    onActiveMonitor([](auto& monitor) { monitor.togglePlayPause(); });
 }
 
 void MainWindow::seekRelative(double seconds)
 {
-    if (programActive_)
-        program_->seekRelative(seconds);
-    else
-        player_->seekRelative(seconds);
+    onActiveMonitor([=](auto& monitor) { monitor.seekRelative(seconds); });
 }
 
 void MainWindow::zoomTimeline(double factor)
@@ -550,10 +546,7 @@ void MainWindow::zoomTimeline(double factor)
 
 void MainWindow::stepFrame(int direction)
 {
-    if (programActive_)
-        program_->stepFrame(direction);
-    else
-        player_->stepFrame(direction);
+    onActiveMonitor([=](auto& monitor) { monitor.stepFrame(direction); });
 }
 
 void MainWindow::stepToMark(int direction)
@@ -566,10 +559,7 @@ void MainWindow::stepToMark(int direction)
 
 void MainWindow::seekEnd()
 {
-    if (programActive_)
-        program_->seekToEnd();
-    else
-        player_->seekToEnd();
+    onActiveMonitor([](auto& monitor) { monitor.seekToEnd(); });
 }
 
 void MainWindow::setPlaying(bool playing)
@@ -583,10 +573,7 @@ void MainWindow::setPlaying(bool playing)
 
 void MainWindow::seekStart()
 {
-    if (programActive_)
-        program_->seekTo(0.0);
-    else
-        player_->seekTo(0.0);
+    onActiveMonitor([](auto& monitor) { monitor.seekTo(0.0); });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -715,11 +702,16 @@ void MainWindow::clearSequence()
 // ---------------------------------------------------------------------------------------------------------------
 // Annulla / Ripeti
 
-void MainWindow::recordEdit(const QString& label, const core::Project& before)
+void MainWindow::recordHistory(const QString& label, const core::Project& before)
 {
     history_.record(label.toStdString(), before);
-    sequenceChanged();
     updateUndoActions();
+}
+
+void MainWindow::recordEdit(const QString& label, const core::Project& before)
+{
+    recordHistory(label, before);
+    sequenceChanged();
 }
 
 void MainWindow::updateUndoActions()
@@ -825,6 +817,18 @@ void MainWindow::ensureProjectFormat()
         project_.setFormat(core::formatOf(*signature));
 }
 
+void MainWindow::refreshWaveforms()
+{
+    // Una forma d'onda finita non cambia altro nella linea del tempo: basta aggiornare quelle dei blocchi.
+    const auto& replacement = project_.audioReplacement();
+    timeline_->setWaveforms(
+        [this](int clipId) {
+            const core::Clip* clip = project_.find(clipId);
+            return clip != nullptr ? waveformFor(clip->path) : nullptr;
+        },
+        replacement ? waveformFor(replacement->path) : nullptr);
+}
+
 void MainWindow::refreshTimeline()
 {
     const core::Sequence& sequence = project_.sequence();
@@ -842,7 +846,7 @@ void MainWindow::refreshTimeline()
             block.fit = static_cast<int>(fit.fit);
             QString reasons;
             for (const std::string& reason : fit.reasons)
-                reasons += QStringLiteral("\n• ") + QString::fromStdString(reason);
+                reasons += QStringLiteral("\n• ") + qs(reason);
             if (fit.fit == core::ClipFit::CopyWithParameters)
                 block.fitNote = QStringLiteral("Si copia senza ricodifica, con i suoi parametri di codifica ripetuti nel "
                                                "file esportato (diversi da quelli del formato del progetto):")
@@ -850,7 +854,7 @@ void MainWindow::refreshTimeline()
             else if (fit.fit == core::ClipFit::Reencode)
                 block.fitNote = QStringLiteral("Diverso dal formato del progetto (%1): all'esportazione sarà ricodificato "
                                                "in quel formato.")
-                                    .arg(QString::fromStdString(project_.format().sourceName))
+                                    .arg(qs(project_.format().sourceName))
                               + reasons;
         }
     }
@@ -998,16 +1002,20 @@ bool MainWindow::replaceAudio(const QString& path, bool showProblems)
     } else if (const core::Clip* clip = project_.find(currentClipId_)) {
         container = clip->path;
     }
+    double duration = 0.0;
     if (!container.empty()) {
-        if (const std::string problem = core::replacementAudioProblem(utf8, container); !problem.empty())
+        // Il controllo apre già il file: la durata si legge da lì.
+        if (const std::string problem = core::replacementAudioProblem(utf8, container, &duration); !problem.empty())
             return refuse(qs(problem));
     }
-    double duration = 0.0;
-    try {
-        const core::AudioDecoder decoder(utf8);
-        duration = std::max(0.0, decoder.durationSeconds());
-    } catch (const std::exception& e) {
-        return refuse(QString::fromUtf8(e.what()));
+    if (container.empty()) {
+        // Nessun contenitore da controllare: il file si apre qui, anche per sapere se è audio valido.
+        try {
+            const core::AudioDecoder decoder(utf8);
+            duration = std::max(0.0, decoder.durationSeconds());
+        } catch (const std::exception& e) {
+            return refuse(QString::fromUtf8(e.what()));
+        }
     }
     const core::Project before = project_;
     project_.setAudioReplacement(core::AudioReplacement{utf8, 0.0, duration});
@@ -1068,7 +1076,7 @@ void MainWindow::startNextWaveform()
         if (!cancelWave_)
             waveforms_[waveformPath_] = result;
         waveformPath_.clear();
-        refreshTimeline();
+        refreshWaveforms();
         startNextWaveform();
     });
     // Bassa priorità: l'anteprima e l'analisi dei file vengono prima.
@@ -1127,8 +1135,17 @@ double MainWindow::exportLength()
 {
     // Come l'esportazione: senza taglio preciso possibile IN va al fotogramma chiave prima (il file è più lungo).
     const core::ProjectFormat format = project_.sequence().empty() ? core::ProjectFormat{} : project_.format();
-    const core::AudioEdit audio = project_.sequence().empty() ? core::AudioEdit{} : project_.audioEdit(core::GapExport::Black);
-    return core::previewExport(previewPlan(), audio, format.empty() ? nullptr : &format, reencodeOptions_).outputSeconds;
+    const ExportSettings settings = exportSettings();
+    return core::previewExport(previewPlan(), settings.audio, settings.format.empty() ? nullptr : &settings.format, settings.reencode)
+        .outputSeconds;
+}
+
+MainWindow::ExportSettings MainWindow::exportSettings() const
+{
+    // Audio, formato e ricodifica valgono per il montaggio; il taglio veloce (sequenza vuota) copia il file com'è.
+    if (project_.sequence().empty())
+        return {};
+    return {project_.audioEdit(core::GapExport::Black), project_.format(), reencodeOptions_};
 }
 
 std::vector<core::ClipRanges> MainWindow::previewPlan()
@@ -1185,11 +1202,10 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     const std::vector<core::ClipRanges> plan = exportPlan();
     if (plan.empty() || exportThread_ != nullptr)
         return false;
-    // L'audio modificato vale per il montaggio; il taglio veloce (sequenza vuota) copia l'audio così com'è.
-    const core::AudioEdit audio = project_.sequence().empty() ? core::AudioEdit{} : project_.audioEdit(core::GapExport::Black);
-    // Il formato del progetto vale per il montaggio (il taglio veloce copia il file com'è).
-    const core::ProjectFormat format = project_.sequence().empty() ? core::ProjectFormat{} : project_.format();
-    const core::ReencodeOptions reencode = project_.sequence().empty() ? core::ReencodeOptions{} : reencodeOptions_;
+    const ExportSettings settings = exportSettings();
+    const core::AudioEdit& audio = settings.audio;
+    const core::ProjectFormat& format = settings.format;
+    const core::ReencodeOptions& reencode = settings.reencode;
 
     auto outcome = std::make_shared<ExportOutcome>();
     auto progress = std::make_shared<std::atomic<double>>(0.0);
@@ -1285,7 +1301,7 @@ bool MainWindow::exportOptionsDialog()
     };
     const core::ExportPreview first = preview(reencodeOptions_.all, reencodeOptions_.closeGaps);
     if (!first.problem.empty()) {
-        QMessageBox::warning(this, QStringLiteral("Esportazione non possibile"), QString::fromStdString(first.problem));
+        QMessageBox::warning(this, QStringLiteral("Esportazione non possibile"), qs(first.problem));
         return false;
     }
 
@@ -1331,9 +1347,9 @@ bool MainWindow::exportOptionsDialog()
                                      : QStringLiteral(", <b>%1 spazi neri</b> (%2)").arg(p.blackGaps).arg(timeText(p.blackSeconds));
         text += QStringLiteral(".<br>Durata del file: <b>%1</b>.").arg(timeText(p.outputSeconds));
         if (!p.closedGaps.empty())
-            text += QStringLiteral("<br><span style='color:#d08a1a'>%1</span>").arg(QString::fromStdString(p.closedGaps).toHtmlEscaped());
+            text += QStringLiteral("<br><span style='color:#d08a1a'>%1</span>").arg(qs(p.closedGaps).toHtmlEscaped());
         if (!p.impreciseCuts.empty())
-            text += QStringLiteral("<br><span style='color:#d08a1a'>%1</span>").arg(QString::fromStdString(p.impreciseCuts).toHtmlEscaped());
+            text += QStringLiteral("<br><span style='color:#d08a1a'>%1</span>").arg(qs(p.impreciseCuts).toHtmlEscaped());
         if (p.reencodedSegments > 0 && p.copiedSegments > 0)
             text += QStringLiteral("<br>I pezzi copiati non perdono niente; quelli ricodificati sono quasi uguali "
                                    "all'originale con la qualità alta.");
@@ -1719,7 +1735,7 @@ void MainWindow::createMenus()
     originalAudioAction_->setEnabled(false);
 
     QMenu* windowMenu = menuBar()->addMenu(QStringLiteral("Fi&nestra"));
-    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+    for (QDockWidget* dock : docks()) {
         QAction* toggle = dock->toggleViewAction();
         toggle->setText(QStringLiteral("Pannello %1").arg(dock->windowTitle()));
         windowMenu->addAction(toggle);
@@ -1750,7 +1766,7 @@ void MainWindow::createMenus()
                 shortcuts.append(action);
         }
     }
-    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_})
+    for (QDockWidget* dock : docks())
         dock->addActions(shortcuts);
 }
 
@@ -1827,8 +1843,7 @@ void MainWindow::addFiles(const QStringList& paths)
     startNextProbe();
     updateExportAction();
     if (!loading_) {
-        history_.record(paths.size() > 1 ? "Aggiungi file" : "Aggiungi il file", before);
-        updateUndoActions();
+        recordHistory(paths.size() > 1 ? QStringLiteral("Aggiungi file") : QStringLiteral("Aggiungi il file"), before);
         setModified(true);
     }
 }
@@ -1945,8 +1960,7 @@ void MainWindow::removeClip(int id, const QString& undoLabel)
     if (index < 0)
         return;
     if (!undoLabel.isEmpty()) {
-        history_.record(undoLabel.toStdString(), project_);
-        updateUndoActions();
+        recordHistory(undoLabel, project_);
     }
     std::erase(probeQueue_, id);
     if (id == probingClipId_)
@@ -2017,6 +2031,31 @@ void MainWindow::refreshClipList()
     updatingList_ = false;
 }
 
+void MainWindow::addKeyframeRows()
+{
+    constexpr std::size_t kBatch = 500;
+    // Toglie la riga "Mostra altri" (se c'è): l'ultima.
+    const int last = keyframeList_->topLevelItemCount() - 1;
+    if (last >= 0 && keyframeList_->topLevelItem(last)->data(0, Qt::UserRole).toBool())
+        delete keyframeList_->takeTopLevelItem(last);
+    const std::size_t from = static_cast<std::size_t>(keyframeList_->topLevelItemCount());
+    const std::size_t to = std::min(keyframeTimes_.size(), from + kBatch);
+    QList<QTreeWidgetItem*> rows;
+    rows.reserve(static_cast<qsizetype>(to - from) + 1);
+    for (std::size_t i = from; i < to; ++i) {
+        auto* row = new QTreeWidgetItem({QString::number(i + 1), qs(core::formatDuration(keyframeTimes_[i]))});
+        row->setData(1, Qt::UserRole, keyframeTimes_[i]);
+        row->setToolTip(1, QStringLiteral("Clic per portare l'anteprima qui"));
+        rows.append(row);
+    }
+    if (to < keyframeTimes_.size()) {
+        auto* more = new QTreeWidgetItem({QString(), QStringLiteral("Mostra altri (%1 da vedere)").arg(keyframeTimes_.size() - to)});
+        more->setData(0, Qt::UserRole, true);
+        rows.append(more);
+    }
+    keyframeList_->addTopLevelItems(rows);
+}
+
 void MainWindow::showInfo(const core::MediaInfo& info)
 {
     const QString path = qs(info.path);
@@ -2038,19 +2077,22 @@ void MainWindow::showInfo(const core::MediaInfo& info)
         addStream(infoTree_, stream);
 
     keyframeList_->clear();
+    keyframeTimes_.clear();
     if (info.keyframeStreamIndex >= 0) {
-        keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave: %1</b> (flusso %2)")
-                                    .arg(info.keyframeTimes.size())
-                                    .arg(info.keyframeStreamIndex));
-        QList<QTreeWidgetItem*> rows;
-        rows.reserve(static_cast<qsizetype>(info.keyframeTimes.size()));
-        for (std::size_t i = 0; i < info.keyframeTimes.size(); ++i) {
-            auto* row = new QTreeWidgetItem({QString::number(i + 1), qs(core::formatDuration(info.keyframeTimes[i]))});
-            row->setData(1, Qt::UserRole, info.keyframeTimes[i]);
-            row->setToolTip(1, QStringLiteral("Clic per portare l'anteprima qui"));
-            rows.append(row);
+        QString title = QStringLiteral("<b>Fotogrammi chiave: %1</b> (flusso %2)")
+                            .arg(info.keyframeTimes.size())
+                            .arg(info.keyframeStreamIndex);
+        if (info.keyframeTimes.size() > 1) {
+            const double first = info.keyframeTimes.front();
+            const double last = info.keyframeTimes.back();
+            title += QStringLiteral("<br>dal %1 al %2, uno ogni %3 s in media")
+                         .arg(qs(core::formatDuration(first)), qs(core::formatDuration(last)))
+                         .arg((last - first) / static_cast<double>(info.keyframeTimes.size() - 1), 0, 'f', 2);
         }
-        keyframeList_->addTopLevelItems(rows);
+        keyframeTitle_->setText(title);
+        // Con migliaia di fotogrammi chiave l'elenco si riempie a blocchi (la riga in fondo ne aggiunge altri).
+        keyframeTimes_ = info.keyframeTimes;
+        addKeyframeRows();
     } else {
         keyframeTitle_->setText(QStringLiteral("<b>Fotogrammi chiave:</b> nessun flusso video"));
     }
@@ -2136,7 +2178,7 @@ void MainWindow::resetLayout()
     if (fullScreenDock_ != nullptr)
         exitFullScreen();
     // A sinistra i file, al centro Sorgente e Montaggio affiancati, sotto la linea del tempo del montaggio.
-    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+    for (QDockWidget* dock : docks()) {
         dock->setFloating(false);
         removeDockWidget(dock);
     }
@@ -2144,7 +2186,7 @@ void MainWindow::resetLayout()
     splitDockWidget(filesDock_, sourceDock_, Qt::Horizontal);
     splitDockWidget(sourceDock_, programDock_, Qt::Horizontal);
     addDockWidget(Qt::BottomDockWidgetArea, timelineDock_);
-    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_})
+    for (QDockWidget* dock : docks())
         dock->show();
     resizeDocks({filesDock_, sourceDock_, programDock_}, {320, 590, 590}, Qt::Horizontal);
     resizeDocks({sourceDock_, timelineDock_}, {620, 230}, Qt::Vertical);
@@ -2177,7 +2219,7 @@ void MainWindow::restoreLayout()
         redockTimeline();
     // Il monitor dove stava la finestra (o un pannello staccato) potrebbe non esserci più.
     keepOnScreen(this);
-    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+    for (QDockWidget* dock : docks()) {
         if (dock->isFloating())
             keepOnScreen(dock);
     }
@@ -2198,7 +2240,7 @@ void MainWindow::keepOnScreen(QWidget* window)
 
 QDockWidget* MainWindow::dockedPanelAt(const QPoint& pos) const
 {
-    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, timelineDock_}) {
+    for (QDockWidget* dock : docks()) {
         if (dock->isVisible() && !dock->isFloating() && dock->geometry().contains(pos))
             return dock;
     }
@@ -2867,16 +2909,16 @@ QString describeStream(const core::StreamSignature& s)
 {
     if (s.kind == core::StreamKind::Video) {
         return QStringLiteral("%1%2, %3x%4, %5 fotogrammi al secondo, pixel %6")
-            .arg(QString::fromStdString(s.codec), s.profile.empty() ? QString() : QStringLiteral(" (%1)").arg(QString::fromStdString(s.profile)))
+            .arg(qs(s.codec), s.profile.empty() ? QString() : QStringLiteral(" (%1)").arg(qs(s.profile)))
             .arg(s.width)
             .arg(s.height)
-            .arg(QString::fromStdString(core::formatFrameRate(s.frameRate)), QString::fromStdString(s.pixelFormat));
+            .arg(qs(core::formatFrameRate(s.frameRate)), qs(s.pixelFormat));
     }
     return QStringLiteral("%1, %2 Hz, %3 canali%4")
-        .arg(QString::fromStdString(s.codec))
+        .arg(qs(s.codec))
         .arg(s.sampleRate)
         .arg(s.channels)
-        .arg(s.channelLayout.empty() ? QString() : QStringLiteral(" (%1)").arg(QString::fromStdString(s.channelLayout)));
+        .arg(s.channelLayout.empty() ? QString() : QStringLiteral(" (%1)").arg(qs(s.channelLayout)));
 }
 
 }  // namespace
@@ -2925,7 +2967,7 @@ void MainWindow::projectSettingsDialog()
         if (shown.empty())
             video->setText(QStringLiteral("non ancora deciso (lo darà il primo pezzo messo nel montaggio)"));
     };
-    const int current = source->findText(QString::fromStdString(project_.format().sourceName));
+    const int current = source->findText(qs(project_.format().sourceName));
     source->setCurrentIndex(current);  // -1 (nessuno) se il formato non viene da un file di adesso
     bool chosen = false;
     connect(source, &QComboBox::currentIndexChanged, &dialog, [&](int index) {
@@ -2952,7 +2994,7 @@ void MainWindow::showAbout()
     QApplication::setOverrideCursor(Qt::WaitCursor);
     QString encoders;
     for (const core::VideoEncoderInfo& info : core::availableVideoEncoders())
-        encoders += QStringLiteral("<br>• %1").arg(QString::fromStdString(core::describe(info)).toHtmlEscaped());
+        encoders += QStringLiteral("<br>• %1").arg(qs(core::describe(info)).toHtmlEscaped());
     QApplication::restoreOverrideCursor();
     if (encoders.isEmpty())
         encoders = QStringLiteral("<br>• nessuno (la ricodifica non sarà disponibile)");
@@ -2967,8 +3009,8 @@ QString versionSummary()
 {
     const core::FfmpegInfo ffmpeg = core::ffmpegInfo();
     return QStringLiteral("Qt %1  ·  FFmpeg %2 (libavformat %3, libavcodec %4)")
-        .arg(QString::fromLatin1(qVersion()), QString::fromStdString(ffmpeg.version),
-             QString::fromStdString(ffmpeg.avformat), QString::fromStdString(ffmpeg.avcodec));
+        .arg(QString::fromLatin1(qVersion()), qs(ffmpeg.version),
+             qs(ffmpeg.avformat), qs(ffmpeg.avcodec));
 }
 
 }  // namespace editor::app

@@ -352,6 +352,19 @@ double Sequence::startOf(int index) const
     return start;
 }
 
+std::vector<double> Sequence::starts() const
+{
+    std::vector<double> result;
+    result.reserve(fragments_.size());
+    double start = 0.0;
+    for (const Fragment& f : fragments_) {
+        start += f.gap;
+        result.push_back(start);
+        start += f.length();
+    }
+    return result;
+}
+
 int Sequence::indexAt(double seconds) const
 {
     double start = 0.0;

@@ -131,7 +131,9 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
                             const ReencodeOptions& reencode = {});
 
 // Problema che impedisce di usare `audioPath` come traccia sostitutiva in un file come `outputPath` (dall'estensione),
-// in italiano; vuoto se va bene. Es. audio PCM in un MP4.
-std::string replacementAudioProblem(const std::string& audioPath, const std::string& outputPath);
+// in italiano; vuoto se va bene. Es. audio PCM in un MP4. Se `durationSeconds` c'è, ci mette la durata dell'audio
+// (0 se non la dichiara), così il file non va riaperto solo per quella.
+std::string replacementAudioProblem(const std::string& audioPath, const std::string& outputPath,
+                                    double* durationSeconds = nullptr);
 
 }  // namespace editor::core
