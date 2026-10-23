@@ -92,21 +92,13 @@ enum class MuteMethod
 // Avanzamento da 0 a 1; restituire false per annullare.
 using ExportProgress = std::function<bool(double fraction)>;
 
-// I tratti `ranges` di `inputPath`, uno dopo l'altro e nell'ordine dato, in un unico file `outputPath`: come
-// exportClips con un solo file (stessi codec, taglio preciso dove serve). Il contenitore si ricava dall'estensione di
-// `outputPath`. Si copiano video e audio (non sottotitoli e dati). I percorsi sono in UTF-8.
-//
-// Nel file creato i tratti si susseguono senza buchi né sovrapposizioni: ognuno viene spostato con lo stesso valore
-// per video e audio, così la sincronia si ristabilisce a ogni giunzione (al massimo un pacchetto audio di silenzio,
-// ~20 ms, a ogni giunzione).
-//
-// Lancia MediaError (messaggio in italiano) se qualcosa non va, ExportCancelled se annullato: in entrambi i casi
-// non resta un file a metà.
-ExportResult exportSegments(const std::string& inputPath, const std::string& outputPath,
-                            const std::vector<TimeRange>& ranges, const ExportProgress& progress = {});
-
-// Come sopra, con i tratti di più file uniti uno dopo l'altro (anche di contenitori diversi), nel formato del progetto
-// (`format`; senza, quello del primo file). Ogni file si confronta con il formato (vedi classifyClip):
+// I tratti `clips` (di uno o più file, anche di contenitori diversi) uniti uno dopo l'altro e nell'ordine dato in un
+// unico file `outputPath`, nel formato del progetto (`format`; senza, quello del primo file). I percorsi sono in UTF-8.
+// Si copiano video e audio (non sottotitoli e dati). Nel file creato i tratti si susseguono senza buchi né
+// sovrapposizioni: ognuno viene spostato con lo stesso valore per video e audio, così la sincronia si ristabilisce a
+// ogni giunzione (al massimo un pacchetto audio di silenzio, ~20 ms, a ogni giunzione). Lancia MediaError (messaggio
+// in italiano) se qualcosa non va, ExportCancelled se annullato: in entrambi i casi non resta un file a metà.
+// Ogni file si confronta con il formato (vedi classifyClip):
 // - uguale: i suoi tratti si copiano così come sono;
 // - parametri di codifica H.264/HEVC diversi (es. un altro numero di fotogrammi di riferimento): si copiano, e i
 //   parametri di ogni file (SPS e PPS, per HEVC anche VPS) si ripetono nel flusso davanti a ogni suo fotogramma

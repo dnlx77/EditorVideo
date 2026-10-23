@@ -1858,10 +1858,4 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
     return preview;
 }
 
-ExportResult exportSegments(const std::string& inputPath, const std::string& outputPath,
-                            const std::vector<TimeRange>& ranges, const ExportProgress& progress)
-{
-    return exportClips({{inputPath, ranges}}, outputPath, AudioEdit{}, progress);
-}
-
 }  // namespace editor::core

@@ -72,11 +72,11 @@ public:
     }
 
 protected:
-    // Il primo messaggio di incompatibilità fra a.mkv e `other`, e il controllo che l'unione venga rifiutata.
+    // Il primo motivo per cui `other` non si copia nel formato di a.mkv, e il controllo che l'unione venga rifiutata.
     static std::string refusal(const std::string& other)
     {
-        const auto mismatches = checkCompatibility({readMediaSignature(path("a.mkv")), readMediaSignature(path(other))});
-        EXPECT_FALSE(mismatches.empty());
+        const ClipFitResult fit = classifyClip(readMediaSignature(path(other)), formatOf(readMediaSignature(path("a.mkv"))));
+        EXPECT_EQ(fit.fit, ClipFit::Reencode);
         const std::string out = path("rifiutato.mkv");
         try {
             exportClips({{path("a.mkv"), {{0.0, 2.0}}}, {path(other), {{0.0, 2.0}}}}, out, AudioEdit{});
@@ -85,7 +85,7 @@ protected:
             EXPECT_NE(std::string(e.what()).find("non si possono unire"), std::string::npos) << e.what();
         }
         EXPECT_FALSE(fs::exists(dir_ / "rifiutato.mkv"));
-        return mismatches.empty() ? std::string() : mismatches.front().message;
+        return fit.reasons.empty() ? std::string() : fit.reasons.front();
     }
 };
 
@@ -186,18 +186,17 @@ TEST_F(MultiFileJoinTest, SequenceOutOfOrderWithRepeatedFile)
 
 TEST_F(MultiFileJoinTest, DifferentResolutionIsRefused)
 {
-    EXPECT_EQ(refusal("risoluzione.mkv"), "Clip 2 (risoluzione.mkv): risoluzione 320x240 invece di 64x48");
+    EXPECT_EQ(refusal("risoluzione.mkv"), "risoluzione 320x240 invece di 64x48");
 }
 
 TEST_F(MultiFileJoinTest, DifferentCodecIsRefused)
 {
-    EXPECT_EQ(refusal("codec.mkv"), "Clip 2 (codec.mkv): codec video mpeg2video invece di mpeg4");
+    EXPECT_EQ(refusal("codec.mkv"), "codec video mpeg2video invece di mpeg4");
 }
 
 TEST_F(MultiFileJoinTest, DifferentSampleRateIsRefused)
 {
-    EXPECT_EQ(refusal("campionamento.mkv"),
-              "Clip 2 (campionamento.mkv): frequenza di campionamento 44100 Hz invece di 48000 Hz");
+    EXPECT_EQ(refusal("campionamento.mkv"), "frequenza di campionamento 44100 Hz invece di 48000 Hz");
 }
 
 TEST_F(MultiFileJoinTest, AlternatingFilesAreCheckedClipByClip)

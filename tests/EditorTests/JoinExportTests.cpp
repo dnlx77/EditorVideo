@@ -24,6 +24,7 @@ using editor::tests::sampleLuma;
 using editor::tests::SampleSpec;
 using editor::tests::SampleDirTest;
 using editor::tests::writeSampleFile;
+using editor::tests::exportSegments;
 using editor::tests::expectMonotonicPackets;
 using editor::tests::expectVideoFrames;
 

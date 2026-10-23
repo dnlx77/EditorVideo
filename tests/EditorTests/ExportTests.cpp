@@ -3,6 +3,7 @@
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
 #include "EditorCore/VideoDecoder.h"
+#include "MediaChecks.h"
 #include "SampleMedia.h"
 
 #include <gtest/gtest.h>
@@ -13,6 +14,7 @@
 
 namespace fs = std::filesystem;
 using namespace editor::core;
+using editor::tests::exportSegments;
 using editor::tests::sampleAudio;
 using editor::tests::sampleLuma;
 using editor::tests::SampleSpec;
