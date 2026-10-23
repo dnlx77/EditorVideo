@@ -2,11 +2,13 @@
 
 #include "EditorCore/Playback.h"
 
+#include <QtCore/QEvent>
 #include <QtGui/QActionGroup>
+#include <QtGui/QPainter>
+#include <QtGui/QPixmap>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QSlider>
-#include <QtWidgets/QStyle>
 #include <QtWidgets/QToolButton>
 
 #include <algorithm>
@@ -37,6 +39,85 @@ QString speedText(double speed)
     return (speed < 0 ? QStringLiteral("◀ ") : QString()) + number + QStringLiteral("×");
 }
 
+// Il simbolo `glyph` in un quadrato di `size` pixel logici, nel colore `color`.
+QPixmap glyphPixmap(TransportBar::Glyph glyph, const QColor& color, int size, qreal dpr)
+{
+    using G = TransportBar::Glyph;
+    QPixmap pixmap(QSize(size, size) * dpr);
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+    QPainter p(&pixmap);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    p.setBrush(color);
+    const qreal s = size;
+    const auto triangle = [&](qreal left, qreal right, bool pointsRight) {
+        QPolygonF t;
+        if (pointsRight)
+            t << QPointF(left, s * 0.2) << QPointF(right, s * 0.5) << QPointF(left, s * 0.8);
+        else
+            t << QPointF(right, s * 0.2) << QPointF(left, s * 0.5) << QPointF(right, s * 0.8);
+        p.drawPolygon(t);
+    };
+    const auto bar = [&](qreal x, qreal w) { p.drawRect(QRectF(x, s * 0.2, w, s * 0.6)); };
+    switch (glyph) {
+    case G::Play:
+        triangle(s * 0.28, s * 0.8, true);
+        break;
+    case G::Pause:
+        bar(s * 0.27, s * 0.16);
+        bar(s * 0.57, s * 0.16);
+        break;
+    case G::Stop:
+        p.drawRect(QRectF(s * 0.25, s * 0.25, s * 0.5, s * 0.5));
+        break;
+    case G::SkipBack:
+        bar(s * 0.18, s * 0.1);
+        triangle(s * 0.28, s * 0.55, false);
+        triangle(s * 0.55, s * 0.82, false);
+        break;
+    case G::SkipForward:
+        triangle(s * 0.18, s * 0.45, true);
+        triangle(s * 0.45, s * 0.72, true);
+        bar(s * 0.72, s * 0.1);
+        break;
+    case G::SeekBack:
+        triangle(s * 0.15, s * 0.5, false);
+        triangle(s * 0.5, s * 0.85, false);
+        break;
+    case G::SeekForward:
+        triangle(s * 0.15, s * 0.5, true);
+        triangle(s * 0.5, s * 0.85, true);
+        break;
+    case G::FrameBack:
+        triangle(s * 0.22, s * 0.62, false);
+        bar(s * 0.68, s * 0.1);
+        break;
+    case G::FrameForward:
+        bar(s * 0.22, s * 0.1);
+        triangle(s * 0.38, s * 0.78, true);
+        break;
+    case G::Volume:
+    case G::Muted: {
+        QPolygonF speaker;
+        speaker << QPointF(s * 0.15, s * 0.38) << QPointF(s * 0.3, s * 0.38) << QPointF(s * 0.5, s * 0.2)
+                << QPointF(s * 0.5, s * 0.8) << QPointF(s * 0.3, s * 0.62) << QPointF(s * 0.15, s * 0.62);
+        p.drawPolygon(speaker);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(color, std::max(1.0, s * 0.08), Qt::SolidLine, Qt::RoundCap));
+        if (glyph == G::Volume) {
+            p.drawArc(QRectF(s * 0.38, s * 0.32, s * 0.3, s * 0.36), -50 * 16, 100 * 16);
+            p.drawArc(QRectF(s * 0.36, s * 0.18, s * 0.5, s * 0.64), -50 * 16, 100 * 16);
+        } else {
+            p.drawLine(QPointF(s * 0.6, s * 0.36), QPointF(s * 0.86, s * 0.64));
+            p.drawLine(QPointF(s * 0.86, s * 0.36), QPointF(s * 0.6, s * 0.64));
+        }
+        break;
+    }
+    }
+    return pixmap;
+}
+
 }  // namespace
 
 TransportBar::TransportBar(Kind kind, QWidget* parent)
@@ -47,25 +128,20 @@ TransportBar::TransportBar(Kind kind, QWidget* parent)
     layout->setSpacing(1);
     const bool source = kind == Kind::Source;
 
-    addButton(layout, kEnds, QStringLiteral("Vai all'inizio (Home)"), &onStart)
-        ->setIcon(style()->standardIcon(QStyle::SP_MediaSkipBackward));
-    addButton(layout, kMarks, QStringLiteral("%1 precedente (Maiusc+←)").arg(source ? QStringLiteral("Fotogramma chiave")
-                                                                                    : QStringLiteral("Taglio")),
-              &onPreviousMark)
-        ->setIcon(style()->standardIcon(QStyle::SP_MediaSeekBackward));
-    addButton(layout, kEssential, QStringLiteral("Fotogramma precedente (←)"), &onPreviousFrame)
-        ->setText(QStringLiteral("◀|"));
+    const QString mark = source ? QStringLiteral("Fotogramma chiave") : QStringLiteral("Taglio");
+    setGlyph(addButton(layout, kEnds, QStringLiteral("Vai all'inizio (Home)"), &onStart), Glyph::SkipBack);
+    setGlyph(addButton(layout, kMarks, QStringLiteral("%1 precedente (Maiusc+←)").arg(mark), &onPreviousMark),
+             Glyph::SeekBack);
+    setGlyph(addButton(layout, kEssential, QStringLiteral("Fotogramma precedente (←)"), &onPreviousFrame),
+             Glyph::FrameBack);
     play_ = addButton(layout, kEssential, QString(), &onPlayPause);
-    addButton(layout, kStop, QStringLiteral("Stop: ferma e torna dove era partita la riproduzione"), &onStop)
-        ->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
-    addButton(layout, kEssential, QStringLiteral("Fotogramma successivo (→)"), &onNextFrame)
-        ->setText(QStringLiteral("|▶"));
-    addButton(layout, kMarks, QStringLiteral("%1 successivo (Maiusc+→)").arg(source ? QStringLiteral("Fotogramma chiave")
-                                                                                   : QStringLiteral("Taglio")),
-              &onNextMark)
-        ->setIcon(style()->standardIcon(QStyle::SP_MediaSeekForward));
-    addButton(layout, kEnds, QStringLiteral("Vai alla fine (Fine)"), &onEnd)
-        ->setIcon(style()->standardIcon(QStyle::SP_MediaSkipForward));
+    setGlyph(addButton(layout, kStop, QStringLiteral("Stop: ferma e torna dove era partita la riproduzione"), &onStop),
+             Glyph::Stop);
+    setGlyph(addButton(layout, kEssential, QStringLiteral("Fotogramma successivo (→)"), &onNextFrame),
+             Glyph::FrameForward);
+    setGlyph(addButton(layout, kMarks, QStringLiteral("%1 successivo (Maiusc+→)").arg(mark), &onNextMark),
+             Glyph::SeekForward);
+    setGlyph(addButton(layout, kEnds, QStringLiteral("Vai alla fine (Fine)"), &onEnd), Glyph::SkipForward);
 
     if (source) {
         layout->addSpacing(8);
@@ -161,6 +237,43 @@ QToolButton* TransportBar::addButton(QHBoxLayout* layout, int priority, const QS
     return button;
 }
 
+void TransportBar::setGlyph(QToolButton* button, Glyph glyph)
+{
+    const auto known = std::find_if(glyphs_.begin(), glyphs_.end(), [button](const auto& g) { return g.first == button; });
+    if (known != glyphs_.end()) {
+        if (known->second == glyph && !button->icon().isNull())
+            return;
+        known->second = glyph;
+    } else {
+        glyphs_.emplace_back(button, glyph);
+    }
+    // Colore del testo del tema (chiaro sul tema scuro); più tenue se il pulsante è disattivato.
+    const QPalette palette = button->palette();
+    const int size = button->iconSize().height();
+    const qreal dpr = devicePixelRatioF();
+    QIcon icon;
+    icon.addPixmap(glyphPixmap(glyph, palette.color(QPalette::Active, QPalette::ButtonText), size, dpr), QIcon::Normal);
+    icon.addPixmap(glyphPixmap(glyph, palette.color(QPalette::Disabled, QPalette::ButtonText), size, dpr), QIcon::Disabled);
+    button->setIcon(icon);
+}
+
+void TransportBar::updateIcons()
+{
+    const auto glyphs = glyphs_;
+    for (auto& g : glyphs_)
+        g.first->setIcon(QIcon());  // forza il ridisegno
+    for (const auto& [button, glyph] : glyphs)
+        setGlyph(button, glyph);
+}
+
+void TransportBar::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    // Tema chiaro/scuro di Windows cambiato, o finestra spostata su un monitor con un'altra scala.
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange)
+        updateIcons();
+}
+
 void TransportBar::setInfoWidget(QWidget* widget)
 {
     info_ = widget;
@@ -176,7 +289,7 @@ void TransportBar::setMediaEnabled(bool enabled)
 void TransportBar::setPlaying(bool playing)
 {
     playing_ = playing;
-    play_->setIcon(style()->standardIcon(playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+    setGlyph(play_, playing ? Glyph::Pause : Glyph::Play);
     play_->setToolTip(playing ? QStringLiteral("Pausa (Spazio, K)") : QStringLiteral("Riproduci (Spazio)"));
 }
 
@@ -200,7 +313,7 @@ void TransportBar::setVolume(int percent, bool muted)
         const QSignalBlocker block(volume_);
         volume_->setValue(percent);
     }
-    mute_->setIcon(style()->standardIcon(muted || percent == 0 ? QStyle::SP_MediaVolumeMuted : QStyle::SP_MediaVolume));
+    setGlyph(mute_, muted || percent == 0 ? Glyph::Muted : Glyph::Volume);
     mute_->setToolTip(muted ? QStringLiteral("Riattiva l'audio dell'anteprima") : QStringLiteral("Togli l'audio dell'anteprima"));
 }
 

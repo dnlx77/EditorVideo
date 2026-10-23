@@ -3,6 +3,7 @@
 #include <QtWidgets/QWidget>
 
 #include <functional>
+#include <utility>
 #include <vector>
 
 class QHBoxLayout;
@@ -62,11 +63,31 @@ public:
 
     QSize minimumSizeHint() const override;
 
+    // Simboli dei pulsanti, disegnati nel colore del testo del tema (le icone standard sono nere, sul tema scuro non si
+    // vedono).
+    enum class Glyph
+    {
+        SkipBack,
+        SeekBack,
+        FrameBack,
+        Play,
+        Pause,
+        Stop,
+        FrameForward,
+        SeekForward,
+        SkipForward,
+        Volume,
+        Muted,
+    };
+
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private:
     QToolButton* addButton(QHBoxLayout* layout, int priority, const QString& tip, std::function<void()>* action);
+    void setGlyph(QToolButton* button, Glyph glyph);
+    void updateIcons();  // ridisegna i simboli (es. il tema è cambiato)
     void updateVisibility();  // nasconde i pulsanti che non ci stanno, dal meno importante
 
     struct Item
@@ -75,6 +96,7 @@ private:
         int priority = 0;  // più alto = resta visibile più a lungo
     };
     std::vector<Item> items_;
+    std::vector<std::pair<QToolButton*, Glyph>> glyphs_;
     QWidget* info_ = nullptr;
     QHBoxLayout* infoSlot_ = nullptr;
     QToolButton* play_ = nullptr;
