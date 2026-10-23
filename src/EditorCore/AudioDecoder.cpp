@@ -14,15 +14,6 @@ namespace editor::core {
 
 using namespace detail;
 
-namespace {
-
-struct SwrDeleter
-{
-    void operator()(SwrContext* ctx) const { swr_free(&ctx); }
-};
-
-}  // namespace
-
 // Il file aperto (fmt, stream, index, codec, timeBase, startOffset) viene da OpenedStream.
 struct AudioDecoder::Impl : OpenedStream
 {
@@ -77,10 +68,7 @@ struct AudioDecoder::Impl : OpenedStream
     void configureResampler(const AVFrame* f)
     {
         AVChannelLayout inLayout = {};
-        if (f->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
-            av_channel_layout_default(&inLayout, f->ch_layout.nb_channels);
-        else
-            av_channel_layout_copy(&inLayout, &f->ch_layout);
+        defaultOrCopyLayout(&inLayout, f->ch_layout);
 
         if (swr && f->format == swrInFormat && f->sample_rate == swrInRate
             && av_channel_layout_compare(&inLayout, &swrInLayout) == 0) {
@@ -162,7 +150,7 @@ std::optional<AudioChunk> AudioDecoder::next()
     Impl& d = *impl_;
     while (d.decodeNext()) {
         AVFrame* f = d.frame.get();
-        const std::int64_t ts = f->best_effort_timestamp != AV_NOPTS_VALUE ? f->best_effort_timestamp : f->pts;
+        const std::int64_t ts = frameTimestamp(f);
         const double time = ts != AV_NOPTS_VALUE ? ts * d.timeBase - d.startOffset : d.nextTime;
 
         d.configureResampler(f);

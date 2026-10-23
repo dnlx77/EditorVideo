@@ -13,4 +13,14 @@ std::string utf8FromPath(const std::filesystem::path& path);
 // Solo il nome del file (con l'estensione), in UTF-8.
 std::string fileNameOf(const std::string& utf8Path);
 
+// Il testo con le lettere ASCII in minuscolo (per confrontare nomi di file e estensioni).
+std::string lowercase(std::string text);
+
+// Chiave per riconoscere lo stesso file: percorso assoluto e normalizzato; su Windows maiuscole e minuscole non
+// contano, né "/" o "\".
+std::string sameFileKey(const std::string& utf8Path);
+
+// true se i due percorsi indicano lo stesso file (anche se uno dei due non esiste ancora, come il file da creare).
+bool samePath(const std::string& a, const std::string& b);
+
 }  // namespace editor::core

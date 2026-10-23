@@ -48,16 +48,6 @@ constexpr Candidate kCandidates[] = {
 
 constexpr int kAudioBitRate = 192000;  // AAC, bit al secondo
 
-struct SwsDeleter
-{
-    void operator()(SwsContext* ctx) const { sws_freeContext(ctx); }
-};
-
-struct SwrDeleter
-{
-    void operator()(SwrContext* ctx) const { swr_free(&ctx); }
-};
-
 struct FifoDeleter
 {
     void operator()(AVAudioFifo* fifo) const { av_audio_fifo_free(fifo); }
@@ -164,12 +154,11 @@ CodecContextPtr openVideo(const Candidate& candidate, const VideoEncoderSettings
 
 // Manda un fotogramma (o nullptr = fine) e passa a `sink` i pacchetti pronti. Alcuni encoder (Media Foundation)
 // accettano un nuovo fotogramma solo dopo aver dato i pacchetti: si alternano invio e ricezione.
-void sendAndDrain(AVCodecContext* ctx, const AVFrame* frame, const PacketSink& sink)
+void sendAndDrain(AVCodecContext* ctx, const AVFrame* frame, const PacketSink& sink, AVPacket* packet)
 {
-    PacketPtr packet(av_packet_alloc());
     const auto drain = [&](bool untilEnd) {
         for (;;) {
-            const int ret = avcodec_receive_packet(ctx, packet.get());
+            const int ret = avcodec_receive_packet(ctx, packet);
             if (ret == AVERROR(EAGAIN) && !untilEnd)
                 return;
             if (ret == AVERROR_EOF)
@@ -179,20 +168,20 @@ void sendAndDrain(AVCodecContext* ctx, const AVFrame* frame, const PacketSink& s
             if (ret < 0)
                 throw MediaError("Errore dell'encoder: " + ffmpegError(ret));
             if (sink)
-                sink(packet.get());
-            av_packet_unref(packet.get());
+                sink(packet);
+            av_packet_unref(packet);
         }
     };
     for (;;) {
         const int ret = avcodec_send_frame(ctx, frame);
         if (ret == AVERROR(EAGAIN)) {
-            const int got = avcodec_receive_packet(ctx, packet.get());
+            const int got = avcodec_receive_packet(ctx, packet);
             if (got < 0 && got != AVERROR(EAGAIN))
                 throw MediaError("Errore dell'encoder: " + ffmpegError(got));
             if (got >= 0) {
                 if (sink)
-                    sink(packet.get());
-                av_packet_unref(packet.get());
+                    sink(packet);
+                av_packet_unref(packet);
             }
             continue;
         }
@@ -201,6 +190,32 @@ void sendAndDrain(AVCodecContext* ctx, const AVFrame* frame, const PacketSink& s
         break;
     }
     drain(frame == nullptr);
+}
+
+// Come sopra, con un pacchetto usato solo per questa chiamata (per i pochi fotogrammi di una prova).
+void sendAndDrain(AVCodecContext* ctx, const AVFrame* frame, const PacketSink& sink)
+{
+    PacketPtr packet(av_packet_alloc());
+    if (!packet)
+        throw MediaError("Memoria insufficiente per l'encoder.");
+    sendAndDrain(ctx, frame, sink, packet.get());
+}
+
+// Fotogramma di lavoro da riusare: la prima volta (o se cambiano formato o misura) alloca i buffer, poi basta renderlo
+// scrivibile (se l'encoder tiene ancora un riferimento ai dati, ne prende di nuovi).
+void prepareBuffer(AVFrame* frame, AVPixelFormat format, int width, int height)
+{
+    if (frame->buf[0] != nullptr && frame->format == format && frame->width == width && frame->height == height) {
+        if (av_frame_make_writable(frame) < 0)
+            throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
+        return;
+    }
+    av_frame_unref(frame);
+    frame->format = format;
+    frame->width = width;
+    frame->height = height;
+    if (av_frame_get_buffer(frame, 0) < 0)
+        throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
 }
 
 // Prova vera: l'encoder si apre e codifica un fotogramma.
@@ -220,22 +235,8 @@ bool works(const Candidate& candidate)
         frame->height = ctx->height;
         if (av_frame_get_buffer(frame.get(), 0) < 0)
             return false;
-        // Nero (range TV): luminanza 16, colore 128.
-        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(ctx->pix_fmt);
-        for (int plane = 0; plane < 4 && frame->data[plane] != nullptr; ++plane) {
-            const int rows = plane == 0 ? frame->height : AV_CEIL_RSHIFT(frame->height, desc->log2_chroma_h);
-            const bool is16 = desc->comp[0].depth > 8;
-            const int value = plane == 0 ? 16 : 128;
-            for (int y = 0; y < rows; ++y) {
-                std::uint8_t* row = frame->data[plane] + static_cast<std::ptrdiff_t>(y) * frame->linesize[plane];
-                if (is16) {
-                    auto* p = reinterpret_cast<std::uint16_t*>(row);
-                    std::fill(p, p + frame->linesize[plane] / 2, static_cast<std::uint16_t>(value << (desc->comp[0].depth - 8)));
-                } else {
-                    std::fill(row, row + frame->linesize[plane], static_cast<std::uint8_t>(value));
-                }
-            }
-        }
+        const std::ptrdiff_t linesizes[4] = {frame->linesize[0], frame->linesize[1], frame->linesize[2], frame->linesize[3]};
+        av_image_fill_black(frame->data, linesizes, ctx->pix_fmt, AVCOL_RANGE_MPEG, ctx->width, ctx->height);
         frame->pts = 0;
         int packets = 0;
         const PacketSink count = [&](AVPacket*) { ++packets; };
@@ -353,6 +354,23 @@ struct VideoEncoder::Impl
     CodecContextPtr ctx;
     std::unique_ptr<SwsContext, SwsDeleter> sws;
     bool finished = false;
+
+    // Tenuti fra un fotogramma e l'altro per non allocare ogni volta.
+    PacketPtr packet{av_packet_alloc()};
+    FramePtr referenced{av_frame_alloc()};  // fotogramma già nel formato dell'encoder: solo un riferimento
+    FramePtr converted{av_frame_alloc()};   // fotogramma convertito alla misura e al formato dell'encoder
+    FramePtr fitted{av_frame_alloc()};      // immagine ridimensionata, prima di metterla fra le bande nere
+    // Con cui è preparato `sws`: formato, misura di ingresso e di uscita, gamma dei colori.
+    struct SwsKey
+    {
+        int format = -1;
+        int width = 0;
+        int height = 0;
+        int outWidth = 0;
+        int outHeight = 0;
+        bool fullRange = false;
+        bool operator==(const SwsKey&) const = default;
+    } swsKey;
 };
 
 VideoEncoder::VideoEncoder(const VideoEncoderSettings& settings)
@@ -360,6 +378,8 @@ VideoEncoder::VideoEncoder(const VideoEncoderSettings& settings)
 {
     if (settings.width <= 0 || settings.height <= 0)
         throw MediaError("Misure del video da codificare non valide.");
+    if (!impl_->packet || !impl_->referenced || !impl_->converted || !impl_->fitted)
+        throw MediaError("Memoria insufficiente per l'encoder video.");
     std::vector<VideoEncoderInfo> choices;
     for (const VideoEncoderInfo& info : workingEncoders(settings.codec)) {
         if (!settings.backend || info.backend == *settings.backend)
@@ -417,19 +437,18 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
         source = software.get();
     }
 
-    FramePtr work(av_frame_alloc());
+    AVFrame* work = nullptr;
     if (source->format == ctx->pix_fmt && source->width == ctx->width && source->height == ctx->height
         && source->color_range != AVCOL_RANGE_JPEG) {
-        if (av_frame_ref(work.get(), source) < 0)
+        work = impl_->referenced.get();
+        av_frame_unref(work);
+        if (av_frame_ref(work, source) < 0)
             throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
     } else {
         // Formato o misura diversi: conversione. Le proporzioni dell'immagine restano quelle dell'originale (con le
         // proporzioni dei suoi pixel): se sono diverse da quelle del video codificato, bande nere ai lati o sopra e sotto.
-        work->format = ctx->pix_fmt;
-        work->width = ctx->width;
-        work->height = ctx->height;
-        if (av_frame_get_buffer(work.get(), 0) < 0)
-            throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
+        work = impl_->converted.get();
+        prepareBuffer(work, ctx->pix_fmt, ctx->width, ctx->height);
         const AVRational sar = source->sample_aspect_ratio.num > 0 ? source->sample_aspect_ratio : AVRational{1, 1};
         const double aspect = static_cast<double>(source->width) * sar.num / (static_cast<double>(source->height) * sar.den);
         int width = ctx->width;
@@ -452,17 +471,18 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
                                               ctx->pix_fmt, SWS_BICUBIC, nullptr, nullptr, nullptr));
         if (!impl_->sws)
             throw MediaError("Conversione del fotogramma da codificare non possibile.");
-        const int* coefficients = sws_getCoefficients(SWS_CS_DEFAULT);
-        sws_setColorspaceDetails(impl_->sws.get(), coefficients, fullRange ? 1 : 0, coefficients, 0, 0, 1 << 16, 1 << 16);
+        // I colori si dicono al convertitore solo quando cambia qualcosa (di solito mai dopo il primo fotogramma).
+        const Impl::SwsKey key{sourceFormat, source->width, source->height, width, height, fullRange};
+        if (!(key == impl_->swsKey)) {
+            const int* coefficients = sws_getCoefficients(SWS_CS_DEFAULT);
+            sws_setColorspaceDetails(impl_->sws.get(), coefficients, fullRange ? 1 : 0, coefficients, 0, 0, 1 << 16, 1 << 16);
+            impl_->swsKey = key;
+        }
         if (width == ctx->width && height == ctx->height) {
             sws_scale(impl_->sws.get(), source->data, source->linesize, 0, source->height, work->data, work->linesize);
         } else {
-            FramePtr fitted(av_frame_alloc());
-            fitted->format = ctx->pix_fmt;
-            fitted->width = width;
-            fitted->height = height;
-            if (av_frame_get_buffer(fitted.get(), 0) < 0)
-                throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
+            AVFrame* fitted = impl_->fitted.get();
+            prepareBuffer(fitted, ctx->pix_fmt, width, height);
             sws_scale(impl_->sws.get(), source->data, source->linesize, 0, source->height, fitted->data, fitted->linesize);
             // Nero dappertutto, poi l'immagine al centro (in posizioni pari, per il colore sottocampionato).
             const std::ptrdiff_t linesizes[4] = {work->linesize[0], work->linesize[1], work->linesize[2], work->linesize[3]};
@@ -480,7 +500,7 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
                                     work->linesize[plane], fitted->data[plane], fitted->linesize[plane], bytes, rows);
             }
         }
-        av_frame_copy_props(work.get(), source);
+        av_frame_copy_props(work, source);
         work->sample_aspect_ratio = {1, 1};
     }
     work->pts = frame->pts;
@@ -489,7 +509,8 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
         work->flags |= AV_FRAME_FLAG_KEY;
     else
         work->flags &= ~AV_FRAME_FLAG_KEY;
-    sendAndDrain(ctx, work.get(), sink);
+    sendAndDrain(ctx, work, sink, impl_->packet.get());
+    av_frame_unref(impl_->referenced.get());  // non tiene in vita il fotogramma dell'originale fino al prossimo
 }
 
 void VideoEncoder::finish(const PacketSink& sink)
@@ -497,7 +518,7 @@ void VideoEncoder::finish(const PacketSink& sink)
     if (impl_->finished)
         return;
     impl_->finished = true;
-    sendAndDrain(impl_->ctx.get(), nullptr, sink);
+    sendAndDrain(impl_->ctx.get(), nullptr, sink, impl_->packet.get());
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -515,6 +536,12 @@ struct AudioEncoder::Impl
     std::int64_t nextPts = 0;  // campioni già mandati all'encoder
     bool finished = false;
 
+    // Tenuti fra una chiamata e l'altra per non allocare ogni volta.
+    PacketPtr packet{av_packet_alloc()};
+    FramePtr block{av_frame_alloc()};      // il blocco di frame_size campioni che va all'encoder
+    FramePtr converted{av_frame_alloc()};  // l'audio in ingresso convertito, prima di metterlo in coda
+    int convertedCapacity = 0;             // campioni che stanno in `converted`
+
     ~Impl() { av_channel_layout_uninit(&inLayout); }
 
     // Manda all'encoder blocchi di frame_size campioni dalla coda (anche l'ultimo, più corto, se `all`).
@@ -523,17 +550,22 @@ struct AudioEncoder::Impl
         const int size = ctx->frame_size > 0 ? ctx->frame_size : 1024;
         while (av_audio_fifo_size(fifo.get()) >= size || (all && av_audio_fifo_size(fifo.get()) > 0)) {
             const int n = std::min(size, av_audio_fifo_size(fifo.get()));
-            FramePtr frame(av_frame_alloc());
-            frame->nb_samples = n;
-            frame->format = ctx->sample_fmt;
-            frame->sample_rate = ctx->sample_rate;
-            av_channel_layout_copy(&frame->ch_layout, &ctx->ch_layout);
-            if (av_frame_get_buffer(frame.get(), 0) < 0)
-                throw MediaError("Memoria insufficiente per l'audio da codificare.");
+            AVFrame* frame = block.get();
+            frame->nb_samples = size;
+            if (frame->buf[0] != nullptr) {
+                if (av_frame_make_writable(frame) < 0)
+                    throw MediaError("Memoria insufficiente per l'audio da codificare.");
+            } else {
+                frame->format = ctx->sample_fmt;
+                frame->sample_rate = ctx->sample_rate;
+                if (av_channel_layout_copy(&frame->ch_layout, &ctx->ch_layout) < 0 || av_frame_get_buffer(frame, 0) < 0)
+                    throw MediaError("Memoria insufficiente per l'audio da codificare.");
+            }
+            frame->nb_samples = n;  // l'ultimo blocco può essere più corto: il buffer resta quello intero
             av_audio_fifo_read(fifo.get(), reinterpret_cast<void**>(frame->data), n);
             frame->pts = nextPts;
             nextPts += n;
-            sendAndDrain(ctx.get(), frame.get(), sink);
+            sendAndDrain(ctx.get(), frame, sink, packet.get());
         }
     }
 };
@@ -545,6 +577,8 @@ AudioEncoder::AudioEncoder(const AudioEncoderSettings& settings)
     if (codec == nullptr)
         throw MediaError("Encoder AAC non presente in questa versione di FFmpeg.");
     impl_->ctx.reset(avcodec_alloc_context3(codec));
+    if (!impl_->ctx || !impl_->packet || !impl_->block || !impl_->converted)
+        throw MediaError("Memoria insufficiente per l'encoder AAC.");
     AVCodecContext* ctx = impl_->ctx.get();
     ctx->sample_rate = settings.sampleRate;
     ctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
@@ -592,15 +626,18 @@ void AudioEncoder::encode(const AVFrame* frame, const PacketSink& sink)
         av_channel_layout_uninit(&impl_->inLayout);
         av_channel_layout_copy(&impl_->inLayout, &frame->ch_layout);
     }
-    const int capacity = swr_get_out_samples(impl_->swr.get(), frame->nb_samples);
-    FramePtr converted(av_frame_alloc());
-    converted->nb_samples = std::max(capacity, 1);
-    converted->format = ctx->sample_fmt;
-    converted->sample_rate = ctx->sample_rate;
-    av_channel_layout_copy(&converted->ch_layout, &ctx->ch_layout);
-    if (av_frame_get_buffer(converted.get(), 0) < 0)
-        throw MediaError("Memoria insufficiente per l'audio da codificare.");
-    const int got = swr_convert(impl_->swr.get(), converted->data, converted->nb_samples,
+    const int capacity = std::max(swr_get_out_samples(impl_->swr.get(), frame->nb_samples), 1);
+    AVFrame* converted = impl_->converted.get();
+    if (capacity > impl_->convertedCapacity) {  // si rialloca solo se serve più spazio di prima
+        av_frame_unref(converted);
+        converted->nb_samples = capacity;
+        converted->format = ctx->sample_fmt;
+        converted->sample_rate = ctx->sample_rate;
+        if (av_channel_layout_copy(&converted->ch_layout, &ctx->ch_layout) < 0 || av_frame_get_buffer(converted, 0) < 0)
+            throw MediaError("Memoria insufficiente per l'audio da codificare.");
+        impl_->convertedCapacity = capacity;
+    }
+    const int got = swr_convert(impl_->swr.get(), converted->data, impl_->convertedCapacity,
                                 const_cast<const std::uint8_t**>(frame->extended_data), frame->nb_samples);
     if (got < 0)
         throw MediaError("Conversione dell'audio da codificare non riuscita.");
@@ -628,7 +665,7 @@ void AudioEncoder::finish(const PacketSink& sink)
         }
     }
     impl_->sendQueued(true, sink);
-    sendAndDrain(ctx, nullptr, sink);
+    sendAndDrain(ctx, nullptr, sink, impl_->packet.get());
 }
 
 }  // namespace editor::core

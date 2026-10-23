@@ -82,7 +82,7 @@ std::vector<double> readKeyframes(AVFormatContext* fmt, int streamIndex, const s
         }
 
         if (packet->stream_index == streamIndex && (packet->flags & AV_PKT_FLAG_KEY) != 0) {
-            const std::int64_t ts = packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts;
+            const std::int64_t ts = packetTimestamp(packet.get());
             if (ts != AV_NOPTS_VALUE)
                 times.push_back(ts * timeBase - startOffset);
         }

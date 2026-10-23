@@ -3,6 +3,7 @@
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/H264Params.h"
+#include "EditorCore/NalUnits.h"
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/TimeUtil.h"
 
@@ -78,12 +79,6 @@ struct StreamCopy
     std::vector<std::uint8_t> silence;  // un blocco di silenzio codificato; vuoto = non disponibile
 };
 
-std::string lowercase(std::string text)
-{
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return text;
-}
-
 std::string uppercase(std::string text)
 {
     std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
@@ -116,69 +111,15 @@ void shiftPacket(AVPacket* pkt, std::int64_t shift)
         pkt->dts -= shift;
 }
 
-// Parametri di codifica di un file H.264 o HEVC, da ripetere nel flusso: i NAL (SPS e PPS, per HEVC anche VPS) e quanti
-// byte misura la lunghezza davanti a ogni NAL nei pacchetti.
-struct ParameterSets
-{
-    int lengthSize = 4;
-    std::vector<std::vector<std::uint8_t>> nals;
-};
+using nal::ParameterSets;
 
 // Dai "dati extra" in formato avcC / hvcC (MP4, MKV). std::nullopt se sono in un altro formato (es. Annex B).
 std::optional<ParameterSets> parameterSetsOf(AVCodecID codec, const std::vector<std::uint8_t>& extra)
 {
-    ParameterSets out;
-    std::size_t pos = 0;
-    const auto be16 = [&](std::size_t at) { return static_cast<std::size_t>(extra[at] << 8 | extra[at + 1]); };
-    // Un NAL preceduto da 2 byte di lunghezza; `keep` = da tenere.
-    const auto takeNal = [&](bool keep) {
-        if (pos + 2 > extra.size())
-            return false;
-        const std::size_t length = be16(pos);
-        pos += 2;
-        if (pos + length > extra.size())
-            return false;
-        if (keep)
-            out.nals.emplace_back(extra.begin() + static_cast<std::ptrdiff_t>(pos),
-                                  extra.begin() + static_cast<std::ptrdiff_t>(pos + length));
-        pos += length;
-        return true;
-    };
-    if (codec == AV_CODEC_ID_H264) {
-        if (extra.size() < 7 || extra[0] != 1)
-            return std::nullopt;
-        out.lengthSize = (extra[4] & 3) + 1;
-        pos = 5;
-        for (int list = 0; list < 2; ++list) {  // prima gli SPS, poi i PPS
-            if (pos >= extra.size())
-                return std::nullopt;
-            const int count = list == 0 ? (extra[pos++] & 0x1f) : extra[pos++];
-            for (int i = 0; i < count; ++i) {
-                if (!takeNal(true))
-                    return std::nullopt;
-            }
-        }
-        return out;
-    }
-    if (codec == AV_CODEC_ID_HEVC) {
-        if (extra.size() < 23 || extra[0] != 1)
-            return std::nullopt;
-        out.lengthSize = (extra[21] & 3) + 1;
-        const int arrays = extra[22];
-        pos = 23;
-        for (int a = 0; a < arrays; ++a) {
-            if (pos + 3 > extra.size())
-                return std::nullopt;
-            const int type = extra[pos] & 0x3f;
-            const std::size_t count = be16(pos + 1);
-            pos += 3;
-            for (std::size_t i = 0; i < count; ++i) {
-                if (!takeNal(type == 32 || type == 33 || type == 34))  // VPS, SPS, PPS
-                    return std::nullopt;
-            }
-        }
-        return out;
-    }
+    if (codec == AV_CODEC_ID_H264)
+        return nal::readAvcC(extra);
+    if (codec == AV_CODEC_ID_HEVC)
+        return nal::readHvcC(extra);
     return std::nullopt;
 }
 
@@ -188,14 +129,8 @@ bool rewriteNals(AVPacket* pkt, int fromSize, int toSize, const std::vector<std:
 {
     std::vector<std::uint8_t> data;
     data.reserve(static_cast<std::size_t>(pkt->size) + 256);
-    const auto putLength = [&](std::size_t length) {
-        for (int b = toSize - 1; b >= 0; --b)
-            data.push_back(static_cast<std::uint8_t>(length >> (8 * b)));
-    };
-    for (const auto& nal : prefix) {
-        putLength(nal.size());
-        data.insert(data.end(), nal.begin(), nal.end());
-    }
+    for (const auto& unit : prefix)
+        nal::appendLengthPrefixed(data, unit.data(), unit.size(), toSize);
     std::size_t pos = 0;
     const auto size = static_cast<std::size_t>(pkt->size);
     while (pos < size) {
@@ -207,43 +142,11 @@ bool rewriteNals(AVPacket* pkt, int fromSize, int toSize, const std::vector<std:
         pos += static_cast<std::size_t>(fromSize);
         if (pos + length > size || (toSize < 4 && length >> (8 * toSize) != 0))
             return false;
-        putLength(length);
-        data.insert(data.end(), pkt->data + pos, pkt->data + pos + length);
+        nal::appendLengthPrefixed(data, pkt->data + pos, length, toSize);
         pos += length;
     }
     replacePacketData(pkt, data.data(), data.size());
     return true;
-}
-
-// NAL di un flusso Annex B (con i codici di inizio 00 00 01 / 00 00 00 01).
-std::vector<std::vector<std::uint8_t>> splitAnnexB(const std::uint8_t* data, std::size_t size)
-{
-    std::vector<std::vector<std::uint8_t>> nals;
-    std::size_t i = 0;
-    std::size_t begin = std::string::npos;
-    while (i + 2 < size) {
-        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
-            if (begin != std::string::npos) {
-                std::size_t end = i;
-                while (end > begin && data[end - 1] == 0)
-                    --end;  // gli zeri prima del codice di inizio non fanno parte del NAL
-                nals.emplace_back(data + begin, data + end);
-            }
-            i += 3;
-            begin = i;
-            continue;
-        }
-        ++i;
-    }
-    if (begin != std::string::npos && begin < size)
-        nals.emplace_back(data + begin, data + size);
-    return nals;
-}
-
-bool startsWithStartCode(const std::uint8_t* data, std::size_t size)
-{
-    return (size >= 3 && data[0] == 0 && data[1] == 0 && data[2] == 1)
-        || (size >= 4 && data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 1);
 }
 
 // Parametri di codifica (SPS/PPS, per HEVC anche VPS) dai "dati extra", in avcC/hvcC o in Annex B (come li danno
@@ -253,13 +156,11 @@ std::optional<ParameterSets> parameterNalsOf(AVCodecID codec, const std::vector<
     if (!extra.empty() && extra[0] == 1)
         return parameterSetsOf(codec, extra);
     ParameterSets sets;
-    for (auto& nal : splitAnnexB(extra.data(), extra.size())) {
-        if (nal.empty())
-            continue;
-        const int type = codec == AV_CODEC_ID_HEVC ? (nal[0] >> 1) & 0x3f : nal[0] & 0x1f;
+    for (auto& unit : nal::splitAnnexB(extra.data(), extra.size())) {
+        const int type = codec == AV_CODEC_ID_HEVC ? (unit[0] >> 1) & 0x3f : unit[0] & 0x1f;
         const bool parameter = codec == AV_CODEC_ID_HEVC ? (type == 32 || type == 33 || type == 34) : (type == 7 || type == 8);
         if (parameter)
-            sets.nals.push_back(std::move(nal));
+            sets.nals.push_back(std::move(unit));
     }
     if (sets.nals.empty())
         return std::nullopt;
@@ -270,40 +171,21 @@ std::optional<ParameterSets> parameterNalsOf(AVCodecID codec, const std::vector<
 // NAL di `prefix`.
 bool encodedToLengthPrefixed(AVPacket* pkt, int toSize, const std::vector<std::vector<std::uint8_t>>& prefix)
 {
-    if (!startsWithStartCode(pkt->data, static_cast<std::size_t>(pkt->size)))
+    if (!nal::startsWithStartCode(pkt->data, static_cast<std::size_t>(pkt->size)))
         return rewriteNals(pkt, 4, toSize, prefix);
-    std::vector<std::vector<std::uint8_t>> nals = prefix;
-    for (auto& nal : splitAnnexB(pkt->data, static_cast<std::size_t>(pkt->size))) {
-        if (!nal.empty())
-            nals.push_back(std::move(nal));
-    }
     std::vector<std::uint8_t> data;
-    for (const auto& nal : nals) {
-        for (int b = toSize - 1; b >= 0; --b)
-            data.push_back(static_cast<std::uint8_t>(nal.size() >> (8 * b)));
-        data.insert(data.end(), nal.begin(), nal.end());
-    }
+    for (const auto& unit : prefix)
+        nal::appendLengthPrefixed(data, unit.data(), unit.size(), toSize);
+    for (const auto& unit : nal::splitAnnexB(pkt->data, static_cast<std::size_t>(pkt->size)))
+        nal::appendLengthPrefixed(data, unit.data(), unit.size(), toSize);
     replacePacketData(pkt, data.data(), data.size());
     return true;
-}
-
-bool sameAudio(const StreamSignature& a, const StreamSignature& b)
-{
-    return a.codec == b.codec && a.sampleRate == b.sampleRate && a.channels == b.channels
-        && a.channelLayout == b.channelLayout && a.extradata == b.extradata;
 }
 
 AVCodecID codecIdOf(const std::string& name)
 {
     const AVCodecDescriptor* desc = avcodec_descriptor_get_by_name(name.c_str());
     return desc != nullptr ? desc->id : AV_CODEC_ID_NONE;
-}
-
-const StreamSignature* streamOf(const MediaSignature& signature, StreamKind kind)
-{
-    const auto it = std::find_if(signature.streams.begin(), signature.streams.end(),
-                                 [kind](const StreamSignature& s) { return s.kind == kind; });
-    return it == signature.streams.end() ? nullptr : &*it;
 }
 
 // Una parte di un tratto: copiata o ricodificata.
@@ -321,28 +203,27 @@ struct Piece
 // chiave da cui copiare.
 std::vector<Piece> splitForPreciseCut(const TimeRange& range, const std::vector<double>& keyframes, bool bFrames)
 {
-    constexpr double kOnKeyframe = 1e-3;  // entro un millesimo: è lo stesso fotogramma
-    const auto first = std::lower_bound(keyframes.begin(), keyframes.end(), range.start - kOnKeyframe);
-    if (first == keyframes.end() || *first >= range.end - kOnKeyframe)
+    const auto first = std::lower_bound(keyframes.begin(), keyframes.end(), range.start - kTimeEpsilon);
+    if (first == keyframes.end() || *first >= range.end - kTimeEpsilon)
         return {{range, true}};
     const double copyStart = std::max(*first, range.start);
     double copyEnd = range.end;
     if (bFrames) {
         // OUT su un fotogramma chiave: fino lì si copia. Altrimenti si copia fino all'ultimo prima di OUT.
-        const auto atEnd = std::lower_bound(keyframes.begin(), keyframes.end(), range.end - kOnKeyframe);
-        const bool outOnKeyframe = atEnd != keyframes.end() && *atEnd <= range.end + kOnKeyframe;
+        const auto atEnd = std::lower_bound(keyframes.begin(), keyframes.end(), range.end - kTimeEpsilon);
+        const bool outOnKeyframe = atEnd != keyframes.end() && *atEnd <= range.end + kTimeEpsilon;
         if (!outOnKeyframe) {
             const double last = *std::prev(atEnd);
-            if (last <= copyStart + kOnKeyframe)
+            if (last <= copyStart + kTimeEpsilon)
                 return {{range, true}};
             copyEnd = last;
         }
     }
     std::vector<Piece> pieces;
-    if (copyStart > range.start + kOnKeyframe)
+    if (copyStart > range.start + kTimeEpsilon)
         pieces.push_back({{range.start, copyStart}, true});
     pieces.push_back({{copyStart, copyEnd}, false});
-    if (copyEnd < range.end - kOnKeyframe)
+    if (copyEnd < range.end - kTimeEpsilon)
         pieces.push_back({{copyEnd, range.end}, true});
     for (std::size_t i = 0; i + 1 < pieces.size(); ++i)
         pieces[i].continues = true;
@@ -438,7 +319,7 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
             keyframes = known->second;
         }
         std::sort(keyframes.begin(), keyframes.end());
-        const StreamSignature* own = streamOf(plan.signatures[c], StreamKind::Video);
+        const StreamSignature* own = findStream(plan.signatures[c].streams, StreamKind::Video);
         for (const TimeRange& range : clips[c].ranges) {
             if (plan.reencode[c] || own == nullptr || keyframes.empty()) {
                 plan.pieces[c].push_back({{range, plan.reencode[c]}});
@@ -469,19 +350,19 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
         for (std::size_t c = 0; c < clips.size() && plan.problem.empty(); ++c) {
             if (!plan.reencode[c]) {
                 // Copiato (con i bordi ricodificati): l'audio è uguale a quello del formato, quindi si copia.
-                const StreamSignature* own = streamOf(plan.signatures[c], StreamKind::Audio);
-                plan.copyAudio[c] = audio != nullptr && own != nullptr && sameAudio(*own, *audio);
+                const StreamSignature* own = findStream(plan.signatures[c].streams, StreamKind::Audio);
+                plan.copyAudio[c] = audio != nullptr && own != nullptr && sameAudioFormat(*own, *audio);
                 continue;
             }
-            if (streamOf(plan.signatures[c], StreamKind::Video) == nullptr) {
+            if (findStream(plan.signatures[c].streams, StreamKind::Video) == nullptr) {
                 plan.problem = "Il file " + plan.signatures[c].fileName + " non ha video: non si può mettere in un "
                                "montaggio video.";
                 break;
             }
             if (audio == nullptr)
                 continue;
-            const StreamSignature* own = streamOf(plan.signatures[c], StreamKind::Audio);
-            plan.copyAudio[c] = own != nullptr && sameAudio(*own, *audio);
+            const StreamSignature* own = findStream(plan.signatures[c].streams, StreamKind::Audio);
+            plan.copyAudio[c] = own != nullptr && sameAudioFormat(*own, *audio);
             if (!plan.copyAudio[c] && audio->codec != "aac")
                 plan.problem = "L'audio del formato del progetto è " + audio->codec + ": per ora si ricodifica solo in AAC.";
         }
@@ -518,7 +399,7 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
         for (std::size_t c = 0; c < clips.size(); ++c) {
             if (plan.reencode[c])
                 continue;
-            const StreamSignature* v = streamOf(plan.signatures[c], StreamKind::Video);
+            const StreamSignature* v = findStream(plan.signatures[c].streams, StreamKind::Video);
             const auto sets = v != nullptr ? parameterSetsOf(codecIdOf(v->codec), v->extradata) : std::nullopt;
             if (!sets) {
                 plan.problem = "Il file " + plan.signatures[c].fileName + " ha parametri di codifica diversi dagli altri, in "
@@ -529,18 +410,6 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
         }
     }
     return plan;
-}
-
-bool samePath(const std::string& a, const std::string& b)
-{
-    std::error_code ec;
-    const std::filesystem::path pa = pathFromUtf8(a);
-    const std::filesystem::path pb = pathFromUtf8(b);
-    if (std::filesystem::exists(pb, ec) && std::filesystem::equivalent(pa, pb, ec))
-        return true;
-    // Su Windows i nomi dei file non distinguono maiuscole e minuscole.
-    return lowercase(utf8FromPath(std::filesystem::weakly_canonical(pa, ec)))
-        == lowercase(utf8FromPath(std::filesystem::weakly_canonical(pb, ec)));
 }
 
 // Codec tag dell'originale se il contenitore di uscita lo accetta, altrimenti 0 (lo sceglie il muxer).
@@ -570,6 +439,131 @@ bool trimPcm(AVPacket* pkt, const StreamCopy& copy, double time, double tb, cons
     shiftPacket(pkt, -static_cast<std::int64_t>(std::llround(first / rate / tb)));
     pkt->duration = std::llround((last - first) / rate / tb);
     return true;
+}
+
+// Per un pacchetto audio copiato: false se non va scritto in `range`; il PCM viene tagliato al campione. `time` è il
+// tempo del pacchetto nel file originale (senza startOffset). `continues`: il tratto continua nella parte dopo, quindi
+// il pacchetto a cavallo della fine resta qui.
+bool keepAudioInRange(AVPacket* pkt, const StreamCopy& copy, double time, double tb, const TimeRange& range, bool continues)
+{
+    if (copy.pcmBlockAlign > 0)
+        return trimPcm(pkt, copy, time, tb, range);
+    const double end = time + std::max<std::int64_t>(pkt->duration, 0) * tb;
+    return !(time < range.start - kTimeEpsilon || (continues ? time >= range.end - kTimeEpsilon : end > range.end + kTimeEpsilon));
+}
+
+// Porta il demuxer al fotogramma chiave del flusso `index` in `seconds` (tempo mostrato) o a quello subito prima; se non
+// si può, all'inizio del file.
+void seekBefore(AVFormatContext* fmt, int index, double seconds, double startOffset)
+{
+    const auto ts = std::llround((seconds + startOffset) / av_q2d(fmt->streams[index]->time_base));
+    if (av_seek_frame(fmt, index, ts, AVSEEK_FLAG_BACKWARD) < 0)
+        av_seek_frame(fmt, index, 0, AVSEEK_FLAG_BACKWARD);
+}
+
+// Copia i dati extra nei parametri del codec (con il riempimento che chiede FFmpeg).
+void setExtradata(AVCodecParameters* par, const std::uint8_t* data, std::size_t size)
+{
+    av_freep(&par->extradata);
+    par->extradata_size = 0;
+    par->extradata = static_cast<std::uint8_t*>(av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE));
+    if (par->extradata == nullptr)
+        throw MediaError(kOutOfMemoryForOutput);
+    std::memcpy(par->extradata, data, size);
+    par->extradata_size = static_cast<int>(size);
+}
+
+// Il codec tag per un video con i parametri nel flusso (avc3 / hev1 invece di avc1 / hvc1), se il contenitore lo
+// ammette; altrimenti 0.
+unsigned inStreamTag(const AVOutputFormat* format, AVCodecID codec)
+{
+    if (format->codec_tag == nullptr)
+        return 0;
+    const unsigned tag = codec == AV_CODEC_ID_HEVC ? MKTAG('h', 'e', 'v', '1') : MKTAG('a', 'v', 'c', '3');
+    return av_codec_get_id(format->codec_tag, tag) == codec ? tag : 0;
+}
+
+void requireCodec(const AVOutputFormat* format, AVCodecID codec)
+{
+    if (avformat_query_codec(format, codec, FF_COMPLIANCE_NORMAL) == 0)
+        throw MediaError("Il formato " + std::string(format->name) + " non può contenere il codec " + avcodec_get_name(codec) + ".");
+}
+
+// Fotogrammi al secondo del formato del progetto, come frazione (30 se non li dice).
+AVRational projectFrameRate(const StreamSignature& format)
+{
+    return av_d2q(format.frameRate > 0 ? format.frameRate : 30.0, 1001000);
+}
+
+// Encoder video nel formato del progetto (H.264 o HEVC) con i suoi parametri di codifica già letti, per i tratti da
+// ricodificare e per il nero.
+struct ProjectVideoEncoder
+{
+    ProjectVideoEncoder(const StreamSignature& format, AVRational fps, Rational timeBase, QualityPreset quality)
+        : encoder(settingsFor(format, fps, timeBase, quality))
+    {
+        AVCodecParameters* par = avcodec_parameters_alloc();
+        if (par == nullptr)
+            throw MediaError(kOutOfMemory);
+        encoder.copyParameters(par);
+        const auto sets = parameterNalsOf(par->codec_id, std::vector<std::uint8_t>(par->extradata, par->extradata + par->extradata_size));
+        avcodec_parameters_free(&par);
+        if (!sets)
+            throw MediaError("L'encoder " + encoder.info().ffmpegName + " non ha dato i parametri di codifica.");
+        parameters = *sets;
+    }
+
+    VideoEncoder encoder;
+    ParameterSets parameters;
+
+private:
+    static VideoEncoderSettings settingsFor(const StreamSignature& format, AVRational fps, Rational timeBase, QualityPreset quality)
+    {
+        VideoEncoderSettings settings;
+        settings.codec = format.codec == "hevc" ? VideoCodec::Hevc : VideoCodec::H264;
+        settings.width = format.width;
+        settings.height = format.height;
+        settings.frameRate = {fps.num, fps.den};
+        settings.timeBase = timeBase;
+        settings.quality = quality;
+        return settings;
+    }
+};
+
+// Fotogramma nero (gamma TV: luminanza 16, colore 128) della misura data.
+FramePtr makeBlackFrame(int width, int height)
+{
+    FramePtr black(av_frame_alloc());
+    if (!black)
+        throw MediaError(kOutOfMemory);
+    black->format = AV_PIX_FMT_YUV420P;
+    black->width = width;
+    black->height = height;
+    if (av_frame_get_buffer(black.get(), 0) < 0)
+        throw MediaError(kOutOfMemory);
+    const std::ptrdiff_t linesizes[4] = {black->linesize[0], black->linesize[1], black->linesize[2], black->linesize[3]};
+    av_image_fill_black(black->data, linesizes, AV_PIX_FMT_YUV420P, AVCOL_RANGE_MPEG, width, height);
+    return black;
+}
+
+// Codifica `samples` campioni di silenzio (a blocchi di 1024), con un solo fotogramma riusato per tutti.
+void encodeSilence(AudioEncoder& encoder, int sampleRate, int channels, std::int64_t samples, const PacketSink& sink)
+{
+    constexpr int kBlock = 1024;
+    FramePtr silence(av_frame_alloc());
+    if (!silence)
+        throw MediaError(kOutOfMemory);
+    silence->format = AV_SAMPLE_FMT_FLTP;
+    silence->sample_rate = sampleRate;
+    silence->nb_samples = kBlock;
+    av_channel_layout_default(&silence->ch_layout, std::max(1, channels));
+    if (av_frame_get_buffer(silence.get(), 0) < 0)
+        throw MediaError(kOutOfMemory);
+    av_samples_set_silence(silence->extended_data, 0, kBlock, silence->ch_layout.nb_channels, AV_SAMPLE_FMT_FLTP);
+    for (std::int64_t remaining = samples; remaining > 0; remaining -= silence->nb_samples) {
+        silence->nb_samples = static_cast<int>(std::min<std::int64_t>(remaining, kBlock));
+        encoder.encode(silence.get(), sink);
+    }
 }
 
 // Un file da cui si copia: i flussi video e audio vanno, nell'ordine, nei flussi 0, 1, 2... del file creato.
@@ -627,8 +621,8 @@ InputFile openClip(const std::string& path, bool withAudio)
         copy.output = file.copied++;
         copy.video = video;
         if (video) {
-            const AVRational rate = av_guess_frame_rate(file.ctx.get(), in, nullptr);
-            copy.frameDuration = rate.num > 0 && rate.den > 0 ? 1.0 / av_q2d(rate) : 0.0;
+            const double fps = guessFrameRate(file.ctx.get(), in);
+            copy.frameDuration = fps > 0 ? 1.0 / fps : 0.0;
         } else {
             describeAudio(copy, par);
         }
@@ -666,9 +660,7 @@ std::optional<std::vector<std::uint8_t>> encodeSilentFrame(const AVCodecParamete
         if (!ctx || !frame || !packet)
             return std::nullopt;
         ctx->sample_rate = par->sample_rate;
-        if (par->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
-            av_channel_layout_default(&ctx->ch_layout, par->ch_layout.nb_channels);
-        else if (av_channel_layout_copy(&ctx->ch_layout, &par->ch_layout) < 0)
+        if (defaultOrCopyLayout(&ctx->ch_layout, par->ch_layout) < 0)
             return std::nullopt;
         const void* formats = nullptr;
         int count = 0;
@@ -961,9 +953,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             continue;
         const AVStream* in = first.ctx->streams[i];
         const AVCodecParameters* par = in->codecpar;
-        if (avformat_query_codec(output->oformat, par->codec_id, FF_COMPLIANCE_NORMAL) == 0)
-            throw MediaError("Il formato " + std::string(output->oformat->name) + " non può contenere il codec "
-                             + avcodec_get_name(par->codec_id) + ".");
+        requireCodec(output->oformat, par->codec_id);
         AVStream* out = avformat_new_stream(output.get(), nullptr);
         if (out == nullptr || avcodec_parameters_copy(out->codecpar, par) < 0)
             throw MediaError(kOutOfMemoryForOutput);
@@ -980,19 +970,13 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             const std::vector<std::uint8_t> current(par->extradata, par->extradata + par->extradata_size);
             if (level > maxH264Level(parseH264Config(current))) {
                 const std::vector<std::uint8_t> raised = withH264Level(current, level);
-                av_freep(&out->codecpar->extradata);
-                out->codecpar->extradata = static_cast<std::uint8_t*>(av_mallocz(raised.size() + AV_INPUT_BUFFER_PADDING_SIZE));
-                if (out->codecpar->extradata == nullptr)
-                    throw MediaError(kOutOfMemoryForOutput);
-                std::copy(raised.begin(), raised.end(), out->codecpar->extradata);
-                out->codecpar->extradata_size = static_cast<int>(raised.size());
+                setExtradata(out->codecpar, raised.data(), raised.size());
                 out->codecpar->level = level;
             }
         }
         // Parametri nel flusso: in un MP4 il video lo dichiara (avc3 / hev1 invece di avc1 / hvc1).
-        if (parametersInStream && par->codec_type == AVMEDIA_TYPE_VIDEO && output->oformat->codec_tag != nullptr) {
-            const unsigned tag = par->codec_id == AV_CODEC_ID_HEVC ? MKTAG('h', 'e', 'v', '1') : MKTAG('a', 'v', 'c', '3');
-            if (av_codec_get_id(output->oformat->codec_tag, tag) == par->codec_id)
+        if (parametersInStream && par->codec_type == AVMEDIA_TYPE_VIDEO) {
+            if (const unsigned tag = inStreamTag(output->oformat, par->codec_id))
                 out->codecpar->codec_tag = tag;
         }
         out->time_base = in->time_base;
@@ -1007,25 +991,16 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 throw MediaError(kOutOfMemoryForOutput);
             AVCodecParameters* par = out->codecpar;
             par->codec_id = codecIdOf(s.codec);
-            if (avformat_query_codec(output->oformat, par->codec_id, FF_COMPLIANCE_NORMAL) == 0)
-                throw MediaError("Il formato " + std::string(output->oformat->name) + " non può contenere il codec " + s.codec + ".");
-            if (!s.extradata.empty()) {
-                par->extradata = static_cast<std::uint8_t*>(av_mallocz(s.extradata.size() + AV_INPUT_BUFFER_PADDING_SIZE));
-                if (par->extradata == nullptr)
-                    throw MediaError(kOutOfMemoryForOutput);
-                std::copy(s.extradata.begin(), s.extradata.end(), par->extradata);
-                par->extradata_size = static_cast<int>(s.extradata.size());
-            }
+            requireCodec(output->oformat, par->codec_id);
+            if (!s.extradata.empty())
+                setExtradata(par, s.extradata.data(), s.extradata.size());
             if (s.kind == StreamKind::Video) {
                 par->codec_type = AVMEDIA_TYPE_VIDEO;
                 par->width = s.width;
                 par->height = s.height;
                 par->format = av_get_pix_fmt(s.pixelFormat.c_str());
                 par->sample_aspect_ratio = {1, 1};
-                const unsigned tag = par->codec_id == AV_CODEC_ID_HEVC ? MKTAG('h', 'e', 'v', '1') : MKTAG('a', 'v', 'c', '3');
-                par->codec_tag = output->oformat->codec_tag != nullptr && av_codec_get_id(output->oformat->codec_tag, tag) == par->codec_id
-                                     ? tag
-                                     : 0;
+                par->codec_tag = inStreamTag(output->oformat, par->codec_id);
                 out->time_base = {1, 90000};
                 out->avg_frame_rate = av_d2q(s.frameRate > 0 ? s.frameRate : 30.0, 1001000);
             } else {
@@ -1057,9 +1032,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
         out->disposition = AV_DISPOSITION_DEFAULT;
         replacement.copy.output = out->index;
         // Si parte dal punto del file audio che finisce all'inizio del file creato.
-        const auto ts = std::llround((std::max(0.0, -replacement.offset) + replacement.start) / av_q2d(in->time_base));
-        if (av_seek_frame(replacement.ctx.get(), replacement.stream, ts, AVSEEK_FLAG_BACKWARD) < 0)
-            av_seek_frame(replacement.ctx.get(), replacement.stream, 0, AVSEEK_FLAG_BACKWARD);
+        seekBefore(replacement.ctx.get(), replacement.stream, std::max(0.0, -replacement.offset), replacement.start);
     }
 
     const int streamCount = static_cast<int>(output->nb_streams);
@@ -1125,6 +1098,20 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             last = pkt->dts;
         };
 
+        // Il file creato copre almeno da `start` a `end` (secondi).
+        const auto extend = [&](double start, double end) {
+            firstTime = std::min(firstTime, start);
+            lastEnd = std::max(lastEnd, end);
+        };
+
+        // Scrive il pacchetto (che da qui non è più suo) nel flusso `index` del file creato.
+        const auto writePacket = [&](AVPacket* pkt, int index) {
+            pkt->stream_index = index;
+            pkt->pos = -1;
+            if (const int ret = av_interleaved_write_frame(output.get(), pkt); ret < 0)
+                throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
+        };
+
         // Scrive la traccia sostitutiva fino al tempo `until` del file creato, senza superare `end` (la fine del
         // file creato): si chiama man mano che si scrive il video, così video e audio restano mescolati nel file.
         const auto pumpReplacement = [&](double until, double end) {
@@ -1150,7 +1137,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                     }
                     replacement.pending = true;
                 }
-                const std::int64_t ts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
+                const std::int64_t ts = packetTimestamp(pkt);
                 const double sourceTime = ts * tb - replacement.start;
                 double time = sourceTime + replacement.offset;  // nel file creato
                 if (time >= until)
@@ -1166,7 +1153,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 if (replacement.copy.pcmBlockAlign > 0) {
                     if (!trimPcm(pkt, replacement.copy, sourceTime, tb, {-replacement.offset, end - replacement.offset}))
                         continue;
-                    time = (pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts) * tb - replacement.start + replacement.offset;
+                    time = packetTimestamp(pkt) * tb - replacement.start + replacement.offset;
                     duration = pkt->duration * tb;
                 } else if (time < -kTimeEpsilon || time + duration > end + kTimeEpsilon) {
                     continue;  // solo i pacchetti interamente dentro il file creato
@@ -1176,13 +1163,120 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 shiftPacket(pkt, std::llround((replacement.start - replacement.offset) / tb));
                 av_packet_rescale_ts(pkt, in->time_base, out->time_base);
                 keepDtsIncreasing(pkt, replacement.copy.output);
-                firstTime = std::min(firstTime, time);
-                lastEnd = std::max(lastEnd, time + duration);
-                pkt->stream_index = replacement.copy.output;
-                pkt->pos = -1;
-                if (const int ret = av_interleaved_write_frame(output.get(), pkt); ret < 0)
-                    throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
+                extend(time, time + duration);
+                writePacket(pkt, replacement.copy.output);
             }
+        };
+
+        // Scrive un pacchetto copiato dal file originale (video o audio) nel file creato: tutti i tempi spostati di
+        // `shiftSeconds`, e per il video i parametri di codifica del file `c` se vanno ripetuti nel flusso. Aggiorna dove
+        // finiscono il video e l'audio scritti.
+        const auto writeCopied = [&](AVPacket* pkt, StreamCopy& copy, const AVStream* in, double shiftSeconds, std::size_t c,
+                                     double& videoEnd, double& audioEnd) {
+            // Parametri nel flusso: davanti a ogni fotogramma chiave quelli di questo file (con la lunghezza dei NAL del
+            // file creato, se diversa).
+            if (parametersInStream && copy.video) {
+                const ParameterSets& mine = clipParameters[c];
+                const int target = outLength;
+                const bool key = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
+                if ((key || mine.lengthSize != target)
+                    && !rewriteNals(pkt, mine.lengthSize, target, key ? mine.nals : std::vector<std::vector<std::uint8_t>>{}))
+                    throw MediaError("Un fotogramma di " + clips[c].path + " non si legge: impossibile copiarlo.");
+            }
+            shiftPacket(pkt, std::llround(shiftSeconds / av_q2d(in->time_base)));
+            const AVStream* out = output->streams[copy.output];
+            av_packet_rescale_ts(pkt, in->time_base, out->time_base);
+            keepDtsIncreasing(pkt, copy.output);
+
+            if (pkt->pts != AV_NOPTS_VALUE) {
+                const double t = pkt->pts * av_q2d(out->time_base);
+                double duration = pkt->duration * av_q2d(out->time_base);
+                if (copy.video && duration <= 0)
+                    duration = copy.frameDuration;
+                extend(t, t + duration);
+                if (copy.video)
+                    videoEnd = std::max(videoEnd, t + duration);
+                // Il decoder restituisce sempre un blocco intero, anche se il contenitore ne dichiara una parte (l'ultimo
+                // blocco di un file AAC contiene il riempimento dell'encoder): in mezzo al file creato quella parte in
+                // più non si può togliere, quindi se ne tiene conto.
+                if (copy.audioFrameSeconds > 0)
+                    audioEnd = std::max(audioEnd, t + std::max(duration, copy.audioFrameSeconds));
+                // La traccia sostitutiva va scritta insieme al video, poco più avanti.
+                if (copy.video)
+                    pumpReplacement(std::min(t + 0.3, totalLength - 0.1), totalLength);
+            }
+            writePacket(pkt, copy.output);
+        };
+
+        // Un pacchetto audio di un file copiato, nel tratto `range` (che comincia dopo `doneLength` secondi del
+        // montaggio): lo tiene solo la parte dentro il tratto, silenziata dove serve, poi lo scrive. false se non è
+        // stato scritto. `time` = tempo del pacchetto nel file originale (senza startOffset), `start` = startOffset.
+        const auto copyAudioPacket = [&](AVPacket* pkt, StreamCopy& copy, const AVStream* in, double time, double start,
+                                         const TimeRange& range, bool continues, double shiftSeconds, std::size_t c,
+                                         double& audioEnd) {
+            const double tb = av_q2d(in->time_base);
+            if (!keepAudioInRange(pkt, copy, time, tb, range, continues))
+                return false;
+            // Tratti silenziati: si confrontano con il tempo del pacchetto nella sequenza.
+            const std::int64_t kept = packetTimestamp(pkt);
+            const double seqStart = doneLength + (kept * tb - start - range.start);
+            double length = std::max<std::int64_t>(pkt->duration, 0) * tb;
+            if (length <= 0)
+                length = copy.audioFrameSeconds;
+            if (!applyMute(pkt, copy, in->codecpar, seqStart, seqStart + length, audio.muted, muteMethod, result))
+                return false;
+            double videoEnd = 0.0;
+            writeCopied(pkt, copy, in, shiftSeconds, c, videoEnd, audioEnd);
+            return true;
+        };
+
+        // Dove vanno i pacchetti dell'encoder video del progetto: parametri nel flusso davanti a ogni fotogramma chiave,
+        // tempi nell'unità del flusso, e (poco più avanti) la traccia sostitutiva. `defaultDuration` = durata di un
+        // fotogramma nell'unità dell'encoder, per i pacchetti che non la dicono.
+        const auto videoSinkFor = [&](ProjectVideoEncoder& video, std::int64_t defaultDuration, double frameSeconds) -> PacketSink {
+            const Rational encoderTb = video.encoder.timeBase();
+            AVStream* outV = output->streams[outVideo];
+            return [&, &parameters = video.parameters, encoderTb, outV, defaultDuration, frameSeconds](AVPacket* p) {
+                const bool key = (p->flags & AV_PKT_FLAG_KEY) != 0;
+                if (!encodedToLengthPrefixed(p, outLength, key ? parameters.nals : std::vector<std::vector<std::uint8_t>>{}))
+                    throw MediaError("Un pacchetto dell'encoder non si legge.");
+                if (p->duration <= 0)
+                    p->duration = defaultDuration;
+                av_packet_rescale_ts(p, {encoderTb.num, encoderTb.den}, outV->time_base);
+                keepDtsIncreasing(p, outVideo);
+                const double t = p->pts * av_q2d(outV->time_base);
+                extend(t, t + frameSeconds);
+                pumpReplacement(std::min(t + 0.3, totalLength - 0.1), totalLength);
+                writePacket(p, outVideo);
+            };
+        };
+
+        // Dove vanno i pacchetti AAC dell'encoder audio del progetto, che comincia a `outputPosition` del file creato.
+        // `muting` = il flusso con cui applicare i tratti silenziati (vedi applyMute), nullptr = niente da silenziare.
+        // `audioEnd` = dove finisce l'audio scritto.
+        const auto audioSinkFor = [&](int rate, StreamCopy* muting, double& audioEnd) -> PacketSink {
+            AVStream* outA = output->streams[outAudio];
+            return [&, &audioEnd = audioEnd, rate, outA, muting](AVPacket* p) {
+                if (p->pts < 0)
+                    return;  // il ritardo iniziale dell'encoder (qualche millesimo): non si sente
+                const double time = outputPosition + static_cast<double>(p->pts) / rate;
+                // L'ultimo blocco può dichiarare meno campioni, ma il decoder ne restituisce comunque uno intero.
+                const double duration = std::max<std::int64_t>({p->duration, 0, outA->codecpar->frame_size}) / static_cast<double>(rate);
+                if (muting != nullptr) {
+                    const double seqStart = doneLength + (time - outputPosition);
+                    if (!applyMute(p, *muting, outA->codecpar, seqStart, seqStart + duration, audio.muted, muteMethod, result))
+                        return;
+                }
+                const std::int64_t shift = std::llround(outputPosition * rate);
+                p->pts += shift;
+                if (p->dts != AV_NOPTS_VALUE)
+                    p->dts += shift;
+                av_packet_rescale_ts(p, {1, rate}, outA->time_base);
+                keepDtsIncreasing(p, outAudio);
+                extend(time, time + duration);
+                audioEnd = std::max(audioEnd, time + duration);
+                writePacket(p, outAudio);
+            };
         };
 
         // Ricodifica di un tratto. Il video si decodifica e si ricodifica nel formato del progetto: a fotogrammi al
@@ -1196,48 +1290,14 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             AVFormatContext* input = current.ctx.get();
             const double start = current.start;
             const StreamSignature& format = *plan.reference.video();
-            const AVRational fps = av_d2q(format.frameRate > 0 ? format.frameRate : 30.0, 1001000);
+            const AVRational fps = projectFrameRate(format);
             const double frameSeconds = av_q2d(av_inv_q(fps));
             const int frames = std::max(1, static_cast<int>(std::llround(range.length() / frameSeconds)));
             const std::int64_t base = std::llround(outputPosition / frameSeconds);
-            AVStream* outV = output->streams[outVideo];
 
             // Un encoder per tratto: alla fine si svuota, così i suoi pacchetti non si mescolano con quelli dopo.
-            VideoEncoderSettings settings;
-            settings.codec = format.codec == "hevc" ? VideoCodec::Hevc : VideoCodec::H264;
-            settings.width = format.width;
-            settings.height = format.height;
-            settings.frameRate = {fps.num, fps.den};
-            settings.quality = reencode.quality;
-            VideoEncoder encoder(settings);
-            ParameterSets encoderParameters;
-            {
-                AVCodecParameters* par = avcodec_parameters_alloc();
-                encoder.copyParameters(par);
-                const auto sets = parameterNalsOf(par->codec_id, std::vector<std::uint8_t>(par->extradata, par->extradata + par->extradata_size));
-                avcodec_parameters_free(&par);
-                if (!sets)
-                    throw MediaError("L'encoder " + encoder.info().ffmpegName + " non ha dato i parametri di codifica.");
-                encoderParameters = *sets;
-            }
-            const Rational encoderTb = encoder.timeBase();
-            const PacketSink videoSink = [&](AVPacket* p) {
-                const bool key = (p->flags & AV_PKT_FLAG_KEY) != 0;
-                if (!encodedToLengthPrefixed(p, outLength, key ? encoderParameters.nals : std::vector<std::vector<std::uint8_t>>{}))
-                    throw MediaError("Un pacchetto dell'encoder non si legge.");
-                if (p->duration <= 0)
-                    p->duration = 1;
-                av_packet_rescale_ts(p, {encoderTb.num, encoderTb.den}, outV->time_base);
-                keepDtsIncreasing(p, outVideo);
-                const double t = p->pts * av_q2d(outV->time_base);
-                firstTime = std::min(firstTime, t);
-                lastEnd = std::max(lastEnd, t + frameSeconds);
-                pumpReplacement(std::min(t + 0.3, totalLength - 0.1), totalLength);
-                p->stream_index = outVideo;
-                p->pos = -1;
-                if (const int ret = av_interleaved_write_frame(output.get(), p); ret < 0)
-                    throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
-            };
+            ProjectVideoEncoder video(format, fps, Rational{0, 1}, reencode.quality);
+            const PacketSink videoSink = videoSinkFor(video, 1, frameSeconds);
 
             // Decoder del video (e dell'audio, se si ricodifica).
             const auto openDecoder = [&](int index) {
@@ -1279,21 +1339,22 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             }
 
             // Dal fotogramma chiave all'inizio del tratto (o quello subito prima).
-            const auto ts = std::llround((range.start + start) / av_q2d(inV->time_base));
-            if (av_seek_frame(input, videoIndex, ts, AVSEEK_FLAG_BACKWARD) < 0)
-                av_seek_frame(input, videoIndex, 0, AVSEEK_FLAG_BACKWARD);
+            seekBefore(input, videoIndex, range.start, start);
 
             // --- Video: fotogramma `k` del tratto al tempo range.start + k / fps.
             FramePtr held;  // l'ultimo fotogramma decodificato non oltre il tempo del prossimo fotogramma da scrivere
             int k = 0;
             bool videoDone = false;
             const double half = frameSeconds / 2;
+            FramePtr emitted(av_frame_alloc());  // riferimento al fotogramma da scrivere, col suo tempo
+            if (!emitted)
+                throw MediaError(kOutOfMemory);
             const auto emit = [&](const AVFrame* frame) {
-                FramePtr copy(av_frame_clone(frame));
-                if (!copy)
+                av_frame_unref(emitted.get());
+                if (av_frame_ref(emitted.get(), frame) < 0)
                     throw MediaError(kOutOfMemory);
-                copy->pts = base + k;
-                encoder.encode(copy.get(), k == 0, videoSink);
+                emitted->pts = base + k;
+                video.encoder.encode(emitted.get(), k == 0, videoSink);
                 ++k;
                 if (progress && !progress(std::clamp((doneLength + k * frameSeconds) / totalLength, 0.0, 1.0)))
                     throw ExportCancelled();
@@ -1301,7 +1362,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             const auto onVideoFrame = [&](AVFrame* frame) {
                 if (videoDone)
                     return;
-                const std::int64_t when = frame->best_effort_timestamp != AV_NOPTS_VALUE ? frame->best_effort_timestamp : frame->pts;
+                const std::int64_t when = frameTimestamp(frame);
                 if (when == AV_NOPTS_VALUE)
                     return;
                 const double t = when * av_q2d(inV->time_base) - start;
@@ -1318,34 +1379,12 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             bool audioDone = audioIndex < 0;
             double audioEnd = outputPosition;
             const int outRate = outA != nullptr ? std::max(1, outA->codecpar->sample_rate) : 1;
-            const PacketSink audioSink = [&](AVPacket* p) {
-                if (p->pts < 0)
-                    return;  // il ritardo iniziale dell'encoder (qualche millesimo): non si sente
-                const double time = outputPosition + static_cast<double>(p->pts) / outRate;
-                // L'ultimo blocco può dichiarare meno campioni, ma il decoder ne restituisce comunque uno intero.
-                const double duration = std::max<std::int64_t>({p->duration, 0, outA->codecpar->frame_size}) / static_cast<double>(outRate);
-                const double seqStart = doneLength + (time - outputPosition);
-                if (!applyMute(p, audioOut, outA->codecpar, seqStart, seqStart + duration, audio.muted, muteMethod, result))
-                    return;
-                const std::int64_t shift = std::llround(outputPosition * outRate);
-                p->pts += shift;
-                if (p->dts != AV_NOPTS_VALUE)
-                    p->dts += shift;
-                av_packet_rescale_ts(p, {1, outRate}, outA->time_base);
-                keepDtsIncreasing(p, outAudio);
-                firstTime = std::min(firstTime, time);
-                lastEnd = std::max(lastEnd, time + duration);
-                audioEnd = std::max(audioEnd, time + duration);
-                p->stream_index = outAudio;
-                p->pos = -1;
-                if (const int ret = av_interleaved_write_frame(output.get(), p); ret < 0)
-                    throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
-            };
+            const PacketSink audioSink = outA != nullptr ? audioSinkFor(outRate, &audioOut, audioEnd) : PacketSink{};
             const auto onAudioFrame = [&](AVFrame* frame) {
                 if (audioDone)
                     return;
                 const AVStream* in = input->streams[audioIndex];
-                const std::int64_t when = frame->best_effort_timestamp != AV_NOPTS_VALUE ? frame->best_effort_timestamp : frame->pts;
+                const std::int64_t when = frameTimestamp(frame);
                 if (when == AV_NOPTS_VALUE || frame->sample_rate <= 0)
                     return;
                 const double t0 = when * av_q2d(in->time_base) - start;
@@ -1376,43 +1415,17 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             const auto onCopiedAudio = [&](AVPacket* pkt) {
                 StreamCopy& copy = current.streams[audioIndex];
                 const AVStream* in = input->streams[audioIndex];
-                const double tb = av_q2d(in->time_base);
-                const std::int64_t ts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
+                const std::int64_t ts = packetTimestamp(pkt);
                 if (ts == AV_NOPTS_VALUE)
                     return;
+                const double tb = av_q2d(in->time_base);
                 const double time = ts * tb - start;
                 const double decodeTime = (pkt->dts != AV_NOPTS_VALUE ? pkt->dts : ts) * tb - start;
                 if (decodeTime >= range.end + kReadPastOut) {
                     audioDone = true;
                     return;
                 }
-                if (copy.pcmBlockAlign > 0) {
-                    if (!trimPcm(pkt, copy, time, tb, range))
-                        return;
-                } else {
-                    const double end = time + std::max<std::int64_t>(pkt->duration, 0) * tb;
-                    if (time < range.start - kTimeEpsilon || (continues ? time >= range.end - kTimeEpsilon : end > range.end + kTimeEpsilon))
-                        return;
-                }
-                const std::int64_t kept = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
-                const double seqStart = doneLength + (kept * tb - start - range.start);
-                double length = std::max<std::int64_t>(pkt->duration, 0) * tb;
-                if (length <= 0)
-                    length = copy.audioFrameSeconds;
-                if (!applyMute(pkt, copy, in->codecpar, seqStart, seqStart + length, audio.muted, muteMethod, result))
-                    return;
-                shiftPacket(pkt, std::llround((range.start + start - outputPosition) / tb));
-                av_packet_rescale_ts(pkt, in->time_base, outA->time_base);
-                keepDtsIncreasing(pkt, outAudio);
-                const double t = pkt->pts * av_q2d(outA->time_base);
-                const double duration = std::max(pkt->duration * av_q2d(outA->time_base), copy.audioFrameSeconds);
-                firstTime = std::min(firstTime, t);
-                lastEnd = std::max(lastEnd, t + duration);
-                audioEnd = std::max(audioEnd, t + duration);
-                pkt->stream_index = outAudio;
-                pkt->pos = -1;
-                if (const int ret = av_interleaved_write_frame(output.get(), pkt); ret < 0)
-                    throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
+                copyAudioPacket(pkt, copy, in, time, start, range, continues, range.start + start - outputPosition, c, audioEnd);
             };
 
             PacketPtr pkt(av_packet_alloc());
@@ -1456,28 +1469,12 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                 throw MediaError("Nel tratto da ricodificare di " + clips[c].path + " non c'è nessun fotogramma.");
             while (k < frames)
                 emit(held.get());
-            encoder.finish(videoSink);
+            video.encoder.finish(videoSink);
             if (audioEncoder) {
-                if (audioIndex < 0) {
-                    // Il file non ha audio: silenzio per tutto il tratto.
-                    const AVCodecParameters* par = outA->codecpar;
-                    std::int64_t remaining = std::llround(range.length() * outRate);
-                    while (remaining > 0) {
-                        FramePtr silence(av_frame_alloc());
-                        if (!silence)
-                            throw MediaError(kOutOfMemory);
-                        silence->format = AV_SAMPLE_FMT_FLTP;
-                        silence->sample_rate = outRate;
-                        silence->nb_samples = static_cast<int>(std::min<std::int64_t>(remaining, 1024));
-                        av_channel_layout_default(&silence->ch_layout, std::max(1, par->ch_layout.nb_channels));
-                        if (av_frame_get_buffer(silence.get(), 0) < 0)
-                            throw MediaError(kOutOfMemory);
-                        av_samples_set_silence(silence->extended_data, 0, silence->nb_samples, silence->ch_layout.nb_channels,
-                                               AV_SAMPLE_FMT_FLTP);
-                        audioEncoder->encode(silence.get(), audioSink);
-                        remaining -= silence->nb_samples;
-                    }
-                }
+                // Il file non ha audio: silenzio per tutto il tratto.
+                if (audioIndex < 0)
+                    encodeSilence(*audioEncoder, outRate, outA->codecpar->ch_layout.nb_channels,
+                                  std::llround(range.length() * outRate), audioSink);
                 audioEncoder->finish(audioSink);
             }
             for (unsigned i = 0; i < input->nb_streams; ++i)
@@ -1491,111 +1488,33 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
         // fotogramma non lascia niente.
         const auto writeBlack = [&](double seconds) -> std::pair<double, double> {
             const StreamSignature& format = *plan.reference.video();
-            const AVRational fps = av_d2q(format.frameRate > 0 ? format.frameRate : 30.0, 1001000);
+            const AVRational fps = projectFrameRate(format);
             const double frameSeconds = av_q2d(av_inv_q(fps));
             const int frames = static_cast<int>(std::llround(seconds / frameSeconds));
             if (frames <= 0)
                 return {outputPosition, outputPosition};
             // Tempi in 1/90000 s: il nero parte esattamente dove finisce il pezzo prima (non arrotondato ai fotogrammi).
             constexpr int kTicks = 90000;
-            const std::int64_t frameTicks = std::llround(frameSeconds * kTicks);
-            AVStream* outV = output->streams[outVideo];
-            VideoEncoderSettings settings;
-            settings.codec = format.codec == "hevc" ? VideoCodec::Hevc : VideoCodec::H264;
-            settings.width = format.width;
-            settings.height = format.height;
-            settings.frameRate = {fps.num, fps.den};
-            settings.timeBase = {1, kTicks};
-            settings.quality = reencode.quality;
-            VideoEncoder encoder(settings);
-            ParameterSets encoderParameters;
-            {
-                AVCodecParameters* par = avcodec_parameters_alloc();
-                encoder.copyParameters(par);
-                const auto sets = parameterNalsOf(par->codec_id, std::vector<std::uint8_t>(par->extradata, par->extradata + par->extradata_size));
-                avcodec_parameters_free(&par);
-                if (!sets)
-                    throw MediaError("L'encoder " + encoder.info().ffmpegName + " non ha dato i parametri di codifica.");
-                encoderParameters = *sets;
-            }
-            const Rational encoderTb = encoder.timeBase();
-            const PacketSink videoSink = [&](AVPacket* p) {
-                const bool key = (p->flags & AV_PKT_FLAG_KEY) != 0;
-                if (!encodedToLengthPrefixed(p, outLength, key ? encoderParameters.nals : std::vector<std::vector<std::uint8_t>>{}))
-                    throw MediaError("Un pacchetto dell'encoder non si legge.");
-                if (p->duration <= 0)
-                    p->duration = frameTicks;
-                av_packet_rescale_ts(p, {encoderTb.num, encoderTb.den}, outV->time_base);
-                keepDtsIncreasing(p, outVideo);
-                const double t = p->pts * av_q2d(outV->time_base);
-                firstTime = std::min(firstTime, t);
-                lastEnd = std::max(lastEnd, t + frameSeconds);
-                pumpReplacement(std::min(t + 0.3, totalLength - 0.1), totalLength);
-                p->stream_index = outVideo;
-                p->pos = -1;
-                if (const int ret = av_interleaved_write_frame(output.get(), p); ret < 0)
-                    throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
-            };
-            // Il fotogramma nero (gamma TV: luminanza 16, colore 128), sempre lo stesso.
-            FramePtr black(av_frame_alloc());
-            if (!black)
-                throw MediaError(kOutOfMemory);
-            black->format = AV_PIX_FMT_YUV420P;
-            black->width = format.width;
-            black->height = format.height;
-            if (av_frame_get_buffer(black.get(), 0) < 0)
-                throw MediaError(kOutOfMemory);
-            const std::ptrdiff_t linesizes[4] = {black->linesize[0], black->linesize[1], black->linesize[2], black->linesize[3]};
-            av_image_fill_black(black->data, linesizes, AV_PIX_FMT_YUV420P, AVCOL_RANGE_MPEG, format.width, format.height);
+            ProjectVideoEncoder video(format, fps, Rational{1, kTicks}, reencode.quality);
+            const PacketSink videoSink = videoSinkFor(video, std::llround(frameSeconds * kTicks), frameSeconds);
+            // Il fotogramma nero è sempre lo stesso, cambia solo il tempo.
+            const FramePtr black = makeBlackFrame(format.width, format.height);
             for (int k = 0; k < frames; ++k) {
                 black->pts = std::llround((outputPosition + k * frameSeconds) * kTicks);
-                encoder.encode(black.get(), k == 0, videoSink);
+                video.encoder.encode(black.get(), k == 0, videoSink);
                 if (progress && !progress(std::clamp((doneLength + (k + 1) * frameSeconds) / totalLength, 0.0, 1.0)))
                     throw ExportCancelled();
             }
-            encoder.finish(videoSink);
+            video.encoder.finish(videoSink);
 
             // Silenzio, lungo quanto il nero.
             double audioEnd = outputPosition;
             if (outAudio >= 0) {
-                AVStream* outA = output->streams[outAudio];
-                const int rate = std::max(1, outA->codecpar->sample_rate);
-                AudioEncoder silenceEncoder(AudioEncoderSettings{rate, outA->codecpar->ch_layout.nb_channels});
-                const PacketSink audioSink = [&](AVPacket* p) {
-                    if (p->pts < 0)
-                        return;  // il ritardo iniziale dell'encoder
-                    const double time = outputPosition + static_cast<double>(p->pts) / rate;
-                    const double duration = std::max<std::int64_t>({p->duration, 0, outA->codecpar->frame_size}) / static_cast<double>(rate);
-                    const std::int64_t shift = std::llround(outputPosition * rate);
-                    p->pts += shift;
-                    if (p->dts != AV_NOPTS_VALUE)
-                        p->dts += shift;
-                    av_packet_rescale_ts(p, {1, rate}, outA->time_base);
-                    keepDtsIncreasing(p, outAudio);
-                    firstTime = std::min(firstTime, time);
-                    lastEnd = std::max(lastEnd, time + duration);
-                    audioEnd = std::max(audioEnd, time + duration);
-                    p->stream_index = outAudio;
-                    p->pos = -1;
-                    if (const int ret = av_interleaved_write_frame(output.get(), p); ret < 0)
-                        throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
-                };
-                std::int64_t remaining = std::llround(frames * frameSeconds * rate);
-                while (remaining > 0) {
-                    FramePtr silence(av_frame_alloc());
-                    if (!silence)
-                        throw MediaError(kOutOfMemory);
-                    silence->format = AV_SAMPLE_FMT_FLTP;
-                    silence->sample_rate = rate;
-                    silence->nb_samples = static_cast<int>(std::min<std::int64_t>(remaining, 1024));
-                    av_channel_layout_default(&silence->ch_layout, std::max(1, outA->codecpar->ch_layout.nb_channels));
-                    if (av_frame_get_buffer(silence.get(), 0) < 0)
-                        throw MediaError(kOutOfMemory);
-                    av_samples_set_silence(silence->extended_data, 0, silence->nb_samples, silence->ch_layout.nb_channels,
-                                           AV_SAMPLE_FMT_FLTP);
-                    silenceEncoder.encode(silence.get(), audioSink);
-                    remaining -= silence->nb_samples;
-                }
+                const AVCodecParameters* par = output->streams[outAudio]->codecpar;
+                const int rate = std::max(1, par->sample_rate);
+                AudioEncoder silenceEncoder(AudioEncoderSettings{rate, par->ch_layout.nb_channels});
+                const PacketSink audioSink = audioSinkFor(rate, nullptr, audioEnd);
+                encodeSilence(silenceEncoder, rate, par->ch_layout.nb_channels, std::llround(frames * frameSeconds * rate), audioSink);
                 silenceEncoder.finish(audioSink);
             }
             ++result.blackGaps;
@@ -1638,47 +1557,6 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                     double videoEnd = outputPosition;  // fine dell'ultimo fotogramma scritto di questo tratto
                     double audioEnd = outputPosition;  // fine dell'audio compresso come uscirà dal decoder
 
-                    const auto write = [&](AVPacket* pkt, StreamCopy& copy, const AVStream* in) {
-                        // Parametri nel flusso: davanti a ogni fotogramma chiave quelli di questo file (con la lunghezza dei
-                        // NAL del file creato, se diversa).
-                        if (parametersInStream && copy.video) {
-                            const ParameterSets& mine = clipParameters[c];
-                            const int target = outLength;
-                            const bool key = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
-                            if ((key || mine.lengthSize != target)
-                                && !rewriteNals(pkt, mine.lengthSize, target,
-                                                key ? mine.nals : std::vector<std::vector<std::uint8_t>>{}))
-                                throw MediaError("Un fotogramma di " + clips[c].path + " non si legge: impossibile copiarlo.");
-                        }
-                        shiftPacket(pkt, std::llround(shiftSeconds / av_q2d(in->time_base)));
-                        const AVStream* out = output->streams[copy.output];
-                        av_packet_rescale_ts(pkt, in->time_base, out->time_base);
-                        keepDtsIncreasing(pkt, copy.output);
-
-                        if (pkt->pts != AV_NOPTS_VALUE) {
-                            const double t = pkt->pts * av_q2d(out->time_base);
-                            double duration = pkt->duration * av_q2d(out->time_base);
-                            if (copy.video && duration <= 0)
-                                duration = copy.frameDuration;
-                            firstTime = std::min(firstTime, t);
-                            lastEnd = std::max(lastEnd, t + duration);
-                            if (copy.video)
-                                videoEnd = std::max(videoEnd, t + duration);
-                            // Il decoder restituisce sempre un blocco intero, anche se il contenitore ne dichiara una parte
-                            // (l'ultimo blocco di un file AAC contiene il riempimento dell'encoder): in mezzo al file
-                            // creato quella parte in più non si può togliere, quindi se ne tiene conto.
-                            if (copy.audioFrameSeconds > 0)
-                                audioEnd = std::max(audioEnd, t + std::max(duration, copy.audioFrameSeconds));
-                            // La traccia sostitutiva va scritta insieme al video, poco più avanti.
-                            if (copy.video)
-                                pumpReplacement(std::min(t + 0.3, totalLength - 0.1), totalLength);
-                        }
-                        pkt->stream_index = copy.output;
-                        pkt->pos = -1;
-                        if (const int ret = av_interleaved_write_frame(output.get(), pkt); ret < 0)
-                            throw MediaError("Errore durante la scrittura del file (" + ffmpegError(ret) + ").");
-                    };
-
                     for (StreamCopy& copy : current.streams) {
                         copy.started = false;
                         copy.finished = copy.output < 0;
@@ -1687,12 +1565,8 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                     int remaining = clipStreams;
 
                     // Ci si posiziona sul fotogramma chiave all'inizio del tratto (o quello subito prima).
-                    if (current.pacingStream >= 0 && remaining > 0) {
-                        const AVStream* st = input->streams[current.pacingStream];
-                        const auto ts = std::llround((range.start + start) / av_q2d(st->time_base));
-                        if (av_seek_frame(input, current.pacingStream, ts, AVSEEK_FLAG_BACKWARD) < 0)
-                            av_seek_frame(input, current.pacingStream, 0, AVSEEK_FLAG_BACKWARD);  // si legge dall'inizio
-                    }
+                    if (current.pacingStream >= 0 && remaining > 0)
+                        seekBefore(input, current.pacingStream, range.start, start);
 
                     while (remaining > 0) {
                         const int ret = av_read_frame(input, packet.get());
@@ -1703,7 +1577,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
 
                         StreamCopy& copy = current.streams[packet->stream_index];
                         const AVStream* in = input->streams[packet->stream_index];
-                        const std::int64_t ts = packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts;
+                        const std::int64_t ts = packetTimestamp(packet.get());
                         if (copy.output < 0 || copy.finished || ts == AV_NOPTS_VALUE) {
                             av_packet_unref(packet.get());
                             continue;
@@ -1744,40 +1618,14 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                                 continue;
                             }
                             for (PacketPtr& held : copy.pending)
-                                write(held.get(), copy, in);
+                                writeCopied(held.get(), copy, in, shiftSeconds, c, videoEnd, audioEnd);
                             copy.pending.clear();
-                        } else {
-                            if (copy.pcmBlockAlign > 0) {
-                                // Audio PCM: si tiene esattamente la parte del pacchetto dentro il tratto.
-                                if (!trimPcm(packet.get(), copy, time, tb, range)) {
-                                    av_packet_unref(packet.get());
-                                    continue;
-                                }
-                            } else {
-                                // Audio compresso: solo i pacchetti interamente dentro il tratto, così alle giunzioni non
-                                // si sovrappone (al più un pacchetto, ~20 ms, di silenzio a ogni giunzione). Dove il tratto
-                                // continua nella parte dopo (taglio preciso) l'audio è continuo: il pacchetto a cavallo resta qui.
-                                const double end = time + std::max<std::int64_t>(packet->duration, 0) * tb;
-                                if (time < range.start - kTimeEpsilon
-                                    || (piece.continues ? time >= range.end - kTimeEpsilon : end > range.end + kTimeEpsilon)) {
-                                    av_packet_unref(packet.get());
-                                    continue;
-                                }
-                            }
-                            // Tratti silenziati: si confrontano con il tempo del pacchetto nella sequenza.
-                            const std::int64_t kept = packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts;
-                            const double seqStart = doneLength + (kept * tb - start - range.start);
-                            double length = std::max<std::int64_t>(packet->duration, 0) * tb;
-                            if (length <= 0)
-                                length = copy.audioFrameSeconds;
-                            if (!applyMute(packet.get(), copy, in->codecpar, seqStart, seqStart + length, audio.muted,
-                                           muteMethod, result)) {
-                                av_packet_unref(packet.get());
-                                continue;
-                            }
+                            writeCopied(packet.get(), copy, in, shiftSeconds, c, videoEnd, audioEnd);
+                        } else if (!copyAudioPacket(packet.get(), copy, in, time, start, range, piece.continues, shiftSeconds, c,
+                                                    audioEnd)) {
+                            av_packet_unref(packet.get());
+                            continue;
                         }
-
-                        write(packet.get(), copy, in);
                         if (progress) {
                             const double inRange = std::clamp(time - range.start, 0.0, range.length());
                             if (!progress(std::clamp((doneLength + inRange) / totalLength, 0.0, 1.0)))

@@ -34,11 +34,6 @@ struct BufferRefDeleter
 };
 using BufferRefPtr = std::unique_ptr<AVBufferRef, BufferRefDeleter>;
 
-struct SwsDeleter
-{
-    void operator()(SwsContext* ctx) const { sws_freeContext(ctx); }
-};
-
 // Formato pixel con cui il decoder restituisce le superfici D3D11, se il codec supporta D3D11VA.
 AVPixelFormat d3d11PixelFormat(const AVCodec* codec)
 {
@@ -241,7 +236,7 @@ struct VideoDecoder::Impl : OpenedStream
 
     double frameTime(const AVFrame* f) const
     {
-        const std::int64_t ts = f->best_effort_timestamp != AV_NOPTS_VALUE ? f->best_effort_timestamp : f->pts;
+        const std::int64_t ts = frameTimestamp(f);
         if (ts == AV_NOPTS_VALUE)
             return lastTime + (fps > 0 ? 1.0 / fps : 0.0);
         return ts * timeBase - startOffset;
@@ -370,8 +365,7 @@ VideoDecoder::VideoDecoder(const std::string& utf8Path, const Options& options)
     static_cast<OpenedStream&>(d) = openMainStream(utf8Path, AVMEDIA_TYPE_VIDEO);
     d.hwPixelFormat = d3d11PixelFormat(d.codec);
 
-    const AVRational rate = av_guess_frame_rate(d.fmt.get(), d.stream, nullptr);
-    d.fps = rate.num > 0 && rate.den > 0 ? av_q2d(rate) : 0.0;
+    d.fps = guessFrameRate(d.fmt.get(), d.stream);
 
     // Dimensioni di visualizzazione: si applica il rapporto d'aspetto dei pixel, poi si rientra nel riquadro massimo.
     const AVCodecParameters* par = d.stream->codecpar;
