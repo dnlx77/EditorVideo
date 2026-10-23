@@ -745,6 +745,10 @@ void PlayerWidget::tick()
     // Il cursore segue ogni passo; il testo del tempo basta aggiornarlo ~30 volte al secondo (alla fine e in pausa
     // lo aggiorna comunque updatePositionLabel).
     timeline_->setPlayhead(position_);
+    if (video_) {
+        const auto [from, to] = video_->cachedRange();
+        timeline_->setCacheRange(from, to);
+    }
     if (!labelClock_.isValid() || labelClock_.elapsed() >= 33) {
         updatePositionLabel(position_);
         labelClock_.restart();
@@ -865,6 +869,13 @@ void PlayerWidget::updatePositionLabel(double seconds)
 {
     timeLabel_->setText(QStringLiteral("%1 / %2").arg(timeText(seconds), timeText(duration_)));
     timeline_->setPlayhead(seconds);
+    const auto [from, to] = cachedRange();
+    timeline_->setCacheRange(from, to);
+}
+
+std::pair<double, double> PlayerWidget::cachedRange() const
+{
+    return video_ ? video_->cachedRange() : std::pair{0.0, 0.0};
 }
 
 void PlayerWidget::setKeyframes(const std::vector<double>& keyframes)

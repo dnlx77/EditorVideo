@@ -50,6 +50,8 @@ public:
     bool inGap() const { return gapIndex_ >= 0; }  // in uno spazio vuoto
 
     std::function<void(double)> onPositionChanged;
+    // Tratto già in memoria del pezzo mostrato, nei tempi della sequenza (from == to = niente), per la barretta celeste.
+    std::function<void(double from, double to)> onCacheRangeChanged;
     std::function<void()> onActivated;  // l'utente ha usato questa anteprima (per i tasti Spazio e frecce)
     std::function<void()> onPlaybackStarted;
     std::function<void()> onVideoDoubleClicked;  // doppio clic sull'immagine (schermo intero)

@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 class QLabel;
@@ -97,6 +98,8 @@ public:
     void seekRelative(double deltaSeconds);
 
     bool isPlaying() const { return playing_; }
+    // Tratto del video già in memoria (vedi core::VideoDecoder::cachedRange), nei tempi del file; {0, 0} se nessuno.
+    std::pair<double, double> cachedRange() const;
     double currentPosition();  // secondi
     QString statusText() const;  // es. "Decodifica: GPU (D3D11VA)"
 

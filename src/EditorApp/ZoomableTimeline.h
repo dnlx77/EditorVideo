@@ -4,6 +4,7 @@
 
 #include <QtWidgets/QWidget>
 
+class QPainter;
 class QScrollBar;
 class QToolButton;
 
@@ -33,6 +34,9 @@ public:
     // La riproduzione è (ri)partita: la vista torna a seguire il cursore.
     void resumeFollowing();
     bool isFollowing() const { return following_; }
+    // Tratto già pronto in memoria per la riproduzione (vedi core::VideoDecoder::cachedRange), nei tempi di questa
+    // linea del tempo: una barretta celeste sopra l'asse. to <= from = niente.
+    void setCacheRange(double from, double to);
 
 protected:
     explicit ZoomableTimeline(QWidget* parent = nullptr);
@@ -57,6 +61,8 @@ protected:
 
     void resizeEvent(QResizeEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    // Disegna la barretta della cache (la chiama la classe derivata in paintEvent, prima del cursore).
+    void paintCacheBar(QPainter& p) const;
 
 private:
     void syncControls();  // barra di scorrimento e pulsante dopo un cambiamento della vista
@@ -67,6 +73,9 @@ private:
     QToolButton* fit_ = nullptr;
     bool following_ = true;
     bool syncing_ = false;  // si sta aggiornando la barra: i suoi segnali non sono dell'utente
+    double cacheFrom_ = 0.0;
+    double cacheTo_ = 0.0;
+    QRectF cacheStrip() const;  // la riga in cui sta la barretta
 };
 
 }  // namespace editor::app

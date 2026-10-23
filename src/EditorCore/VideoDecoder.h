@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace editor::core {
@@ -33,6 +34,9 @@ public:
         // Si può cambiare in seguito con setOutputSize().
         int maxWidth = 1920;
         int maxHeight = 1080;
+        // Lettura anticipata del file (vedi cachedRange): utile per la riproduzione, inutile per chi salta qua e là
+        // (miniature), dove leggerebbe secondi di video che non servono.
+        bool readAhead = true;
     };
 
     // Lancia MediaError se il file non si apre o non ha un flusso video.
@@ -64,6 +68,11 @@ public:
 
     // Fotogramma successivo a quello restituito per ultimo; nullptr a fine file.
     std::shared_ptr<VideoFrame> nextFrame();
+
+    // Tratto del video (secondi) già letto dal file e tenuto in memoria, compresso: alcuni secondi prima e fino a
+    // ~10 secondi dopo l'ultimo fotogramma decodificato. Un salto lì dentro (anche all'indietro) non rilegge il
+    // file. {0, 0} se vuoto. Come setOutputSize, si può chiamare da un altro thread mentre si decodifica.
+    std::pair<double, double> cachedRange() const;
 
 private:
     struct Impl;

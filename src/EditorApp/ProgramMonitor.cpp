@@ -434,6 +434,19 @@ void ProgramMonitor::updatePosition()
     updateLabels();
     if (onPositionChanged)
         onPositionChanged(position_);
+    if (onCacheRangeChanged) {
+        double from = 0.0;
+        double to = 0.0;
+        if (gapIndex_ < 0 && index_ >= 0 && index_ < static_cast<int>(sequence.fragments().size())) {
+            // Solo la parte del pezzo: il resto del file non è nel montaggio.
+            const core::Fragment& f = sequence.fragments()[static_cast<std::size_t>(index_)];
+            const auto [cacheFrom, cacheTo] = player_->cachedRange();
+            const double start = sequence.startOf(index_);
+            from = start + std::clamp(cacheFrom, f.start, f.end) - f.start;
+            to = start + std::clamp(cacheTo, f.start, f.end) - f.start;
+        }
+        onCacheRangeChanged(from, to);
+    }
 }
 
 void ProgramMonitor::updateLabels()
