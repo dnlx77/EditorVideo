@@ -3,6 +3,7 @@
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/Sequence.h"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -15,8 +16,12 @@ struct Clip
     int id = 0;          // identificativo stabile
     std::string path;    // UTF-8
     bool analyzed = false;  // fotogrammi chiave e durata noti
-    std::vector<double> keyframes;
+    // Fotogrammi chiave in ordine. Dopo l'analisi non cambiano più: sono condivisi fra le copie del progetto (ogni
+    // passo di Annulla/Ripeti è una copia, con file da migliaia di fotogrammi chiave).
+    std::shared_ptr<const std::vector<double>> keyframeData;
     double duration = 0.0;
+
+    const std::vector<double>& keyframes() const;  // vuoto se il file non è stato analizzato
 
     // Fotogramma chiave nello stesso punto o subito prima (prima del primo: il primo; senza: `seconds`).
     double snapToKeyframe(double seconds) const;
@@ -31,6 +36,9 @@ struct ClipRanges
     std::vector<double> keyframes;
     // Spazio vuoto nel montaggio prima di ogni tratto, in secondi (stesso ordine di `ranges`; vuoto = nessuno).
     std::vector<double> gapsBefore;
+    // Caratteristiche dei flussi già lette (per le anteprime, che altrimenti riaprono ogni file); nullptr = da leggere
+    // dal file, come fa sempre l'esportazione vera.
+    std::shared_ptr<const MediaSignature> signature;
 };
 
 // Un file audio (MP3, AAC, M4A, WAV...) che prende il posto dell'audio originale di tutta la sequenza.

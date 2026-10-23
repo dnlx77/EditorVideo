@@ -6,9 +6,15 @@
 
 namespace editor::core {
 
+const std::vector<double>& Clip::keyframes() const
+{
+    static const std::vector<double> none;
+    return keyframeData ? *keyframeData : none;
+}
+
 double Clip::snapToKeyframe(double seconds) const
 {
-    return core::snapToKeyframe(keyframes, seconds);
+    return core::snapToKeyframe(keyframes(), seconds);
 }
 
 int Project::add(std::string path)
@@ -26,8 +32,8 @@ void Project::setAnalysis(int id, std::vector<double> keyframes, double duration
     if (index < 0)
         return;
     Clip& clip = clips_[index];
-    clip.keyframes = std::move(keyframes);
-    std::sort(clip.keyframes.begin(), clip.keyframes.end());
+    std::sort(keyframes.begin(), keyframes.end());
+    clip.keyframeData = std::make_shared<const std::vector<double>>(std::move(keyframes));
     clip.duration = std::max(0.0, duration);
     clip.analyzed = true;
 }
@@ -40,7 +46,7 @@ void Project::setClipPath(int id, std::string path)
     Clip& clip = clips_[index];
     clip.path = std::move(path);
     clip.analyzed = false;
-    clip.keyframes.clear();
+    clip.keyframeData.reset();
     clip.duration = 0.0;
 }
 
@@ -87,7 +93,7 @@ std::vector<ClipRanges> Project::exportPlan(GapExport gaps) const
         if (clip == nullptr)
             continue;
         if (plan.empty() || f.clipId != previousClip)
-            plan.push_back({clip->path, {}, clip->keyframes});
+            plan.push_back({clip->path, {}, clip->keyframes()});
         plan.back().ranges.push_back({f.start, f.end});
         plan.back().gapsBefore.push_back(gaps == GapExport::Black ? f.gap : 0.0);
         previousClip = f.clipId;
@@ -112,7 +118,7 @@ void Project::restoreEdits(const Project& snapshot)
     for (Clip& clip : clips) {
         const Clip* now = find(clip.id);
         if (now != nullptr && now->analyzed && now->path == clip.path) {
-            clip.keyframes = now->keyframes;
+            clip.keyframeData = now->keyframeData;
             clip.duration = now->duration;
             clip.analyzed = true;
         }
