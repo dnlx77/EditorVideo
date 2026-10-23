@@ -807,9 +807,11 @@ const core::MediaSignature* MainWindow::signatureFor(const std::string& path)
         } catch (const std::exception&) {
             // File mancante o non leggibile: niente segno sul blocco (lo dice già l'elenco dei file).
         }
-        known = signatures_.emplace(path, std::move(signature)).first;
+        known = signatures_
+                    .emplace(path, signature ? std::make_shared<const core::MediaSignature>(std::move(*signature)) : nullptr)
+                    .first;
     }
-    return known->second ? &*known->second : nullptr;
+    return known->second.get();
 }
 
 void MainWindow::ensureProjectFormat()
@@ -1121,12 +1123,24 @@ bool MainWindow::hasExportPlan() const
     return clip != nullptr && clip->analyzed && segment.hasIn() && segment.hasOut();
 }
 
-double MainWindow::exportLength() const
+double MainWindow::exportLength()
 {
     // Come l'esportazione: senza taglio preciso possibile IN va al fotogramma chiave prima (il file è più lungo).
     const core::ProjectFormat format = project_.sequence().empty() ? core::ProjectFormat{} : project_.format();
     const core::AudioEdit audio = project_.sequence().empty() ? core::AudioEdit{} : project_.audioEdit(core::GapExport::Black);
-    return core::previewExport(exportPlan(), audio, format.empty() ? nullptr : &format, reencodeOptions_).outputSeconds;
+    return core::previewExport(previewPlan(), audio, format.empty() ? nullptr : &format, reencodeOptions_).outputSeconds;
+}
+
+std::vector<core::ClipRanges> MainWindow::previewPlan()
+{
+    // Per le anteprime dell'esportazione: le caratteristiche dei file si leggono una volta sola (signatureFor), non a
+    // ogni calcolo. L'esportazione vera le rilegge dai file.
+    std::vector<core::ClipRanges> plan = exportPlan();
+    for (core::ClipRanges& clip : plan) {
+        signatureFor(clip.path);
+        clip.signature = signatures_.at(clip.path);
+    }
+    return plan;
 }
 
 void MainWindow::updateExportAction()
@@ -1258,7 +1272,7 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
 
 bool MainWindow::exportOptionsDialog()
 {
-    const std::vector<core::ClipRanges> plan = exportPlan();
+    const std::vector<core::ClipRanges> plan = previewPlan();
     const core::AudioEdit audio = project_.audioEdit(core::GapExport::Black);
     const core::ProjectFormat& format = project_.format();
     // Quanti tratti si copiano e quanti si ricodificano (la prima volta prova anche gli encoder: qualche secondo).
@@ -1770,6 +1784,7 @@ void MainWindow::resetProject()
     probeQueue_.clear();
     project_.clear();
     clipInfo_.clear();
+    signatures_.clear();
     waveQueue_.clear();  // le forme d'onda già calcolate restano: servono se si riapre lo stesso file
     timeline_->setAudioSelection(0.0, 0.0);
     currentClipId_ = 0;
@@ -1912,7 +1927,7 @@ void MainWindow::selectClip(int id)
     player_->openFile(currentPath_);
     if (clip->analyzed) {
         showInfo(clipInfo_[id]);
-        player_->setKeyframes(clip->keyframes);
+        player_->setKeyframes(clip->keyframes());
         updateSourceBands();
     } else {
         infoTree_->clear();
@@ -2741,8 +2756,8 @@ QImage MainWindow::thumbnailFor(int clipId, double sourceTime)
     // finestra le miniature richieste restano in buona parte le stesse.
     const double at = clip->snapToKeyframe(sourceTime);
     const QString key = QStringLiteral("%1|%2").arg(qs(clip->path)).arg(std::llround(at * 1000));
-    if (const auto it = thumbnails_.constFind(key); it != thumbnails_.constEnd())
-        return *it;
+    if (const QImage* ready = thumbnails_.object(key))
+        return *ready;
     if (!thumbnailPending_.contains(key)) {
         thumbnailPending_.insert(key, true);
         thumbnailQueue_.push_back({key, clip->path, at});
@@ -2759,7 +2774,10 @@ int MainWindow::pendingThumbnails() const
 
 int MainWindow::readyThumbnails() const
 {
-    return static_cast<int>(std::count_if(thumbnails_.cbegin(), thumbnails_.cend(), [](const QImage& i) { return !i.isNull(); }));
+    int ready = 0;
+    for (const QString& key : thumbnails_.keys())
+        ready += thumbnails_.object(key)->isNull() ? 0 : 1;
+    return ready;
 }
 
 void MainWindow::startNextThumbnails()
@@ -2786,8 +2804,11 @@ void MainWindow::startNextThumbnails()
         thumbnailThread_->deleteLater();
         thumbnailThread_ = nullptr;
         for (std::size_t i = 0; i < batch->size(); ++i) {
-            if (!cancelThumbnails_)
-                thumbnails_.insert((*batch)[i].key, (*results)[i]);
+            if (!cancelThumbnails_) {
+                // Costo in kilobyte: l'immagine vuota (il file non ha video) costa 1.
+                const QImage& image = (*results)[i];
+                thumbnails_.insert((*batch)[i].key, new QImage(image), static_cast<int>(image.sizeInBytes() / 1024) + 1);
+            }
             thumbnailPending_.remove((*batch)[i].key);
         }
         timeline_->thumbnailsChanged();

@@ -384,7 +384,7 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
     for (const ClipRanges& clip : clips) {
         auto known = read.find(clip.path);
         if (known == read.end())
-            known = read.emplace(clip.path, readMediaSignature(clip.path)).first;
+            known = read.emplace(clip.path, clip.signature ? *clip.signature : readMediaSignature(clip.path)).first;
         plan.signatures.push_back(known->second);
         if (replaced)
             std::erase_if(plan.signatures.back().streams, [](const StreamSignature& s) { return s.kind == StreamKind::Audio; });

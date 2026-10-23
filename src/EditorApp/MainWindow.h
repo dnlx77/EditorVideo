@@ -6,6 +6,7 @@
 #include "EditorCore/ProjectFile.h"
 #include "EditorCore/SegmentExport.h"
 
+#include <QtCore/QCache>
 #include <QtCore/QHash>
 #include <QtGui/QImage>
 #include <QtWidgets/QMainWindow>
@@ -152,7 +153,8 @@ public:
     // Cosa verrebbe esportato adesso (vuoto = niente) e quanto dura.
     std::vector<core::ClipRanges> exportPlan() const;
     bool hasExportPlan() const;  // come !exportPlan().empty(), senza costruire il piano
-    double exportLength() const;
+    double exportLength();  // durata del file che si esporterebbe (per le prove)
+    std::vector<core::ClipRanges> previewPlan();  // come exportPlan(), con le caratteristiche dei file già lette
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -303,7 +305,7 @@ private:
 
     core::Project project_;
     std::map<int, core::MediaInfo> clipInfo_;  // analisi dei file del progetto, per id
-    std::map<std::string, std::optional<core::MediaSignature>> signatures_;  // vedi signatureFor (per percorso)
+    std::map<std::string, std::shared_ptr<const core::MediaSignature>> signatures_;  // vedi signatureFor (per percorso)
     int currentClipId_ = 0;                    // file mostrato nella Sorgente (0 = nessuno)
     QString currentPath_;                      // il suo percorso (nativo)
     bool updatingList_ = false;                // mentre si ricostruisce l'elenco dei file
@@ -311,14 +313,16 @@ private:
 
     core::EditHistory history_;
 
-    // Miniature della timeline: per "percorso|millisecondi" (immagine vuota = il file non ha video).
+    // Miniature della timeline: per "percorso|millisecondi" (immagine vuota = il file non ha video). In memoria al
+    // massimo 64 MB: le più vecchie escono e, se servono di nuovo, si rifanno.
+    static constexpr int kThumbnailCacheKilobytes = 64 * 1024;
     struct ThumbnailRequest
     {
         QString key;
         std::string path;
         double seconds = 0.0;
     };
-    QHash<QString, QImage> thumbnails_;
+    QCache<QString, QImage> thumbnails_{kThumbnailCacheKilobytes};
     std::deque<ThumbnailRequest> thumbnailQueue_;
     QHash<QString, bool> thumbnailPending_;
     QThread* thumbnailThread_ = nullptr;
