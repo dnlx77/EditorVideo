@@ -91,14 +91,11 @@ void compareStream(const StreamSignature& s, const StreamSignature& ref, std::ve
         // Per H.264 si guarda cosa cambia davvero: livello e informazioni sui tempi non contano, perché i
         // fotogrammi si decodificano allo stesso modo con i parametri del primo file. Formato e profondità del
         // colore, interlacciamento e proporzioni dei pixel cambiano l'immagine: quelli no.
-        for (const std::string& difference : compareH264(parseH264Config(s.extradata), parseH264Config(ref.extradata))) {
-            const bool picture = difference.starts_with("formato colore") || difference.starts_with("profondità colore")
-                              || difference.starts_with("uno è interlacciato") || difference.starts_with("proporzioni")
-                              || difference.find("non leggibili") != std::string::npos;
-            if (picture)
-                add(difference);
+        for (const H264Difference& difference : findH264Differences(parseH264Config(s.extradata), parseH264Config(ref.extradata))) {
+            if (difference.changesPicture)
+                add(difference.message);
             else
-                addParameters(difference);
+                addParameters(difference.message);
         }
         return;
     }

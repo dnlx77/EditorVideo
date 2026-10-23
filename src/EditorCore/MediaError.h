@@ -11,4 +11,11 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// Il file non ha un flusso del tipo richiesto (es. un file solo audio aperto come video).
+class NoStreamError : public MediaError
+{
+public:
+    using MediaError::MediaError;
+};
+
 }  // namespace editor::core

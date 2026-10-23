@@ -206,8 +206,12 @@ void PlayerWidget::openFile(const QString& path)
     const std::string utf8Path = QDir::toNativeSeparators(path).toStdString();
 
     QString videoError;
+    bool noVideoStream = false;  // un file solo audio: niente da segnalare
     try {
         video_ = std::make_unique<core::VideoDecoder>(utf8Path);
+    } catch (const core::NoStreamError& e) {
+        videoError = QString::fromUtf8(e.what());
+        noVideoStream = true;
     } catch (const std::exception& e) {
         videoError = QString::fromUtf8(e.what());
     }
@@ -244,7 +248,7 @@ void PlayerWidget::openFile(const QString& path)
         const QSize pixels = view_->pixelSize();
         video_->setOutputSize(pixels.width(), pixels.height());
         showFrameAt(0.0);
-    } else if (!videoError.isEmpty() && !videoError.contains(QStringLiteral("non contiene un flusso video")))
+    } else if (!videoError.isEmpty() && !noVideoStream)
         view_->setMessage(QStringLiteral("Video non riproducibile, solo audio.\n%1").arg(videoError));
     else
         view_->setMessage(QStringLiteral("Solo audio"));

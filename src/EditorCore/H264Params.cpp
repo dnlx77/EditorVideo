@@ -285,15 +285,15 @@ H264Config parseH264Config(const std::vector<std::uint8_t>& extradata)
     return config;
 }
 
-std::vector<std::string> compareH264(const H264Config& other, const H264Config& reference)
+std::vector<H264Difference> findH264Differences(const H264Config& other, const H264Config& reference)
 {
-    std::vector<std::string> out;
-    const auto add = [&out](const std::string& text) {
-        if (std::find(out.begin(), out.end(), text) == out.end())
-            out.push_back(text);
+    std::vector<H264Difference> out;
+    const auto add = [&out](const std::string& text, bool changesPicture = false) {
+        if (std::none_of(out.begin(), out.end(), [&](const H264Difference& d) { return d.message == text; }))
+            out.push_back({text, changesPicture});
     };
     if (!other.valid || !reference.valid) {
-        add("parametri di codifica video diversi (non leggibili)");
+        add("parametri di codifica video diversi (non leggibili)", true);
         return out;
     }
     const std::string encoder = "impostazioni dell'encoder diverse";
@@ -308,15 +308,15 @@ std::vector<std::string> compareH264(const H264Config& other, const H264Config& 
         if (s.profileIdc != r.profileIdc)
             add("profilo H.264 " + profileName(s.profileIdc) + " invece di " + profileName(r.profileIdc));
         if (s.chromaFormatIdc != r.chromaFormatIdc || s.separateColourPlane != r.separateColourPlane)
-            add("formato colore " + chromaName(s.chromaFormatIdc) + " invece di " + chromaName(r.chromaFormatIdc));
+            add("formato colore " + chromaName(s.chromaFormatIdc) + " invece di " + chromaName(r.chromaFormatIdc), true);
         if (s.bitDepthLuma != r.bitDepthLuma || s.bitDepthChroma != r.bitDepthChroma)
             add("profondità colore " + std::to_string(s.bitDepthLuma) + " bit invece di " + std::to_string(r.bitDepthLuma)
-                + " bit");
+                + " bit", true);
         if (s.widthInMbs != r.widthInMbs || s.heightInMapUnits != r.heightInMapUnits || s.cropLeft != r.cropLeft
             || s.cropRight != r.cropRight || s.cropTop != r.cropTop || s.cropBottom != r.cropBottom)
             add("dimensioni codificate diverse");
         if (s.frameMbsOnly != r.frameMbsOnly || s.mbAdaptiveFrameField != r.mbAdaptiveFrameField)
-            add("uno è interlacciato e l'altro no");
+            add("uno è interlacciato e l'altro no", true);
         if (s.log2MaxFrameNum != r.log2MaxFrameNum || s.gapsInFrameNumAllowed != r.gapsInFrameNumAllowed)
             add(encoder + " (numerazione dei fotogrammi)");
         if (s.picOrderCntType != r.picOrderCntType || s.log2MaxPicOrderCntLsb != r.log2MaxPicOrderCntLsb
@@ -336,7 +336,7 @@ std::vector<std::string> compareH264(const H264Config& other, const H264Config& 
                 add(encoder + " (matrici di quantizzazione)");
         }
         if (s.sarWidth * r.sarHeight != r.sarWidth * s.sarHeight && (s.sarWidth != 0 || r.sarWidth != 0))
-            add("proporzioni dei pixel diverse");
+            add("proporzioni dei pixel diverse", true);
     }
 
     for (const H264Pps& p : other.pps) {
@@ -368,6 +368,14 @@ std::vector<std::string> compareH264(const H264Config& other, const H264Config& 
     if (other.nalLengthSize != reference.nalLengthSize)
         add(encoder + " (formato dei pacchetti)");
     return out;
+}
+
+std::vector<std::string> compareH264(const H264Config& other, const H264Config& reference)
+{
+    std::vector<std::string> messages;
+    for (const H264Difference& difference : findH264Differences(other, reference))
+        messages.push_back(difference.message);
+    return messages;
 }
 
 int maxH264Level(const H264Config& config)

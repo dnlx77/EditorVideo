@@ -286,6 +286,26 @@ TEST(H264Params, RealDifferencesAreRefused)
               (std::vector<std::string>{"impostazioni dell'encoder diverse (parametri delle immagini)"}));
 }
 
+TEST(H264Params, DifferencesSayIfTheyChangeThePicture)
+{
+    // Solo impostazioni dell'encoder: basta ripetere i parametri giusti nel flusso.
+    Params cavlc;
+    cavlc.cabac = false;
+    const auto settings = findH264Differences(parseH264Config(avcC(cavlc)), parseH264Config(avcC({})));
+    ASSERT_EQ(settings.size(), 1u);
+    EXPECT_FALSE(settings[0].changesPicture);
+
+    Params profile;
+    profile.profile = 77;
+    for (const H264Difference& d : findH264Differences(parseH264Config(avcC(profile)), parseH264Config(avcC({}))))
+        EXPECT_FALSE(d.changesPicture) << d.message;
+
+    // Parametri che non si leggono: non si sa che cosa cambia, quindi si conta come immagine diversa.
+    const auto unreadable = findH264Differences(parseH264Config({1, 2, 3}), parseH264Config(avcC({})));
+    ASSERT_EQ(unreadable.size(), 1u);
+    EXPECT_TRUE(unreadable[0].changesPicture);
+}
+
 TEST(H264Params, LevelCanBeRaised)
 {
     const auto data = avcC({});

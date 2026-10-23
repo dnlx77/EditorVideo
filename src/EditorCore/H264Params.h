@@ -77,9 +77,20 @@ struct H264Config
 // Legge avcC o Annex B. valid = false se i dati non si capiscono.
 H264Config parseH264Config(const std::vector<std::uint8_t>& extradata);
 
-// Differenze che impediscono di decodificare i fotogrammi di `other` con i parametri di `reference` (in italiano,
-// comprensibili: "profilo H.264 High invece di Main", "impostazioni dell'encoder diverse (CABAC/CAVLC)"...).
-// Vuoto = si possono unire. Livello, vincoli e informazioni sui tempi non contano.
+// Una differenza fra due insiemi di parametri.
+struct H264Difference
+{
+    std::string message;  // in italiano, comprensibile: "profilo H.264 High invece di Main"...
+    // Cambia l'immagine (formato o profondità del colore, interlacciamento, proporzioni dei pixel) o i parametri non si
+    // leggono: non basta ripetere i parametri giusti nel flusso. Le altre sono solo impostazioni dell'encoder.
+    bool changesPicture = false;
+};
+
+// Differenze che impediscono di decodificare i fotogrammi di `other` con i parametri di `reference`. Vuoto = si possono
+// unire. Livello, vincoli e informazioni sui tempi non contano.
+std::vector<H264Difference> findH264Differences(const H264Config& other, const H264Config& reference);
+
+// Come findH264Differences, solo i messaggi ("impostazioni dell'encoder diverse (CABAC/CAVLC)"...).
 std::vector<std::string> compareH264(const H264Config& other, const H264Config& reference);
 
 // Livello più alto fra quelli dei parametri (per il file unito, che deve dichiarare almeno il massimo).
