@@ -7,7 +7,6 @@
 
 class QLabel;
 class QTimer;
-class QToolButton;
 
 namespace editor::core {
 class Project;
@@ -16,6 +15,7 @@ class Project;
 namespace editor::app {
 
 class PlayerWidget;
+class TransportBar;
 
 // Anteprima del montaggio: riproduce i pezzi della sequenza uno dopo l'altro. A ogni pezzo apre il file giusto e
 // riproduce solo il suo tratto; fra un pezzo e l'altro può esserci una brevissima pausa (il file esportato no).
@@ -30,8 +30,17 @@ public:
     void sequenceChanged();
     void seekTo(double seconds);  // tempo della sequenza
     void seekRelative(double deltaSeconds);
-    void togglePlayPause();
-    void setPlaying(bool playing);  // L riproduce, K mette in pausa
+    void togglePlayPause();  // mettendo in pausa la velocità torna quella scelta (finisce la spola)
+    void setPlaying(bool playing);
+    void stop();  // ferma e torna dove era partita la riproduzione
+    // Velocità, spola, ripetizione e volume: come in PlayerWidget, per tutto il montaggio (anche negli spazi vuoti e
+    // all'indietro da un pezzo al precedente). La ripetizione rifà tutto il montaggio.
+    void setBaseSpeed(double speed);
+    void shuttle(int direction);
+    double speed() const { return speed_; }
+    void setLoop(bool loop);
+    void setVolume(int percent);
+    void setMuted(bool muted);
     void stepFrame(int direction);  // un fotogramma avanti (+1) o indietro (-1), in pausa
     void stepToCut(int direction);  // inizio del pezzo successivo (+1) o di questo / del precedente (-1)
     void seekToEnd();
@@ -52,6 +61,9 @@ protected:
 
 private:
     void load(int index, double offset);
+    void start();     // parte la riproduzione dalla posizione attuale, alla velocità attuale
+    void reachedEdge();  // arrivati alla fine (o all'inizio, all'indietro) del montaggio
+    void setCurrentSpeed(double speed);
     // Nello spazio vuoto prima del pezzo `index`, al tempo `seconds` della sequenza.
     void enterGap(int index, double seconds);
     void fragmentEnded();
@@ -60,7 +72,7 @@ private:
 
     const core::Project& project_;
     PlayerWidget* player_ = nullptr;
-    QToolButton* playButton_ = nullptr;
+    TransportBar* transport_ = nullptr;
     QLabel* timeLabel_ = nullptr;
     QLabel* fragmentLabel_ = nullptr;
     QTimer* poll_ = nullptr;
@@ -72,6 +84,13 @@ private:
     int loadedClipId_ = 0;  // file aperto nel lettore
     double position_ = 0.0;
     bool playing_ = false;
+    double speed_ = 1.0;  // negativa = all'indietro
+    double baseSpeed_ = 1.0;
+    bool loop_ = false;
+    int volume_ = 100;
+    bool muted_ = false;
+    double playStart_ = 0.0;
+    bool hasPlayStart_ = false;
 };
 
 }  // namespace editor::app

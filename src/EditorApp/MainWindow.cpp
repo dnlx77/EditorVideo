@@ -294,6 +294,7 @@ MainWindow::MainWindow(QWidget* parent)
     player_->setIdleMessage(QStringLiteral("Apri un file video da File > Apri file video..."));
     player_->onSegmentChanged = [this] { updateExportAction(); };
     player_->onVideoDoubleClicked = [this] { toggleFullScreen(sourceDock_); };
+    player_->onAddRequested = [this] { addToSequence(); };
     player_->installEventFilter(this);  // un clic sulla Sorgente la rende l'anteprima attiva
     auto* sourcePanel = new QWidget;
     auto* sourceLayout = new QVBoxLayout(sourcePanel);
@@ -530,6 +531,16 @@ void MainWindow::setProgramActive(bool active)
 void MainWindow::togglePlay()
 {
     onActiveMonitor([](auto& monitor) { monitor.togglePlayPause(); });
+}
+
+void MainWindow::shuttle(int direction)
+{
+    onActiveMonitor([=](auto& monitor) { monitor.shuttle(direction); });
+}
+
+void MainWindow::stopPlayback()
+{
+    onActiveMonitor([](auto& monitor) { monitor.stop(); });
 }
 
 void MainWindow::seekRelative(double seconds)
@@ -1624,8 +1635,13 @@ void MainWindow::createMenus()
     QAction* playAction = playMenu->addAction(QStringLiteral("Riproduci / &Pausa (anteprima attiva)"), this,
                                               [this] { togglePlay(); });
     playAction->setShortcut(QKeySequence(Qt::Key_Space));
-    playMenu->addAction(QStringLiteral("Riproduci"), this, [this] { setPlaying(true); })->setShortcut(QKeySequence(Qt::Key_L));
+    // Spola come nei programmi professionali: L avanti, J indietro (premuti più volte vanno più veloci), K ferma.
+    playMenu->addAction(QStringLiteral("Avanti (più volte: più veloce)"), this, [this] { shuttle(+1); })
+        ->setShortcut(QKeySequence(Qt::Key_L));
+    playMenu->addAction(QStringLiteral("All'indietro (più volte: più veloce)"), this, [this] { shuttle(-1); })
+        ->setShortcut(QKeySequence(Qt::Key_J));
     playMenu->addAction(QStringLiteral("Pausa"), this, [this] { setPlaying(false); })->setShortcut(QKeySequence(Qt::Key_K));
+    playMenu->addAction(QStringLiteral("S&top (torna dove era partita la riproduzione)"), this, [this] { stopPlayback(); });
     playMenu->addSeparator();
     QAction* previousFrame = playMenu->addAction(QStringLiteral("Fotogramma p&recedente"), this, [this] { stepFrame(-1); });
     previousFrame->setShortcuts({QKeySequence(Qt::Key_Left), QKeySequence(Qt::Key_Comma)});
@@ -1638,7 +1654,7 @@ void MainWindow::createMenus()
                         [this] { stepToMark(+1); })
         ->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Right));
     QAction* backAction = playMenu->addAction(QStringLiteral("&Indietro di 5 secondi"), this, [this] { seekRelative(-5.0); });
-    backAction->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_Left), QKeySequence(Qt::Key_J)});
+    backAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Left));
     QAction* forwardAction = playMenu->addAction(QStringLiteral("&Avanti di 5 secondi"), this, [this] { seekRelative(5.0); });
     forwardAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Right));
     QAction* startAction = playMenu->addAction(QStringLiteral("Vai all'i&nizio"), this, [this] { seekStart(); });
@@ -2769,11 +2785,12 @@ void MainWindow::showShortcuts()
     };
     static const Row rows[] = {
         {"Spazio", "Riproduci / pausa (anteprima attiva: clic su un'anteprima per sceglierla)"},
-        {"L / K", "Riproduci / pausa"},
+        {"L / J / K", "Avanti / all'indietro (premuti più volte: 2x, 4x) / pausa"},
         {"← / →  (anche , / .)", "Fotogramma precedente / successivo"},
         {"Maiusc+← / Maiusc+→", "Sorgente: fotogramma chiave precedente / successivo · Montaggio: inizio del pezzo"},
-        {"Ctrl+← / Ctrl+→  (J indietro)", "Indietro / avanti di 5 secondi"},
+        {"Ctrl+← / Ctrl+→", "Indietro / avanti di 5 secondi"},
         {"Home / Fine", "Inizio / fine"},
+        {"Pulsanti sotto le anteprime", "Anche stop, velocità (0,25x - 4x), ripetizione e volume dell'anteprima"},
         {"+ / -  (Ctrl+rotellina)", "Ingrandisci / riduci la linea del tempo dell'anteprima attiva (pulsante Adatta: tutto)"},
         {"Rotellina", "Scorri la linea del tempo ingrandita"},
         {"I / O", "Sorgente: segna IN / OUT · Montaggio: inizio / fine del tratto audio"},

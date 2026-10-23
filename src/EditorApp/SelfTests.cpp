@@ -1059,6 +1059,45 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 std::printf("  NON riuscito: segmento IN-OUT non valido\n");
             ok = ok && segmentOk;
 
+            // Pulsanti dei player: velocità 2x, stop (torna al punto di partenza), all'indietro e pausa (la spola
+            // finisce). Il tempo si misura davvero, con margini larghi: su un PC lento i tick arrivano in ritardo.
+            {
+                const auto runFor = [](int milliseconds) {
+                    QElapsedTimer t;
+                    t.start();
+                    while (t.elapsed() < milliseconds)
+                        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                    return t.elapsed() / 1000.0;
+                };
+                player->seekTo(0.0);
+                player->setBaseSpeed(2.0);
+                player->play();
+                const double fastElapsed = runFor(600);
+                const double fast = player->currentPosition();
+                player->togglePlayPause();
+                player->setBaseSpeed(1.0);
+                const bool fastOk = std::abs(fast - 2.0 * fastElapsed) < 2.0 * fastElapsed * 0.35;
+                player->stop();
+                const bool stopOk = player->currentPosition() < 0.05 && !player->isPlaying();
+                bool reverseOk = true;
+                double reverseFrom = pausedAt;
+                double reverseTo = pausedAt;
+                if (pausedAt > 0.6) {
+                    player->seekTo(pausedAt);
+                    player->shuttle(-1);
+                    runFor(300);
+                    reverseTo = player->currentPosition();
+                    reverseOk = player->speed() < 0 && reverseTo < reverseFrom - 0.1;
+                    player->togglePlayPause();
+                    reverseOk = reverseOk && player->speed() == 1.0 && !player->isPlaying();
+                }
+                std::printf("Comandi: 2x %.2f s in %.2f s %s, stop %s, all'indietro da %.2f a %.2f s %s\n", fast,
+                            fastElapsed, fastOk ? "ok" : "NO", stopOk ? "ok" : "NO", reverseFrom, reverseTo,
+                            reverseOk ? "ok" : "NO");
+                std::fflush(stdout);
+                ok = ok && fastOk && stopOk && reverseOk;
+            }
+
             const auto finish = [&app, window](bool success) {
                 // Con EDITORVIDEO_SMOKE_SCREENSHOT=percorso.png salva anche un'immagine della finestra.
                 const QString screenshot = qEnvironmentVariable("EDITORVIDEO_SMOKE_SCREENSHOT");

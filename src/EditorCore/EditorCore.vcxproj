@@ -54,6 +54,7 @@
     <ClInclude Include="SegmentExport.h" />
     <ClInclude Include="Sequence.h" />
     <ClInclude Include="Thumbnails.h" />
+    <ClInclude Include="TimeStretch.h" />
     <ClInclude Include="TimelineZoom.h" />
     <ClInclude Include="TimeUtil.h" />
     <ClInclude Include="VideoDecoder.h" />
@@ -79,6 +80,7 @@
     <ClCompile Include="SegmentExport.cpp" />
     <ClCompile Include="Sequence.cpp" />
     <ClCompile Include="Thumbnails.cpp" />
+    <ClCompile Include="TimeStretch.cpp" />
     <ClCompile Include="TimelineZoom.cpp" />
     <ClCompile Include="VideoDecoder.cpp" />
     <ClCompile Include="Waveform.cpp" />

@@ -101,3 +101,32 @@ TEST(Playback, ShortSilenceIsOneBlock)
 }
 
 }  // namespace
+
+namespace {
+
+using editor::core::audibleAtSpeed;
+using editor::core::shuttleSpeed;
+
+TEST(Playback, ShuttleStartsAtNormalSpeedThenDoubles)
+{
+    EXPECT_EQ(shuttleSpeed(1.0, false, +1), 1.0);   // fermo: L parte a 1x
+    EXPECT_EQ(shuttleSpeed(1.0, true, +1), 2.0);    // L ripetuto
+    EXPECT_EQ(shuttleSpeed(2.0, true, +1), 4.0);
+    EXPECT_EQ(shuttleSpeed(4.0, true, +1), 4.0);    // non oltre 4x
+    EXPECT_EQ(shuttleSpeed(0.5, true, +1), 1.0);    // dal rallentatore: 1x
+    EXPECT_EQ(shuttleSpeed(1.0, false, -1), -1.0);  // J: indietro a 1x
+    EXPECT_EQ(shuttleSpeed(-1.0, true, -1), -2.0);
+    EXPECT_EQ(shuttleSpeed(-4.0, true, +1), 1.0);   // il tasto opposto riparte a 1x
+    EXPECT_EQ(shuttleSpeed(2.0, true, -1), -1.0);
+}
+
+TEST(Playback, AudioOnlyForwardUpToDoubleSpeed)
+{
+    EXPECT_TRUE(audibleAtSpeed(0.25));
+    EXPECT_TRUE(audibleAtSpeed(1.0));
+    EXPECT_TRUE(audibleAtSpeed(2.0));
+    EXPECT_FALSE(audibleAtSpeed(4.0));
+    EXPECT_FALSE(audibleAtSpeed(-1.0));
+}
+
+}  // namespace

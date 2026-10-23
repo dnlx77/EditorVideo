@@ -18,6 +18,19 @@ bool playbackFinished(const PlaybackState& state)
     return state.duration <= 0 || state.clock >= state.duration;
 }
 
+double shuttleSpeed(double current, bool playing, int direction)
+{
+    const double sign = direction < 0 ? -1.0 : 1.0;
+    if (!playing || current * sign <= 0.0 || std::abs(current) < 1.0)
+        return sign;
+    return sign * std::min(4.0, std::abs(current) * 2.0);
+}
+
+bool audibleAtSpeed(double speed)
+{
+    return speed > 0.0 && speed <= 2.0;
+}
+
 bool writeSilence(std::size_t frames, int channels, int sampleRate,
                   const std::function<bool(const std::int16_t* samples, std::size_t count)>& write)
 {

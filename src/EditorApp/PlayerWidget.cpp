@@ -1,10 +1,12 @@
 #include "EditorApp/PlayerWidget.h"
 
 #include "EditorApp/TimelineWidget.h"
+#include "EditorApp/TransportBar.h"
 #include "EditorApp/UiText.h"
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Playback.h"
+#include "EditorCore/TimeStretch.h"
 #include "EditorCore/VideoDecoder.h"
 
 #include <QtCore/QDir>
@@ -14,18 +16,22 @@
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QStyle>
-#include <QtWidgets/QToolButton>
 #include <QtWidgets/QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <optional>
 
 namespace editor::app {
 
 namespace {
 
 constexpr std::size_t kMaxQueuedFrames = 8;
+// All'indietro si decodifica in avanti un blocco alla volta, poi lo si mostra al contrario: al massimo questi
+// fotogrammi (sono immagini grandi) o questi secondi per blocco.
+constexpr std::size_t kReverseBlockFrames = 24;
+constexpr double kReverseBlockSeconds = 1.0;
 
 }  // namespace
 
@@ -121,11 +127,27 @@ PlayerWidget::PlayerWidget(QWidget* parent)
 {
     view_ = new VideoView;
 
-    playButton_ = new QToolButton;
-    playButton_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
-    playButton_->setToolTip(QStringLiteral("Riproduci (Spazio)"));
-    playButton_->setFocusPolicy(Qt::NoFocus);
-    connect(playButton_, &QToolButton::clicked, this, [this] { togglePlayPause(); });
+    transport_ = new TransportBar(TransportBar::Kind::Source);
+    transport_->onStart = [this] { seekTo(0.0); };
+    transport_->onPreviousMark = [this] { stepToKeyframe(-1); };
+    transport_->onPreviousFrame = [this] { stepFrame(-1); };
+    transport_->onPlayPause = [this] { togglePlayPause(); };
+    transport_->onStop = [this] { stop(); };
+    transport_->onNextFrame = [this] { stepFrame(+1); };
+    transport_->onNextMark = [this] { stepToKeyframe(+1); };
+    transport_->onEnd = [this] { seekToEnd(); };
+    transport_->onMarkIn = [this] { markIn(); };
+    transport_->onMarkOut = [this] { markOut(); };
+    transport_->onGoToIn = [this] { goToIn(); };
+    transport_->onGoToOut = [this] { goToOut(); };
+    transport_->onAdd = [this] {
+        if (onAddRequested)
+            onAddRequested();
+    };
+    transport_->onSpeedChosen = [this](double speed) { setBaseSpeed(speed); };
+    transport_->onLoopToggled = [this](bool loop) { setLoop(loop); };
+    transport_->onVolumeChanged = [this](int percent) { setVolume(percent); };
+    transport_->onMuteToggled = [this](bool muted) { setMuted(muted); };
 
     timeline_ = new TimelineWidget;
     timeline_->onScrub = [this](double seconds) { updatePositionLabel(seconds); };
@@ -142,14 +164,17 @@ PlayerWidget::PlayerWidget(QWidget* parent)
     decoderLabel_ = new QLabel;
     decoderLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
+    // Prima riga: i pulsanti, con il tempo in mezzo; sotto il segmento IN-OUT e il decoder.
+    transport_->setInfoWidget(timeLabel_);
     controls_ = new QWidget;
-    auto* controls = new QHBoxLayout(controls_);
+    auto* controls = new QVBoxLayout(controls_);
     controls->setContentsMargins(0, 0, 0, 0);
-    controls->addWidget(playButton_);
-    controls->addWidget(timeLabel_, 2);
-    controls->addSpacing(16);
-    controls->addWidget(segmentLabel_, 5);
-    controls->addWidget(decoderLabel_, 2);
+    controls->setSpacing(0);
+    controls->addWidget(transport_);
+    auto* details = new QHBoxLayout;
+    details->addWidget(segmentLabel_, 5);
+    details->addWidget(decoderLabel_, 2);
+    controls->addLayout(details);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -336,18 +361,31 @@ void PlayerWidget::closeFile()
 
 void PlayerWidget::togglePlayPause()
 {
-    if (playing_)
+    if (playing_) {
         pause();
-    else
+        speed_ = baseSpeed_;  // finisce la spola
+        updateControls();
+    } else {
         play();
+    }
 }
 
 void PlayerWidget::play()
 {
     if (!hasMedia() || playing_)
         return;
-    if (duration_ > 0 && position_ >= duration_ - 0.05)
+    if (speed_ < 0) {
+        // Con una finestra (montaggio) ci pensa tick(): all'inizio del pezzo avvisa subito onWindowEnd.
+        if (position_ <= 0.0005 && windowEnd_ <= 0) {
+            speed_ = baseSpeed_;  // all'indietro dall'inizio: non c'è niente da riprodurre
+            updateControls();
+            return;
+        }
+    } else if (duration_ > 0 && position_ >= duration_ - 0.05) {
         position_ = 0.0;  // alla fine: si ricomincia dall'inizio
+    }
+    playStart_ = position_;
+    hasPlayStart_ = true;
     startWorkers(position_);
     playing_ = true;
     timeline_->resumeFollowing();  // la linea del tempo torna a seguire il cursore
@@ -363,6 +401,78 @@ void PlayerWidget::pause()
     playing_ = false;
     updateControls();
     updatePositionLabel(position_);
+}
+
+void PlayerWidget::stop()
+{
+    if (!hasMedia())
+        return;
+    if (playing_)
+        pause();
+    speed_ = baseSpeed_;
+    if (hasPlayStart_)
+        seekTo(playStart_);
+    updateControls();
+}
+
+void PlayerWidget::setBaseSpeed(double speed)
+{
+    baseSpeed_ = speed > 0 ? speed : 1.0;
+    setSpeed(baseSpeed_);
+}
+
+void PlayerWidget::setSpeed(double speed)
+{
+    if (speed == 0.0 || speed == speed_)
+        return;
+    speed_ = speed;
+    if (playing_)
+        restartAt(clock());
+    updateControls();
+}
+
+void PlayerWidget::shuttle(int direction)
+{
+    if (!hasMedia())
+        return;
+    setSpeed(core::shuttleSpeed(speed_, playing_, direction));
+    if (!playing_)
+        play();
+}
+
+void PlayerWidget::setLoop(bool loop)
+{
+    loop_ = loop;
+    updateControls();
+}
+
+void PlayerWidget::setVolume(int percent)
+{
+    volume_ = std::clamp(percent, 0, 100);
+    if (volume_ > 0)
+        muted_ = false;
+    updateGain();
+}
+
+void PlayerWidget::setMuted(bool muted)
+{
+    muted_ = muted;
+    updateGain();
+}
+
+void PlayerWidget::updateGain()
+{
+    // Al quadrato: il cursore segue meglio come si sente il volume.
+    const float level = static_cast<float>(volume_) / 100.0f;
+    gain_ = muted_ ? 0.0f : level * level;
+    updateControls();
+}
+
+void PlayerWidget::restartAt(double position)
+{
+    stopWorkers();
+    position_ = duration_ > 0 ? std::clamp(position, 0.0, duration_) : std::max(0.0, position);
+    startWorkers(position_);
 }
 
 void PlayerWidget::seekTo(double seconds)
@@ -409,7 +519,8 @@ void PlayerWidget::startWorkers(double from)
         videoEnded_ = video_ == nullptr;
     }
 
-    audioActive_ = audio_ != nullptr && audioOut_.isOpen();
+    workerSpeed_ = speed_;
+    audioActive_ = audio_ != nullptr && audioOut_.isOpen() && core::audibleAtSpeed(speed_);
     audioEnded_ = !audioActive_;
     audioDelta_ = externalActive_ ? externalDelta_ : 0.0;
     audioFrom_ = from;
@@ -425,7 +536,9 @@ void PlayerWidget::startWorkers(double from)
 
     stopWorkers_ = false;
     decoderAtDisplayed_ = false;  // il thread video porta avanti il decoder
-    if (video_)
+    if (video_ && workerSpeed_ < 0)
+        videoThread_ = std::thread([this, from] { videoReverseWorker(from); });
+    else if (video_)
         videoThread_ = std::thread([this] { videoWorker(); });
     if (audioActive_)
         audioThread_ = std::thread([this] { audioWorker(); });
@@ -472,12 +585,63 @@ void PlayerWidget::videoWorker()
     }
 }
 
+void PlayerWidget::videoReverseWorker(double from)
+{
+    // Il fotogramma `from` è già visibile: si parte da quello prima. Ogni blocco [inizio, fine) si decodifica in avanti
+    // dal fotogramma chiave (seek), poi va nella coda dal più recente al più vecchio.
+    double blockEnd = from - frameDuration_ / 2;
+    try {
+        while (!stopWorkers_ && blockEnd > 0.0) {
+            const double length = std::min(kReverseBlockSeconds, kReverseBlockFrames * frameDuration_);
+            const double blockStart = std::max(0.0, blockEnd - length);
+            std::vector<std::shared_ptr<core::VideoFrame>> block;
+            for (auto frame = video_->seek(blockStart); frame && frame->time < blockEnd && !stopWorkers_;
+                 frame = video_->nextFrame()) {
+                if (frame->time >= blockStart - frameDuration_ / 2)
+                    block.push_back(std::move(frame));
+            }
+            if (stopWorkers_)
+                break;
+            // Il blocco dopo finisce dove inizia questo (prima di cedere i fotogrammi alla coda).
+            const double earliest = block.empty() ? blockStart : std::min(blockStart, block.front()->time);
+            for (auto it = block.rbegin(); it != block.rend(); ++it) {
+                std::unique_lock lock(queueMutex_);
+                queueSpace_.wait(lock, [this] { return stopWorkers_ || queue_.size() < kMaxQueuedFrames; });
+                if (stopWorkers_)
+                    break;
+                queue_.push_back(std::move(*it));
+            }
+            blockEnd = earliest;
+            if (blockStart <= 0.0)
+                break;
+        }
+    } catch (const std::exception&) {
+        // Errore di decodifica: ci si ferma sull'ultimo fotogramma mostrato.
+    }
+    std::lock_guard lock(queueMutex_);
+    videoEnded_ = true;
+}
+
 void PlayerWidget::audioWorker()
 {
     try {
         bool first = true;
         const int channels = audio_->channels();
         const double rate = audio_->sampleRate();
+        const double speed = workerSpeed_;
+        // A velocità diverse da 1x i campioni passano dal TimeStretch (stessa intonazione).
+        std::optional<core::TimeStretch> stretch;
+        if (speed != 1.0)
+            stretch.emplace(channels, static_cast<int>(rate), speed);
+        std::vector<std::int16_t> out;
+        const auto send = [&](std::vector<std::int16_t>& samples) {
+            const float gain = gain_;
+            if (gain != 1.0f) {
+                for (std::int16_t& v : samples)
+                    v = static_cast<std::int16_t>(std::clamp(std::lround(v * gain), -32768L, 32767L));
+            }
+            return samples.empty() || audioOut_.write(samples.data(), samples.size(), stopWorkers_);
+        };
         while (!stopWorkers_) {
             auto chunk = audio_->next();
             if (!chunk)
@@ -487,7 +651,7 @@ void PlayerWidget::audioWorker()
                 first = false;
                 audioStart_ = time;
                 // L'audio esterno può cominciare più avanti: fino a lì silenzio, così l'orologio parte dal punto giusto.
-                const double gap = std::round((time - audioFrom_) * rate);
+                const double gap = std::round((time - audioFrom_) * rate / speed);
                 if (gap > 0 && gap < rate * 3600) {
                     audioStart_ = audioFrom_;
                     const bool written = core::writeSilence(
@@ -508,11 +672,24 @@ void PlayerWidget::audioWorker()
                     std::fill(chunk->samples.begin() + static_cast<std::ptrdiff_t>(from) * channels,
                               chunk->samples.begin() + static_cast<std::ptrdiff_t>(to) * channels, std::int16_t{0});
             }
-            if (!audioOut_.write(chunk->samples.data(), chunk->samples.size(), stopWorkers_))
+            if (stretch) {
+                out.clear();
+                stretch->push(chunk->samples.data(), chunk->samples.size());
+                stretch->pull(out);
+                if (!send(out))
+                    break;
+            } else if (!send(chunk->samples)) {
                 break;
+            }
         }
-        if (!stopWorkers_)
+        if (!stopWorkers_) {
+            if (stretch) {
+                out.clear();
+                stretch->flush(out);
+                send(out);
+            }
             audioOut_.flush();
+        }
     } catch (const std::exception&) {
         // Errore di decodifica: l'orologio passa al tempo reale e il video prosegue.
     }
@@ -522,7 +699,8 @@ void PlayerWidget::audioWorker()
 double PlayerWidget::clock()
 {
     if (audioClock_) {
-        const double now = audioStart_.load() + audioOut_.playedFrames() / double(audioOut_.sampleRate());
+        const double now =
+            audioStart_.load() + audioOut_.playedFrames() / double(audioOut_.sampleRate()) * workerSpeed_;
         if (audioEnded_ && audioOut_.drained()) {
             // Audio finito (o più corto del video): da qui in poi si va avanti con il tempo reale.
             audioClock_ = false;
@@ -531,20 +709,27 @@ double PlayerWidget::clock()
         }
         return now;
     }
-    return wallBase_ + std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart_).count();
+    return wallBase_
+         + workerSpeed_ * std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart_).count();
 }
 
 void PlayerWidget::tick()
 {
     const double now = clock();
+    const bool reverse = workerSpeed_ < 0;
 
     std::shared_ptr<core::VideoFrame> latest;
     bool videoDone = false;
     {
         std::lock_guard lock(queueMutex_);
-        // Mostriamo l'ultimo fotogramma il cui tempo è già arrivato; quelli in ritardo vengono saltati.
-        while (!queue_.empty() && queue_.front()->time <= now
-               && (windowEnd_ <= 0 || queue_.front()->time < windowEnd_ - 0.001)) {
+        // Mostriamo l'ultimo fotogramma il cui tempo è già arrivato; quelli in ritardo vengono saltati. All'indietro
+        // la coda va dal più recente al più vecchio, e "arrivato" vuol dire non prima di adesso.
+        while (!queue_.empty()) {
+            const double t = queue_.front()->time;
+            const bool due = reverse ? t >= now : t <= now;
+            const bool inWindow = windowEnd_ <= 0 || (reverse ? t >= windowStart_ - 0.001 : t < windowEnd_ - 0.001);
+            if (!due || !inWindow)
+                break;
             latest = std::move(queue_.front());
             queue_.pop_front();
         }
@@ -565,9 +750,40 @@ void PlayerWidget::tick()
         labelClock_.restart();
     }
 
-    if (windowEnd_ > 0 && now >= windowEnd_ - 0.001) {
+    if (windowEnd_ > 0 && !reverse && now >= windowEnd_ - 0.001) {
         // Fine del pezzo: ci si ferma qui e lo si dice a chi riproduce la sequenza.
         stopAt(windowEnd_, true);
+        return;
+    }
+    if (windowEnd_ > 0 && reverse && now <= windowStart_ + 0.001) {
+        stopAt(windowStart_, true);  // all'indietro: inizio del pezzo
+        return;
+    }
+
+    // Ripetizione fra IN e OUT (o tutto il file): arrivati in fondo si riparte dall'altro capo.
+    if (loop_ && windowEnd_ <= 0) {
+        const bool segment = segment_.hasIn() || segment_.hasOut();
+        const double loopStart = segment ? segment_.in() : 0.0;
+        const double loopEnd = segment ? segment_.out() : duration_;
+        if (loopEnd > loopStart + frameDuration_) {
+            if (!reverse && now >= loopEnd - 0.001) {
+                restartAt(loopStart);
+                return;
+            }
+            if (reverse && now <= loopStart + 0.001) {
+                restartAt(loopEnd - frameDuration_);
+                return;
+            }
+        }
+    }
+
+    if (reverse) {
+        // All'indietro ci si ferma all'inizio del file.
+        if (now <= 0.0005) {
+            stopAt(0.0, false);
+            speed_ = baseSpeed_;
+            updateControls();
+        }
         return;
     }
 
@@ -579,6 +795,10 @@ void PlayerWidget::tick()
     state.clock = now;
     state.duration = duration_;
     if (core::playbackFinished(state)) {
+        if (loop_ && windowEnd_ <= 0 && duration_ > 0) {
+            restartAt(segment_.hasIn() ? segment_.in() : 0.0);  // ripetizione: il file finisce prima di OUT
+            return;
+        }
         // Un pezzo che arriva fino alla fine del file finisce qui, non al limite della finestra.
         stopAt(duration_ > 0 ? duration_ : position_, windowEnd_ > 0);
     }
@@ -624,10 +844,12 @@ void PlayerWidget::showFrameAt(double seconds)
 void PlayerWidget::updateControls()
 {
     const bool media = hasMedia();
-    playButton_->setEnabled(media);
+    transport_->setMediaEnabled(media);
     timeline_->setEnabled(media && duration_ > 0);
-    playButton_->setIcon(style()->standardIcon(playing_ ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
-    playButton_->setToolTip(playing_ ? QStringLiteral("Pausa (Spazio)") : QStringLiteral("Riproduci (Spazio)"));
+    transport_->setPlaying(playing_);
+    transport_->setSpeed(speed_);
+    transport_->setLoop(loop_);
+    transport_->setVolume(volume_, muted_);
 
     QString decoder;
     if (video_)
@@ -815,8 +1037,9 @@ const core::CutSegment& PlayerWidget::segment() const
     return segment_;
 }
 
-void PlayerWidget::setPlaybackWindow(double end)
+void PlayerWidget::setPlaybackWindow(double start, double end)
 {
+    windowStart_ = start;
     windowEnd_ = end;
 }
 
