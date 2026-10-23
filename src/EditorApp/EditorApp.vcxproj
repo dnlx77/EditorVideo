@@ -53,6 +53,7 @@
     <ClInclude Include="SelfTests.h" />
     <ClInclude Include="SequenceTimeline.h" />
     <ClInclude Include="TimelineWidget.h" />
+    <ClInclude Include="TransportBar.h" />
     <ClInclude Include="ThumbnailCache.h" />
     <ClInclude Include="UiText.h" />
     <ClInclude Include="WaveformStore.h" />
@@ -68,6 +69,7 @@
     <ClCompile Include="SequenceTimeline.cpp" />
     <ClCompile Include="ThumbnailCache.cpp" />
     <ClCompile Include="TimelineWidget.cpp" />
+    <ClCompile Include="TransportBar.cpp" />
     <ClCompile Include="WaveformStore.cpp" />
     <ClCompile Include="ZoomableTimeline.cpp" />
   </ItemGroup>

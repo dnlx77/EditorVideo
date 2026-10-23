@@ -59,16 +59,18 @@ La finestra è divisa così:
 - Dove un bordo verticale e uno orizzontale fra i pannelli si incrociano il cursore diventa una croce: trascinando l'incrocio si cambiano insieme larghezza e altezza. I pannelli staccati si ridimensionano anche dagli angoli della loro finestra.
 - I pannelli possono diventare piccoli (circa 120x100): quando lo spazio è poco nascondono le righe secondarie (nella Sorgente prima le scritte sotto, poi la linea del tempo; nei file le schede Informazioni e Fotogrammi chiave).
 - **Doppio clic sull'immagine** della Sorgente o del Montaggio: quell'anteprima a schermo intero; **Esc** o un altro doppio clic per uscire. Spazio, frecce e gli altri tasti funzionano anche a schermo intero e nei pannelli staccati.
+- Sotto la Sorgente e il Montaggio ci sono i **pulsanti di riproduzione**: inizio, fotogramma chiave (Sorgente) o taglio (Montaggio) precedente, fotogramma indietro, riproduci/pausa, **stop** (ferma e torna dove era partita la riproduzione), fotogramma avanti, segno successivo, fine; nella Sorgente anche IN, OUT, vai a IN / OUT e "+ Montaggio". A destra la **velocità** (0,25x - 4x; fino a 2x l'audio si sente con la stessa intonazione, oltre e all'indietro è muto), la **ripetizione** (Sorgente: fra IN e OUT o tutto il file; Montaggio: tutto il montaggio) e il **volume** dell'anteprima (non cambia il file esportato). Con poco spazio si nascondono prima i pulsanti meno importanti.
 - La disposizione viene salvata chiudendo il programma e ritrovata alla riapertura (se un monitor non c'è più, la finestra torna su quello principale). Il menu **Finestra** mostra o nasconde ogni pannello e ha **Ripristina disposizione** per tornare a quella iniziale.
 
 ### Comandi
 
 | Comando | Tasto |
 |---|---|
-| Riproduci / Pausa (l'anteprima usata per ultima, segnata con ▶ nel titolo del suo pannello) | Spazio (oppure L / K) |
+| Riproduci / Pausa (l'anteprima usata per ultima, segnata con ▶ nel titolo del suo pannello) | Spazio |
+| Spola: avanti / all'indietro (premuti più volte: 2x, 4x) / pausa | L / J / K |
 | Fotogramma precedente / successivo | ← / → (oppure `,` / `.`) |
 | Sorgente: fotogramma chiave precedente / successivo · Montaggio: inizio del pezzo precedente / successivo | Maiusc+← / Maiusc+→ |
-| Indietro / avanti di 5 secondi | Ctrl+← / Ctrl+→ (J indietro) |
+| Indietro / avanti di 5 secondi | Ctrl+← / Ctrl+→ |
 | Inizio / fine | Home / Fine |
 | Ingrandisci / riduci la linea del tempo dell'anteprima attiva | + / - (oppure Ctrl+rotellina sulla linea del tempo) |
 | Segna IN / OUT (Sorgente; con il Montaggio attivo: inizio e fine del tratto audio) | I / O |

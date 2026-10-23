@@ -262,6 +262,8 @@ private:
     void togglePlay();
     void seekRelative(double seconds);
     void seekStart();
+    void shuttle(int direction);  // J (-1) / L (+1): spola, vedi core::shuttleSpeed
+    void stopPlayback();          // ferma e torna dove era partita la riproduzione
 
     struct ExportOutcome
     {

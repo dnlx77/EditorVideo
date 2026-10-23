@@ -1,15 +1,15 @@
 #include "EditorApp/ProgramMonitor.h"
 
 #include "EditorApp/PlayerWidget.h"
+#include "EditorApp/TransportBar.h"
 #include "EditorApp/UiText.h"
+#include "EditorCore/Playback.h"
 #include "EditorCore/Project.h"
 
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
-#include <QtWidgets/QStyle>
-#include <QtWidgets/QToolButton>
 #include <QtWidgets/QVBoxLayout>
 
 #include <algorithm>
@@ -28,32 +28,42 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     };
     player_->onWindowEnd = [this] { fragmentEnded(); };
 
-    playButton_ = new QToolButton;
-    playButton_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
-    playButton_->setToolTip(QStringLiteral("Riproduci il montaggio"));
-    playButton_->setFocusPolicy(Qt::NoFocus);
-    connect(playButton_, &QToolButton::clicked, this, [this] {
-        if (onActivated)
-            onActivated();
-        togglePlayPause();
-    });
+    transport_ = new TransportBar(TransportBar::Kind::Program);
+    // Ogni pulsante rende attivo il Montaggio (per i tasti), poi fa il suo comando.
+    const auto command = [this](auto action) {
+        return [this, action] {
+            if (onActivated)
+                onActivated();
+            action();
+        };
+    };
+    transport_->onStart = command([this] { seekTo(0.0); });
+    transport_->onPreviousMark = command([this] { stepToCut(-1); });
+    transport_->onPreviousFrame = command([this] { stepFrame(-1); });
+    transport_->onPlayPause = command([this] { togglePlayPause(); });
+    transport_->onStop = command([this] { stop(); });
+    transport_->onNextFrame = command([this] { stepFrame(+1); });
+    transport_->onNextMark = command([this] { stepToCut(+1); });
+    transport_->onEnd = command([this] { seekToEnd(); });
+    transport_->onSpeedChosen = [this](double speed) { setBaseSpeed(speed); };
+    transport_->onLoopToggled = [this](bool loop) { setLoop(loop); };
+    transport_->onVolumeChanged = [this](int percent) { setVolume(percent); };
+    transport_->onMuteToggled = [this](bool muted) { setMuted(muted); };
     timeLabel_ = new QLabel;
     fragmentLabel_ = new QLabel;
     // Le scritte non impongono una larghezza minima: in un pannello stretto si tagliano.
     timeLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     fragmentLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
-    auto* controls = new QHBoxLayout;
-    controls->addWidget(playButton_);
-    controls->addWidget(timeLabel_, 2);
-    controls->addSpacing(12);
-    controls->addWidget(fragmentLabel_, 5);
+    transport_->setInfoWidget(timeLabel_);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
     layout->setSizeConstraint(QLayout::SetNoConstraint);  // la misura minima la decide minimumSizeHint
     layout->addWidget(player_, 1);
-    layout->addLayout(controls);
+    layout->addWidget(transport_);
+    layout->addWidget(fragmentLabel_);
 
     poll_ = new QTimer(this);
     poll_->setInterval(40);
@@ -95,7 +105,7 @@ void ProgramMonitor::load(int index, double offset)
                                   project_.sequence().startOf(index) - f.start - replacement->offset);
     else
         player_->setExternalAudio(QString(), 0.0);
-    player_->setPlaybackWindow(f.end);
+    player_->setPlaybackWindow(f.start, f.end);
     player_->seekTo(f.start + std::clamp(offset, 0.0, f.length()));
 }
 
@@ -150,13 +160,32 @@ void ProgramMonitor::togglePlayPause()
         player_->pause();
         playing_ = false;
         poll_->stop();
+        setCurrentSpeed(baseSpeed_);  // finisce la spola
         updatePosition();
         return;
     }
-    if (position_ >= sequence.totalLength() - 0.05)
+    playStart_ = position_;
+    hasPlayStart_ = true;
+    start();
+}
+
+void ProgramMonitor::start()
+{
+    const core::Sequence& sequence = project_.sequence();
+    if (sequence.empty() || playing_)
+        return;
+    if (speed_ < 0) {
+        if (position_ <= 0.0005) {
+            setCurrentSpeed(baseSpeed_);  // all'indietro dall'inizio: niente da riprodurre
+            return;
+        }
+        if (index_ < 0 && gapIndex_ < 0)
+            seekTo(position_);
+    } else if (position_ >= sequence.totalLength() - 0.05) {
         seekTo(0.0);  // alla fine: si ricomincia
-    else if (index_ < 0)
+    } else if (index_ < 0) {
         seekTo(position_);
+    }
     playing_ = true;
     if (onPlaybackStarted)
         onPlaybackStarted();
@@ -174,6 +203,72 @@ void ProgramMonitor::setPlaying(bool playing)
 {
     if (playing != playing_)
         togglePlayPause();
+}
+
+void ProgramMonitor::stop()
+{
+    if (project_.sequence().empty())
+        return;
+    if (playing_)
+        togglePlayPause();
+    setCurrentSpeed(baseSpeed_);
+    if (hasPlayStart_)
+        seekTo(playStart_);
+}
+
+void ProgramMonitor::setBaseSpeed(double speed)
+{
+    baseSpeed_ = speed > 0 ? speed : 1.0;
+    setCurrentSpeed(baseSpeed_);
+}
+
+void ProgramMonitor::setCurrentSpeed(double speed)
+{
+    if (speed == 0.0)
+        return;
+    if (gapIndex_ >= 0 && playing_) {
+        updatePosition();  // nello spazio vuoto il tempo riparte da qui con la nuova velocità
+        gapBase_ = position_;
+        gapClock_.restart();
+    }
+    speed_ = speed;
+    player_->setSpeed(speed);
+    updateLabels();
+}
+
+void ProgramMonitor::shuttle(int direction)
+{
+    if (project_.sequence().empty())
+        return;
+    setCurrentSpeed(core::shuttleSpeed(speed_, playing_, direction));
+    if (!playing_) {
+        playStart_ = position_;
+        hasPlayStart_ = true;
+        start();
+    }
+}
+
+void ProgramMonitor::setLoop(bool loop)
+{
+    loop_ = loop;
+    updateLabels();
+}
+
+void ProgramMonitor::setVolume(int percent)
+{
+    volume_ = std::clamp(percent, 0, 100);
+    if (volume_ > 0)
+        muted_ = false;
+    player_->setVolume(volume_);
+    player_->setMuted(muted_);
+    updateLabels();
+}
+
+void ProgramMonitor::setMuted(bool muted)
+{
+    muted_ = muted;
+    player_->setMuted(muted);
+    updateLabels();
 }
 
 void ProgramMonitor::stepFrame(int direction)
@@ -230,9 +325,27 @@ void ProgramMonitor::fragmentEnded()
     if (!playing_)
         return;
     const core::Sequence& sequence = project_.sequence();
+    const auto& fragments = sequence.fragments();
+    if (speed_ < 0) {
+        // All'indietro: lo spazio vuoto prima di questo pezzo, oppure la fine del pezzo prima.
+        if (index_ < 0 || index_ >= static_cast<int>(fragments.size()))
+            return reachedEdge();
+        const double gap = fragments[static_cast<std::size_t>(index_)].gap;
+        if (gap > 0.0) {
+            enterGap(index_, sequence.startOf(index_) - 0.0005);
+            return;
+        }
+        if (index_ == 0)
+            return reachedEdge();
+        const int previous = index_ - 1;
+        load(previous, fragments[static_cast<std::size_t>(previous)].length() - 0.001);
+        player_->play();
+        updatePosition();
+        return;
+    }
     const int next = index_ + 1;
-    if (next < static_cast<int>(sequence.fragments().size())) {
-        const double gap = sequence.fragments()[static_cast<std::size_t>(next)].gap;
+    if (next < static_cast<int>(fragments.size())) {
+        const double gap = fragments[static_cast<std::size_t>(next)].gap;
         if (gap > 0.0) {
             enterGap(next, sequence.startOf(next) - gap);  // prima del pezzo dopo c'è uno spazio vuoto
             return;
@@ -240,9 +353,31 @@ void ProgramMonitor::fragmentEnded()
         load(next, 0.0);
         player_->play();
     } else {
-        playing_ = false;  // fine del montaggio
-        poll_->stop();
+        return reachedEdge();
     }
+    updatePosition();
+}
+
+void ProgramMonitor::reachedEdge()
+{
+    const core::Sequence& sequence = project_.sequence();
+    if (loop_ && !sequence.empty()) {
+        // Ripetizione: si riparte dall'altro capo del montaggio, senza fermarsi.
+        seekTo(speed_ < 0 ? std::max(0.0, sequence.totalLength() - player_->frameDuration()) : 0.0);
+        if (gapIndex_ >= 0) {
+            gapBase_ = position_;
+            gapClock_.restart();
+        } else if (!player_->isPlaying()) {
+            player_->play();
+        }
+        updatePosition();
+        return;
+    }
+    playing_ = false;  // fine (o inizio) del montaggio
+    poll_->stop();
+    if (speed_ < 0)
+        seekTo(0.0);
+    setCurrentSpeed(baseSpeed_);
     updatePosition();
 }
 
@@ -254,6 +389,7 @@ void ProgramMonitor::sequenceChanged()
         playing_ = false;
         poll_->stop();
     }
+    setCurrentSpeed(baseSpeed_);
     if (loadedClipId_ != 0 && project_.find(loadedClipId_) == nullptr)
         loadedClipId_ = 0;
     if (sequence.empty()) {
@@ -274,10 +410,21 @@ void ProgramMonitor::updatePosition()
     const core::Sequence& sequence = project_.sequence();
     if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
         const double gapEnd = sequence.startOf(gapIndex_);
+        const double gapStart = gapEnd - sequence.fragments()[static_cast<std::size_t>(gapIndex_)].gap;
         if (playing_)
-            position_ = std::min(gapEnd, gapBase_ + static_cast<double>(gapClock_.nsecsElapsed()) / 1e9);
-        if (playing_ && position_ >= gapEnd - 1e-6) {
+            position_ = std::clamp(gapBase_ + speed_ * static_cast<double>(gapClock_.nsecsElapsed()) / 1e9, gapStart, gapEnd);
+        if (playing_ && speed_ > 0 && position_ >= gapEnd - 1e-6) {
             load(gapIndex_, 0.0);  // finito lo spazio vuoto: il pezzo dopo
+            player_->play();
+        } else if (playing_ && speed_ < 0 && position_ <= gapStart + 1e-6) {
+            // All'indietro: finito lo spazio vuoto, la fine del pezzo prima (o l'inizio del montaggio).
+            if (gapIndex_ == 0) {
+                position_ = 0.0;
+                reachedEdge();
+                return;
+            }
+            const int previous = gapIndex_ - 1;
+            load(previous, sequence.fragments()[static_cast<std::size_t>(previous)].length() - 0.001);
             player_->play();
         }
     } else if (index_ >= 0 && index_ < static_cast<int>(sequence.fragments().size())) {
@@ -292,8 +439,11 @@ void ProgramMonitor::updatePosition()
 void ProgramMonitor::updateLabels()
 {
     const core::Sequence& sequence = project_.sequence();
-    playButton_->setEnabled(!sequence.empty());
-    playButton_->setIcon(style()->standardIcon(playing_ ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+    transport_->setMediaEnabled(!sequence.empty());
+    transport_->setPlaying(playing_);
+    transport_->setSpeed(speed_);
+    transport_->setLoop(loop_);
+    transport_->setVolume(volume_, muted_);
     timeLabel_->setText(QStringLiteral("%1 / %2").arg(timeText(position_), timeText(sequence.totalLength())));
     if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
         fragmentLabel_->setText(QStringLiteral("Spazio vuoto (nero) prima del pezzo %1").arg(gapIndex_ + 1));

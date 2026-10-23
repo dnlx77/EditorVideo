@@ -20,7 +20,6 @@
 
 class QLabel;
 class QTimer;
-class QToolButton;
 
 namespace editor::core {
 class AudioDecoder;
@@ -31,6 +30,7 @@ struct VideoFrame;
 namespace editor::app {
 
 class TimelineWidget;
+class TransportBar;
 class VideoView;
 
 // Anteprima con riproduzione audio/video sincronizzata, linea del tempo con i fotogrammi chiave e segmento IN-OUT.
@@ -48,14 +48,34 @@ public:
     void closeFile();
     bool hasMedia() const;
 
-    void togglePlayPause();
+    void togglePlayPause();  // mettendo in pausa la velocità torna quella scelta (finisce la spola)
     void play();
     void pause();
+    // Ferma e torna dove era partita l'ultima riproduzione.
+    void stop();
 
-    // Riproduce solo fino a `end` (secondi del file), poi si ferma e chiama onWindowEnd: serve all'anteprima della
-    // sequenza, che passa al pezzo successivo. end <= 0 = nessun limite.
-    void setPlaybackWindow(double end);
+    // Velocità. setBaseSpeed: quella scelta dal menu (positiva), con cui parte la riproduzione. setSpeed: quella del
+    // momento, anche negativa (all'indietro); se si sta riproducendo si continua da qui alla nuova velocità.
+    // L'audio si sente solo fino a 2x in avanti (core::audibleAtSpeed), con la stessa intonazione.
+    void setBaseSpeed(double speed);
+    void setSpeed(double speed);
+    double speed() const { return speed_; }
+    double baseSpeed() const { return baseSpeed_; }
+    // Spola (J = -1, L = +1, premuti più volte): vedi core::shuttleSpeed. Se si è fermi parte la riproduzione.
+    void shuttle(int direction);
+    // Ripetizione: arrivata a OUT (o alla fine del file) la riproduzione riparte da IN (o dall'inizio).
+    void setLoop(bool loop);
+    bool loop() const { return loop_; }
+    // Volume dell'anteprima (0-100) e muto: solo l'ascolto, non il file esportato.
+    void setVolume(int percent);
+    void setMuted(bool muted);
+
+    // Riproduce solo fra `start` ed `end` (secondi del file), poi si ferma e chiama onWindowEnd: serve all'anteprima
+    // della sequenza, che passa al pezzo successivo (o al precedente, all'indietro). end <= 0 = nessun limite.
+    void setPlaybackWindow(double start, double end);
     std::function<void()> onWindowEnd;
+    // Pulsante "aggiungi al montaggio" della barra dei comandi.
+    std::function<void()> onAddRequested;
 
     // Solo nero al posto dell'immagine (uno spazio vuoto del montaggio), senza chiudere il file.
     void setBlank(bool blank);
@@ -121,7 +141,10 @@ private:
     void startWorkers(double from);
     void stopWorkers();
     void videoWorker();
+    void videoReverseWorker(double from);  // all'indietro: blocchi decodificati in avanti e poi mostrati al contrario
     void audioWorker();
+    void restartAt(double position);  // durante la riproduzione: riparte da `position` (salto, ripetizione, velocità)
+    void updateGain();
 
     double clock();
     void tick();
@@ -136,7 +159,7 @@ private:
     double markTime() const;
 
     VideoView* view_ = nullptr;
-    QToolButton* playButton_ = nullptr;
+    TransportBar* transport_ = nullptr;
     TimelineWidget* timeline_ = nullptr;
     QLabel* timeLabel_ = nullptr;
     QLabel* segmentLabel_ = nullptr;
@@ -166,7 +189,15 @@ private:
     double frameDuration_ = 0.04;
     bool decoderAtDisplayed_ = false; // il decoder è subito dopo il fotogramma visibile
     bool playing_ = false;
-    double windowEnd_ = 0.0;  // vedi setPlaybackWindow()
+    double windowStart_ = 0.0;  // vedi setPlaybackWindow()
+    double windowEnd_ = 0.0;
+    double speed_ = 1.0;        // vedi setSpeed()
+    double baseSpeed_ = 1.0;
+    bool loop_ = false;
+    int volume_ = 100;
+    bool muted_ = false;
+    double playStart_ = 0.0;    // da dove è partita l'ultima riproduzione (per stop)
+    bool hasPlayStart_ = false;
 
     core::CutSegment segment_;
     std::vector<core::TimeRange> ranges_;  // vedi setRanges()
@@ -186,6 +217,8 @@ private:
     double audioFrom_ = 0.0;   // da dove parte la riproduzione (per il silenzio prima dell'audio esterno)
     double audioDelta_ = 0.0;  // tempo nell'audio = tempo del file + audioDelta_
     std::vector<core::TimeRange> workerMutes_;  // copia di audioMutes_ per il thread audio
+    double workerSpeed_ = 1.0;  // velocità della riproduzione in corso (ferma mentre i thread lavorano)
+    std::atomic<float> gain_{1.0f};  // volume per il thread audio
 
     // Orologio: audio se c'è, altrimenti tempo reale.
     bool audioActive_ = false;
