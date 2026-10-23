@@ -5,7 +5,6 @@
 #include "EditorCore/ProjectFile.h"
 
 #include <algorithm>
-#include <cctype>
 #include <filesystem>
 
 namespace editor::core {
@@ -14,23 +13,9 @@ using namespace detail;
 
 namespace {
 
-std::string lowercase(std::string text)
-{
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return text;
-}
-
 std::string extensionOf(const std::string& utf8Path)
 {
     return lowercase(utf8FromPath(pathFromUtf8(utf8Path).extension()));
-}
-
-// Chiave per riconoscere lo stesso file: su Windows maiuscole e minuscole non contano, né "/" o "\".
-std::string sameFileKey(const std::string& utf8Path)
-{
-    std::error_code ec;
-    std::filesystem::path absolute = std::filesystem::absolute(pathFromUtf8(utf8Path), ec).lexically_normal();
-    return lowercase(utf8FromPath(absolute.make_preferred()));
 }
 
 }  // namespace
@@ -103,9 +88,12 @@ std::optional<double> inspectMedia(const std::string& utf8Path)
         return std::nullopt;
     try {
         const FormatContextPtr ctx = openInput(utf8Path);
-        if (findMainStream(ctx.get(), AVMEDIA_TYPE_VIDEO) < 0 && findMainStream(ctx.get(), AVMEDIA_TYPE_AUDIO) < 0)
+        int main = findMainStream(ctx.get(), AVMEDIA_TYPE_VIDEO);
+        if (main < 0)
+            main = findMainStream(ctx.get(), AVMEDIA_TYPE_AUDIO);
+        if (main < 0)
             return std::nullopt;
-        return ctx->duration != AV_NOPTS_VALUE ? std::max(0.0, ctx->duration / double(AV_TIME_BASE)) : 0.0;
+        return std::max(0.0, durationOf(ctx.get(), ctx->streams[main]));
     } catch (const std::exception&) {
         return std::nullopt;
     }

@@ -1,5 +1,7 @@
 #include "EditorCore/H264Params.h"
 
+#include "EditorCore/NalUnits.h"
+
 #include <algorithm>
 #include <stdexcept>
 
@@ -250,54 +252,25 @@ H264Config parseH264Config(const std::vector<std::uint8_t>& extradata)
 {
     H264Config config;
     try {
+        std::vector<nal::Nal> parameterNals;
         if (extradata.size() >= 7 && extradata[0] == 1) {
             // avcC
-            config.nalLengthSize = (extradata[4] & 0x03) + 1;
-            std::size_t pos = 6;  // byte 5 = numero di SPS, poi per ognuno 2 byte di lunghezza e il NAL
-            const auto readNals = [&](int count, std::vector<std::vector<std::uint8_t>>& out) {
-                for (int i = 0; i < count; ++i) {
-                    if (pos + 2 > extradata.size())
-                        throw ParseError{};
-                    const std::size_t length = (extradata[pos] << 8) | extradata[pos + 1];
-                    pos += 2;
-                    if (pos + length > extradata.size() || length == 0)
-                        throw ParseError{};
-                    out.emplace_back(extradata.begin() + static_cast<std::ptrdiff_t>(pos),
-                                     extradata.begin() + static_cast<std::ptrdiff_t>(pos + length));
-                    pos += length;
-                }
-            };
-            readNals(extradata[5] & 0x1f, config.rawSps);
-            if (pos >= extradata.size())
+            auto sets = nal::readAvcC(extradata);
+            if (!sets)
                 throw ParseError{};
-            const int numPps = extradata[pos++];
-            readNals(numPps, config.rawPps);
+            config.nalLengthSize = sets->lengthSize;
+            parameterNals = std::move(sets->nals);
         } else {
             // Annex B: NAL separati dai codici di inizio 00 00 01 / 00 00 00 01.
             config.nalLengthSize = 0;
-            std::vector<std::size_t> starts;
-            for (std::size_t i = 0; i + 3 <= extradata.size(); ++i) {
-                if (extradata[i] == 0 && extradata[i + 1] == 0 && extradata[i + 2] == 1) {
-                    starts.push_back(i + 3);
-                    i += 2;
-                }
-            }
-            if (starts.empty())
-                throw ParseError{};
-            for (std::size_t k = 0; k < starts.size(); ++k) {
-                std::size_t end = k + 1 < starts.size() ? starts[k + 1] - 3 : extradata.size();
-                while (end > starts[k] && extradata[end - 1] == 0)
-                    --end;  // zero del codice di inizio a 4 byte successivo
-                if (end <= starts[k])
-                    continue;
-                std::vector<std::uint8_t> nal(extradata.begin() + static_cast<std::ptrdiff_t>(starts[k]),
-                                              extradata.begin() + static_cast<std::ptrdiff_t>(end));
-                const int type = nal[0] & 0x1f;
-                if (type == 7)
-                    config.rawSps.push_back(std::move(nal));
-                else if (type == 8)
-                    config.rawPps.push_back(std::move(nal));
-            }
+            parameterNals = nal::splitAnnexB(extradata.data(), extradata.size());
+        }
+        for (nal::Nal& unit : parameterNals) {
+            const int type = unit[0] & 0x1f;
+            if (type == 7)
+                config.rawSps.push_back(std::move(unit));
+            else if (type == 8)
+                config.rawPps.push_back(std::move(unit));
         }
         if (config.rawSps.empty() || config.rawPps.empty())
             throw ParseError{};

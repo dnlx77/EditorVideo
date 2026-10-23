@@ -36,6 +36,13 @@ struct MediaSignature
     std::vector<StreamSignature> streams;  // solo video (non copertine) e audio, nell'ordine del file
 };
 
+// Il primo flusso del tipo richiesto, nullptr se non c'è.
+const StreamSignature* findStream(const std::vector<StreamSignature>& streams, StreamKind kind);
+
+// true se i due flussi audio hanno lo stesso codec, frequenza, canali e impostazioni dell'encoder: i pacchetti dell'uno
+// si possono mettere accanto a quelli dell'altro.
+bool sameAudioFormat(const StreamSignature& a, const StreamSignature& b);
+
 // Legge le caratteristiche dei flussi (veloce: non legge tutto il file). Lancia MediaError se il file non si apre.
 MediaSignature readMediaSignature(const std::string& utf8Path);
 

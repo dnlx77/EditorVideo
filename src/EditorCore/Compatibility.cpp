@@ -155,16 +155,27 @@ MediaSignature readMediaSignature(const std::string& utf8Path)
     return signature;
 }
 
+const StreamSignature* findStream(const std::vector<StreamSignature>& streams, StreamKind kind)
+{
+    const auto it = std::find_if(streams.begin(), streams.end(), [kind](const StreamSignature& s) { return s.kind == kind; });
+    return it == streams.end() ? nullptr : &*it;
+}
+
+bool sameAudioFormat(const StreamSignature& a, const StreamSignature& b)
+{
+    std::vector<Mismatch> differences;
+    compareStream(a, b, differences);
+    return differences.empty();
+}
+
 const StreamSignature* ProjectFormat::video() const
 {
-    const auto it = std::find_if(streams.begin(), streams.end(), [](const StreamSignature& s) { return s.kind == StreamKind::Video; });
-    return it == streams.end() ? nullptr : &*it;
+    return findStream(streams, StreamKind::Video);
 }
 
 const StreamSignature* ProjectFormat::audio() const
 {
-    const auto it = std::find_if(streams.begin(), streams.end(), [](const StreamSignature& s) { return s.kind == StreamKind::Audio; });
-    return it == streams.end() ? nullptr : &*it;
+    return findStream(streams, StreamKind::Audio);
 }
 
 ProjectFormat formatOf(const MediaSignature& signature)

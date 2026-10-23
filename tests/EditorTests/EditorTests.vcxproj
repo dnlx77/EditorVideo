@@ -48,6 +48,7 @@
     <ClCompile Include="LibraryInfoTests.cpp" />
     <ClCompile Include="MediaChecks.cpp" />
     <ClCompile Include="MediaProbeTests.cpp" />
+    <ClCompile Include="NalUnitsTests.cpp" />
     <ClCompile Include="MultiFileJoinTests.cpp" />
     <ClCompile Include="ParameterJoinTests.cpp" />
     <ClCompile Include="PlaybackTests.cpp" />

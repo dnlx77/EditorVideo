@@ -5,10 +5,14 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/pixdesc.h>
+#include <libswresample/swresample.h>
+#include <libswscale/swscale.h>
 }
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -38,7 +42,49 @@ struct FrameDeleter
 };
 using FramePtr = std::unique_ptr<AVFrame, FrameDeleter>;
 
+struct SwsDeleter
+{
+    void operator()(SwsContext* ctx) const { sws_freeContext(ctx); }
+};
+
+struct SwrDeleter
+{
+    void operator()(SwrContext* ctx) const { swr_free(&ctx); }
+};
+
 std::string ffmpegError(int code);
+
+// Tempo del pacchetto: quello di presentazione se c'è, altrimenti quello di decodifica (AV_NOPTS_VALUE se mancano
+// entrambi), nell'unità del flusso.
+inline std::int64_t packetTimestamp(const AVPacket* pkt)
+{
+    return pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
+}
+
+// Tempo del fotogramma decodificato: la stima del decoder se c'è, altrimenti pts (AV_NOPTS_VALUE se mancano),
+// nell'unità del flusso.
+inline std::int64_t frameTimestamp(const AVFrame* frame)
+{
+    return frame->best_effort_timestamp != AV_NOPTS_VALUE ? frame->best_effort_timestamp : frame->pts;
+}
+
+// Fotogrammi al secondo del flusso video; 0 se il file non li dice.
+inline double guessFrameRate(const AVFormatContext* fmt, const AVStream* st)
+{
+    const AVRational rate = av_guess_frame_rate(const_cast<AVFormatContext*>(fmt), const_cast<AVStream*>(st), nullptr);
+    return rate.num > 0 && rate.den > 0 ? av_q2d(rate) : 0.0;
+}
+
+// Disposizione dei canali in `out` (da liberare con av_channel_layout_uninit): quella di `in`, o la standard per quel
+// numero di canali se `in` non la dice. Restituisce un codice di errore FFmpeg negativo se la copia non riesce.
+inline int defaultOrCopyLayout(AVChannelLayout* out, const AVChannelLayout& in)
+{
+    if (in.order == AV_CHANNEL_ORDER_UNSPEC) {
+        av_channel_layout_default(out, in.nb_channels);
+        return 0;
+    }
+    return av_channel_layout_copy(out, &in);
+}
 
 // true se `cancel` c'è ed è diventato true (richiesta di annullare un'operazione lunga).
 bool isCancelled(const std::atomic<bool>* cancel);
@@ -97,9 +143,7 @@ void readStreamFormat(const AVFormatContext* fmt, const AVStream* st, Stream& ou
         out.height = par->height;
         if (const char* name = av_get_pix_fmt_name(static_cast<AVPixelFormat>(par->format)))
             out.pixelFormat = name;
-        const AVRational rate =
-            av_guess_frame_rate(const_cast<AVFormatContext*>(fmt), const_cast<AVStream*>(st), nullptr);
-        out.frameRate = rate.num > 0 && rate.den > 0 ? av_q2d(rate) : 0.0;
+        out.frameRate = guessFrameRate(fmt, st);
     } else if (par->codec_type == AVMEDIA_TYPE_AUDIO) {
         out.sampleRate = par->sample_rate;
         out.channels = par->ch_layout.nb_channels;

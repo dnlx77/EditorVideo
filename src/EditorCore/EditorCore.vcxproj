@@ -46,6 +46,7 @@
     <ClInclude Include="LibraryInfo.h" />
     <ClInclude Include="MediaError.h" />
     <ClInclude Include="MediaProbe.h" />
+    <ClInclude Include="NalUnits.h" />
     <ClInclude Include="PathUtil.h" />
     <ClInclude Include="Playback.h" />
     <ClInclude Include="Project.h" />
@@ -70,6 +71,7 @@
     <ClCompile Include="Json.cpp" />
     <ClCompile Include="LibraryInfo.cpp" />
     <ClCompile Include="MediaProbe.cpp" />
+    <ClCompile Include="NalUnits.cpp" />
     <ClCompile Include="PathUtil.cpp" />
     <ClCompile Include="Playback.cpp" />
     <ClCompile Include="Project.cpp" />

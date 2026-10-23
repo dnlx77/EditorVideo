@@ -143,10 +143,7 @@ double durationOf(const AVFormatContext* fmt, const AVStream* stream)
 std::string describeChannelLayout(const AVCodecParameters* par)
 {
     AVChannelLayout layout = {};
-    if (par->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
-        av_channel_layout_default(&layout, par->ch_layout.nb_channels);
-    else
-        av_channel_layout_copy(&layout, &par->ch_layout);
+    defaultOrCopyLayout(&layout, par->ch_layout);
     char text[128] = {};
     std::string result;
     if (av_channel_layout_describe(&layout, text, sizeof(text)) > 0)
