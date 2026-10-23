@@ -110,7 +110,7 @@ OpenedStream openMainStream(const std::string& utf8Path, AVMediaType type)
     opened.fmt = openInput(utf8Path);
     opened.index = findMainStream(opened.fmt.get(), type);
     if (opened.index < 0)
-        throw MediaError("Il file non contiene un flusso " + kind + ": " + utf8Path);
+        throw NoStreamError("Il file non contiene un flusso " + kind + ": " + utf8Path);
     opened.stream = opened.fmt->streams[opened.index];
     keepOnlyStream(opened.fmt.get(), opened.index);
 
