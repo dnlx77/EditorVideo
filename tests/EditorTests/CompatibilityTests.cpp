@@ -33,23 +33,29 @@ MediaSignature phoneVideo(const std::string& name)
     return m;
 }
 
-TEST(Compatibility, SameParametersAreCompatible)
+// Come entra nel file un pezzo di `clip`, rispetto al formato del primo file (a.mp4).
+ClipFitResult fitOf(const MediaSignature& clip, bool withAudio = true)
 {
-    EXPECT_TRUE(checkCompatibility({phoneVideo("a.mp4"), phoneVideo("b.mp4"), phoneVideo("c.mov")}).empty());
-    EXPECT_TRUE(checkCompatibility({phoneVideo("solo.mp4")}).empty());
-    EXPECT_TRUE(checkCompatibility({}).empty());
+    return classifyClip(clip, formatOf(phoneVideo("a.mp4")), withAudio);
 }
 
-TEST(Compatibility, DifferentResolutionNamesClipAndValues)
+TEST(Compatibility, SameParametersAreCopied)
+{
+    const ClipFitResult result = fitOf(phoneVideo("b.mov"));
+    EXPECT_EQ(result.fit, ClipFit::Copy);
+    EXPECT_TRUE(result.reasons.empty());
+}
+
+TEST(Compatibility, DifferentResolutionNamesTheValues)
 {
     MediaSignature small = phoneVideo("nome.mp4");
     small.streams[0].width = 1280;
     small.streams[0].height = 720;
-    const auto result = checkCompatibility({phoneVideo("a.mp4"), phoneVideo("b.mp4"), small});
-    ASSERT_EQ(result.size(), 1u);
-    EXPECT_EQ(result[0].clipIndex, 2);
+    const ClipFitResult result = fitOf(small);
+    EXPECT_EQ(result.fit, ClipFit::Reencode);
     // La differenza delle misure cambia anche i parametri di codifica: si segnala solo la causa.
-    EXPECT_EQ(result[0].message, "Clip 3 (nome.mp4): risoluzione 1280x720 invece di 1920x1080");
+    ASSERT_EQ(result.reasons.size(), 1u);
+    EXPECT_EQ(result.reasons[0], "risoluzione 1280x720 invece di 1920x1080");
 }
 
 TEST(Compatibility, DifferentCodecHidesOtherDetails)
@@ -58,9 +64,10 @@ TEST(Compatibility, DifferentCodecHidesOtherDetails)
     hevc.streams[0].codec = "hevc";
     hevc.streams[0].profile = "Main";
     hevc.streams[0].width = 3840;
-    const auto result = checkCompatibility({phoneVideo("a.mp4"), hevc});
-    ASSERT_EQ(result.size(), 1u);
-    EXPECT_EQ(result[0].message, "Clip 2 (hevc.mp4): codec video hevc invece di h264");
+    const ClipFitResult result = fitOf(hevc);
+    EXPECT_EQ(result.fit, ClipFit::Reencode);
+    ASSERT_EQ(result.reasons.size(), 1u);
+    EXPECT_EQ(result.reasons[0], "codec video hevc invece di h264");
 }
 
 TEST(Compatibility, VideoDetails)
@@ -69,18 +76,29 @@ TEST(Compatibility, VideoDetails)
     other.streams[0].profile = "Main";
     other.streams[0].pixelFormat = "yuv420p10le";
     other.streams[0].frameRate = 60.0;
-    const auto result = checkCompatibility({phoneVideo("a.mp4"), other});
-    ASSERT_EQ(result.size(), 3u);
-    EXPECT_EQ(result[0].message, "Clip 2 (x.mp4): profilo video Main invece di High");
-    EXPECT_EQ(result[1].message, "Clip 2 (x.mp4): formato pixel yuv420p10le invece di yuv420p");
-    EXPECT_EQ(result[2].message, "Clip 2 (x.mp4): frequenza fotogrammi 60 fps invece di 30 fps");
+    const ClipFitResult result = fitOf(other);
+    EXPECT_EQ(result.fit, ClipFit::Reencode);
+    ASSERT_EQ(result.reasons.size(), 3u);
+    EXPECT_EQ(result.reasons[0], "profilo video Main invece di High");
+    EXPECT_EQ(result.reasons[1], "formato pixel yuv420p10le invece di yuv420p");
+    EXPECT_EQ(result.reasons[2], "frequenza fotogrammi 60 fps invece di 30 fps");
+}
+
+TEST(Compatibility, OnlyTheProfileDiffersCopiesWithItsParameters)
+{
+    MediaSignature other = phoneVideo("x.mp4");
+    other.streams[0].profile = "Main";
+    const ClipFitResult result = fitOf(other);
+    EXPECT_EQ(result.fit, ClipFit::CopyWithParameters);
+    ASSERT_EQ(result.reasons.size(), 1u);
+    EXPECT_EQ(result.reasons[0], "profilo video Main invece di High");
 }
 
 TEST(Compatibility, NearlyEqualFrameRatesAreTheSame)
 {
     MediaSignature other = phoneVideo("x.mp4");
     other.streams[0].frameRate = 30.0001;
-    EXPECT_TRUE(checkCompatibility({phoneVideo("a.mp4"), other}).empty());
+    EXPECT_EQ(fitOf(other).fit, ClipFit::Copy);
 }
 
 TEST(Compatibility, AudioDetails)
@@ -89,47 +107,44 @@ TEST(Compatibility, AudioDetails)
     other.streams[1].sampleRate = 44100;
     other.streams[1].channels = 1;
     other.streams[1].channelLayout = "mono";
-    const auto result = checkCompatibility({phoneVideo("a.mp4"), other});
-    ASSERT_EQ(result.size(), 2u);
-    EXPECT_EQ(result[0].message, "Clip 2 (x.mp4): frequenza di campionamento 44100 Hz invece di 48000 Hz");
-    EXPECT_EQ(result[1].message, "Clip 2 (x.mp4): canali 1 (mono) invece di 2 (stereo)");
+    const ClipFitResult result = fitOf(other);
+    EXPECT_EQ(result.fit, ClipFit::Reencode);
+    ASSERT_EQ(result.reasons.size(), 2u);
+    EXPECT_EQ(result.reasons[0], "frequenza di campionamento 44100 Hz invece di 48000 Hz");
+    EXPECT_EQ(result.reasons[1], "canali 1 (mono) invece di 2 (stereo)");
 }
 
-TEST(Compatibility, DifferentExtradataIsRefused)
+TEST(Compatibility, AudioIsIgnoredWhenItIsNotCopied)
+{
+    // Con una traccia audio sostitutiva l'audio dei file non si copia: le sue differenze non contano.
+    MediaSignature other = phoneVideo("x.mp4");
+    other.streams[1].sampleRate = 44100;
+    EXPECT_EQ(fitOf(other).fit, ClipFit::Reencode);
+    EXPECT_EQ(fitOf(other, false).fit, ClipFit::Copy);
+}
+
+TEST(Compatibility, DifferentExtradataIsReencoded)
 {
     // Stessi codec e misure ma SPS/PPS diversi (es. impostazioni dell'encoder cambiate fra due riprese).
     MediaSignature other = phoneVideo("x.mp4");
     other.streams[0].extradata.back() = 0x00;
     other.streams[1].extradata = {0x12, 0x10};
-    const auto result = checkCompatibility({phoneVideo("a.mp4"), other});
-    ASSERT_EQ(result.size(), 2u);
-    // Dati H.264 non leggibili: rifiutati per prudenza; per l'audio un messaggio generico.
-    EXPECT_EQ(result[0].message, "Clip 2 (x.mp4): parametri di codifica video diversi (non leggibili)");
-    EXPECT_EQ(result[1].message, "Clip 2 (x.mp4): impostazioni dell'encoder audio diverse");
+    const ClipFitResult result = fitOf(other);
+    EXPECT_EQ(result.fit, ClipFit::Reencode);
+    ASSERT_EQ(result.reasons.size(), 2u);
+    // Dati H.264 non leggibili: ricodificato per prudenza; per l'audio un messaggio generico.
+    EXPECT_EQ(result.reasons[0], "parametri di codifica video diversi (non leggibili)");
+    EXPECT_EQ(result.reasons[1], "impostazioni dell'encoder audio diverse");
 }
 
 TEST(Compatibility, DifferentStreamLayout)
 {
     MediaSignature mute = phoneVideo("muto.mp4");
     mute.streams.pop_back();
-    const auto result = checkCompatibility({phoneVideo("a.mp4"), mute});
-    ASSERT_EQ(result.size(), 1u);
-    EXPECT_EQ(result[0].message, "Clip 2 (muto.mp4): 1 flussi video e 0 audio invece di 1 video e 1 audio");
-}
-
-TEST(Compatibility, EveryClipIsComparedWithTheFirst)
-{
-    MediaSignature b = phoneVideo("b.mp4");
-    b.streams[1].sampleRate = 44100;
-    MediaSignature c = phoneVideo("c.mp4");
-    c.streams[0].width = 1280;
-    const auto result = checkCompatibility({phoneVideo("a.mp4"), b, c});
-    ASSERT_EQ(result.size(), 2u);
-    EXPECT_EQ(result[0].clipIndex, 1);
-    EXPECT_EQ(result[1].clipIndex, 2);
-    EXPECT_EQ(describeMismatches(result),
-              "Clip 2 (b.mp4): frequenza di campionamento 44100 Hz invece di 48000 Hz\n"
-              "Clip 3 (c.mp4): risoluzione 1280x1080 invece di 1920x1080");
+    const ClipFitResult result = fitOf(mute);
+    EXPECT_EQ(result.fit, ClipFit::Reencode);
+    ASSERT_EQ(result.reasons.size(), 1u);
+    EXPECT_EQ(result.reasons[0], "1 flussi video e 0 audio invece di 1 video e 1 audio");
 }
 
 }  // namespace

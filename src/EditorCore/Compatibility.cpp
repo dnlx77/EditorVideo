@@ -14,6 +14,16 @@ using namespace detail;
 
 namespace {
 
+// Una differenza che impedisce di copiare un file così com'è nel formato del progetto.
+struct Mismatch
+{
+    std::string message;   // es. "risoluzione 1280x720 invece di 1920x1080"
+    // Solo i parametri di codifica di un video H.264 o HEVC (SPS/PPS, profilo): stessi codec, misure e fotogrammi al
+    // secondo, quindi i pacchetti si possono copiare lo stesso, ripetendo i parametri giusti nel flusso (vedi
+    // exportClips). Le altre differenze richiedono la ricodifica.
+    bool parametersOnly = false;
+};
+
 std::string kindName(StreamKind kind)
 {
     return kind == StreamKind::Video ? "video" : "audio";
@@ -38,15 +48,12 @@ bool parametersInStream(const StreamSignature& s)
     return s.kind == StreamKind::Video && (s.codec == "h264" || s.codec == "hevc");
 }
 
-// Differenze fra un flusso e quello corrispondente del primo file.
-void compareStream(const StreamSignature& s, const StreamSignature& ref, const std::string& prefix,
-                   int clipIndex, std::vector<Mismatch>& out)
+// Differenze fra un flusso e quello corrispondente del formato di riferimento.
+void compareStream(const StreamSignature& s, const StreamSignature& ref, std::vector<Mismatch>& out)
 {
-    const auto add = [&](const std::string& what) { out.push_back({clipIndex, prefix + what}); };
+    const auto add = [&](const std::string& what) { out.push_back({what}); };
     // Una differenza dei soli parametri di codifica: per H.264 e HEVC i pacchetti si copiano lo stesso.
-    const auto addParameters = [&](const std::string& what) {
-        out.push_back({clipIndex, prefix + what, parametersInStream(s)});
-    };
+    const auto addParameters = [&](const std::string& what) { out.push_back({what, parametersInStream(s)}); };
     const std::string kind = kindName(s.kind);
     const std::size_t before = out.size();
 
@@ -102,8 +109,7 @@ void compareStream(const StreamSignature& s, const StreamSignature& ref, const s
 }
 
 // Differenze di un file rispetto a un altro (il riferimento): flussi presenti e, flusso per flusso, compareStream.
-void compareFile(const MediaSignature& clip, const MediaSignature& ref, const std::string& prefix, int index,
-                 std::vector<Mismatch>& out)
+void compareFile(const MediaSignature& clip, const MediaSignature& ref, std::vector<Mismatch>& out)
 {
     const int refVideo = countOf(ref, StreamKind::Video);
     const int refAudio = countOf(ref, StreamKind::Audio);
@@ -113,13 +119,12 @@ void compareFile(const MediaSignature& clip, const MediaSignature& ref, const st
     for (std::size_t s = 0; sameLayout && s < clip.streams.size(); ++s)
         sameLayout = clip.streams[s].kind == ref.streams[s].kind;
     if (!sameLayout) {
-        out.push_back({index, prefix + std::to_string(video) + " flussi video e " + std::to_string(audio)
-                                  + " audio invece di " + std::to_string(refVideo) + " video e " + std::to_string(refAudio)
-                                  + " audio"});
+        out.push_back({std::to_string(video) + " flussi video e " + std::to_string(audio) + " audio invece di "
+                       + std::to_string(refVideo) + " video e " + std::to_string(refAudio) + " audio"});
         return;
     }
     for (std::size_t s = 0; s < clip.streams.size(); ++s)
-        compareStream(clip.streams[s], ref.streams[s], prefix, index, out);
+        compareStream(clip.streams[s], ref.streams[s], out);
 }
 
 }  // namespace
@@ -150,19 +155,6 @@ MediaSignature readMediaSignature(const std::string& utf8Path)
     return signature;
 }
 
-std::vector<Mismatch> checkCompatibility(const std::vector<MediaSignature>& clips)
-{
-    std::vector<Mismatch> result;
-    if (clips.size() < 2)
-        return result;
-    for (std::size_t c = 1; c < clips.size(); ++c) {
-        const MediaSignature& clip = clips[c];
-        compareFile(clip, clips.front(), "Clip " + std::to_string(c + 1) + " (" + clip.fileName + "): ",
-                    static_cast<int>(c), result);
-    }
-    return result;
-}
-
 const StreamSignature* ProjectFormat::video() const
 {
     const auto it = std::find_if(streams.begin(), streams.end(), [](const StreamSignature& s) { return s.kind == StreamKind::Video; });
@@ -189,7 +181,7 @@ ClipFitResult classifyClip(const MediaSignature& clip, const ProjectFormat& form
         std::erase_if(other.streams, [](const StreamSignature& s) { return s.kind == StreamKind::Audio; });
     }
     std::vector<Mismatch> mismatches;
-    compareFile(other, ref, "", 1, mismatches);
+    compareFile(other, ref, mismatches);
     ClipFitResult result;
     for (const Mismatch& m : mismatches)
         result.reasons.push_back(m.message);
@@ -200,17 +192,6 @@ ClipFitResult classifyClip(const MediaSignature& clip, const ProjectFormat& form
     else
         result.fit = ClipFit::Reencode;
     return result;
-}
-
-std::string describeMismatches(const std::vector<Mismatch>& mismatches)
-{
-    std::string text;
-    for (const Mismatch& m : mismatches) {
-        if (!text.empty())
-            text += '\n';
-        text += m.message;
-    }
-    return text;
 }
 
 }  // namespace editor::core

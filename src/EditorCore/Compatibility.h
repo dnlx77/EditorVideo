@@ -36,26 +36,8 @@ struct MediaSignature
     std::vector<StreamSignature> streams;  // solo video (non copertine) e audio, nell'ordine del file
 };
 
-// Una differenza che impedisce di unire un file al primo.
-struct Mismatch
-{
-    int clipIndex = 0;     // 0 = primo file
-    std::string message;   // es. "Clip 3 (nome.mp4): risoluzione 1280x720 invece di 1920x1080"
-    // Solo i parametri di codifica di un video H.264 o HEVC (SPS/PPS, profilo): stessi codec, misure e fotogrammi al
-    // secondo, quindi i pacchetti si possono copiare lo stesso, ripetendo i parametri giusti nel flusso (vedi
-    // exportClips). Le altre differenze richiedono la ricodifica.
-    bool parametersOnly = false;
-};
-
 // Legge le caratteristiche dei flussi (veloce: non legge tutto il file). Lancia MediaError se il file non si apre.
 MediaSignature readMediaSignature(const std::string& utf8Path);
-
-// Confronta ogni file con il primo. Vuoto = si possono unire. Il confronto della base dei tempi non serve:
-// nell'unione i tempi vengono convertiti comunque.
-std::vector<Mismatch> checkCompatibility(const std::vector<MediaSignature>& clips);
-
-// Tutte le differenze, una per riga.
-std::string describeMismatches(const std::vector<Mismatch>& mismatches);
 
 // Formato del progetto: codec, misure, fotogrammi al secondo e audio del file che si esporta. Lo dà un file del
 // progetto (di solito quello del primo pezzo messo nel montaggio); i pezzi degli altri file si confrontano con questo.
@@ -75,7 +57,7 @@ ProjectFormat formatOf(const MediaSignature& signature);
 enum class ClipFit
 {
     Copy,                // si copia così com'è
-    CopyWithParameters,  // si copia, con i suoi parametri di codifica ripetuti nel flusso (vedi Mismatch)
+    CopyWithParameters,  // si copia, con i suoi parametri di codifica ripetuti nel flusso (solo parametri di codifica diversi)
     Reencode,            // diverso: senza ricodifica non si può unire
 };
 

@@ -323,14 +323,21 @@ TEST(H264Params, CompatibilityUsesTheRealDifferences)
     level.level = 42;
     Params timing;
     timing.timeScale = 30000;
-    EXPECT_TRUE(checkCompatibility({h264File("a.mp4", {}), h264File("b.mp4", level), h264File("c.mp4", timing)}).empty());
+    const ProjectFormat format = formatOf(h264File("a.mp4", {}));
+    for (const Params& p : {level, timing}) {
+        const ClipFitResult same = classifyClip(h264File("x.mp4", p), format);
+        EXPECT_EQ(same.fit, ClipFit::Copy);
+        EXPECT_TRUE(same.reasons.empty());
+    }
 
-    // Encoder impostato diversamente: rifiutato, con il motivo in parole semplici.
+    // Encoder impostato diversamente: si copia ma ripetendo i suoi parametri nel flusso, con il motivo in parole
+    // semplici.
     Params cavlc;
     cavlc.cabac = false;
-    const auto result = checkCompatibility({h264File("a.mp4", {}), h264File("b.mp4", cavlc)});
-    ASSERT_EQ(result.size(), 1u);
-    EXPECT_EQ(result[0].message, "Clip 2 (b.mp4): impostazioni dell'encoder diverse (CAVLC invece di CABAC)");
+    const ClipFitResult result = classifyClip(h264File("b.mp4", cavlc), format);
+    EXPECT_EQ(result.fit, ClipFit::CopyWithParameters);
+    ASSERT_EQ(result.reasons.size(), 1u);
+    EXPECT_EQ(result.reasons[0], "impostazioni dell'encoder diverse (CAVLC invece di CABAC)");
 }
 
 }  // namespace

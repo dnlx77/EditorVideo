@@ -2,6 +2,7 @@
 
 // Controlli comuni ai test sui file creati (esportazioni e unioni).
 
+#include "EditorCore/SegmentExport.h"
 #include "EditorCore/VideoDecoder.h"
 
 #include <cstdint>
@@ -9,6 +10,14 @@
 #include <vector>
 
 namespace editor::tests {
+
+// Esporta i tratti `ranges` di un solo file (come exportClips con un file e senza modifiche all'audio).
+inline core::ExportResult exportSegments(const std::string& inputPath, const std::string& outputPath,
+                                         const std::vector<core::TimeRange>& ranges,
+                                         const core::ExportProgress& progress = {})
+{
+    return core::exportClips({{inputPath, ranges}}, outputPath, core::AudioEdit{}, progress);
+}
 
 // Luminanza (Y, range TV) del pixel (x, y), ricavata dal grigio BGRA del fotogramma.
 double lumaAt(const core::VideoFrame& frame, int x, int y);

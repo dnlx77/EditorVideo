@@ -46,6 +46,8 @@ constexpr Candidate kCandidates[] = {
     {"av1_mf", VideoCodec::Av1, EncoderBackend::MediaFoundation},
 };
 
+constexpr int kAudioBitRate = 192000;  // AAC, bit al secondo
+
 struct SwsDeleter
 {
     void operator()(SwsContext* ctx) const { sws_freeContext(ctx); }
@@ -289,36 +291,57 @@ std::string describe(const VideoEncoderInfo& info)
     return codecName(info.codec) + " - " + backendName(info.backend) + " (" + info.ffmpegName + ")";
 }
 
+namespace {
+
+// Gli encoder funzionanti di un codec. La prova si fa la prima volta che si chiede quel codec, anche da più thread
+// insieme, e il risultato resta in memoria: l'esportazione prova solo i codec che usa (H.264, HEVC), AV1 solo quando
+// serve l'elenco completo.
+const std::vector<VideoEncoderInfo>& workingEncoders(VideoCodec codec)
+{
+    constexpr std::size_t kCodecs = 3;
+    static std::vector<VideoEncoderInfo> encoders[kCodecs];
+    static std::once_flag once[kCodecs];
+    const auto index = static_cast<std::size_t>(codec);
+    std::call_once(once[index], [codec, index] {
+        // La prova si fa sempre in un thread a parte, anche se la chiede il thread della finestra: Media Foundation usa
+        // COM, e nel thread della finestra (COM a thread singolo, quello delle finestre di Windows) non funziona e lascia
+        // bloccata la finestra di Windows per salvare che si apre dopo.
+        std::thread probe([codec, index] {
+            // Gli encoder che non trovano la loro scheda video lo scrivono nel registro di FFmpeg: durante la prova no.
+            const int level = av_log_get_level();
+            av_log_set_level(AV_LOG_QUIET);
+            for (const Candidate& c : kCandidates) {
+                if (c.codec == codec && works(c))
+                    encoders[index].push_back({c.codec, c.backend, c.name});
+            }
+            av_log_set_level(level);
+        });
+        probe.join();
+    });
+    return encoders[index];
+}
+
+}  // namespace
+
 const std::vector<VideoEncoderInfo>& availableVideoEncoders()
 {
     static std::vector<VideoEncoderInfo> encoders;
     static std::once_flag once;
     std::call_once(once, [] {
-        // La prova si fa sempre in un thread a parte, anche se la chiede il thread della finestra: Media Foundation usa
-        // COM, e nel thread della finestra (COM a thread singolo, quello delle finestre di Windows) non funziona e lascia
-        // bloccata la finestra di Windows per salvare che si apre dopo.
-        std::thread probe([] {
-            // Gli encoder che non trovano la loro scheda video lo scrivono nel registro di FFmpeg: durante la prova no.
-            const int level = av_log_get_level();
-            av_log_set_level(AV_LOG_QUIET);
-            for (const Candidate& c : kCandidates) {
-                if (works(c))
-                    encoders.push_back({c.codec, c.backend, c.name});
-            }
-            av_log_set_level(level);
-        });
-        probe.join();
+        for (const VideoCodec codec : {VideoCodec::H264, VideoCodec::Hevc, VideoCodec::Av1}) {
+            const std::vector<VideoEncoderInfo>& found = workingEncoders(codec);
+            encoders.insert(encoders.end(), found.begin(), found.end());
+        }
     });
     return encoders;
 }
 
 std::optional<VideoEncoderInfo> preferredVideoEncoder(VideoCodec codec)
 {
-    for (const VideoEncoderInfo& info : availableVideoEncoders()) {
-        if (info.codec == codec)
-            return info;
-    }
-    return std::nullopt;
+    const std::vector<VideoEncoderInfo>& found = workingEncoders(codec);
+    if (found.empty())
+        return std::nullopt;
+    return found.front();
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -338,8 +361,8 @@ VideoEncoder::VideoEncoder(const VideoEncoderSettings& settings)
     if (settings.width <= 0 || settings.height <= 0)
         throw MediaError("Misure del video da codificare non valide.");
     std::vector<VideoEncoderInfo> choices;
-    for (const VideoEncoderInfo& info : availableVideoEncoders()) {
-        if (info.codec == settings.codec && (!settings.backend || info.backend == *settings.backend))
+    for (const VideoEncoderInfo& info : workingEncoders(settings.codec)) {
+        if (!settings.backend || info.backend == *settings.backend)
             choices.push_back(info);
     }
     if (choices.empty()) {
@@ -526,10 +549,9 @@ AudioEncoder::AudioEncoder(const AudioEncoderSettings& settings)
     ctx->sample_rate = settings.sampleRate;
     ctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
     av_channel_layout_default(&ctx->ch_layout, std::max(1, settings.channels));
-    ctx->bit_rate = settings.bitRate;
+    ctx->bit_rate = kAudioBitRate;
     ctx->time_base = {1, settings.sampleRate};
-    if (settings.globalHeader)
-        ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;  // dati extra nel contenitore (MP4, MKV)
     if (const int ret = avcodec_open2(ctx, codec, nullptr); ret < 0)
         throw MediaError("L'encoder AAC non si apre: " + ffmpegError(ret));
     impl_->fifo.reset(av_audio_fifo_alloc(ctx->sample_fmt, ctx->ch_layout.nb_channels, std::max(ctx->frame_size, 1024) * 4));
