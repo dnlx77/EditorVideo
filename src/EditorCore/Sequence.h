@@ -86,6 +86,7 @@ public:
     int indexOf(int fragmentId) const;  // -1 se non c'è
     double totalLength() const;         // fino alla fine dell'ultimo pezzo, spazi vuoti compresi
     double startOf(int index) const;    // dove inizia il pezzo `index` nella sequenza
+    std::vector<double> starts() const;  // l'inizio di ogni pezzo, in una volta sola (startOf per tutti)
     // Pezzo che si trova a quel tempo della sequenza (-1 se oltre la fine o in uno spazio vuoto).
     int indexAt(double seconds) const;
 

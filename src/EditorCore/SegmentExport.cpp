@@ -883,7 +883,7 @@ std::string replacementProblem(AVFormatContext* ctx, int index, const std::strin
 
 }  // namespace
 
-std::string replacementAudioProblem(const std::string& audioPath, const std::string& outputPath)
+std::string replacementAudioProblem(const std::string& audioPath, const std::string& outputPath, double* durationSeconds)
 {
     FormatContextPtr ctx;
     try {
@@ -891,7 +891,10 @@ std::string replacementAudioProblem(const std::string& audioPath, const std::str
     } catch (const std::exception& e) {
         return e.what();
     }
-    return replacementProblem(ctx.get(), findMainStream(ctx.get(), AVMEDIA_TYPE_AUDIO), audioPath, outputPath);
+    const int index = findMainStream(ctx.get(), AVMEDIA_TYPE_AUDIO);
+    if (durationSeconds != nullptr && index >= 0)
+        *durationSeconds = std::max(0.0, durationOf(ctx.get(), ctx->streams[index]));
+    return replacementProblem(ctx.get(), index, audioPath, outputPath);
 }
 
 ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,

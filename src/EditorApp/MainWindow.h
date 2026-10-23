@@ -11,6 +11,7 @@
 #include <QtGui/QImage>
 #include <QtWidgets/QMainWindow>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -204,10 +205,31 @@ private:
     void resetProject();  // ferma le analisi e svuota tutto (prima di aprire un altro progetto)
     // Dopo una modifica fatta dall'utente: `before` è lo stato di prima, da ritrovare con Annulla.
     void recordEdit(const QString& label, const core::Project& before);
+    // Come recordEdit, per le modifiche che non toccano la sequenza (nessun aggiornamento dell'interfaccia).
+    void recordHistory(const QString& label, const core::Project& before);
     void updateUndoActions();
     void afterHistoryChange(const QString& message);
     // Comandi di spostamento: vanno all'anteprima attiva.
     void stepFrame(int direction);
+    // Chiama `action` con l'anteprima attiva (il Montaggio o la Sorgente: hanno gli stessi comandi di spostamento).
+    template <typename Action>
+    void onActiveMonitor(Action&& action)
+    {
+        if (programActive_)
+            action(*program_);
+        else
+            action(*player_);
+    }
+    // I quattro pannelli, per i cicli che li trattano tutti.
+    std::array<QDockWidget*, 4> docks() const { return {filesDock_, sourceDock_, programDock_, timelineDock_}; }
+    // Audio, formato e ricodifica con cui si esporta o si calcola l'anteprima dell'esportazione.
+    struct ExportSettings
+    {
+        core::AudioEdit audio;
+        core::ProjectFormat format;
+        core::ReencodeOptions reencode;
+    };
+    ExportSettings exportSettings() const;
     // Zoom della linea del tempo dell'anteprima attiva (factor > 1 ingrandisce, 0 = Adatta).
     void zoomTimeline(double factor);
     void stepToMark(int direction);  // Sorgente: fotogramma chiave; Montaggio: inizio dei pezzi
@@ -225,6 +247,8 @@ private:
     void refreshClipList();
     void sequenceChanged();
     void refreshTimeline();
+    void addKeyframeRows();  // aggiunge il blocco successivo di fotogrammi chiave all'elenco
+    void refreshWaveforms();  // solo le forme d'onda dei blocchi (quando ne finisce una)
     // Formato del progetto: se non c'è ancora e il montaggio ha dei pezzi, quello del file del primo pezzo.
     void ensureProjectFormat();
     // Caratteristiche dei flussi di un file (lette una volta e tenute da parte); nullptr se il file non si legge.
@@ -291,6 +315,7 @@ private:
     QTreeWidget* infoTree_ = nullptr;
     QLabel* keyframeTitle_ = nullptr;
     QTreeWidget* keyframeList_ = nullptr;
+    std::vector<double> keyframeTimes_;  // quelli del file mostrato, a blocchi in keyframeList_ (vedi addKeyframeRows)
     PlayerWidget* player_ = nullptr;
     ProgramMonitor* program_ = nullptr;
     SequenceTimeline* timeline_ = nullptr;

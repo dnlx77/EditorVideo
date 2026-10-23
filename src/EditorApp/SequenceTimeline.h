@@ -69,6 +69,10 @@ public:
 
     void setMuted(std::vector<core::TimeRange> ranges);  // tempi della sequenza
     void setReplacement(std::optional<Replacement> replacement);
+    // Quando finisce una forma d'onda: aggiorna solo quelle dei blocchi (`forClip` dà quella di un file) e della traccia
+    // sostitutiva, senza rifare il resto.
+    void setWaveforms(const std::function<std::shared_ptr<const core::Waveform>(int clipId)>& forClip,
+                      const std::shared_ptr<const core::Waveform>& replacement);
     // Tratto selezionato sulla corsia audio (tempi della sequenza); to <= from = nessuno.
     void setAudioSelection(double from, double to);
     bool hasAudioSelection() const { return selectionTo_ > selectionFrom_; }
@@ -141,6 +145,7 @@ private:
 
     std::vector<Block> blocks_;
     double total_ = 0.0;  // durata della sequenza: somma dei blocchi, calcolata in setBlocks
+    std::vector<double> starts_;  // inizio di ogni blocco (dopo il suo spazio vuoto), calcolato in setBlocks
     std::vector<core::TimeRange> muted_;
     std::optional<Replacement> replacement_;
     double playhead_ = 0.0;

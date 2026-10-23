@@ -352,7 +352,9 @@ TEST_F(AudioExportTest, IncompatibleReplacementIsRefused)
     // PCM (WAV) in un MP4: senza ricodifica non si può.
     const std::string problem = replacementAudioProblem(path("musica.wav"), path("x.mp4"));
     EXPECT_NE(problem.find("non può stare in un file MP4"), std::string::npos) << problem;
-    EXPECT_TRUE(replacementAudioProblem(path("musica.wav"), path("x.mkv")).empty());
+    double duration = -1.0;  // la durata arriva dallo stesso controllo, senza riaprire il file
+    EXPECT_TRUE(replacementAudioProblem(path("musica.wav"), path("x.mkv"), &duration).empty());
+    EXPECT_GT(duration, 1.0);
     EXPECT_TRUE(replacementAudioProblem(path("musica.m4a"), path("x.mp4")).empty());
     EXPECT_FALSE(replacementAudioProblem(path("muto.mkv"), path("x.mkv")).empty());  // niente audio
 
