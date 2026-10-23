@@ -19,7 +19,8 @@ std::shared_ptr<VideoFrame> ThumbnailExtractor::extract(const std::string& utf8P
         failed_ = false;
         try {
             decoder_ = std::make_unique<VideoDecoder>(
-                utf8Path, VideoDecoder::Options{.allowHardware = allowHardware_, .maxWidth = maxWidth_, .maxHeight = maxHeight_});
+                utf8Path, VideoDecoder::Options{.allowHardware = allowHardware_, .maxWidth = maxWidth_, .maxHeight = maxHeight_,
+                                                .readAhead = false});
         } catch (const std::exception&) {
             failed_ = true;  // niente video (es. un file solo audio)
         }

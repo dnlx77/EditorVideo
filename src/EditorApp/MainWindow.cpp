@@ -304,6 +304,7 @@ MainWindow::MainWindow(QWidget* parent)
     program_ = new ProgramMonitor(project_);
     program_->onActivated = [this] { setProgramActive(true); };
     program_->onPositionChanged = [this](double seconds) { timeline_->setPlayhead(seconds); };
+    program_->onCacheRangeChanged = [this](double from, double to) { timeline_->setCacheRange(from, to); };
     program_->onPlaybackStarted = [this] { timeline_->resumeFollowing(); };
     program_->onVideoDoubleClicked = [this] { toggleFullScreen(programDock_); };
 

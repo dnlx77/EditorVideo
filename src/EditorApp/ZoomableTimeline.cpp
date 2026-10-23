@@ -1,5 +1,6 @@
 #include "EditorApp/ZoomableTimeline.h"
 
+#include <QtGui/QPainter>
 #include <QtGui/QResizeEvent>
 #include <QtGui/QWheelEvent>
 #include <QtWidgets/QScrollBar>
@@ -100,6 +101,43 @@ void ZoomableTimeline::fitAll()
 void ZoomableTimeline::resumeFollowing()
 {
     following_ = true;
+}
+
+void ZoomableTimeline::setCacheRange(double from, double to)
+{
+    if (to <= from)
+        from = to = 0.0;
+    // Si ridisegna solo se la barretta cambia di almeno mezzo pixel (durante la riproduzione arriva ~30 volte al
+    // secondo).
+    const auto moved = [&](double a, double b) { return std::abs(xForTime(a) - xForTime(b)) >= 0.5; };
+    if (!moved(from, cacheFrom_) && !moved(to, cacheTo_))
+        return;
+    cacheFrom_ = from;
+    cacheTo_ = to;
+    update(cacheStrip().toAlignedRect().adjusted(-1, -1, 1, 1));
+}
+
+QRectF ZoomableTimeline::cacheStrip() const
+{
+    const QRectF axis = timeAxis();
+    return QRectF(axis.left(), axis.top() - 5, axis.width(), 3);
+}
+
+void ZoomableTimeline::paintCacheBar(QPainter& p) const
+{
+    if (cacheTo_ <= cacheFrom_)
+        return;
+    const QRectF strip = cacheStrip();
+    const double left = std::clamp(xForTime(cacheFrom_), strip.left(), strip.right());
+    const double right = std::clamp(xForTime(cacheTo_), strip.left(), strip.right());
+    if (right - left < 1.0)
+        return;
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(86, 170, 255));  // celeste, si vede sia sul tema chiaro sia su quello scuro
+    p.drawRect(QRectF(left, strip.top(), right - left, strip.height()));
+    p.restore();
 }
 
 void ZoomableTimeline::followPlayhead(double seconds)

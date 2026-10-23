@@ -11,6 +11,7 @@ extern "C" {
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -124,8 +125,30 @@ struct VideoDecoder::Impl : OpenedStream
     double displayHeight = 0.0;
     // Dimensioni di uscita impacchettate (larghezza << 32 | altezza): così si leggono e scrivono in un colpo solo.
     std::atomic<std::uint64_t> outSize{0};
-    bool demuxerAtEnd = false;
     double lastTime = 0.0;
+
+    // Cache dei pacchetti compressi letti dal file (solo il video), in ordine di lettura: si legge in anticipo fino a
+    // kCacheAhead secondi oltre l'ultimo fotogramma decodificato e si tengono kCacheBehind secondi già passati (a
+    // gruppi interi, da un fotogramma chiave all'altro). Un salto dentro la cache riparte da lì senza rileggere il file.
+    struct CachedPacket
+    {
+        PacketPtr packet;
+        double time = 0.0;  // tempo mostrato (pts), in secondi come i fotogrammi
+        bool key = false;
+    };
+    static constexpr double kCacheAhead = 10.0;
+    static constexpr double kCacheBehind = 5.0;
+    static constexpr std::size_t kCacheMaxBytes = std::size_t{200} << 20;
+    static constexpr int kReadAheadPerFrame = 6;  // pacchetti letti in anticipo a ogni fotogramma, al massimo
+    std::deque<CachedPacket> cache;
+    std::size_t cursor = 0;      // prossimo pacchetto della cache da dare al decoder
+    std::size_t cacheBytes = 0;
+    double cacheEnd = 0.0;       // tempo più alto fra i pacchetti della cache
+    bool demuxerAtEnd = false;   // il file è stato letto fino in fondo (dopo l'ultimo pacchetto della cache)
+    bool drainSent = false;      // al decoder è già stato detto che i pacchetti sono finiti
+    bool readAheadEnabled = true;
+    std::atomic<double> rangeFrom{0.0};  // vedi cachedRange(): letti anche da un altro thread
+    std::atomic<double> rangeTo{0.0};
 
     static AVPixelFormat getFormat(AVCodecContext* c, const AVPixelFormat* formats)
     {
@@ -215,23 +238,118 @@ struct VideoDecoder::Impl : OpenedStream
                 continue;  // fotogramma danneggiato: proviamo con il successivo
             }
 
-            if (demuxerAtEnd)
-                return false;
-            const int read = av_read_frame(fmt.get(), packet.get());
-            if (read < 0) {
-                demuxerAtEnd = true;
+            if (cursor >= cache.size() && !readPacket()) {
+                if (drainSent)
+                    return false;
+                drainSent = true;
                 avcodec_send_packet(ctx.get(), nullptr);  // svuota il decoder
                 continue;
             }
-            if (packet->stream_index != index) {
-                av_packet_unref(packet.get());
-                continue;
-            }
-            const int sent = avcodec_send_packet(ctx.get(), packet.get());
-            av_packet_unref(packet.get());
+            const int sent = avcodec_send_packet(ctx.get(), cache[cursor].packet.get());
+            ++cursor;
             if (sent < 0 && sent != AVERROR(EAGAIN))
                 decodeError();
+            readAhead();
         }
+    }
+
+    // Legge dal file il prossimo pacchetto del video e lo mette in fondo alla cache. false a fine file.
+    bool readPacket()
+    {
+        if (demuxerAtEnd)
+            return false;
+        for (;;) {
+            if (av_read_frame(fmt.get(), packet.get()) < 0) {
+                demuxerAtEnd = true;
+                publishRange();
+                return false;
+            }
+            if (packet->stream_index == index)
+                break;
+            av_packet_unref(packet.get());
+        }
+        CachedPacket cached;
+        cached.packet.reset(av_packet_alloc());
+        if (!cached.packet)
+            throw MediaError("Memoria insufficiente per il decoder video.");
+        av_packet_move_ref(cached.packet.get(), packet.get());
+        const std::int64_t ts = cached.packet->pts != AV_NOPTS_VALUE ? cached.packet->pts : cached.packet->dts;
+        cached.time = ts != AV_NOPTS_VALUE ? ts * timeBase - startOffset : cacheEnd;
+        cached.key = (cached.packet->flags & AV_PKT_FLAG_KEY) != 0;
+        cacheBytes += static_cast<std::size_t>(std::max(0, cached.packet->size));
+        cacheEnd = cache.empty() ? cached.time : std::max(cacheEnd, cached.time);
+        cache.push_back(std::move(cached));
+        publishRange();
+        return true;
+    }
+
+    // Lettura anticipata (pochi pacchetti alla volta, così ogni fotogramma resta veloce) e pulizia di quello che è
+    // ormai troppo indietro.
+    void readAhead()
+    {
+        trimCache();
+        for (int i = 0; readAheadEnabled && i < kReadAheadPerFrame && cacheBytes < kCacheMaxBytes && cacheEnd < lastTime + kCacheAhead; ++i) {
+            if (!readPacket())
+                break;
+        }
+    }
+
+    void trimCache()
+    {
+        // Si toglie un gruppo intero (dal primo fotogramma chiave al successivo) quando il decoder l'ha passato e il
+        // fotogramma chiave dopo è già più indietro di kCacheBehind (o la cache è troppo grande).
+        for (;;) {
+            std::size_t next = 1;
+            while (next < cache.size() && !cache[next].key)
+                ++next;
+            if (next >= cache.size() || next >= cursor)
+                break;
+            const bool old = cache[next].time <= lastTime - kCacheBehind;
+            if (!old && cacheBytes <= kCacheMaxBytes)
+                break;
+            for (std::size_t i = 0; i < next; ++i)
+                cacheBytes -= static_cast<std::size_t>(std::max(0, cache[i].packet->size));
+            cache.erase(cache.begin(), cache.begin() + static_cast<std::ptrdiff_t>(next));
+            cursor -= next;
+        }
+        publishRange();
+    }
+
+    void clearCache()
+    {
+        cache.clear();
+        cursor = 0;
+        cacheBytes = 0;
+        cacheEnd = 0.0;
+        demuxerAtEnd = false;
+        publishRange();
+    }
+
+    // Tratto decodificabile dalla cache: dal primo fotogramma chiave all'ultimo pacchetto letto.
+    void publishRange()
+    {
+        const auto key = std::find_if(cache.begin(), cache.end(), [](const CachedPacket& c) { return c.key; });
+        if (key == cache.end()) {
+            rangeFrom = 0.0;
+            rangeTo = 0.0;
+            return;
+        }
+        rangeFrom = std::max(0.0, key->time);
+        rangeTo = cacheEnd + (fps > 0 ? 1.0 / fps : 0.0);
+    }
+
+    // Pacchetto della cache da cui ripartire per arrivare a `target`: l'ultimo fotogramma chiave non dopo `target`.
+    // std::nullopt se `target` non è nella cache (si legge dal file).
+    std::optional<std::size_t> cachedStart(double target, double tolerance) const
+    {
+        if (cache.empty() || (!demuxerAtEnd && target > cacheEnd + tolerance))
+            return std::nullopt;
+        std::optional<std::size_t> start;
+        for (std::size_t i = 0; i < cache.size(); ++i) {
+            if (cache[i].key && cache[i].time <= target + tolerance)
+                start = i;
+        }
+        return start;
     }
 
     double frameTime(const AVFrame* f) const
@@ -310,13 +428,18 @@ struct VideoDecoder::Impl : OpenedStream
     std::shared_ptr<VideoFrame> seekImpl(double seconds)
     {
         const double target = std::max(0.0, seconds);
-        seekStream(fmt.get(), index, target, startOffset);
-        avcodec_flush_buffers(ctx.get());
-        demuxerAtEnd = false;
-        av_frame_unref(previous.get());
-
         // Il fotogramma "più vicino": il primo che inizia entro mezzo fotogramma dal tempo richiesto.
         const double tolerance = fps > 0 ? 0.5 / fps : 0.001;
+        if (const auto start = cachedStart(target, tolerance)) {
+            cursor = *start;  // già in memoria: niente lettura dal file
+        } else {
+            clearCache();
+            seekStream(fmt.get(), index, target, startOffset);
+        }
+        avcodec_flush_buffers(ctx.get());
+        drainSent = false;
+        av_frame_unref(previous.get());
+
         for (;;) {
             if (!decodeNext())
                 break;
@@ -359,6 +482,7 @@ VideoDecoder::VideoDecoder(const std::string& utf8Path, const Options& options)
 {
     Impl& d = *impl_;
     d.hardwareAllowed = options.allowHardware;
+    d.readAheadEnabled = options.readAhead;
     if (!d.packet || !d.frame || !d.previous || !d.transferred)
         throw MediaError("Memoria insufficiente per il decoder video.");
 
@@ -417,6 +541,11 @@ void VideoDecoder::setOutputSize(int boxWidth, int boxHeight)
 int VideoDecoder::outputHeight() const
 {
     return impl_->outputSize().second;
+}
+
+std::pair<double, double> VideoDecoder::cachedRange() const
+{
+    return {impl_->rangeFrom.load(), impl_->rangeTo.load()};
 }
 
 std::shared_ptr<VideoFrame> VideoDecoder::seek(double seconds)

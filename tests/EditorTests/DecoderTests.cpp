@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <tuple>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -37,6 +38,8 @@ public:
         writeSampleFile(dir_ / "mpeg2.mkv", {.video = true, .audio = false, .mpeg2 = true, .width = 320, .height = 240});
         writeSampleFile(dir_ / "solo_audio.wav", {.video = false, .audio = true});
         writeSampleFile(dir_ / "solo_video.mp4", {.video = true, .audio = false});
+        // 12 s, un fotogramma chiave al secondo: per la cache dei pacchetti.
+        writeSampleFile(dir_ / "lungo.mkv", {.video = true, .audio = false, .frames = 300, .gopSize = 25});
     }
 
 protected:
@@ -140,6 +143,58 @@ TEST_F(DecoderTest, SeekPastEndReturnsLastFrame)
     VideoDecoder decoder(path("mpeg4.mkv"), {.allowHardware = false});
     expectFrame(decoder.seek(10.0), 29, 64, 48);
     EXPECT_EQ(decoder.nextFrame(), nullptr);
+}
+
+// Indice del fotogramma che seek(t) deve restituire: il primo che inizia entro mezzo fotogramma da t.
+int nearestFrame(double t)
+{
+    return static_cast<int>(std::ceil((t - kFrameDuration / 2) / kFrameDuration - 1e-9));
+}
+
+TEST_F(DecoderTest, CacheReadsAheadAndKeepsOnlyTheRecentPast)
+{
+    VideoDecoder decoder(path("lungo.mkv"), {.allowHardware = false});
+    auto frame = decoder.seek(0.0);
+    for (int i = 1; i <= 50; ++i)
+        frame = decoder.nextFrame();
+    expectFrame(frame, 50, 64, 48);
+    // A 2 s: in memoria dall'inizio fino a ~10 s più avanti (qui la fine del file).
+    auto [from, to] = decoder.cachedRange();
+    EXPECT_NEAR(from, 0.0, 1e-6);
+    EXPECT_GE(to, 11.5);
+
+    for (int i = 51; i <= 250; ++i)
+        frame = decoder.nextFrame();
+    expectFrame(frame, 250, 64, 48);
+    // A 10 s: dietro restano ~5 s, a gruppi interi (un fotogramma chiave al secondo).
+    std::tie(from, to) = decoder.cachedRange();
+    EXPECT_GE(from, 4.0 - 1e-6);
+    EXPECT_LE(from, 5.0 + 1e-6);
+    EXPECT_GE(to, 11.9);
+}
+
+TEST_F(DecoderTest, SeekInsideCacheDoesNotRereadTheFile)
+{
+    VideoDecoder decoder(path("lungo.mkv"), {.allowHardware = false});
+    auto frame = decoder.seek(6.0);
+    for (int i = 0; i < 50; ++i)
+        frame = decoder.nextFrame();
+    expectFrame(frame, 200, 64, 48);
+    const double cacheStart = decoder.cachedRange().first;
+    ASSERT_LE(cacheStart, 6.0);
+
+    // Salti all'indietro e in avanti dentro la cache: fotogrammi giusti, e la cache non viene svuotata.
+    for (double t : {7.29, 6.05, 6.97, 11.5, 6.5}) {
+        SCOPED_TRACE(t);
+        expectFrame(decoder.seek(t), nearestFrame(t), 64, 48);
+        expectFrame(decoder.nextFrame(), nearestFrame(t) + 1, 64, 48);
+        EXPECT_EQ(decoder.cachedRange().first, cacheStart);
+    }
+
+    // Fuori dalla cache: si rilegge il file da lì.
+    expectFrame(decoder.seek(1.33), nearestFrame(1.33), 64, 48);
+    EXPECT_NEAR(decoder.cachedRange().first, 1.0, 1e-6);
+    expectFrame(decoder.nextFrame(), nearestFrame(1.33) + 1, 64, 48);
 }
 
 TEST_F(DecoderTest, CodecWithoutGpuSupportFallsBackToSoftware)

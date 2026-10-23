@@ -356,6 +356,8 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
     }
     QPainter p(this);
     p.drawPixmap(0, 0, cache_);
+    if (!blocks_.empty())
+        paintCacheBar(p);
     if (fileDropX_ >= 0) {
         // File trascinati: dove andranno, fra i pezzi.
         const int index = dropIndexAt(fileDropX_);

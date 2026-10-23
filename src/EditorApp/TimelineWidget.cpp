@@ -134,8 +134,10 @@ void TimelineWidget::paintEvent(QPaintEvent*)
     }
     QPainter p(this);
     p.drawPixmap(0, 0, cache_);
-    if (isEnabled() && duration_ > 0)
+    if (isEnabled() && duration_ > 0) {
+        paintCacheBar(p);
         paintCursor(p);
+    }
 }
 
 void TimelineWidget::paintStatic(QPainter& p)
