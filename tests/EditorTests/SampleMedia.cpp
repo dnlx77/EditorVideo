@@ -64,7 +64,7 @@ public:
         video_.enc->time_base = {1, kFps};
         video_.enc->framerate = {kFps, 1};
         video_.enc->gop_size = spec.gopSize;
-        video_.enc->max_b_frames = 0;
+        video_.enc->max_b_frames = spec.bFrames;
         // Qualità alta e costante: i test confrontano i colori decodificati con quelli originali.
         video_.enc->flags |= AV_CODEC_FLAG_QSCALE;
         video_.enc->global_quality = FF_QP2LAMBDA * 2;

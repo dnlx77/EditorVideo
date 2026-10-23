@@ -147,6 +147,13 @@ struct VideoDecoder::Impl : OpenedStream
     bool demuxerAtEnd = false;   // il file è stato letto fino in fondo (dopo l'ultimo pacchetto della cache)
     bool drainSent = false;      // al decoder è già stato detto che i pacchetti sono finiti
     bool readAheadEnabled = true;
+    // Stato del decoder per i salti in avanti: dopo un salto decodifica di seguito da un fotogramma chiave, e
+    // lastDecoded è il tempo dell'ultimo fotogramma uscito (anche di quelli saltati per arrivare al punto chiesto).
+    bool decoderLive = false;
+    double lastDecoded = -1e300;
+    // Durante un salto i pacchetti mostrati prima di questo tempo si decodificano senza i fotogrammi che non servono
+    // da riferimento agli altri (non si vedono e nessuno ne ha bisogno): si arriva prima al punto chiesto.
+    double skipBefore = -1e300;
     std::atomic<double> rangeFrom{0.0};  // vedi cachedRange(): letti anche da un altro thread
     std::atomic<double> rangeTo{0.0};
 
@@ -178,6 +185,7 @@ struct VideoDecoder::Impl : OpenedStream
             throw MediaError("Parametri del flusso video non validi.");
         ctx->pkt_timebase = stream->time_base;
         hardwareActive = false;
+        decoderLive = false;
 
         bool hardware = false;
         if (hardwareAllowed && hwPixelFormat != AV_PIX_FMT_NONE) {
@@ -229,8 +237,10 @@ struct VideoDecoder::Impl : OpenedStream
         };
         for (;;) {
             const int ret = avcodec_receive_frame(ctx.get(), frame.get());
-            if (ret == 0)
+            if (ret == 0) {
+                lastDecoded = frameTime(frame.get());
                 return true;
+            }
             if (ret == AVERROR_EOF)
                 return false;
             if (ret != AVERROR(EAGAIN)) {
@@ -245,6 +255,9 @@ struct VideoDecoder::Impl : OpenedStream
                 avcodec_send_packet(ctx.get(), nullptr);  // svuota il decoder
                 continue;
             }
+            const AVDiscard discard = cache[cursor].time < skipBefore ? AVDISCARD_NONREF : AVDISCARD_DEFAULT;
+            if (ctx->skip_frame != discard)
+                ctx->skip_frame = discard;
             const int sent = avcodec_send_packet(ctx.get(), cache[cursor].packet.get());
             ++cursor;
             if (sent < 0 && sent != AVERROR(EAGAIN))
@@ -430,26 +443,44 @@ struct VideoDecoder::Impl : OpenedStream
         const double target = std::max(0.0, seconds);
         // Il fotogramma "più vicino": il primo che inizia entro mezzo fotogramma dal tempo richiesto.
         const double tolerance = fps > 0 ? 0.5 / fps : 0.001;
-        if (const auto start = cachedStart(target, tolerance)) {
-            cursor = *start;  // già in memoria: niente lettura dal file
-        } else {
-            clearCache();
-            seekStream(fmt.get(), index, target, startOffset);
+        const auto start = cachedStart(target, tolerance);
+        // Avanti nello stesso gruppo (il suo fotogramma chiave è già passato dal decoder e il punto non è ancora
+        // uscito): si prosegue da dove si è, senza ripartire dal fotogramma chiave.
+        const bool goOn = start && decoderLive && !drainSent && *start < cursor && target <= cacheEnd
+                       && lastDecoded < target - tolerance;
+        if (!goOn) {
+            if (start) {
+                cursor = *start;  // già in memoria: niente lettura dal file
+            } else {
+                clearCache();
+                seekStream(fmt.get(), index, target, startOffset);
+            }
+            avcodec_flush_buffers(ctx.get());
+            drainSent = false;
+            lastDecoded = -1e300;
         }
-        avcodec_flush_buffers(ctx.get());
-        drainSent = false;
+        decoderLive = true;
         av_frame_unref(previous.get());
 
+        // Solo fino al punto chiesto, anche se si esce con un'eccezione: dopo si decodifica tutto.
+        struct SkipUntil
+        {
+            double& value;
+            ~SkipUntil() { value = -1e300; }
+        } skip{skipBefore};
+        skipBefore = target - tolerance;
         for (;;) {
             if (!decodeNext())
                 break;
             if (frameTime(frame.get()) >= target - tolerance) {
                 av_frame_unref(previous.get());
+                skipBefore = -1e300;
                 return convert(frame.get());
             }
             av_frame_unref(previous.get());
             av_frame_move_ref(previous.get(), frame.get());
         }
+        skipBefore = -1e300;
         // Tempo oltre la fine: ultimo fotogramma disponibile.
         if (previous->buf[0] != nullptr || previous->hw_frames_ctx != nullptr)
             return convert(previous.get());

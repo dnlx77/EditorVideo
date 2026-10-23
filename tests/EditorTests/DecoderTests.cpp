@@ -40,6 +40,7 @@ public:
         writeSampleFile(dir_ / "solo_video.mp4", {.video = true, .audio = false});
         // 12 s, un fotogramma chiave al secondo: per la cache dei pacchetti.
         writeSampleFile(dir_ / "lungo.mkv", {.video = true, .audio = false, .frames = 300, .gopSize = 25});
+        writeSampleFile(dir_ / "bframe.mkv", {.video = true, .bFrames = 2, .audio = false, .frames = 300, .gopSize = 25});
     }
 
 protected:
@@ -195,6 +196,25 @@ TEST_F(DecoderTest, SeekInsideCacheDoesNotRereadTheFile)
     expectFrame(decoder.seek(1.33), nearestFrame(1.33), 64, 48);
     EXPECT_NEAR(decoder.cachedRange().first, 1.0, 1e-6);
     expectFrame(decoder.nextFrame(), nearestFrame(1.33) + 1, 64, 48);
+}
+
+TEST_F(DecoderTest, SeeksInsideCacheWithBFramesGiveTheRightFrame)
+{
+    // Salti in avanti nello stesso gruppo (il decoder prosegue da dove è), a un gruppo dopo, all'indietro e sullo
+    // stesso fotogramma: con i B-frame, che durante il salto non si decodificano finché non serve.
+    VideoDecoder decoder(path("bframe.mkv"), {.allowHardware = false});
+    auto frame = decoder.seek(4.0);
+    for (int i = 0; i < 25; ++i)
+        frame = decoder.nextFrame();
+    expectFrame(frame, 125, 64, 48);
+    for (double t : {5.2, 5.24, 5.6, 5.92, 6.1, 7.77, 4.33, 4.33, 4.36, 9.0, 8.96, 9.5}) {
+        SCOPED_TRACE(t);
+        expectFrame(decoder.seek(t), nearestFrame(t), 64, 48);
+    }
+    // Dopo un salto si continua normalmente, anche sui B-frame.
+    const int at = nearestFrame(9.5);
+    for (int i = 1; i <= 30; ++i)
+        expectFrame(decoder.nextFrame(), at + i, 64, 48);
 }
 
 TEST_F(DecoderTest, CodecWithoutGpuSupportFallsBackToSoftware)
