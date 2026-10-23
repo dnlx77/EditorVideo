@@ -161,6 +161,7 @@ private:
     double selectionTo_ = 0.0;
     bool selecting_ = false;     // si sta trascinando una selezione sulla corsia audio
     double selectionAnchor_ = 0.0;
+    bool scrubbing_ = false;     // si sta trascinando il cursore sul righello
     bool movingReplacement_ = false;
     double replacementStart_ = 0.0;  // offset all'inizio del trascinamento
 
