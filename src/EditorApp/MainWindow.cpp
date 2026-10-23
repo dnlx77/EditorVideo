@@ -12,7 +12,8 @@
 #include "EditorCore/LibraryInfo.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/SegmentExport.h"
-#include "EditorCore/Thumbnails.h"
+#include "EditorApp/ThumbnailCache.h"
+#include "EditorApp/WaveformStore.h"
 #include "EditorCore/TimeUtil.h"
 #include "EditorCore/Waveform.h"
 
@@ -214,6 +215,8 @@ QString nativeAbsolute(const QString& path)
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
+    , thumbnails_(std::make_unique<ThumbnailCache>(this, [this] { timeline_->thumbnailsChanged(); }))
+    , waveforms_(std::make_unique<WaveformStore>(this, [this] { refreshWaveforms(); }))
 {
     setWindowTitle(QStringLiteral("EditorVideo"));
     resize(1500, 900);
@@ -319,7 +322,14 @@ MainWindow::MainWindow(QWidget* parent)
         if (project_.sequence().moveTo(fragmentId, start))
             recordEdit(QStringLiteral("Sposta pezzo"), before);
     };
-    timeline_->thumbnailFor = [this](int clipId, double sourceTime) { return thumbnailFor(clipId, sourceTime); };
+    timeline_->thumbnailFor = [this](int clipId, double sourceTime) -> QImage {
+        const core::Clip* clip = project_.find(clipId);
+        if (clip == nullptr || !clip->analyzed)
+            return {};
+        // Si usa il fotogramma chiave nello stesso punto o prima: si decodifica un solo fotogramma, e allargando la
+        // finestra le miniature richieste restano in buona parte le stesse.
+        return thumbnails_->get(clip->path, clip->snapToKeyframe(sourceTime));
+    };
     timeline_->onFilesDropped = [this](const QStringList& paths, int index) { dropFiles(paths, DropTarget::Sequence, index); };
     timeline_->onActivate = [this](int fragmentId) {
         // Doppio clic: il pezzo torna nella Sorgente con i suoi IN e OUT.
@@ -494,14 +504,8 @@ MainWindow::~MainWindow()
         cancelProbe_ = true;
         probeThread_->wait();
     }
-    if (waveThread_ != nullptr) {
-        cancelWave_ = true;
-        waveThread_->wait();
-    }
-    if (thumbnailThread_ != nullptr) {
-        cancelThumbnails_ = true;
-        thumbnailThread_->wait();
-    }
+    waveforms_.reset();  // aspetta il calcolo in corso
+    thumbnails_.reset();
     // Lo stesso per un'esportazione: viene annullata e il file a metà cancellato.
     if (exportThread_ != nullptr) {
         cancelExport_ = true;
@@ -752,13 +756,13 @@ void MainWindow::afterHistoryChange(const QString& message)
 {
     // I file tornati nel progetto senza analisi si analizzano di nuovo; quello nella Sorgente potrebbe non esserci più.
     for (const core::Clip& clip : project_.clips()) {
-        requestWaveform(clip.path);
+        waveforms_->request(clip.path);
         if (!clip.analyzed && clip.id != probingClipId_
             && std::find(probeQueue_.begin(), probeQueue_.end(), clip.id) == probeQueue_.end())
             probeQueue_.push_back(clip.id);
     }
     if (const auto& replacement = project_.audioReplacement())
-        requestWaveform(replacement->path);
+        waveforms_->request(replacement->path);
     if (currentClipId_ != 0 && project_.find(currentClipId_) == nullptr) {
         currentClipId_ = 0;
         currentPath_.clear();
@@ -824,9 +828,9 @@ void MainWindow::refreshWaveforms()
     timeline_->setWaveforms(
         [this](int clipId) {
             const core::Clip* clip = project_.find(clipId);
-            return clip != nullptr ? waveformFor(clip->path) : nullptr;
+            return clip != nullptr ? waveforms_->get(clip->path) : nullptr;
         },
-        replacement ? waveformFor(replacement->path) : nullptr);
+        replacement ? waveforms_->get(replacement->path) : nullptr);
 }
 
 void MainWindow::refreshTimeline()
@@ -837,7 +841,7 @@ void MainWindow::refreshTimeline()
     for (const core::Fragment& f : sequence.fragments()) {
         const core::Clip* clip = project_.find(f.clipId);
         blocks.push_back({f.id, project_.indexOf(f.clipId), clip ? fileNameOf(clip->path) : QString(), f.length(), f.start,
-                          f.clipId, clip ? waveformFor(clip->path) : nullptr, f.gap});
+                          f.clipId, clip ? waveforms_->get(clip->path) : nullptr, f.gap});
         // Come entra nel file esportato, rispetto al formato del progetto: segno sul blocco e spiegazione.
         const core::MediaSignature* signature = clip != nullptr ? signatureFor(clip->path) : nullptr;
         if (signature != nullptr && !project_.format().empty()) {
@@ -879,7 +883,7 @@ void MainWindow::refreshTimeline()
     const auto& replacement = project_.audioReplacement();
     if (replacement) {
         timeline_->setReplacement(SequenceTimeline::Replacement{fileNameOf(replacement->path), replacement->offset,
-                                                                replacement->duration, waveformFor(replacement->path)});
+                                                                replacement->duration, waveforms_->get(replacement->path)});
     } else {
         timeline_->setReplacement(std::nullopt);
     }
@@ -1019,7 +1023,7 @@ bool MainWindow::replaceAudio(const QString& path, bool showProblems)
     }
     const core::Project before = project_;
     project_.setAudioReplacement(core::AudioReplacement{utf8, 0.0, duration});
-    requestWaveform(utf8);
+    waveforms_->request(utf8);
     statusBar()->showMessage(QStringLiteral("L'audio del montaggio ora è %1 (l'audio originale è escluso). Trascina la "
                                             "sua maniglia sulla corsia audio per spostarlo.")
                                  .arg(fileNameOf(utf8)),
@@ -1038,49 +1042,19 @@ void MainWindow::restoreOriginalAudio()
     recordEdit(QStringLiteral("Usa l'audio originale"), before);
 }
 
-std::shared_ptr<const core::Waveform> MainWindow::waveformFor(const std::string& path) const
-{
-    const auto it = waveforms_.find(path);
-    return it != waveforms_.end() ? it->second : nullptr;
-}
-
 int MainWindow::pendingWaveforms() const
 {
-    return static_cast<int>(waveQueue_.size()) + (waveThread_ != nullptr ? 1 : 0);
+    return waveforms_->pending();
 }
 
-void MainWindow::requestWaveform(const std::string& path)
+int MainWindow::pendingThumbnails() const
 {
-    if (waveforms_.contains(path) || path == waveformPath_
-        || std::find(waveQueue_.begin(), waveQueue_.end(), path) != waveQueue_.end())
-        return;
-    waveQueue_.push_back(path);
-    startNextWaveform();
+    return thumbnails_->pending();
 }
 
-void MainWindow::startNextWaveform()
+int MainWindow::readyThumbnails() const
 {
-    if (waveThread_ != nullptr || waveQueue_.empty())
-        return;
-    waveformPath_ = waveQueue_.front();
-    waveQueue_.pop_front();
-    auto result = std::make_shared<core::Waveform>();
-    cancelWave_ = false;
-    waveThread_ = QThread::create([path = waveformPath_, result, cancel = &cancelWave_] {
-        *result = core::computeWaveform(path, cancel);
-    });
-    waveThread_->setParent(this);
-    connect(waveThread_, &QThread::finished, this, [this, result] {
-        waveThread_->deleteLater();
-        waveThread_ = nullptr;
-        if (!cancelWave_)
-            waveforms_[waveformPath_] = result;
-        waveformPath_.clear();
-        refreshWaveforms();
-        startNextWaveform();
-    });
-    // Bassa priorità: l'anteprima e l'analisi dei file vengono prima.
-    waveThread_->start(QThread::LowPriority);
+    return thumbnails_->ready();
 }
 
 void MainWindow::updateSourceBands()
@@ -1582,7 +1556,7 @@ void MainWindow::dropFiles(const QStringList& paths, DropTarget target, int sequ
             continue;
         ++added;
         probeQueue_.push_back(ids[i]);
-        requestWaveform(plan.media[i].path);
+        waveforms_->request(plan.media[i].path);
     }
     if (added > 0 || !fragments.empty())
         recordEdit(QStringLiteral("Aggiungi file"), before);
@@ -1801,7 +1775,7 @@ void MainWindow::resetProject()
     project_.clear();
     clipInfo_.clear();
     signatures_.clear();
-    waveQueue_.clear();  // le forme d'onda già calcolate restano: servono se si riapre lo stesso file
+    waveforms_->clearQueue();  // le forme d'onda già calcolate restano: servono se si riapre lo stesso file
     timeline_->setAudioSelection(0.0, 0.0);
     currentClipId_ = 0;
     currentPath_.clear();
@@ -1835,7 +1809,7 @@ void MainWindow::addFiles(const QStringList& paths)
         if (first == 0)
             first = id;
         probeQueue_.push_back(id);
-        requestWaveform(utf8);
+        waveforms_->request(utf8);
     }
     refreshClipList();
     if (currentClipId_ == 0 && first != 0)
@@ -2716,10 +2690,10 @@ bool MainWindow::openProject(const QString& path, bool interactive)
     pendingView_ = loaded.view;
     for (const core::Clip& clip : project_.clips()) {
         probeQueue_.push_back(clip.id);
-        requestWaveform(clip.path);
+        waveforms_->request(clip.path);
     }
     if (const auto& replacement = project_.audioReplacement())
-        requestWaveform(replacement->path);
+        waveforms_->request(replacement->path);
     sequenceChanged();  // aggiorna anche l'elenco dei file
     const int source = project_.find(loaded.view.sourceClipId) != nullptr ? loaded.view.sourceClipId
                      : project_.empty()                                   ? 0
@@ -2784,80 +2758,6 @@ void MainWindow::rebuildRecentMenu()
     recentMenu_->addSeparator();
     recentMenu_->addAction(QStringLiteral("Svuota l'elenco"), this,
                            [] { settings().remove(kRecentProjectsKey); });
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-// Miniature della timeline
-
-QImage MainWindow::thumbnailFor(int clipId, double sourceTime)
-{
-    const core::Clip* clip = project_.find(clipId);
-    if (clip == nullptr || !clip->analyzed)
-        return {};
-    // Si usa il fotogramma chiave nello stesso punto o prima: si decodifica un solo fotogramma, e allargando la
-    // finestra le miniature richieste restano in buona parte le stesse.
-    const double at = clip->snapToKeyframe(sourceTime);
-    const QString key = QStringLiteral("%1|%2").arg(qs(clip->path)).arg(std::llround(at * 1000));
-    if (const QImage* ready = thumbnails_.object(key))
-        return *ready;
-    if (!thumbnailPending_.contains(key)) {
-        thumbnailPending_.insert(key, true);
-        thumbnailQueue_.push_back({key, clip->path, at});
-        // Si parte al prossimo giro del ciclo degli eventi, non durante il disegno della timeline.
-        QTimer::singleShot(0, this, [this] { startNextThumbnails(); });
-    }
-    return {};
-}
-
-int MainWindow::pendingThumbnails() const
-{
-    return static_cast<int>(thumbnailPending_.size());
-}
-
-int MainWindow::readyThumbnails() const
-{
-    int ready = 0;
-    for (const QString& key : thumbnails_.keys())
-        ready += thumbnails_.object(key)->isNull() ? 0 : 1;
-    return ready;
-}
-
-void MainWindow::startNextThumbnails()
-{
-    if (thumbnailThread_ != nullptr || thumbnailQueue_.empty())
-        return;
-    // Tutte le richieste in attesa in un colpo, raggruppate per file: un decoder aperto per file.
-    auto batch = std::make_shared<std::vector<ThumbnailRequest>>(thumbnailQueue_.begin(), thumbnailQueue_.end());
-    thumbnailQueue_.clear();
-    std::stable_sort(batch->begin(), batch->end(),
-                     [](const ThumbnailRequest& a, const ThumbnailRequest& b) { return a.path < b.path; });
-    auto results = std::make_shared<std::vector<QImage>>(batch->size());
-    cancelThumbnails_ = false;
-    thumbnailThread_ = QThread::create([batch, results, cancel = &cancelThumbnails_] {
-        core::ThumbnailExtractor extractor(192, 108, true);  // con la GPU, se c'è
-        for (std::size_t i = 0; i < batch->size() && !cancel->load(); ++i) {
-            const auto frame = extractor.extract((*batch)[i].path, (*batch)[i].seconds);
-            if (frame)
-                (*results)[i] = QImage(frame->pixels.data(), frame->width, frame->height, frame->stride, QImage::Format_RGB32).copy();
-        }
-    });
-    thumbnailThread_->setParent(this);
-    connect(thumbnailThread_, &QThread::finished, this, [this, batch, results] {
-        thumbnailThread_->deleteLater();
-        thumbnailThread_ = nullptr;
-        for (std::size_t i = 0; i < batch->size(); ++i) {
-            if (!cancelThumbnails_) {
-                // Costo in kilobyte: l'immagine vuota (il file non ha video) costa 1.
-                const QImage& image = (*results)[i];
-                thumbnails_.insert((*batch)[i].key, new QImage(image), static_cast<int>(image.sizeInBytes() / 1024) + 1);
-            }
-            thumbnailPending_.remove((*batch)[i].key);
-        }
-        timeline_->thumbnailsChanged();
-        startNextThumbnails();
-    });
-    // Bassa priorità: l'anteprima e l'analisi dei file vengono prima.
-    thumbnailThread_->start(QThread::LowPriority);
 }
 
 void MainWindow::showShortcuts()

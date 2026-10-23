@@ -38,6 +38,8 @@ struct Waveform;
 namespace editor::app {
 
 class PlayerWidget;
+class ThumbnailCache;
+class WaveformStore;
 class ProgramMonitor;
 class SequenceTimeline;
 
@@ -235,9 +237,6 @@ private:
     void stepToMark(int direction);  // Sorgente: fotogramma chiave; Montaggio: inizio dei pezzi
     void seekEnd();
     void setPlaying(bool playing);
-    // Miniature
-    QImage thumbnailFor(int clipId, double sourceTime);
-    void startNextThumbnails();
     void markAudioIn();
     void markAudioOut();
     void updateExportAction();
@@ -255,9 +254,6 @@ private:
     const core::MediaSignature* signatureFor(const std::string& path);
     void projectSettingsDialog();  // Montaggio > Impostazioni del progetto
     void updateSourceBands();
-    void requestWaveform(const std::string& path);
-    void startNextWaveform();
-    std::shared_ptr<const core::Waveform> waveformFor(const std::string& path) const;
     void startNextProbe();
     int selectedClipId() const;
     void setProgramActive(bool active);
@@ -338,20 +334,8 @@ private:
 
     core::EditHistory history_;
 
-    // Miniature della timeline: per "percorso|millisecondi" (immagine vuota = il file non ha video). In memoria al
-    // massimo 64 MB: le più vecchie escono e, se servono di nuovo, si rifanno.
-    static constexpr int kThumbnailCacheKilobytes = 64 * 1024;
-    struct ThumbnailRequest
-    {
-        QString key;
-        std::string path;
-        double seconds = 0.0;
-    };
-    QCache<QString, QImage> thumbnails_{kThumbnailCacheKilobytes};
-    std::deque<ThumbnailRequest> thumbnailQueue_;
-    QHash<QString, bool> thumbnailPending_;
-    QThread* thumbnailThread_ = nullptr;
-    std::atomic<bool> cancelThumbnails_{false};
+    // Miniature della timeline, calcolate in background (vedi ThumbnailCache).
+    std::unique_ptr<ThumbnailCache> thumbnails_;
 
     // File di progetto
     QString projectPath_;      // vuoto = mai salvato
@@ -366,11 +350,7 @@ private:
     std::atomic<bool> cancelProbe_{false};
 
     // Forme d'onda dei file (per percorso), calcolate una alla volta in background e tenute da parte.
-    std::map<std::string, std::shared_ptr<const core::Waveform>> waveforms_;
-    std::deque<std::string> waveQueue_;
-    std::string waveformPath_;  // in calcolo
-    QThread* waveThread_ = nullptr;
-    std::atomic<bool> cancelWave_{false};
+    std::unique_ptr<WaveformStore> waveforms_;
 
     QThread* exportThread_ = nullptr;
     core::ReencodeOptions reencodeOptions_;

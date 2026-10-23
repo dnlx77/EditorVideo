@@ -53,7 +53,9 @@
     <ClInclude Include="SelfTests.h" />
     <ClInclude Include="SequenceTimeline.h" />
     <ClInclude Include="TimelineWidget.h" />
+    <ClInclude Include="ThumbnailCache.h" />
     <ClInclude Include="UiText.h" />
+    <ClInclude Include="WaveformStore.h" />
     <ClInclude Include="ZoomableTimeline.h" />
   </ItemGroup>
   <ItemGroup>
@@ -64,7 +66,9 @@
     <ClCompile Include="ProgramMonitor.cpp" />
     <ClCompile Include="SelfTests.cpp" />
     <ClCompile Include="SequenceTimeline.cpp" />
+    <ClCompile Include="ThumbnailCache.cpp" />
     <ClCompile Include="TimelineWidget.cpp" />
+    <ClCompile Include="WaveformStore.cpp" />
     <ClCompile Include="ZoomableTimeline.cpp" />
   </ItemGroup>
   <ItemGroup>
