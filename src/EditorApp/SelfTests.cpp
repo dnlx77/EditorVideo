@@ -1695,10 +1695,18 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                                               + std::min(audio.find(clipId)->length(), sequence.totalLength() - audio.find(clipId)->position) / 2
                                         : 0.0;
                 line->setSelectedAudioClip(clipId);
+                // Il monitor arriva al punto quando il fotogramma è decodificato: si aspetta che ci sia.
                 window->programMonitor()->seekTo(middle);
-                QCoreApplication::processEvents();
+                QElapsedTimer seeking;
+                seeking.start();
+                while (std::abs(window->programMonitor()->position() - middle) > 0.1 && seeking.elapsed() < 3000)
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                const double splitAt = window->programMonitor()->position();
                 window->splitAtPlayhead();
                 const bool split = audio.track(a3) != nullptr && audio.track(a3)->clips.size() == 2;
+                if (!split)
+                    std::printf("  divisione: cursore a %.3f s (voluto %.3f s), clip audio scelta %d\n", splitAt, middle,
+                                line->selectedAudioClip());
                 line->setFocus(Qt::MouseFocusReason);
                 if (split)
                     line->setSelectedAudioClip(audio.track(a3)->clips[1].id);
