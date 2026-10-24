@@ -413,12 +413,12 @@ TEST_F(ProjectFileTest, AudioTracksAreSavedWithLevelsMuteAndSolo)
     audio.setLevel(a2, -12.25);
     audio.setSolo(a2, true);
     audio.setMuted(a3, true);
-    ASSERT_TRUE(audio.setEnvelope(AudioTracks::kOriginalTrack, {{1.0, 0.0}, {2.5, -60.0}}));
-    ASSERT_TRUE(audio.setEnvelope(a2, {{0.0, -6.5}, {4.25, 3.0}, {9.0, 3.0}}));
     ASSERT_NE(audio.add(a2, AudioClip{0, file("voce.wav"), 0.5, 2.0 + 1.0 / 48000, 1.0, 9.5}), 0);
     ASSERT_NE(audio.add(a2, AudioClip{0, file("musica.mp3"), 10.0, 70.0, 4.0, 181.3}), 0);
     ASSERT_NE(audio.add(a3, AudioClip{0, file("effetto.wav"), 0.0, 1001.0 / 30000, 2.5, 0.0}), 0);
     ASSERT_FALSE(project.audioReplacement().has_value());
+    ASSERT_TRUE(audio.setClipEnvelope(audio.tracks()[0].clips[0].id, {{0.5, -6.5}, {1.25, 3.0}, {2.0, 3.0}}));
+    ASSERT_TRUE(project.sequence().setEnvelope(project.sequence().fragments()[0].id, {{0.0, 0.0}, {0.5, -60.0}}));
 
     saveProjectFile(projectPath(), project, view);
     const std::string text = read(projectPath());
@@ -431,8 +431,8 @@ TEST_F(ProjectFileTest, AudioTracksAreSavedWithLevelsMuteAndSolo)
     EXPECT_TRUE(loaded.missing.empty());
     expectSame(project, loaded.project);
     EXPECT_FALSE(loaded.project.audioTracks().audible(loaded.project.audioTracks().tracks()[1].id));
-    EXPECT_EQ(loaded.project.audioTracks().envelope(AudioTracks::kOriginalTrack).size(), 2u);
-    EXPECT_EQ(loaded.project.audioTracks().envelope(loaded.project.audioTracks().tracks()[0].id).size(), 3u);
+    EXPECT_EQ(loaded.project.audioTracks().tracks()[0].clips[0].envelope.size(), 3u);
+    EXPECT_EQ(loaded.project.sequence().fragments()[0].envelope.size(), 2u);
 
     // Salvato di nuovo (con i file analizzati di nuovo): lo stesso testo.
     Project reopened = loaded.project;

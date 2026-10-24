@@ -133,15 +133,28 @@ std::string text(const JsonValue& value)
 
 JsonValue mixToJson(const AudioMix& mix)
 {
-    JsonValue::Object json{{"livello", mix.levelDb}, {"muto", mix.muted}, {"solo", mix.solo}};
-    if (!mix.envelope.empty()) {
-        // La linea del livello: coppie [tempo in tick, dB].
-        JsonValue::Array line;
-        for (const LevelPoint& p : mix.envelope)
-            line.emplace_back(JsonValue::Array{ticks(p.time), p.db});
-        json["linea"] = std::move(line);
+    return JsonValue::Object{{"livello", mix.levelDb}, {"muto", mix.muted}, {"solo", mix.solo}};
+}
+
+// La linea del livello di un pezzo o di una clip: coppie [tempo nel file in tick, dB].
+JsonValue envelopeToJson(const std::vector<LevelPoint>& points)
+{
+    JsonValue::Array line;
+    for (const LevelPoint& p : points)
+        line.emplace_back(JsonValue::Array{ticks(p.time), p.db});
+    return line;
+}
+
+std::vector<LevelPoint> envelopeFromJson(const JsonValue& value)
+{
+    std::vector<LevelPoint> points;
+    if (!value.isArray())
+        return points;
+    for (const JsonValue& p : value.asArray()) {
+        if (p.isArray() && p.asArray().size() == 2 && p.asArray()[0].isNumber() && p.asArray()[1].isNumber())
+            points.push_back({ticksToSeconds(static_cast<std::int64_t>(p.asArray()[0].asNumber())), p.asArray()[1].asNumber()});
     }
-    return json;
+    return normalizeEnvelope(std::move(points));
 }
 
 AudioMix mixFromJson(const JsonValue& value)
@@ -153,16 +166,6 @@ AudioMix mixFromJson(const JsonValue& value)
         mix.levelDb = std::clamp(value["livello"].asNumber(), AudioTracks::kMinLevelDb, AudioTracks::kMaxLevelDb);
     mix.muted = value["muto"].isBool() && value["muto"].asBool();
     mix.solo = value["solo"].isBool() && value["solo"].asBool();
-    if (value["linea"].isArray()) {
-        std::vector<LevelPoint> points;
-        for (const JsonValue& p : value["linea"].asArray()) {
-            if (p.isArray() && p.asArray().size() == 2 && p.asArray()[0].isNumber() && p.asArray()[1].isNumber())
-                points.push_back({ticksToSeconds(static_cast<std::int64_t>(p.asArray()[0].asNumber())), p.asArray()[1].asNumber()});
-        }
-        AudioTracks tracks;  // per normalizzarla come setEnvelope (ordine, limiti)
-        tracks.setEnvelope(AudioTracks::kOriginalTrack, std::move(points));
-        mix.envelope = tracks.envelope(AudioTracks::kOriginalTrack);
-    }
     return mix;
 }
 
@@ -180,6 +183,8 @@ JsonValue audioTracksToJson(const std::filesystem::path& dir, const AudioTracks&
                                    {"posizione", ticks(c.position)}};
             if (c.sourceDuration > 0.0)
                 clip["durataFile"] = ticks(c.sourceDuration);
+            if (!c.envelope.empty())
+                clip["linea"] = envelopeToJson(c.envelope);
             clips.emplace_back(std::move(clip));
         }
         JsonValue::Object item = mixToJson(track.mix).asObject();
@@ -233,6 +238,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
             {"file", f.clipId}, {"inizio", ticks(f.start)}, {"fine", ticks(f.end)}, {"senzaAudio", std::move(muted)}};
         if (f.gap > 0.0)
             piece["spazioPrima"] = ticks(f.gap);
+        if (!f.envelope.empty())
+            piece["linea"] = envelopeToJson(f.envelope);
         sequence.emplace_back(std::move(piece));
     }
 
@@ -249,7 +256,9 @@ std::string projectToJson(const std::string& projectPath, const Project& project
 
     // Il file resta nella versione più vecchia che basta, così si apre anche con i programmi di prima: 1 senza spazi
     // vuoti, 2 con gli spazi vuoti, 3 con tracce audio che non sono una semplice traccia sostitutiva.
-    const int version = !audioTracks.isNull() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
+    const bool pieceLines = std::any_of(project.sequence().fragments().begin(), project.sequence().fragments().end(),
+                                        [](const Fragment& f) { return !f.envelope.empty(); });
+    const int version = !audioTracks.isNull() || pieceLines ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
     JsonValue::Object root{
         {"formato", kFormatName},
         {"versione", version},
@@ -366,6 +375,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                     f.muted.push_back({seconds(pair[0], "senzaAudio"), seconds(pair[1], "senzaAudio")});
                 }
             }
+            f.envelope = envelopeFromJson(piece["linea"]);
             if (piece["spazioPrima"].isInteger()) {
                 f.gap = seconds(piece["spazioPrima"], "spazioPrima");
                 if (f.gap < 0.0)
@@ -403,6 +413,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                     clip.position = seconds(c["posizione"], "posizione");
                     if (c["durataFile"].isInteger())
                         clip.sourceDuration = ticksToSeconds(c["durataFile"].asInteger());
+                    clip.envelope = envelopeFromJson(c["linea"]);
                     if (!(clip.end > clip.start) || clip.start < 0.0 || clip.position < 0.0)
                         throw ProjectFileError(name + " è rovinato: una clip audio non è valida.");
                     if (!found)

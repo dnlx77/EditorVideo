@@ -105,58 +105,25 @@ bool AudioTracks::audible(int trackId) const
     return !m.muted && (!anySolo || m.solo);
 }
 
-bool AudioTracks::setEnvelope(int trackId, std::vector<LevelPoint> points)
+bool AudioTracks::setClipEnvelope(int clipId, std::vector<LevelPoint> points)
 {
-    AudioMix* m = mutableMix(trackId);
-    if (m == nullptr)
+    int t = 0;
+    int index = 0;
+    if (!locate(clipId, t, index))
         return false;
-    points.erase(std::remove_if(points.begin(), points.end(),
-                                [](const LevelPoint& p) { return !std::isfinite(p.time) || !std::isfinite(p.db); }),
-                 points.end());
-    for (LevelPoint& p : points) {
-        p.time = std::max(0.0, p.time);
-        p.db = std::clamp(p.db, kMinLevelDb, kMaxLevelDb);
-    }
-    std::stable_sort(points.begin(), points.end(), [](const LevelPoint& a, const LevelPoint& b) { return a.time < b.time; });
-    std::vector<LevelPoint> unique;
-    for (const LevelPoint& p : points) {
-        if (!unique.empty() && p.time - unique.back().time < 1e-6)
-            unique.back() = p;
-        else
-            unique.push_back(p);
-    }
-    if (m->envelope == unique)
+    AudioClip& clip = tracks_[static_cast<std::size_t>(t)].clips[static_cast<std::size_t>(index)];
+    points = normalizeEnvelope(std::move(points));
+    if (clip.envelope == points)
         return false;
-    m->envelope = std::move(unique);
+    clip.envelope = std::move(points);
     return true;
-}
-
-double AudioTracks::envelopeDbAt(const std::vector<LevelPoint>& points, double seconds)
-{
-    if (points.empty())
-        return 0.0;
-    if (seconds <= points.front().time)
-        return points.front().db;
-    if (seconds >= points.back().time)
-        return points.back().db;
-    const auto next = std::upper_bound(points.begin(), points.end(), seconds,
-                                       [](double t, const LevelPoint& p) { return t < p.time; });
-    const LevelPoint& b = *next;
-    const LevelPoint& a = *(next - 1);
-    const double span = b.time - a.time;
-    return span <= 0.0 ? b.db : a.db + (b.db - a.db) * (seconds - a.time) / span;
-}
-
-double AudioTracks::envelopeGain(double db)
-{
-    return db <= kMinLevelDb ? 0.0 : dbToGain(db);
 }
 
 bool AudioTracks::needsMix() const
 {
     if (isDefault())
         return false;
-    if (!audible(kOriginalTrack) || original_.levelDb != 0.0 || !original_.envelope.empty())
+    if (!audible(kOriginalTrack) || original_.levelDb != 0.0)
         return true;
     return std::any_of(tracks_.begin(), tracks_.end(), [](const AudioTrack& t) { return !t.clips.empty(); });
 }

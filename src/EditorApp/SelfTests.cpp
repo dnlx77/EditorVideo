@@ -1805,9 +1805,10 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 window->setTrackLevel(track, -12.0);
                 window->setTrackSolo(track, true);
                 window->setTrackMuted(core::AudioTracks::kOriginalTrack, true);
-                window->setTrackEnvelope(track, {{0.2, 0.0}, {0.8, -30.0}});  // dissolvenza: la linea del livello
+                const int musicClip = audio.tracks().empty() || audio.tracks()[0].clips.empty() ? 0 : audio.tracks()[0].clips[0].id;
+                window->setEnvelope(false, musicClip, {{0.2, 0.0}, {0.8, -30.0}});  // dissolvenza: la linea del livello
                 const bool keepsPlaying = window->programMonitor()->isPlaying() && audio.audible(track)
-                                       && !audio.audible(core::AudioTracks::kOriginalTrack) && audio.envelope(track).size() == 2;
+                                       && !audio.audible(core::AudioTracks::kOriginalTrack) && audio.tracks()[0].clips[0].envelope.size() == 2;
                 window->programMonitor()->setPlaying(false);
                 bool undone = true;
                 for (int i = 0; i < 12 && !(audio.isDefault() && window->project().find(wavId) == nullptr); ++i)

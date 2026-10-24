@@ -73,7 +73,7 @@ std::vector<std::int16_t> decodeAll(const std::string& file)
 
 std::vector<std::int16_t> mixOffline(const MixSpec& spec, double seconds)
 {
-    AudioMixer mixer(spec.segments, spec.gains, spec.envelopes);
+    AudioMixer mixer(spec.segments, spec.gains);
     std::vector<std::int16_t> all, chunk;
     const long long total = std::llround(seconds * kRate);
     for (long long frame = 0; frame < total; frame += 4096) {
@@ -160,10 +160,11 @@ TEST_F(MixExportTest, RenderedFileIsTheSameMixAsThePreview)
     AudioTracks& audio = project.audioTracks();
     const int a2 = audio.addTrack();
     const int a3 = audio.addTrack();
-    ASSERT_NE(audio.add(a2, clipOf("la.wav", 0.0, 2.0, 0.5)), 0);
+    const int clipA = audio.add(a2, clipOf("la.wav", 0.0, 2.0, 0.5));
+    ASSERT_NE(clipA, 0);
     ASSERT_NE(audio.add(a3, clipOf("mi.wav", 0.5, 2.5, 1.0)), 0);
     audio.setLevel(a3, -6.0);
-    audio.setEnvelope(a2, {{0.5, 0.0}, {1.0, -20.0}, {2.0, -20.0}, {2.5, 0.0}});  // si abbassa solo una parte
+    audio.setClipEnvelope(clipA, {{0.0, 0.0}, {0.5, -20.0}, {1.5, -20.0}, {2.0, 0.0}});  // si abbassa solo una parte (tempi del file)
     const MixSpec spec = mixSpecOf(project);
     EXPECT_EQ(mixFileCount(spec), 3);
 
@@ -194,8 +195,9 @@ TEST_F(MixExportTest, ExportedMontageHasTheVideoAndTheMixedAudioInTime)
     Project project = montage("video.mkv");
     AudioTracks& audio = project.audioTracks();
     const int a2 = audio.addTrack();
-    ASSERT_NE(audio.add(a2, clipOf("la.wav", 0.0, 2.0, 0.5)), 0);
-    audio.setEnvelope(a2, {{0.5, -60.0}, {1.5, 0.0}});  // entra piano
+    const int clipA = audio.add(a2, clipOf("la.wav", 0.0, 2.0, 0.5));
+    ASSERT_NE(clipA, 0);
+    audio.setClipEnvelope(clipA, {{0.0, -60.0}, {1.0, 0.0}});  // entra piano (tempi del file; la clip parte a 0,5 s)
     const AudioEdit edit = project.audioEdit(GapExport::Black);
     ASSERT_TRUE(edit.mix);
 
@@ -250,6 +252,12 @@ TEST_F(MixExportTest, LevelOfTheVideoAudioAloneIsAppliedToo)
     const auto actual = decodeAll(out);
     const Comparison c = compare(mixOffline(mixSpecOf(project), 3.0), actual, kRate / 2, kRate * 5 / 2);
     EXPECT_EQ(c.bestLag, 0);
+
+    // Anche solo la linea del livello di un pezzo video obbliga a mixare.
+    Project line = montage("voce.mkv");
+    EXPECT_FALSE(line.audioEdit(GapExport::Black).mix);
+    ASSERT_TRUE(line.sequence().setEnvelope(line.sequence().fragments()[0].id, {{0.0, 0.0}, {2.0, -60.0}}));
+    EXPECT_TRUE(line.audioEdit(GapExport::Black).mix);
 
     // Senza modifiche al mix l'audio resta quello copiato.
     Project plain = montage("voce.mkv");

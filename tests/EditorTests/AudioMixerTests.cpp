@@ -158,23 +158,27 @@ TEST_F(AudioMixerTest, LevelChangesWithARampNotAJump)
 
 TEST_F(AudioMixerTest, EnvelopeFollowsTheLineSampleBySample)
 {
-    // Dissolvenza: 0 dB fino a 0,5 s, poi giù fino al silenzio a 1,5 s; l'altra traccia non ha linea.
-    TrackEnvelopes line;
-    line[0] = {{0.5, 0.0}, {1.5, AudioTracks::kMinLevelDb}};
-    AudioMixer mixer({segment("a.wav", 0.0, 2.0, 0.0)}, {{0, 1.0f}}, line);
+    // Pezzo [0,5 s - 2,0 s) del file messo a 0,25 s della sequenza; la linea è nei tempi del file: 0 dB fino a 1,0 s,
+    // poi giù fino al silenzio a 1,75 s.
+    MixSegment s = segment("a.wav", 0.5, 2.0, 0.25);
+    s.envelope = {{1.0, 0.0}, {1.75, kLevelMinDb}};
+    AudioMixer mixer({s}, {{0, 1.0f}});
     const auto out = renderAll(mixer, 2.0, 1000);
-    for (long long f = 0; f < 2 * kRate; ++f) {
-        const double gain = AudioTracks::envelopeGain(AudioTracks::envelopeDbAt(line[0], static_cast<double>(f) / kRate));
-        ASSERT_NEAR(out[f * 2], sampleAudio(f) * gain, 2) << "fotogramma " << f;
+    for (long long f = 250 * kRate / 1000; f < 2 * kRate && f < kRate / 4 + 3 * kRate / 2; ++f) {
+        const double fileTime = 0.5 + static_cast<double>(f - kRate / 4) / kRate;
+        const double gain = envelopeGain(envelopeDbAt(s.envelope, fileTime));
+        ASSERT_NEAR(out[f * 2], sampleAudio(kRate / 2 + (f - kRate / 4)) * gain, 2) << "fotogramma " << f;
     }
-    EXPECT_EQ(out[(kRate * 3 / 2 + 10) * 2], 0);  // dopo la fine della dissolvenza: silenzio
+    // Dopo la fine della dissolvenza (file 1,75 s = sequenza 1,5 s): silenzio.
+    EXPECT_EQ(out[(kRate * 3 / 2 + 10) * 2], 0);
 
-    // La linea si cambia mentre si suona e conta dal blocco dopo.
-    mixer.setEnvelopes({});
+    // La linea si cambia mentre si suona e conta dal blocco dopo: senza linea il suono torna intero.
+    mixer.setEnvelopes({{}});
     std::vector<std::int16_t> after;
     mixer.render(kRate * 3 / 2, 100, after);
     for (long long i = 0; i < 100; ++i)
-        ASSERT_EQ(after[i * 2], sampleAudio(kRate * 3 / 2 + i));
+        ASSERT_EQ(after[i * 2], sampleAudio(kRate / 2 + kRate * 5 / 4 + i));
+    mixer.setEnvelopes({});  // un numero di linee diverso dai tratti: si ignora
 }
 
 TEST_F(AudioMixerTest, LimiterNeverExceedsFullScale)
@@ -257,12 +261,16 @@ TEST_F(AudioMixerTest, ProjectGivesPiecesAndTracks)
     EXPECT_EQ(segments[2].trackId, AudioTracks::kOriginalTrack);
     EXPECT_DOUBLE_EQ(segments[2].position, 1.0);
 
-    audio.setEnvelope(a2, {{0.0, -3.0}, {2.0, -9.0}});
+    ASSERT_TRUE(audio.setClipEnvelope(audio.tracks()[0].clips[0].id, {{0.5, -3.0}, {1.5, -9.0}}));
+    ASSERT_TRUE(project.sequence().setEnvelope(project.sequence().fragments()[0].id, {{0.5, -6.0}}));
     const MixSpec spec = mixSpecOf(project);
     EXPECT_EQ(spec.segments.size(), 3u);
     EXPECT_DOUBLE_EQ(spec.length, 2.0);
-    ASSERT_EQ(spec.envelopes.size(), 1u);  // solo le linee non vuote
-    EXPECT_EQ(spec.envelopes.at(a2).size(), 2u);
+    EXPECT_EQ(spec.segments[0].envelope.size(), 1u);  // la linea del pezzo video
+    EXPECT_EQ(spec.segments[1].envelope.size(), 2u);  // quella della clip
+    EXPECT_TRUE(spec.segments[2].envelope.empty());
+    EXPECT_EQ(segmentEnvelopesOf(project).size(), 3u);
+    EXPECT_TRUE(project.audioNeedsMix());
 
     const auto gains = trackGainsOf(audio);
     EXPECT_FLOAT_EQ(gains.at(AudioTracks::kOriginalTrack), 0.0f);  // A1 muta

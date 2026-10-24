@@ -21,11 +21,11 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project);
 std::map<int, float> trackGainsOf(const AudioTracks& tracks);
 // Tutto quello che serve per mixare il progetto (con gli spazi vuoti di A1 chiusi se `closeGaps`, come nel file esportato).
 MixSpec mixSpecOf(const Project& project, bool closeGaps = false);
-// Le linee del livello non vuote (A1 compresa).
-TrackEnvelopes trackEnvelopesOf(const AudioTracks& tracks);
+// Le linee del livello dei tratti, nello stesso ordine di mixSegmentsOf (per AudioMixer::setEnvelopes).
+std::vector<std::vector<LevelPoint>> segmentEnvelopesOf(const Project& project);
 
 // Il mixer della sequenza: somma, a 48 kHz stereo, l'audio di tutti i tratti presenti in ogni istante, ognuno con il
-// livello, linea del livello e muto/solo della sua traccia e senza i tratti silenziati. Un limitatore dolce evita la saturazione.
+// livello e muto/solo della sua traccia, la linea del livello del tratto e senza i tratti silenziati. Un limitatore dolce evita la saturazione.
 //
 // render() si usa di seguito (blocchi uno dopo l'altro) da un solo thread; un salto a un altro punto va bene, costa
 // solo il riposizionamento dei file. setGain() si può chiamare anche da un altro thread, mentre si suona: il livello
@@ -33,7 +33,7 @@ TrackEnvelopes trackEnvelopesOf(const AudioTracks& tracks);
 class AudioMixer
 {
 public:
-    AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, TrackEnvelopes envelopes = {});
+    AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains);
     ~AudioMixer();
     AudioMixer(AudioMixer&&) noexcept;
     AudioMixer& operator=(AudioMixer&&) noexcept;
@@ -43,9 +43,9 @@ public:
 
     void setGain(int trackId, float gain);
     void setGains(const std::map<int, float>& gains);
-    // Le linee del livello (al posto di quelle di prima): il valore al tempo t della sequenza moltiplica il livello della
-    // traccia, campione per campione.
-    void setEnvelopes(const TrackEnvelopes& envelopes);
+    // Le linee del livello dei tratti, una per tratto nello stesso ordine (al posto di quelle di prima): il valore al
+    // tempo del file moltiplica il livello della traccia, campione per campione.
+    void setEnvelopes(std::vector<std::vector<LevelPoint>> envelopes);
 
     // Scrive in `out` (stereo interlacciato, `frames` * 2 campioni) l'audio dal fotogramma `firstFrame` (contato dal
     // tempo 0 della sequenza). Dove non c'è niente: silenzio.

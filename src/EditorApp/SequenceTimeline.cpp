@@ -1,6 +1,7 @@
 #include "EditorApp/SequenceTimeline.h"
 
 #include "EditorCore/AudioTracks.h"
+#include "EditorCore/LevelEnvelope.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Waveform.h"
 
@@ -1106,7 +1107,13 @@ void SequenceTimeline::paintAudio(QPainter& p)
             p.drawRect(lane);
         }
         p.setRenderHint(QPainter::Antialiasing, true);
-        paintEnvelope(p, i, lane);
+        if (i == 0) {
+            for (std::size_t b = 0; b < blocks_.size(); ++b)
+                paintEnvelope(p, targetOfBlock(b), lane);
+        } else {
+            for (std::size_t c = 0; c < lanes_[static_cast<std::size_t>(i)].clips.size(); ++c)
+                paintEnvelope(p, targetOfClip(i, c), lane);
+        }
         p.setRenderHint(QPainter::Antialiasing, false);
         // Tratto selezionato
         if (hasAudioSelection() && lanes_[static_cast<std::size_t>(i)].trackId == selectionTrack_) {
@@ -1156,74 +1163,119 @@ double SequenceTimeline::envelopeDbForY(const QRectF& lane, double y) const
     return std::abs(db) < kEnvelopeSnapDb ? 0.0 : db;
 }
 
-const std::vector<core::LevelPoint>& SequenceTimeline::lineOf(int laneIndex) const
+SequenceTimeline::EnvTarget SequenceTimeline::targetOfBlock(std::size_t index) const
 {
-    return laneIndex == envLane_ ? envPoints_ : lanes_[static_cast<std::size_t>(laneIndex)].envelope;
+    const Block& b = blocks_[index];
+    return {0, true, b.fragmentId, starts_[index], b.length, b.sourceStart, &b.envelope};
 }
 
-bool SequenceTimeline::envelopeHit(const QPointF& pos, int& laneIndex, int& point) const
+SequenceTimeline::EnvTarget SequenceTimeline::targetOfClip(int lane, std::size_t index) const
+{
+    const AudioBlock& c = lanes_[static_cast<std::size_t>(lane)].clips[index];
+    return {lane, false, c.clipId, c.position, c.length, c.sourceStart, &c.envelope};
+}
+
+const std::vector<core::LevelPoint>& SequenceTimeline::lineOf(const EnvTarget& target) const
+{
+    return envActive_ && sameTarget(target, envTarget_) ? envPoints_ : *target.line;
+}
+
+bool SequenceTimeline::envelopeHit(const QPointF& pos, EnvTarget& target, int& point) const
 {
     if (pos.x() < videoLane().left() || pos.x() > videoLane().right())
         return false;
     const int lane = laneAt(pos.y());
     if (lane < 0)
         return false;
+    // Il pezzo o la clip sotto il mouse.
+    const double t = timeForX(pos.x());
+    EnvTarget found;
+    if (lane == 0) {
+        const int block = blockAt(pos.x());
+        if (block < 0 || t < starts_[static_cast<std::size_t>(block)] || t > starts_[static_cast<std::size_t>(block)] + blocks_[static_cast<std::size_t>(block)].length)
+            return false;
+        found = targetOfBlock(static_cast<std::size_t>(block));
+    } else {
+        const auto& clips = lanes_[static_cast<std::size_t>(lane)].clips;
+        bool any = false;
+        for (std::size_t i = 0; i < clips.size() && !any; ++i) {
+            if (t >= clips[i].position && t <= clips[i].position + clips[i].length) {
+                found = targetOfClip(lane, i);
+                any = true;
+            }
+        }
+        if (!any)
+            return false;
+    }
     const QRectF rect = audioLane(lane);
-    const auto& line = lineOf(lane);
+    const auto& line = lineOf(found);
+    const auto atFile = [&](double fileTime) { return xForTime(found.position + (fileTime - found.source)); };
     for (std::size_t i = 0; i < line.size(); ++i) {
-        const QPointF at(xForTime(line[i].time), envelopeY(rect, line[i].db));
+        if (line[i].time < found.source || line[i].time > found.source + found.length)
+            continue;
+        const QPointF at(atFile(line[i].time), envelopeY(rect, line[i].db));
         if (std::hypot(pos.x() - at.x(), pos.y() - at.y()) <= kEnvelopePointNear) {
-            laneIndex = lane;
+            target = found;
             point = static_cast<int>(i);
             return true;
         }
     }
-    const double y = envelopeY(rect, core::AudioTracks::envelopeDbAt(line, timeForX(pos.x())));
-    if (std::abs(pos.y() - y) <= kEnvelopeNear) {
-        laneIndex = lane;
+    const double fileTime = found.source + (t - found.position);
+    if (std::abs(pos.y() - envelopeY(rect, core::envelopeDbAt(line, fileTime))) <= kEnvelopeNear) {
+        target = found;
         point = -1;
         return true;
     }
     return false;
 }
 
-void SequenceTimeline::paintEnvelope(QPainter& p, int index, const QRectF& lane)
+void SequenceTimeline::paintEnvelope(QPainter& p, const EnvTarget& target, const QRectF& lane)
 {
-    const auto& line = lineOf(index);
+    const double x0 = xForTime(target.position);
+    const double x1 = xForTime(target.position + target.length);
+    const double left = std::max(x0, visibleLeft());
+    const double right = std::min(x1, visibleRight());
+    if (right <= left)
+        return;
+    const auto& line = lineOf(target);
     const QColor accent(255, 190, 40);
+    const auto fileTimeAt = [&](double x) { return target.source + (timeForX(x) - target.position); };
+    const auto xAtFile = [&](double fileTime) { return xForTime(target.position + (fileTime - target.source)); };
     QPainterPath path;
-    const double left = visibleLeft();
-    const double right = visibleRight();
-    path.moveTo(left, envelopeY(lane, core::AudioTracks::envelopeDbAt(line, timeForX(left))));
+    path.moveTo(left, envelopeY(lane, core::envelopeDbAt(line, fileTimeAt(left))));
     for (const core::LevelPoint& pt : line) {
-        const double x = xForTime(pt.time);
+        const double x = xAtFile(pt.time);
         if (x > left && x < right)
             path.lineTo(x, envelopeY(lane, pt.db));
     }
-    path.lineTo(right, envelopeY(lane, core::AudioTracks::envelopeDbAt(line, timeForX(right))));
+    path.lineTo(right, envelopeY(lane, core::envelopeDbAt(line, fileTimeAt(right))));
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setBrush(Qt::NoBrush);
     if (line.empty()) {
         // Nessun punto: il livello è 0 dB dappertutto. La linea è appena accennata.
         QColor faint = accent;
         faint.setAlpha(110);
         p.setPen(QPen(faint, 1, Qt::DashLine));
-        p.setBrush(Qt::NoBrush);
         p.drawPath(path);
+        p.setRenderHint(QPainter::Antialiasing, false);
         return;
     }
-    p.setBrush(Qt::NoBrush);
     p.setPen(QPen(QColor(0, 0, 0, 150), 3.5));
     p.drawPath(path);
     p.setPen(QPen(accent, 1.8));
     p.drawPath(path);
     for (std::size_t i = 0; i < line.size(); ++i) {
-        const QPointF at(xForTime(line[i].time), envelopeY(lane, line[i].db));
-        if (at.x() < left - 8 || at.x() > right + 8)
+        if (line[i].time < target.source || line[i].time > target.source + target.length)
             continue;
-        const bool taken = index == envLane_ && static_cast<int>(i) == envPoint_;
+        const QPointF at(xAtFile(line[i].time), envelopeY(lane, line[i].db));
+        if (at.x() < visibleLeft() - 8 || at.x() > visibleRight() + 8)
+            continue;
+        const bool taken = envActive_ && sameTarget(target, envTarget_) && static_cast<int>(i) == envPoint_;
         p.setPen(QPen(QColor(0, 0, 0, 200), 1.5));
         p.setBrush(taken ? accent : QColor(255, 255, 255));
         p.drawEllipse(at, taken ? 5.0 : 4.0, taken ? 5.0 : 4.0);
     }
+    p.setRenderHint(QPainter::Antialiasing, false);
 }
 
 void SequenceTimeline::paintA1(QPainter& p, const QRectF& lane)
@@ -1365,15 +1417,17 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         selected_ = 0;
         selectedGap_ = 0;
         setSelectedTrack(lanes_[static_cast<std::size_t>(lane)].trackId);
-        int envLane = 0;
+        EnvTarget envTarget;
         int envPoint = -1;
-        if (envelopeHit(pos, envLane, envPoint)) {
-            envLane_ = envLane;
-            envPoints_ = lanes_[static_cast<std::size_t>(envLane)].envelope;
+        if (envelopeHit(pos, envTarget, envPoint)) {
+            envActive_ = true;
+            envTarget_ = envTarget;
+            envPoints_ = *envTarget.line;
             envMoved_ = false;
             if (envPoint < 0) {
-                // Un punto nuovo, sulla linea dove si è cliccato.
-                const core::LevelPoint added{std::max(0.0, t), core::AudioTracks::envelopeDbAt(envPoints_, std::max(0.0, t))};
+                // Un punto nuovo, sulla linea dove si è cliccato (tempo del file, dentro il pezzo o la clip).
+                const double fileTime = envTarget.source + std::clamp(t - envTarget.position, 0.0, envTarget.length);
+                const core::LevelPoint added{fileTime, core::envelopeDbAt(envPoints_, fileTime)};
                 const auto at = std::upper_bound(envPoints_.begin(), envPoints_.end(), added.time,
                                                  [](double time, const core::LevelPoint& q) { return time < q.time; });
                 envPoint = static_cast<int>(at - envPoints_.begin());
@@ -1479,9 +1533,9 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         int lane = 0;
         int clip = 0;
         const int header = x < videoLane().left() ? laneAt(pos.y()) : -1;
-        int envLane = 0;
+        EnvTarget envTarget;
         int envPoint = -1;
-        if (envelopeHit(pos, envLane, envPoint))
+        if (envelopeHit(pos, envTarget, envPoint))
             setCursor(envPoint >= 0 ? Qt::SizeAllCursor : Qt::SizeVerCursor);
         else if (edgeAt(pos, atStart) >= 0 || audioEdgeAt(pos, lane, clip, atStart) || (header >= 0 && levelBar(header).contains(pos)))
             setCursor(Qt::SizeHorCursor);
@@ -1489,22 +1543,24 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
             setCursor(Qt::ArrowCursor);
         return;
     }
-    if (envLane_ >= 0 && envPoint_ >= 0) {
-        // Il punto segue il mouse, ma resta fra i due vicini.
+    if (envActive_ && envPoint_ >= 0) {
+        // Il punto segue il mouse, ma resta dentro il pezzo o la clip e fra i due vicini.
         auto& point = envPoints_[static_cast<std::size_t>(envPoint_)];
         const double previous = envPoint_ > 0 ? envPoints_[static_cast<std::size_t>(envPoint_) - 1].time + 1e-3 : 0.0;
         const double next = envPoint_ + 1 < static_cast<int>(envPoints_.size())
                                 ? envPoints_[static_cast<std::size_t>(envPoint_) + 1].time - 1e-3
                                 : std::numeric_limits<double>::max();
         if (envMoved_ || std::abs(x - pressX_) >= 2 || std::abs(pos.y() - pressY_) >= 2) {
-            point.time = std::clamp(timeForX(x), previous, std::max(previous, next));
-            point.db = envelopeDbForY(audioLane(envLane_), pos.y());
+            const double fileTime = envTarget_.source + std::clamp(timeForX(x) - envTarget_.position, 0.0, envTarget_.length);
+            point.time = std::clamp(fileTime, previous, std::max(previous, next));
+            point.db = envelopeDbForY(audioLane(envTarget_.lane), pos.y());
             envMoved_ = true;
         }
         QToolTip::showText(event->globalPosition().toPoint(),
-                           QStringLiteral("%1: %2 dB a %3").arg(lanes_[static_cast<std::size_t>(envLane_)].name,
+                           QStringLiteral("%1: %2 dB a %3").arg(lanes_[static_cast<std::size_t>(envTarget_.lane)].name,
                                                                   QString::number(point.db, 'f', 1),
-                                                                  QString::fromStdString(core::formatDuration(point.time))),
+                                                                  QString::fromStdString(core::formatDuration(
+                                                                      envTarget_.position + point.time - envTarget_.source))),
                            this);
         invalidate();
         return;
@@ -1609,18 +1665,18 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
         scrubbing_ = false;
         return;
     }
-    if (envLane_ >= 0) {
-        const int track = lanes_[static_cast<std::size_t>(envLane_)].trackId;
+    if (envActive_) {
+        const EnvTarget target = envTarget_;
         const std::vector<core::LevelPoint> points = envPoints_;
         const bool changed = envMoved_;
-        envLane_ = -1;
+        envActive_ = false;
         envPoint_ = -1;
         envMoved_ = false;
         envPoints_.clear();
         QToolTip::hideText();
         invalidate();
         if (changed && onEnvelopeChanged)
-            onEnvelopeChanged(track, points);
+            onEnvelopeChanged(target.fragment, target.id, points);
         return;
     }
     if (levelLane_ >= 0) {
@@ -1756,14 +1812,14 @@ void SequenceTimeline::mouseDoubleClickEvent(QMouseEvent* event)
             onTrackLevel(lanes_[static_cast<std::size_t>(lane)].trackId, 0.0);
         return;
     }
-    int envLane = 0;
+    EnvTarget envTarget;
     int envPoint = -1;
-    if (envelopeHit(pos, envLane, envPoint)) {
+    if (envelopeHit(pos, envTarget, envPoint)) {
         // Doppio clic su un punto della linea del livello: lo toglie.
         if (envPoint >= 0 && onEnvelopeChanged) {
-            std::vector<core::LevelPoint> points = lanes_[static_cast<std::size_t>(envLane)].envelope;
+            std::vector<core::LevelPoint> points = *envTarget.line;
             points.erase(points.begin() + envPoint);
-            onEnvelopeChanged(lanes_[static_cast<std::size_t>(envLane)].trackId, points);
+            onEnvelopeChanged(envTarget.fragment, envTarget.id, points);
         }
         return;
     }

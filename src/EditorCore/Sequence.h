@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EditorCore/LevelEnvelope.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <vector>
@@ -18,6 +19,8 @@ struct Fragment
     std::vector<TimeRange> muted;
     // Spazio vuoto nella sequenza subito prima del pezzo, in secondi (0 = attaccato al precedente o all'inizio).
     double gap = 0.0;
+    // Linea del livello dell'audio del pezzo (vedi LevelPoint), nei tempi del file: segue il pezzo.
+    std::vector<LevelPoint> envelope;
 
     double length() const { return end - start; }
 };
@@ -36,6 +39,8 @@ public:
     // Il pezzo va subito dopo il precedente: se lì c'era uno spazio vuoto lo riempie partendo dal suo inizio, senza
     // spostare gli altri pezzi; se non ci sta, quelli dopo vanno avanti quanto serve.
     int insert(int index, int clipId, double start, double end);
+    // La linea del livello del pezzo (normalizzata); false se il pezzo non c'è o non cambia nulla.
+    bool setEnvelope(int fragmentId, std::vector<LevelPoint> points);
     // Toglie il pezzo; quelli dopo scorrono indietro della sua durata (lo spazio vuoto prima di lui resta).
     bool remove(int fragmentId);
     void removeClip(int clipId);  // tutti i pezzi di un file (quando il file esce dal progetto)

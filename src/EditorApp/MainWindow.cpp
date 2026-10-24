@@ -487,8 +487,8 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onTrackMuted = [this](int trackId, bool muted) { setTrackMuted(trackId, muted); };
     timeline_->onTrackSolo = [this](int trackId, bool solo) { setTrackSolo(trackId, solo); };
     timeline_->onTrackLevel = [this](int trackId, double db) { setTrackLevel(trackId, db); };
-    timeline_->onEnvelopeChanged = [this](int trackId, const std::vector<core::LevelPoint>& points) {
-        setTrackEnvelope(trackId, points);
+    timeline_->onEnvelopeChanged = [this](bool fragment, int id, const std::vector<core::LevelPoint>& points) {
+        setEnvelope(fragment, id, points);
     };
     timeline_->onAudioClipSelected = [this](int) { setProgramActive(true); };
     timeline_->audioFreePosition = [this](int clipId, int trackId, double desired) {
@@ -1070,6 +1070,8 @@ void MainWindow::refreshTimeline()
                           f.clipId, clip ? waveforms_->get(clip->path) : nullptr, f.gap});
         if (clip != nullptr)
             blocks.back().proxyDivisor = proxies_->sourceDivisor(qs(clip->path));
+        if (withAudio)
+            blocks.back().envelope = f.envelope;
         // Come entra nel file esportato, rispetto al formato del progetto: segno sul blocco e spiegazione.
         const core::MediaSignature* signature = clip != nullptr ? signatureFor(clip->path) : nullptr;
         if (signature != nullptr && !project_.format().empty()) {
@@ -1117,14 +1119,12 @@ void MainWindow::refreshTimeline()
                                            audio.audible(trackId), {}};
     };
     lanes.push_back(laneOf(core::AudioTracks::kOriginalTrack));
-    lanes.back().envelope = audio.envelope(core::AudioTracks::kOriginalTrack);
     int audioClips = 0;
     for (const core::AudioTrack& track : audio.tracks()) {
         lanes.push_back(laneOf(track.id));
-        lanes.back().envelope = track.mix.envelope;
         for (const core::AudioClip& c : track.clips) {
             lanes.back().clips.push_back({c.id, qs(c.path), fileNameOf(c.path), colorIndexFor(c.path), c.position, c.length(),
-                                          c.start, waveforms_->get(c.path)});
+                                          c.start, waveforms_->get(c.path), c.envelope});
             ++audioClips;
         }
     }
@@ -1527,10 +1527,10 @@ void MainWindow::setTrackLevel(int trackId, double db)
         refreshTimeline();  // il cursore del livello torna dov'era
 }
 
-void MainWindow::setTrackEnvelope(int trackId, const std::vector<core::LevelPoint>& points)
+void MainWindow::setEnvelope(bool fragment, int id, const std::vector<core::LevelPoint>& points)
 {
     const core::Project before = project_;
-    if (project_.audioTracks().setEnvelope(trackId, points))
+    if (fragment ? project_.sequence().setEnvelope(id, points) : project_.audioTracks().setClipEnvelope(id, points))
         recordMixEdit(QStringLiteral("Linea del livello"), before);
     else
         refreshTimeline();  // il punto trascinato torna dov'era

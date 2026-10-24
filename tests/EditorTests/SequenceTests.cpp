@@ -380,3 +380,24 @@ TEST(SequenceTrim, MutedRangesOutsideThePieceAreCut)
 }
 
 }  // namespace
+
+TEST(SequenceEnvelope, LineFollowsThePieceAndSplitsWithIt)
+{
+    Sequence s;
+    const int id = s.insert(-1, 1, 2.0, 8.0);
+    EXPECT_TRUE(s.setEnvelope(id, {{6.0, -20.0}, {3.0, 0.0}}));  // tempi del file, messi in ordine
+    EXPECT_FALSE(s.setEnvelope(id, {{3.0, 0.0}, {6.0, -20.0}}));
+    EXPECT_FALSE(s.setEnvelope(999, {}));
+    ASSERT_EQ(s.find(id)->envelope.size(), 2u);
+    EXPECT_DOUBLE_EQ(s.find(id)->envelope[0].time, 3.0);
+
+    const int second = s.split(3.0);  // secondo 5 del file
+    ASSERT_NE(second, 0);
+    EXPECT_EQ(s.find(id)->envelope, s.find(second)->envelope);
+
+    // Togliendo un tratto di sequenza le parti che restano tengono la linea.
+    EXPECT_EQ(s.removeSourceRange(1, 3.0, 4.0), Sequence::RemoveResult::Removed);
+    for (const Fragment& f : s.fragments())
+        EXPECT_EQ(f.envelope.size(), 2u);
+}
+

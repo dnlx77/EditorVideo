@@ -131,7 +131,8 @@ std::optional<AudioReplacement> Project::audioReplacement() const
         || tracks[0].clips.size() != 1)
         return std::nullopt;
     const AudioClip& clip = tracks[0].clips[0];
-    if (clip.end != std::max(clip.start, clip.sourceDuration) || (clip.position > 0.0 && clip.start > 0.0))
+    if (clip.end != std::max(clip.start, clip.sourceDuration) || (clip.position > 0.0 && clip.start > 0.0)
+        || !clip.envelope.empty())
         return std::nullopt;
     return AudioReplacement{clip.path, clip.position - clip.start, clip.sourceDuration};
 }
@@ -162,6 +163,12 @@ void Project::restoreEdits(const Project& snapshot)
     nextId_ = std::max(nextId_, snapshot.nextId_);  // un file aggiunto dopo non riprende l'id di uno tolto
 }
 
+bool Project::audioNeedsMix() const
+{
+    return audio_.needsMix() || std::any_of(sequence_.fragments().begin(), sequence_.fragments().end(),
+                                            [](const Fragment& f) { return !f.envelope.empty(); });
+}
+
 AudioEdit Project::audioEdit(GapExport gaps) const
 {
     AudioEdit edit;
@@ -174,7 +181,7 @@ AudioEdit Project::audioEdit(GapExport gaps) const
         closed.closeAllGaps();
         edit.muted = closed.mutedRanges();
     }
-    if (!edit.replacement && !sequence_.empty() && audio_.needsMix()) {
+    if (!edit.replacement && !sequence_.empty() && audioNeedsMix()) {
         edit.mix = std::make_shared<const MixSpec>(mixSpecOf(*this, false));
         edit.mixClosed = std::make_shared<const MixSpec>(mixSpecOf(*this, true));
     }

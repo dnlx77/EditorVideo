@@ -115,6 +115,9 @@ public:
     // Tratti silenziati e traccia sostitutiva, per l'esportazione: nei tempi del file esportato (con gli spazi vuoti
     // trattati come dice `gaps`).
     AudioEdit audioEdit(GapExport gaps = GapExport::Close) const;
+    // Se esportando l'audio non basta copiarlo com'è (vedi AudioTracks::needsMix) o i pezzi video hanno una linea del
+    // livello: allora audioEdit() ha il mix.
+    bool audioNeedsMix() const;
 
     // Formato del progetto (vedi ProjectFormat): vuoto finché non lo si decide, di solito al primo pezzo messo nel
     // montaggio. Fa parte delle modifiche (Annulla e Ripeti lo riportano com'era).

@@ -280,6 +280,20 @@ void Sequence::restore(std::vector<Fragment> fragments)
     }
 }
 
+bool Sequence::setEnvelope(int fragmentId, std::vector<LevelPoint> points)
+{
+    for (Fragment& f : fragments_) {
+        if (f.id != fragmentId)
+            continue;
+        points = normalizeEnvelope(std::move(points));
+        if (f.envelope == points)
+            return false;
+        f.envelope = std::move(points);
+        return true;
+    }
+    return false;
+}
+
 int Sequence::split(double seconds)
 {
     const int index = indexAt(seconds);
@@ -290,6 +304,7 @@ int Sequence::split(double seconds)
     if (cut <= f.start + kTimeEpsilon || cut >= f.end - kTimeEpsilon)
         return 0;  // sul bordo del pezzo: non resterebbe niente da una parte
     Fragment second{nextId_++, f.clipId, cut, f.end, clipRanges(f.muted, cut, f.end)};
+    second.envelope = f.envelope;  // la linea è nei tempi del file: ognuno tiene la sua parte
     f.end = cut;
     f.muted = clipRanges(f.muted, f.start, cut);
     fragments_.insert(fragments_.begin() + index + 1, second);
@@ -313,11 +328,14 @@ Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, doub
         }
         touched = true;
         const std::size_t before = result.size();
-        if (f.start < from - kTimeEpsilon)
+        if (f.start < from - kTimeEpsilon) {
             result.push_back({f.id, f.clipId, f.start, from, clipRanges(f.muted, f.start, from)});
+            result.back().envelope = f.envelope;
+        }
         if (f.end > to + kTimeEpsilon) {
             const bool firstPartKept = f.start < from - kTimeEpsilon;
             result.push_back({firstPartKept ? nextId_++ : f.id, f.clipId, to, f.end, clipRanges(f.muted, to, f.end)});
+            result.back().envelope = f.envelope;
         }
         if (result.size() > before) {
             result[before].gap = f.gap + carriedGap;
