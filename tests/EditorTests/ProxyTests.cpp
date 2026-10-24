@@ -154,7 +154,9 @@ TEST_F(ProxyTest, SizeIsAFractionOfTheOriginal)
 
 TEST_F(ProxyTest, ProxyHasTheSameFramesAtTheSameTimesAndFrequentKeyframes)
 {
-    for (const char* name : {"lontani.mkv", "telefono.mp4", "video_dopo.mkv"}) {
+    // Anche un H.264 (fatto qui con l'encoder del PC): con una scheda NVIDIA è quello che la GPU decodifica e riduce.
+    buildProxy(path("lontani.mkv"), path("h264.mp4"), 1, {}, nullptr, false);
+    for (const char* name : {"lontani.mkv", "telefono.mp4", "video_dopo.mkv", "h264.mp4"}) {
         SCOPED_TRACE(name);
         const std::string original = path(name);
         const std::string proxy = utf8FromPath(dir_ / "proxy" / proxyFileName(original, 2));

@@ -15,6 +15,7 @@ extern "C" {
 #include <cstdio>
 #include <deque>
 #include <filesystem>
+#include <set>
 #include <system_error>
 
 namespace editor::core {
@@ -64,9 +65,19 @@ AVPixelFormat softwareFormat(AVCodecContext*, const AVPixelFormat* formats)
 }
 
 // Decoder della scheda video NVIDIA (NVDEC, "<codec>_cuvid") che riduce i fotogrammi alle misure del proxy già sulla
-// GPU. Vuoto se non c'è (niente scheda NVIDIA, codec o profilo non gestito).
+// GPU. Vuoto se non c'è (niente scheda NVIDIA, codec o profilo non gestito). Solo per i codec delle videocamere e dei
+// telefoni: con quelli vecchi (es. MPEG-4 Part 2) NVDEC non dà sempre gli stessi fotogrammi del decoder normale.
 CodecContextPtr openGpuDecoder(const AVCodec* codec, const AVStream* stream, int width, int height)
 {
+    switch (codec->id) {
+    case AV_CODEC_ID_H264:
+    case AV_CODEC_ID_HEVC:
+    case AV_CODEC_ID_AV1:
+    case AV_CODEC_ID_VP9:
+        break;
+    default:
+        return {};
+    }
     const AVCodec* gpu = avcodec_find_decoder_by_name((std::string(codec->name) + "_cuvid").c_str());
     if (gpu == nullptr)
         return {};
@@ -216,6 +227,9 @@ ProxyInfo buildProxyWith(const std::string& originalUtf8Path, const std::string&
         // originale corrispondente (gli encoder della scheda video possono arrotondare i tempi).
         std::deque<std::int64_t> times;
         std::int64_t lastTime = AV_NOPTS_VALUE;
+        // Tempi dei pacchetti che il file dice di non mostrare (es. prima dell'inizio negli MP4 con le liste di
+        // modifica): il decoder normale li scarta da solo, quello NVIDIA no.
+        std::set<std::int64_t> discarded;
         const AVRational encoderTb{encoder.timeBase().num, encoder.timeBase().den};
         const PacketSink sink = [&](AVPacket* packet) {
             if (times.empty())
@@ -240,6 +254,8 @@ ProxyInfo buildProxyWith(const std::string& originalUtf8Path, const std::string&
             std::int64_t t = frameTimestamp(frame.get());
             if (t == AV_NOPTS_VALUE)
                 t = lastTime == AV_NOPTS_VALUE ? 0 : lastTime + frameTicks;
+            if (discarded.contains(t))
+                return;
             if (lastTime != AV_NOPTS_VALUE && t <= lastTime)
                 return;  // tempo ripetuto o all'indietro: il decoder l'ha già dato (l'originale lo mostrerebbe uguale)
             lastTime = t;
@@ -268,6 +284,8 @@ ProxyInfo buildProxyWith(const std::string& originalUtf8Path, const std::string&
             if (isCancelled(cancel))
                 throw MediaError("Creazione del proxy interrotta.");
             if (packet->stream_index == in.index) {
+                if ((packet->flags & AV_PKT_FLAG_DISCARD) != 0 && packet->pts != AV_NOPTS_VALUE)
+                    discarded.insert(packet->pts);
                 const int sent = avcodec_send_packet(decoder.get(), packet.get());  // un pacchetto danneggiato si salta
                 if (sent < 0 && sent != AVERROR(EAGAIN) && gpu)
                     throw GpuFailure{};
