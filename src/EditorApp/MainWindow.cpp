@@ -364,6 +364,53 @@ MainWindow::MainWindow(QWidget* parent)
         if (project_.sequence().moveTo(fragmentId, start))
             recordEdit(QStringLiteral("Sposta pezzo"), before);
     };
+    // Bordi dei pezzi (step 16): a passi di un fotogramma dal bordo di partenza, dentro il file, lunghi almeno un
+    // fotogramma; durante il trascinamento il Montaggio mostra il fotogramma del nuovo bordo.
+    timeline_->trimLimit = [this](int fragmentId, bool atStart, double desired, bool ripple) {
+        const core::Fragment* f = project_.sequence().find(fragmentId);
+        const core::Clip* clip = f != nullptr ? project_.find(f->clipId) : nullptr;
+        if (clip == nullptr)
+            return desired;
+        const double frame = frameDurationOf(f->clipId);
+        const double edge = atStart ? f->start : f->end;
+        const double stepped = edge + std::round((desired - edge) / frame) * frame;
+        return project_.sequence().trimLimit(fragmentId, atStart ? core::Sequence::Edge::Start : core::Sequence::Edge::End,
+                                             stepped, clip->duration, frame, ripple);
+    };
+    timeline_->onTrimPreview = [this](int fragmentId, bool atStart, double value) {
+        const core::Fragment* f = project_.sequence().find(fragmentId);
+        if (f == nullptr)
+            return;
+        // La fine è esclusa: si mostra l'ultimo fotogramma che resta nel pezzo.
+        const double shown = atStart ? value : value - frameDurationOf(f->clipId);
+        program_->showSourceFrame(f->clipId, shown,
+                                  QStringLiteral("%1 del pezzo %2: %3")
+                                      .arg(atStart ? QStringLiteral("Inizio") : QStringLiteral("Fine"))
+                                      .arg(project_.sequence().indexOf(fragmentId) + 1)
+                                      .arg(timeText(value)));
+    };
+    timeline_->onTrim = [this](int fragmentId, bool atStart, double value, bool ripple) {
+        const core::Fragment* f = project_.sequence().find(fragmentId);
+        const core::Clip* clip = f != nullptr ? project_.find(f->clipId) : nullptr;
+        if (clip == nullptr)
+            return;
+        const double frame = frameDurationOf(f->clipId);
+        const core::Project before = project_;
+        if (!project_.sequence().trim(fragmentId, atStart ? core::Sequence::Edge::Start : core::Sequence::Edge::End,
+                                      value, clip->duration, frame, ripple)) {
+            program_->sequenceChanged();  // torna al punto del montaggio
+            return;
+        }
+        recordEdit(atStart ? QStringLiteral("Sposta inizio del pezzo") : QStringLiteral("Sposta fine del pezzo"), before);
+        // Il Montaggio va sul bordo nuovo (la fine: l'ultimo fotogramma del pezzo).
+        const core::Sequence& sequence = project_.sequence();
+        const int index = sequence.indexOf(fragmentId);
+        if (index >= 0) {
+            const double start = sequence.startOf(index);
+            const double length = sequence.fragments()[static_cast<std::size_t>(index)].length();
+            program_->seekTo(atStart ? start : start + std::max(0.0, length - frame));
+        }
+    };
     timeline_->thumbnailFor = [this](int clipId, double sourceTime) -> QImage {
         const core::Clip* clip = project_.find(clipId);
         if (clip == nullptr || !clip->analyzed)
@@ -887,6 +934,18 @@ void MainWindow::refreshWaveforms()
         replacement ? waveforms_->get(replacement->path) : nullptr);
 }
 
+double MainWindow::frameDurationOf(int clipId) const
+{
+    const auto info = clipInfo_.find(clipId);
+    if (info != clipInfo_.end()) {
+        for (const core::StreamInfo& st : info->second.streams) {
+            if (st.kind == core::StreamKind::Video && !st.attachedPicture && st.frameRate > 0)
+                return 1.0 / st.frameRate;
+        }
+    }
+    return 1.0 / 30;  // non si sa ancora (o solo audio): un trentesimo di secondo
+}
+
 void MainWindow::refreshTimeline()
 {
     const core::Sequence& sequence = project_.sequence();
@@ -896,6 +955,8 @@ void MainWindow::refreshTimeline()
         const core::Clip* clip = project_.find(f.clipId);
         blocks.push_back({f.id, project_.indexOf(f.clipId), clip ? fileNameOf(clip->path) : QString(), f.length(), f.start,
                           f.clipId, clip ? waveforms_->get(clip->path) : nullptr, f.gap});
+        if (clip != nullptr)
+            blocks.back().proxyDivisor = proxies_->sourceDivisor(qs(clip->path));
         // Come entra nel file esportato, rispetto al formato del progetto: segno sul blocco e spiegazione.
         const core::MediaSignature* signature = clip != nullptr ? signatureFor(clip->path) : nullptr;
         if (signature != nullptr && !project_.format().empty()) {
@@ -2838,6 +2899,7 @@ void MainWindow::setPreviewQuality(int divisor)
     player_->reloadVideo();
     program_->reloadVideo();
     updateProxies();
+    refreshTimeline();
     statusBar()->showMessage(divisor == 1 ? QStringLiteral("Anteprima dai file originali")
                                           : QStringLiteral("Anteprima dai proxy a 1/%1 della risoluzione (l'esportazione usa "
                                                            "sempre gli originali)")
@@ -2851,6 +2913,7 @@ void MainWindow::proxyChanged(const QString& original)
         player_->reloadVideo();
     program_->reloadVideo();  // passa al proxy solo se il pezzo mostrato è di quel file
     refreshClipList();
+    refreshTimeline();
 }
 
 void MainWindow::deleteProxies()

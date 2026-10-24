@@ -1606,6 +1606,50 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 std::fflush(stdout);
                 ok = ok && dragged && undone && redone && crossed && closed;
             }
+            // Bordi dei pezzi: la fine del primo pezzo trascinata 2 fotogrammi indietro (resta uno spazio, il pezzo dopo
+            // non si muove), poi con Alt 2 fotogrammi avanti (il pezzo dopo scorre); Annulla torna ogni volta com'era.
+            if (sequence.fragments().size() >= 2) {
+                auto* line = window->sequenceTimeline();
+                window->programMonitor()->seekTo(0.0);  // il cursore lontano dai bordi: niente aggancio
+                line->fitAll();
+                QCoreApplication::processEvents();
+                const double frame = window->frameDurationOf(sequence.fragments()[0].clipId);
+                const double end = sequence.fragments()[0].end;
+                const double nextStart = sequence.startOf(1);
+                const double y = line->videoLaneCenter();
+                const double pixelsPerSecond = line->xForSequenceTime(1.0) - line->xForSequenceTime(0.0);
+                const auto dragEdge = [&](double seconds, Qt::KeyboardModifiers modifiers) {
+                    const double x0 = line->xForBlockEdge(0, false) - 1;
+                    const double x1 = x0 + seconds * pixelsPerSecond;
+                    const auto mouse = [&](QEvent::Type type, double x, Qt::MouseButtons buttons) {
+                        QMouseEvent e(type, QPointF(x, y), line->mapToGlobal(QPointF(x, y)),
+                                      type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, modifiers);
+                        QCoreApplication::sendEvent(line, &e);
+                    };
+                    mouse(QEvent::MouseButtonPress, x0, Qt::LeftButton);
+                    mouse(QEvent::MouseMove, (x0 + x1) / 2, Qt::LeftButton);
+                    mouse(QEvent::MouseMove, x1, Qt::LeftButton);
+                    mouse(QEvent::MouseButtonRelease, x1, Qt::NoButton);
+                    QCoreApplication::processEvents();
+                };
+                dragEdge(-2 * frame, Qt::NoModifier);
+                const double shortened = sequence.fragments()[0].end;
+                const bool shortenOk = std::abs(shortened - (end - 2 * frame)) < 1e-6 && std::abs(sequence.startOf(1) - nextStart) < 1e-6
+                                    && sequence.gapCount() == 1;
+                const bool undone = window->undo() && std::abs(sequence.fragments()[0].end - end) < 1e-6 && sequence.gapCount() == 0;
+                dragEdge(2 * frame, Qt::AltModifier);
+                const double lengthened = sequence.fragments()[0].end;
+                const bool rippleOk = std::abs(lengthened - (end + 2 * frame)) < 1e-6
+                                   && std::abs(sequence.startOf(1) - (nextStart + 2 * frame)) < 1e-6;
+                const bool rippleUndone = window->undo() && std::abs(sequence.fragments()[0].end - end) < 1e-6
+                                       && std::abs(sequence.startOf(1) - nextStart) < 1e-6;
+                std::printf("Bordi dei pezzi: accorciato %s (%.3f -> %.3f s, pezzo dopo fermo), con Alt allungato %s (%.3f s, "
+                            "pezzo dopo spostato), annulla %s\n",
+                            shortenOk ? "sì" : "NO", end, shortened, rippleOk ? "sì" : "NO", lengthened,
+                            undone && rippleUndone ? "sì" : "NO");
+                std::fflush(stdout);
+                ok = ok && shortenOk && undone && rippleOk && rippleUndone;
+            }
             const double expectedLength = window->exportLength();
 
             // Esportazione dei tratti come dal menu (senza chiedere dove salvare), con il messaggio finale.

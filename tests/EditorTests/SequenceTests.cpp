@@ -301,4 +301,82 @@ TEST(SequenceGaps, RestoreKeepsGapsAndRejectsNegative)
     EXPECT_EQ(s.gapCount(), 1);
 }
 
+// Bordi dei pezzi (step 16). Sequenza di prova: A = file 1 [2, 5) da 0, spazio di 1 s, B = file 2 [10, 14) da 4.
+Sequence trimSample(int& a, int& b)
+{
+    Sequence s;
+    a = s.insert(-1, 1, 2.0, 5.0);
+    b = s.insert(-1, 2, 10.0, 14.0);
+    EXPECT_TRUE(s.moveTo(b, 4.0));
+    return s;
+}
+
+TEST(SequenceTrim, ShorteningLeavesAGapAndTheOthersStill)
+{
+    int a = 0, b = 0;
+    Sequence s = trimSample(a, b);
+    EXPECT_TRUE(s.trim(a, Sequence::Edge::End, 4.0, 20.0, 0.04, false));   // fine di A 1 s prima
+    EXPECT_TRUE(s.trim(b, Sequence::Edge::Start, 11.0, 20.0, 0.04, false)); // inizio di B 1 s dopo
+    expectPieces(s, {{1, 2.0, 4.0}, {2, 11.0, 14.0}});
+    EXPECT_NEAR(s.startOf(0), 0.0, 1e-9);
+    EXPECT_NEAR(s.startOf(1), 5.0, 1e-9);  // la fine di B resta a 8
+    EXPECT_NEAR(s.totalLength(), 8.0, 1e-9);
+}
+
+TEST(SequenceTrim, LengtheningStopsAgainstTheNeighbourAndTheFile)
+{
+    int a = 0, b = 0;
+    Sequence s = trimSample(a, b);
+    // A può allungarsi solo fino all'inizio di B (1 s di spazio).
+    EXPECT_NEAR(s.trimLimit(a, Sequence::Edge::End, 9.0, 20.0, 0.04, false), 6.0, 1e-9);
+    // B all'indietro solo fino alla fine di A.
+    EXPECT_NEAR(s.trimLimit(b, Sequence::Edge::Start, 0.0, 20.0, 0.04, false), 9.0, 1e-9);
+    // A all'indietro: è già all'inizio della sequenza, non può andare prima; con ripple sì, fino all'inizio del file.
+    EXPECT_NEAR(s.trimLimit(a, Sequence::Edge::Start, -5.0, 20.0, 0.04, false), 2.0, 1e-9);
+    EXPECT_NEAR(s.trimLimit(a, Sequence::Edge::Start, -5.0, 20.0, 0.04, true), 0.0, 1e-9);
+    // B in avanti: fino alla fine del file.
+    EXPECT_NEAR(s.trimLimit(b, Sequence::Edge::End, 30.0, 20.0, 0.04, false), 20.0, 1e-9);
+    // Mai sotto un fotogramma.
+    EXPECT_NEAR(s.trimLimit(a, Sequence::Edge::Start, 4.99, 20.0, 0.04, false), 4.96, 1e-9);
+    EXPECT_NEAR(s.trimLimit(b, Sequence::Edge::End, 0.0, 20.0, 0.04, false), 10.04, 1e-9);
+
+    EXPECT_TRUE(s.trim(a, Sequence::Edge::End, 9.0, 20.0, 0.04, false));
+    EXPECT_TRUE(s.trim(b, Sequence::Edge::End, 30.0, 20.0, 0.04, false));
+    expectPieces(s, {{1, 2.0, 6.0}, {2, 10.0, 20.0}});
+    EXPECT_NEAR(s.startOf(1), 4.0, 1e-9);  // B non si è mosso
+    EXPECT_EQ(s.gapCount(), 0);
+    EXPECT_FALSE(s.trim(a, Sequence::Edge::End, 7.0, 20.0, 0.04, false));  // già contro B
+}
+
+TEST(SequenceTrim, RippleMovesTheFollowingPieces)
+{
+    int a = 0, b = 0;
+    Sequence s = trimSample(a, b);
+    // Con ripple A si allunga di 3 s oltre lo spazio: B scorre avanti, lo spazio resta.
+    EXPECT_TRUE(s.trim(a, Sequence::Edge::End, 8.0, 20.0, 0.04, true));
+    EXPECT_NEAR(s.startOf(1), 7.0, 1e-9);
+    // L'inizio di B un secondo prima: B resta dove inizia e si allunga, niente scorre indietro.
+    EXPECT_TRUE(s.trim(b, Sequence::Edge::Start, 9.0, 20.0, 0.04, true));
+    EXPECT_NEAR(s.startOf(1), 7.0, 1e-9);
+    expectPieces(s, {{1, 2.0, 8.0}, {2, 9.0, 14.0}});
+    EXPECT_NEAR(s.totalLength(), 12.0, 1e-9);
+    // Accorciando l'inizio di A con ripple, B torna indietro.
+    EXPECT_TRUE(s.trim(a, Sequence::Edge::Start, 4.0, 20.0, 0.04, true));
+    EXPECT_NEAR(s.startOf(1), 5.0, 1e-9);
+}
+
+TEST(SequenceTrim, MutedRangesOutsideThePieceAreCut)
+{
+    int a = 0, b = 0;
+    Sequence s = trimSample(a, b);
+    ASSERT_TRUE(s.muteRange(0.5, 2.5));  // nel file di A: [2.5, 4.5)
+    EXPECT_TRUE(s.trim(a, Sequence::Edge::End, 3.5, 20.0, 0.04, false));
+    ASSERT_EQ(s.fragments()[0].muted.size(), 1u);
+    EXPECT_NEAR(s.fragments()[0].muted[0].start, 2.5, 1e-9);
+    EXPECT_NEAR(s.fragments()[0].muted[0].end, 3.5, 1e-9);
+    EXPECT_TRUE(s.trim(a, Sequence::Edge::Start, 3.5 - 0.04, 20.0, 0.04, false));
+    ASSERT_EQ(s.fragments()[0].muted.size(), 1u);
+    EXPECT_NEAR(s.fragments()[0].muted[0].start, 3.46, 1e-9);
+}
+
 }  // namespace

@@ -164,6 +164,7 @@ public:
     bool hasExportPlan() const;  // come !exportPlan().empty(), senza costruire il piano
     double exportLength();  // durata del file che si esporterebbe (per le prove)
     std::vector<core::ClipRanges> previewPlan();  // come exportPlan(), con le caratteristiche dei file già lette
+    double frameDurationOf(int clipId) const;  // un fotogramma del video del file (1/30 s se non si sa)
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
