@@ -35,6 +35,7 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="AudioEditTests.cpp" />
+    <ClCompile Include="AudioTracksTests.cpp" />
     <ClCompile Include="BlackGapTests.cpp" />
     <ClCompile Include="ComfortTests.cpp" />
     <ClCompile Include="CompatibilityTests.cpp" />

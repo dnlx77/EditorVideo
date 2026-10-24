@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EditorCore/AudioTracks.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/Sequence.h"
 
@@ -41,7 +42,8 @@ struct ClipRanges
     std::shared_ptr<const MediaSignature> signature;
 };
 
-// Un file audio (MP3, AAC, M4A, WAV...) che prende il posto dell'audio originale di tutta la sequenza.
+// Un file audio (MP3, AAC, M4A, WAV...) che prende il posto dell'audio originale di tutta la sequenza. Nelle tracce
+// audio (AudioTracks) è una clip su A2, dal punto `offset` fino alla fine del file, con A1 silenziata.
 struct AudioReplacement
 {
     std::string path;     // UTF-8
@@ -93,9 +95,16 @@ public:
     // vuoto prima di ogni tratto (ClipRanges::gapsBefore; con GapExport::Close nessuno).
     std::vector<ClipRanges> exportPlan(GapExport gaps = GapExport::Close) const;
 
-    // Traccia audio sostitutiva (vedi AudioReplacement); std::nullopt = audio originale.
+    // Tracce audio: A1 (l'audio dei pezzi video) e quelle aggiunte con le clip audio.
+    AudioTracks& audioTracks() { return audio_; }
+    const AudioTracks& audioTracks() const { return audio_; }
+
+    // Traccia audio sostitutiva (vedi AudioReplacement), il caso più semplice delle tracce audio: impostarla toglie
+    // tutte le tracce aggiunte e mette il file su A2 con A1 silenziata; std::nullopt rimette le tracce come
+    // all'inizio (solo A1). audioReplacement() la ricava dalle tracce: c'è solo se sono proprio in quella forma
+    // (A1 silenziata e una sola clip, su A2, fino alla fine del file, senza livelli cambiati).
     void setAudioReplacement(std::optional<AudioReplacement> replacement);
-    const std::optional<AudioReplacement>& audioReplacement() const { return replacement_; }
+    std::optional<AudioReplacement> audioReplacement() const;
     void setAudioOffset(double offset);  // sposta la traccia sostitutiva
     // Tratti silenziati e traccia sostitutiva, per l'esportazione: nei tempi del file esportato (con gli spazi vuoti
     // trattati come dice `gaps`).
@@ -112,7 +121,7 @@ public:
 
 private:
     std::vector<Clip> clips_;
-    std::optional<AudioReplacement> replacement_;
+    AudioTracks audio_;
     ProjectFormat format_;
     Sequence sequence_;
     int nextId_ = 1;

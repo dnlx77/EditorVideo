@@ -131,6 +131,56 @@ std::string text(const JsonValue& value)
     return value.isString() ? value.asString() : std::string();
 }
 
+JsonValue mixToJson(const AudioMix& mix)
+{
+    return JsonValue::Object{{"livello", mix.levelDb}, {"muto", mix.muted}, {"solo", mix.solo}};
+}
+
+AudioMix mixFromJson(const JsonValue& value)
+{
+    AudioMix mix;
+    if (!value.isObject())
+        return mix;
+    if (value["livello"].isNumber())
+        mix.levelDb = std::clamp(value["livello"].asNumber(), AudioTracks::kMinLevelDb, AudioTracks::kMaxLevelDb);
+    mix.muted = value["muto"].isBool() && value["muto"].asBool();
+    mix.solo = value["solo"].isBool() && value["solo"].asBool();
+    return mix;
+}
+
+// Le tracce audio, quando non sono né quelle di partenza né una traccia sostitutiva (che resta nel formato di prima).
+JsonValue audioTracksToJson(const std::filesystem::path& dir, const AudioTracks& audio)
+{
+    JsonValue::Array tracks;
+    for (const AudioTrack& track : audio.tracks()) {
+        JsonValue::Array clips;
+        for (const AudioClip& c : track.clips) {
+            JsonValue::Object clip{{"percorso", c.path},
+                                   {"relativo", relativeTo(dir, c.path)},
+                                   {"inizio", ticks(c.start)},
+                                   {"fine", ticks(c.end)},
+                                   {"posizione", ticks(c.position)}};
+            if (c.sourceDuration > 0.0)
+                clip["durataFile"] = ticks(c.sourceDuration);
+            clips.emplace_back(std::move(clip));
+        }
+        JsonValue::Object item = mixToJson(track.mix).asObject();
+        item["clip"] = std::move(clips);
+        tracks.emplace_back(std::move(item));
+    }
+    return JsonValue::Object{{"A1", mixToJson(audio.mix(AudioTracks::kOriginalTrack))}, {"tracce", std::move(tracks)}};
+}
+
+// Un file audio delle tracce che non si trova (una volta sola, anche se lo usano più clip).
+void addMissingAudio(LoadedProject& loaded, const std::string& absolute, const std::string& relative)
+{
+    const bool known = std::any_of(loaded.missing.begin(), loaded.missing.end(), [&](const MissingFile& m) {
+        return m.clipId == 0 && m.savedPath == absolute;
+    });
+    if (!known)
+        loaded.missing.push_back({0, absolute, fileNameOf(absolute.empty() ? relative : absolute)});
+}
+
 }  // namespace
 
 std::int64_t secondsToTicks(double seconds)
@@ -169,17 +219,22 @@ std::string projectToJson(const std::string& projectPath, const Project& project
     }
 
     JsonValue replacement;
-    if (const auto& r = project.audioReplacement()) {
+    JsonValue audioTracks;
+    if (const auto r = project.audioReplacement()) {
         replacement = JsonValue::Object{{"percorso", r->path},
                                         {"relativo", relativeTo(dir, r->path)},
                                         {"scostamento", ticks(r->offset)},
                                         {"durata", ticks(r->duration)}};
+    } else if (!project.audioTracks().isDefault()) {
+        audioTracks = audioTracksToJson(dir, project.audioTracks());
     }
 
-    const JsonValue::Object root{
+    // Il file resta nella versione più vecchia che basta, così si apre anche con i programmi di prima: 1 senza spazi
+    // vuoti, 2 con gli spazi vuoti, 3 con tracce audio che non sono una semplice traccia sostitutiva.
+    const int version = !audioTracks.isNull() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
+    JsonValue::Object root{
         {"formato", kFormatName},
-        // Senza spazi vuoti il file resta quello della versione 1, che si apre anche con i programmi di prima.
-        {"versione", project.sequence().gapCount() > 0 ? kProjectFormatVersion : 1},
+        {"versione", version},
         {"formatoProgetto", formatToJson(project.format())},
         {"unitaDiTempo", JsonValue::Object{{"tickAlSecondo", kProjectTicksPerSecond},
                                            {"nota", "i tempi sono numeri interi di tick (1/705600000 di secondo)"}}},
@@ -192,6 +247,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
                                        {"posizione", ticks(view.sourcePosition)}}},
         {"montaggio", JsonValue::Object{{"posizione", ticks(view.programPosition)}}},
     };
+    if (!audioTracks.isNull())
+        root["tracceAudio"] = std::move(audioTracks);
     return JsonValue(root).dump();
 }
 
@@ -307,7 +364,36 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                 AudioReplacement{found ? *found : absolute, seconds(r["scostamento"], "scostamento"),
                                  r["durata"].isInteger() ? ticksToSeconds(r["durata"].asInteger()) : 0.0});
             if (!found)
-                loaded.missing.push_back({0, absolute, fileNameOf(absolute)});
+                addMissingAudio(loaded, absolute, text(r["relativo"]));
+        }
+
+        if (const JsonValue& a = root["tracceAudio"]; a.isObject()) {
+            std::vector<AudioTrack> tracks;
+            for (const JsonValue& t : a["tracce"].asArray()) {
+                AudioTrack track;
+                track.mix = mixFromJson(t);
+                for (const JsonValue& c : t["clip"].asArray()) {
+                    const std::string absolute = text(c["percorso"]);
+                    const std::string relative = text(c["relativo"]);
+                    if (absolute.empty() && relative.empty())
+                        throw ProjectFileError(name + " è rovinato: una clip audio non ha il percorso del file.");
+                    const auto found = locate(dir, absolute, relative);
+                    AudioClip clip;
+                    clip.path = found ? *found : absolute;
+                    clip.start = seconds(c["inizio"], "inizio");
+                    clip.end = seconds(c["fine"], "fine");
+                    clip.position = seconds(c["posizione"], "posizione");
+                    if (c["durataFile"].isInteger())
+                        clip.sourceDuration = ticksToSeconds(c["durataFile"].asInteger());
+                    if (!(clip.end > clip.start) || clip.start < 0.0 || clip.position < 0.0)
+                        throw ProjectFileError(name + " è rovinato: una clip audio non è valida.");
+                    if (!found)
+                        addMissingAudio(loaded, absolute, relative);
+                    track.clips.push_back(std::move(clip));
+                }
+                tracks.push_back(std::move(track));
+            }
+            loaded.project.audioTracks().restore(mixFromJson(a["A1"]), std::move(tracks));
         }
 
         // Formato del progetto. I progetti di prima non ce l'hanno: lo si ricava poi dal primo pezzo.
@@ -359,15 +445,13 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
 
 void relocateMissing(LoadedProject& loaded, const MissingFile& file, const std::string& newPath)
 {
-    if (file.clipId == 0) {
-        if (auto replacement = loaded.project.audioReplacement()) {
-            replacement->path = newPath;
-            loaded.project.setAudioReplacement(replacement);
-        }
-    } else {
+    if (file.clipId == 0)
+        loaded.project.audioTracks().relocate(file.savedPath, newPath);
+    else
         loaded.project.setClipPath(file.clipId, newPath);
-    }
-    std::erase_if(loaded.missing, [&](const MissingFile& m) { return m.clipId == file.clipId; });
+    std::erase_if(loaded.missing, [&](const MissingFile& m) {
+        return m.clipId == file.clipId && (file.clipId != 0 || m.savedPath == file.savedPath);
+    });
 }
 
 int dropMissing(LoadedProject& loaded)
@@ -375,7 +459,10 @@ int dropMissing(LoadedProject& loaded)
     int removed = 0;
     for (const MissingFile& file : loaded.missing) {
         if (file.clipId == 0) {
-            loaded.project.setAudioReplacement(std::nullopt);
+            if (const auto replacement = loaded.project.audioReplacement(); replacement && replacement->path == file.savedPath)
+                loaded.project.setAudioReplacement(std::nullopt);  // torna l'audio originale
+            else
+                loaded.project.audioTracks().removePath(file.savedPath);
             continue;
         }
         const auto& fragments = loaded.project.sequence().fragments();

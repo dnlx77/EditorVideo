@@ -19,7 +19,7 @@ namespace editor::core {
 // basi dei tempi usate da video e audio (1/90000, 1/1000, 1/48000, 1/44100, 1001/30000...), quindi un tempo
 // letto da un file torna identico dopo salvataggio e riapertura.
 constexpr std::int64_t kProjectTicksPerSecond = 705'600'000;
-constexpr int kProjectFormatVersion = 2;  // 2: spazi vuoti nella sequenza ("spazioPrima")
+constexpr int kProjectFormatVersion = 3;  // 2: spazi vuoti nella sequenza ("spazioPrima"); 3: tracce audio ("tracceAudio")
 inline constexpr const char* kProjectExtension = ".evproj";
 
 std::int64_t secondsToTicks(double seconds);
@@ -57,7 +57,7 @@ std::string projectToJson(const std::string& projectPath, const Project& project
 // Un file del progetto che non si trova né al percorso assoluto né a quello relativo.
 struct MissingFile
 {
-    int clipId = 0;            // 0 = è l'audio sostitutivo
+    int clipId = 0;            // 0 = è un file audio delle tracce audio (tutte le clip con quel percorso)
     std::string savedPath;     // percorso assoluto salvato
     std::string fileName;      // solo il nome, per i messaggi
 };
@@ -78,7 +78,8 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
 
 // Il file mancante è stato ritrovato in `newPath`: lo usa al posto di quello salvato.
 void relocateMissing(LoadedProject& loaded, const MissingFile& file, const std::string& newPath);
-// Si prosegue senza i file mancanti: tolti dal progetto con i loro pezzi (e l'audio sostitutivo, se manca).
+// Si prosegue senza i file mancanti: tolti dal progetto con i loro pezzi e le loro clip audio (l'audio sostitutivo
+// che manca si toglie del tutto: torna l'audio originale).
 // Restituisce quanti pezzi della sequenza sono stati tolti.
 int dropMissing(LoadedProject& loaded);
 
