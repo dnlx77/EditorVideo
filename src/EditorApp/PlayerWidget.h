@@ -78,6 +78,16 @@ public:
     // Pulsante "aggiungi al montaggio" della barra dei comandi.
     std::function<void()> onAddRequested;
 
+    // Da dove leggere il video di un file (il suo proxy, se c'è); nessuna funzione = dal file stesso. L'audio viene
+    // sempre dal file.
+    std::function<QString(const QString& path)> videoSourceFor;
+    // Il file da cui leggere il video può essere cambiato (proxy pronto, qualità cambiata): se è così si riapre il
+    // video e si resta allo stesso punto, anche durante la riproduzione.
+    void reloadVideo();
+    // Menu "Qualità anteprima" della barra dei comandi: 1 = originale, 2, 4, 8 (frazione della risoluzione).
+    void setPreviewQuality(int divisor);
+    std::function<void(int divisor)> onPreviewQualityChosen;
+
     // Solo nero al posto dell'immagine (uno spazio vuoto del montaggio), senza chiudere il file.
     void setBlank(bool blank);
 
@@ -175,6 +185,7 @@ private:
     std::unique_ptr<core::AudioDecoder> audio_;
     AudioOutput audioOut_;
     QString path_;                   // file aperto
+    QString videoPath_;              // file da cui si legge il video: path_ o il suo proxy
     double ownAudioDuration_ = 0.0;  // durata dell'audio del file (anche quando suona quello esterno)
     bool ownAudio_ = false;          // il file ha un audio
     std::vector<core::TimeRange> audioMutes_;

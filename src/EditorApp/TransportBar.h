@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+class QComboBox;
 class QHBoxLayout;
 class QMenu;
 class QSlider;
@@ -40,6 +41,7 @@ public:
     void setSpeed(double speed);  // velocità attuale (negativa = all'indietro), scritta sul pulsante
     void setLoop(bool loop);
     void setVolume(int percent, bool muted);
+    void setQuality(int divisor);  // qualità dell'anteprima mostrata nel menu (1, 2, 4, 8)
 
     std::function<void()> onStart;
     std::function<void()> onPreviousMark;
@@ -60,6 +62,8 @@ public:
     std::function<void(bool)> onLoopToggled;
     std::function<void(int)> onVolumeChanged;
     std::function<void(bool)> onMuteToggled;
+    // Qualità dell'anteprima scelta dal menu a tendina: 1 = originale, 2, 4, 8 = frazione della risoluzione (proxy).
+    std::function<void(int)> onQualityChosen;
 
     QSize minimumSizeHint() const override;
 
@@ -102,6 +106,7 @@ private:
     QToolButton* play_ = nullptr;
     QToolButton* speed_ = nullptr;
     QMenu* speedMenu_ = nullptr;
+    QComboBox* quality_ = nullptr;
     QToolButton* loop_ = nullptr;
     QToolButton* mute_ = nullptr;
     QSlider* volume_ = nullptr;

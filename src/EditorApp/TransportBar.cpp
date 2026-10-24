@@ -1,11 +1,13 @@
 #include "EditorApp/TransportBar.h"
 
 #include "EditorCore/Playback.h"
+#include "EditorCore/Proxy.h"
 
 #include <QtCore/QEvent>
 #include <QtGui/QActionGroup>
 #include <QtGui/QPainter>
 #include <QtGui/QPixmap>
+#include <QtWidgets/QComboBox>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QSlider>
@@ -25,6 +27,7 @@ constexpr int kStop = 90;
 constexpr int kMarks = 70;       // segno precedente / successivo
 constexpr int kInOut = 60;
 constexpr int kSpeed = 50;
+constexpr int kQuality = 45;
 constexpr int kEnds = 40;        // inizio, fine
 constexpr int kMute = 35;
 constexpr int kLoop = 30;
@@ -180,6 +183,22 @@ TransportBar::TransportBar(Kind kind, QWidget* parent)
     layout->addWidget(speed_);
     items_.push_back({speed_, kSpeed});
 
+    // Qualità dell'anteprima: originale o un proxy più leggero (salti immediati anche con i video pesanti).
+    quality_ = new QComboBox;
+    quality_->setFocusPolicy(Qt::NoFocus);
+    quality_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    quality_->setToolTip(QStringLiteral("Qualità dell'anteprima: Originale mostra i file così come sono; 1/2, 1/4 e 1/8 "
+                                        "usano un proxy (una copia più leggera, creata in sottofondo) per muoversi "
+                                        "senza attese. L'esportazione usa sempre gli originali."));
+    for (const int divisor : core::kPreviewDivisors)
+        quality_->addItem(divisor == 1 ? QStringLiteral("Originale") : QStringLiteral("1/%1").arg(divisor), divisor);
+    connect(quality_, &QComboBox::activated, this, [this](int index) {
+        if (onQualityChosen)
+            onQualityChosen(quality_->itemData(index).toInt());
+    });
+    layout->addWidget(quality_);
+    items_.push_back({quality_, kQuality});
+
     loop_ = new QToolButton;
     loop_->setFocusPolicy(Qt::NoFocus);
     loop_->setAutoRaise(true);
@@ -298,6 +317,15 @@ void TransportBar::setSpeed(double speed)
     speed_->setText(speedText(speed));
     for (QAction* action : speedMenu_->actions())
         action->setChecked(std::abs(action->data().toDouble() - speed) < 1e-9);
+}
+
+void TransportBar::setQuality(int divisor)
+{
+    const int index = quality_->findData(divisor);
+    if (index >= 0 && index != quality_->currentIndex()) {
+        const QSignalBlocker block(quality_);
+        quality_->setCurrentIndex(index);
+    }
 }
 
 void TransportBar::setLoop(bool loop)

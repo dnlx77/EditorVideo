@@ -49,6 +49,10 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     transport_->onLoopToggled = [this](bool loop) { setLoop(loop); };
     transport_->onVolumeChanged = [this](int percent) { setVolume(percent); };
     transport_->onMuteToggled = [this](bool muted) { setMuted(muted); };
+    transport_->onQualityChosen = [this](int divisor) {
+        if (onPreviewQualityChosen)
+            onPreviewQualityChosen(divisor);
+    };
     timeLabel_ = new QLabel;
     fragmentLabel_ = new QLabel;
     // Le scritte non impongono una larghezza minima: in un pannello stretto si tagliano.
@@ -77,6 +81,21 @@ void ProgramMonitor::mousePressEvent(QMouseEvent* event)
     if (onActivated)
         onActivated();
     QWidget::mousePressEvent(event);
+}
+
+void ProgramMonitor::setVideoSource(std::function<QString(const QString& path)> source)
+{
+    player_->videoSourceFor = std::move(source);
+}
+
+void ProgramMonitor::reloadVideo()
+{
+    player_->reloadVideo();
+}
+
+void ProgramMonitor::setPreviewQuality(int divisor)
+{
+    transport_->setQuality(divisor);
 }
 
 void ProgramMonitor::load(int index, double offset)
