@@ -402,11 +402,7 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->freeStart = [this](int fragmentId, double desired) {
         return project_.sequence().nearestFreeStart(fragmentId, desired);
     };
-    timeline_->onMoveTo = [this](int fragmentId, double start) {
-        const core::Project before = project_;
-        if (project_.sequence().moveTo(fragmentId, start))
-            recordEdit(QStringLiteral("Sposta pezzo"), before);
-    };
+    timeline_->onMoveTo = [this](int fragmentId, double start) { moveFragment(fragmentId, start); };
     // Bordi dei pezzi (step 16): a passi di un fotogramma dal bordo di partenza, dentro il file, lunghi almeno un
     // fotogramma; durante il trascinamento il Montaggio mostra il fotogramma del nuovo bordo.
     timeline_->trimLimit = [this](int fragmentId, bool atStart, double desired, bool ripple) {
@@ -487,6 +483,11 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onTrackMuted = [this](int trackId, bool muted) { setTrackMuted(trackId, muted); };
     timeline_->onTrackSolo = [this](int trackId, bool solo) { setTrackSolo(trackId, solo); };
     timeline_->onTrackLevel = [this](int trackId, double db) { setTrackLevel(trackId, db); };
+    timeline_->onTrackMagnet = [this](int trackId, bool magnet) {
+        const core::Project before = project_;
+        if (project_.audioTracks().setMagnet(trackId, magnet))
+            recordEdit(magnet ? QStringLiteral("Calamita accesa") : QStringLiteral("Calamita spenta"), before);
+    };
     timeline_->onEnvelopeChanged = [this](bool fragment, int id, const std::vector<core::LevelPoint>& points) {
         setEnvelope(fragment, id, points);
     };
@@ -1116,7 +1117,7 @@ void MainWindow::refreshTimeline()
     const auto laneOf = [&](int trackId) {
         const core::AudioMix& mix = audio.mix(trackId);
         return SequenceTimeline::AudioLane{trackId, qs(audio.trackName(trackId)), mix.levelDb, mix.muted, mix.solo,
-                                           audio.audible(trackId), {}};
+                                           audio.audible(trackId), {}, mix.magnet};
     };
     lanes.push_back(laneOf(core::AudioTracks::kOriginalTrack));
     int audioClips = 0;
@@ -1502,6 +1503,18 @@ bool MainWindow::trimAudioClip(int clipId, bool atStart, double value, bool ripp
         return false;
     recordEdit(atStart ? QStringLiteral("Sposta inizio della clip audio") : QStringLiteral("Sposta fine della clip audio"), before);
     return true;
+}
+
+void MainWindow::moveFragment(int fragmentId, double start)
+{
+    const core::Project before = project_;
+    bool audioMoved = false;
+    bool audioStayed = false;
+    if (!project_.moveFragment(fragmentId, start, &audioMoved, &audioStayed))
+        return;
+    if (audioStayed)
+        statusBar()->showMessage(QStringLiteral("Le clip audio sotto il pezzo non ci stanno nel nuovo punto: si è spostato solo il pezzo."), 8000);
+    recordEdit(audioMoved ? QStringLiteral("Sposta pezzo e audio") : QStringLiteral("Sposta pezzo"), before);
 }
 
 void MainWindow::setTrackMuted(int trackId, bool muted)

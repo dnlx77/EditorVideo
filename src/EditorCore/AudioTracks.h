@@ -33,6 +33,9 @@ struct AudioMix
     double levelDb = 0.0;  // volume della traccia, in dB (0 = com'è nel file)
     bool muted = false;
     bool solo = false;
+    // Calamita: se è attiva, trascinando un pezzo video si spostano anche le clip di questa traccia che stanno sotto di
+    // lui. Non cambia il suono.
+    bool magnet = false;
 
     bool operator==(const AudioMix&) const = default;
 };
@@ -73,6 +76,7 @@ public:
     bool setLevel(int trackId, double db);
     bool setMuted(int trackId, bool muted);
     bool setSolo(int trackId, bool solo);
+    bool setMagnet(int trackId, bool magnet);
     // La linea del livello di una clip (normalizzata); false se la clip non c'è o non cambia nulla.
     bool setClipEnvelope(int clipId, std::vector<LevelPoint> points);
     // Se la traccia si sente nel mix (muto e solo di tutte le tracce compresi).

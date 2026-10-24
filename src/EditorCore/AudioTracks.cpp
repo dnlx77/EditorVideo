@@ -94,6 +94,15 @@ bool AudioTracks::setSolo(int trackId, bool solo)
     return true;
 }
 
+bool AudioTracks::setMagnet(int trackId, bool magnet)
+{
+    AudioMix* m = mutableMix(trackId);
+    if (m == nullptr || m->magnet == magnet)
+        return false;
+    m->magnet = magnet;
+    return true;
+}
+
 bool AudioTracks::audible(int trackId) const
 {
     if (trackId != kOriginalTrack && track(trackId) == nullptr)

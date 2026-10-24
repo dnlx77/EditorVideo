@@ -140,6 +140,7 @@ public:
     int addAudioFiles(const QStringList& paths, int trackId, double seconds);
     bool moveAudioClip(int clipId, int trackId, double position);
     bool trimAudioClip(int clipId, bool atStart, double value, bool ripple);
+    void moveFragment(int fragmentId, double start);  // sposta un pezzo (con la calamita, anche le clip audio sotto)
     void setTrackMuted(int trackId, bool muted);
     void setTrackSolo(int trackId, bool solo);
     void setTrackLevel(int trackId, double db);

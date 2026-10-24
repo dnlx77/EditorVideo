@@ -163,6 +163,59 @@ void Project::restoreEdits(const Project& snapshot)
     nextId_ = std::max(nextId_, snapshot.nextId_);  // un file aggiunto dopo non riprende l'id di uno tolto
 }
 
+bool Project::moveFragment(int fragmentId, double start, bool* audioMoved, bool* audioStayed)
+{
+    if (audioMoved != nullptr)
+        *audioMoved = false;
+    if (audioStayed != nullptr)
+        *audioStayed = false;
+    const auto& fragments = sequence_.fragments();
+    const auto at = std::find_if(fragments.begin(), fragments.end(), [&](const Fragment& f) { return f.id == fragmentId; });
+    if (at == fragments.end())
+        return false;
+    const double oldStart = sequence_.starts()[static_cast<std::size_t>(at - fragments.begin())];
+    const double length = at->length();
+    if (!sequence_.moveTo(fragmentId, start))
+        return false;
+    const double delta = start - oldStart;
+    if (std::abs(delta) <= kTimeEpsilon)
+        return true;
+    // Le clip delle tracce con la calamita accesa che toccano il pezzo vanno con lui, tutte di seguito (le più lontane
+    // per prime, così non si urtano).
+    struct Moved
+    {
+        int clip;
+        int track;
+        double position;
+    };
+    std::vector<Moved> moved;
+    for (const AudioTrack& track : audio_.tracks()) {
+        if (!track.mix.magnet)
+            continue;
+        for (const AudioClip& c : track.clips) {
+            if (c.endPosition() > oldStart + kTimeEpsilon && c.position < oldStart + length - kTimeEpsilon)
+                moved.push_back({c.id, track.id, c.position + delta});
+        }
+    }
+    if (moved.empty())
+        return true;
+    std::sort(moved.begin(), moved.end(), [&](const Moved& a, const Moved& b) {
+        return delta > 0 ? a.position > b.position : a.position < b.position;
+    });
+    AudioTracks scratch = audio_;
+    bool all = true;
+    for (const Moved& m : moved)
+        all = all && m.position >= 0.0 && scratch.moveTo(m.clip, m.track, m.position);
+    if (all) {
+        audio_ = std::move(scratch);
+        if (audioMoved != nullptr)
+            *audioMoved = true;
+    } else if (audioStayed != nullptr) {
+        *audioStayed = true;
+    }
+    return true;
+}
+
 bool Project::audioNeedsMix() const
 {
     return audio_.needsMix() || std::any_of(sequence_.fragments().begin(), sequence_.fragments().end(),

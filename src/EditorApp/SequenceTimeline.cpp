@@ -389,12 +389,18 @@ QRectF SequenceTimeline::soloBox(int index) const
     return mute.translated(mute.width() + 3, 0);
 }
 
+QRectF SequenceTimeline::magnetBox(int index) const
+{
+    const QRectF solo = soloBox(index);
+    return solo.translated(solo.width() + 3, 0);
+}
+
 QRectF SequenceTimeline::levelBar(int index) const
 {
     const QRectF header = headerRect(audioLane(index));
-    const QRectF solo = soloBox(index);
+    const QRectF last = index > 0 ? magnetBox(index) : soloBox(index);  // A1 non ha la calamita (è già attaccata al video)
     const double height = std::clamp(header.height() - 4, 10.0, 16.0);
-    return QRectF(QPointF(solo.right() + 5, header.center().y() - height / 2), QPointF(header.right() - 3, header.center().y() + height / 2));
+    return QRectF(QPointF(last.right() + 5, header.center().y() - height / 2), QPointF(header.right() - 3, header.center().y() + height / 2));
 }
 
 double SequenceTimeline::levelForX(int index, double x) const
@@ -597,6 +603,9 @@ bool SequenceTimeline::event(QEvent* event)
                 return show(QStringLiteral("%1: muto (la traccia non si sente)").arg(a.name));
             if (soloBox(l).contains(pos))
                 return show(QStringLiteral("%1: solo (se una traccia è in solo si sentono solo quelle in solo)").arg(a.name));
+            if (l > 0 && magnetBox(l).contains(pos))
+                return show(QStringLiteral("%1: calamita. Se è accesa, trascinando un pezzo video si spostano insieme a lui le "
+                                           "clip di questa traccia che stanno sotto di lui (ogni traccia a modo suo)").arg(a.name));
             if (levelBar(l).contains(pos))
                 return show(QStringLiteral("%1: livello %2 dB · trascina per cambiarlo, doppio clic per tornare a 0 dB")
                                 .arg(a.name, QString::number(a.levelDb, 'f', 1)));
@@ -1068,6 +1077,8 @@ void SequenceTimeline::paintHeaders(QPainter& p)
         };
         toggle(muteBox(i), QStringLiteral("M"), lane.muted, QColor(230, 90, 70));
         toggle(soloBox(i), QStringLiteral("S"), lane.solo, QColor(240, 200, 60));
+        if (i > 0)
+            toggle(magnetBox(i), QStringLiteral("C"), lane.magnet, QColor(110, 150, 230));
         // Livello: barretta riempita fino al valore, con una tacca a 0 dB e il valore scritto sopra.
         const QRectF bar = levelBar(i);
         if (bar.width() < 12)
@@ -1391,6 +1402,9 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         } else if (soloBox(lane).contains(pos)) {
             if (onTrackSolo)
                 onTrackSolo(l.trackId, !l.solo);
+        } else if (lane > 0 && magnetBox(lane).contains(pos)) {
+            if (onTrackMagnet)
+                onTrackMagnet(l.trackId, !l.magnet);
         } else if (levelBar(lane).contains(pos)) {
             levelLane_ = lane;
             levelValue_ = levelForX(lane, pos.x());
