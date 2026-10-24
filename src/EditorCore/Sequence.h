@@ -1,7 +1,9 @@
 #pragma once
 
+#include "EditorCore/LevelEnvelope.h"
 #include "EditorCore/TimeUtil.h"
 
+#include <utility>
 #include <vector>
 
 namespace editor::core {
@@ -18,6 +20,8 @@ struct Fragment
     std::vector<TimeRange> muted;
     // Spazio vuoto nella sequenza subito prima del pezzo, in secondi (0 = attaccato al precedente o all'inizio).
     double gap = 0.0;
+    // Linea del livello dell'audio del pezzo (vedi LevelPoint), nei tempi del file: segue il pezzo.
+    std::vector<LevelPoint> envelope;
 
     double length() const { return end - start; }
 };
@@ -36,6 +40,8 @@ public:
     // Il pezzo va subito dopo il precedente: se lì c'era uno spazio vuoto lo riempie partendo dal suo inizio, senza
     // spostare gli altri pezzi; se non ci sta, quelli dopo vanno avanti quanto serve.
     int insert(int index, int clipId, double start, double end);
+    // La linea del livello del pezzo (normalizzata); false se il pezzo non c'è o non cambia nulla.
+    bool setEnvelope(int fragmentId, std::vector<LevelPoint> points);
     // Toglie il pezzo; quelli dopo scorrono indietro della sua durata (lo spazio vuoto prima di lui resta).
     bool remove(int fragmentId);
     void removeClip(int clipId);  // tutti i pezzi di un file (quando il file esce dal progetto)
@@ -47,10 +53,14 @@ public:
     // Spazi vuoti. Un pezzo si sposta da solo, senza muovere gli altri, e non si può sovrapporre a nessuno.
     // Dove può iniziare il pezzo se lo si vuole far iniziare a `desired` (tempo della sequenza): il punto libero più
     // vicino, cioè `desired` se lì ci sta, altrimenti contro il pezzo che lo blocca (o in un altro spazio, se è più
-    // vicino). -1 se il pezzo non c'è.
+    // vicino). Verso destra però il pezzo spinge quelli dopo di lui: si può andare dovunque, non prima della fine del
+    // pezzo che lo precede. -1 se il pezzo non c'è.
     double nearestFreeStart(int fragmentId, double desired) const;
-    // Sposta il pezzo in modo che inizi a `start`; false (e nessuna modifica) se si sovrapporrebbe ad altri.
-    bool moveTo(int fragmentId, double start);
+    // Sposta il pezzo in modo che inizi a `start`. Verso destra i pezzi dopo di lui, se li urta, vengono spinti avanti
+    // (a catena, senza spazi nuovi fra quelli spinti); verso sinistra non può sovrapporsi a nessuno (false, e nessuna
+    // modifica) e può passare in un altro spazio vuoto. Se `shifts` c'è, ci mette (id del pezzo, di quanto si è spostato)
+    // per ogni pezzo che si è mosso.
+    bool moveTo(int fragmentId, double start, std::vector<std::pair<int, double>>* shifts = nullptr);
     // Pezzo che ha subito prima lo spazio vuoto in cui si trova `seconds` (-1 se lì non c'è uno spazio vuoto).
     int gapIndexAt(double seconds) const;
     // Chiude lo spazio vuoto prima del pezzo `index`: quel pezzo e i successivi scorrono indietro.

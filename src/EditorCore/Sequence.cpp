@@ -115,6 +115,20 @@ double Sequence::nearestFreeStart(int fragmentId, double desired) const
     if (self < 0)
         return -1.0;
     const double length = fragments_[self].length();
+    double oldStart = 0.0;
+    double previousEnd = 0.0;  // fine del pezzo che sta prima di lui
+    double t = 0.0;
+    for (int i = 0; i <= self; ++i) {
+        t += fragments_[static_cast<std::size_t>(i)].gap;
+        if (i == self)
+            oldStart = t;
+        else
+            previousEnd = t + fragments_[static_cast<std::size_t>(i)].length();
+        t += fragments_[static_cast<std::size_t>(i)].length();
+    }
+    // Verso destra il pezzo spinge quelli dopo di lui: si può andare dovunque, non prima della fine del precedente.
+    if (desired > oldStart + kTimeEpsilon)
+        return std::max(desired, previousEnd);
     double best = -1.0;
     double bestDistance = 0.0;
     // Gli spazi liberi fra gli altri pezzi (che restano dove sono): in ognuno il punto più vicino a `desired`.
@@ -129,7 +143,7 @@ double Sequence::nearestFreeStart(int fragmentId, double desired) const
         }
     };
     double freeFrom = 0.0;
-    double t = 0.0;
+    t = 0.0;
     for (std::size_t i = 0; i < fragments_.size(); ++i) {
         t += fragments_[i].gap;
         if (static_cast<int>(i) != self) {
@@ -200,32 +214,63 @@ bool Sequence::trim(int fragmentId, Edge edge, double value, double sourceDurati
     return true;
 }
 
-bool Sequence::moveTo(int fragmentId, double start)
+bool Sequence::moveTo(int fragmentId, double start, std::vector<std::pair<int, double>>* shifts)
 {
     const int self = indexOf(fragmentId);
     if (self < 0 || start < -kTimeEpsilon)
         return false;
     start = std::max(0.0, start);
     const double length = fragments_[self].length();
-    // Posizioni di tutti i pezzi; quello spostato non deve sovrapporsi a nessun altro.
-    std::vector<std::pair<double, Fragment>> placed;
+    // Posizioni di tutti i pezzi.
+    std::vector<double> at;
     double t = 0.0;
-    for (std::size_t i = 0; i < fragments_.size(); ++i) {
-        t += fragments_[i].gap;
-        const double end = t + fragments_[i].length();
-        if (static_cast<int>(i) != self) {
-            if (start < end - kTimeEpsilon && start + length > t + kTimeEpsilon)
-                return false;
-            placed.emplace_back(t, fragments_[i]);
-        }
-        t = end;
+    for (const Fragment& f : fragments_) {
+        t += f.gap;
+        at.push_back(t);
+        t += f.length();
     }
-    placed.emplace_back(start, fragments_[self]);
-    std::stable_sort(placed.begin(), placed.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    const double oldStart = at[static_cast<std::size_t>(self)];
+    std::vector<std::pair<double, Fragment>> placed;
+    if (start > oldStart + kTimeEpsilon) {
+        // Verso destra: i pezzi dopo, se il pezzo li urta, vengono spinti avanti (a catena); quelli prima restano.
+        if (self > 0 && start < at[static_cast<std::size_t>(self) - 1] + fragments_[static_cast<std::size_t>(self) - 1].length() - kTimeEpsilon)
+            return false;
+        double cursor = start + length;
+        for (std::size_t i = 0; i < fragments_.size(); ++i) {
+            double position = at[i];
+            if (static_cast<int>(i) == self) {
+                position = start;
+            } else if (static_cast<int>(i) > self) {
+                position = std::max(position, cursor);
+                cursor = position + fragments_[i].length();
+            }
+            placed.emplace_back(position, fragments_[i]);
+        }
+    } else {
+        // Verso sinistra (o fermo): il pezzo non si sovrappone a nessun altro e può passare in un altro spazio.
+        for (std::size_t i = 0; i < fragments_.size(); ++i) {
+            const double end = at[i] + fragments_[i].length();
+            if (static_cast<int>(i) != self) {
+                if (start < end - kTimeEpsilon && start + length > at[i] + kTimeEpsilon)
+                    return false;
+                placed.emplace_back(at[i], fragments_[i]);
+            }
+        }
+        placed.emplace_back(start, fragments_[static_cast<std::size_t>(self)]);
+        std::stable_sort(placed.begin(), placed.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    }
+    if (shifts != nullptr) {
+        shifts->clear();
+        for (const auto& [position, f] : placed) {
+            const int index = indexOf(f.id);
+            if (std::abs(position - at[static_cast<std::size_t>(index)]) > kTimeEpsilon)
+                shifts->emplace_back(f.id, position - at[static_cast<std::size_t>(index)]);
+        }
+    }
     fragments_.clear();
     double previousEnd = 0.0;
-    for (auto& [at, f] : placed) {
-        f.gap = std::max(0.0, at - previousEnd);
+    for (auto& [position, f] : placed) {
+        f.gap = std::max(0.0, position - previousEnd);
         if (f.gap <= kTimeEpsilon)
             f.gap = 0.0;
         previousEnd = previousEnd + f.gap + f.length();
@@ -280,6 +325,20 @@ void Sequence::restore(std::vector<Fragment> fragments)
     }
 }
 
+bool Sequence::setEnvelope(int fragmentId, std::vector<LevelPoint> points)
+{
+    for (Fragment& f : fragments_) {
+        if (f.id != fragmentId)
+            continue;
+        points = normalizeEnvelope(std::move(points));
+        if (f.envelope == points)
+            return false;
+        f.envelope = std::move(points);
+        return true;
+    }
+    return false;
+}
+
 int Sequence::split(double seconds)
 {
     const int index = indexAt(seconds);
@@ -290,6 +349,7 @@ int Sequence::split(double seconds)
     if (cut <= f.start + kTimeEpsilon || cut >= f.end - kTimeEpsilon)
         return 0;  // sul bordo del pezzo: non resterebbe niente da una parte
     Fragment second{nextId_++, f.clipId, cut, f.end, clipRanges(f.muted, cut, f.end)};
+    second.envelope = f.envelope;  // la linea è nei tempi del file: ognuno tiene la sua parte
     f.end = cut;
     f.muted = clipRanges(f.muted, f.start, cut);
     fragments_.insert(fragments_.begin() + index + 1, second);
@@ -313,11 +373,14 @@ Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, doub
         }
         touched = true;
         const std::size_t before = result.size();
-        if (f.start < from - kTimeEpsilon)
+        if (f.start < from - kTimeEpsilon) {
             result.push_back({f.id, f.clipId, f.start, from, clipRanges(f.muted, f.start, from)});
+            result.back().envelope = f.envelope;
+        }
         if (f.end > to + kTimeEpsilon) {
             const bool firstPartKept = f.start < from - kTimeEpsilon;
             result.push_back({firstPartKept ? nextId_++ : f.id, f.clipId, to, f.end, clipRanges(f.muted, to, f.end)});
+            result.back().envelope = f.envelope;
         }
         if (result.size() > before) {
             result[before].gap = f.gap + carriedGap;

@@ -1,5 +1,6 @@
 #include "EditorCore/Project.h"
 
+#include "EditorCore/AudioMixer.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <algorithm>
@@ -130,7 +131,8 @@ std::optional<AudioReplacement> Project::audioReplacement() const
         || tracks[0].clips.size() != 1)
         return std::nullopt;
     const AudioClip& clip = tracks[0].clips[0];
-    if (clip.end != std::max(clip.start, clip.sourceDuration) || (clip.position > 0.0 && clip.start > 0.0))
+    if (clip.end != std::max(clip.start, clip.sourceDuration) || (clip.position > 0.0 && clip.start > 0.0)
+        || !clip.envelope.empty())
         return std::nullopt;
     return AudioReplacement{clip.path, clip.position - clip.start, clip.sourceDuration};
 }
@@ -161,14 +163,98 @@ void Project::restoreEdits(const Project& snapshot)
     nextId_ = std::max(nextId_, snapshot.nextId_);  // un file aggiunto dopo non riprende l'id di uno tolto
 }
 
+bool Project::moveFragment(int fragmentId, double start, bool* audioMoved, bool* audioStayed)
+{
+    if (audioMoved != nullptr)
+        *audioMoved = false;
+    if (audioStayed != nullptr)
+        *audioStayed = false;
+    // Dove sono i pezzi prima dello spostamento.
+    struct Place
+    {
+        int id;
+        double start;
+        double length;
+    };
+    std::vector<Place> before;
+    double t = 0.0;
+    for (const Fragment& f : sequence_.fragments()) {
+        t += f.gap;
+        before.push_back({f.id, t, f.length()});
+        t += f.length();
+    }
+    std::vector<std::pair<int, double>> shifts;
+    if (!sequence_.moveTo(fragmentId, start, &shifts))
+        return false;
+    if (shifts.empty())
+        return true;
+    // Le clip delle tracce con la calamita accesa che toccano un pezzo spostato (nella sua posizione di prima) vanno con
+    // lui, dello stesso tratto: tutte di seguito, quelle in testa nel verso dello spostamento per prime.
+    struct Moved
+    {
+        int clip;
+        int track;
+        double position;
+        double delta;
+    };
+    std::vector<Moved> moved;
+    for (const AudioTrack& track : audio_.tracks()) {
+        if (!track.mix.magnet)
+            continue;
+        for (const AudioClip& c : track.clips) {
+            for (const auto& [id, delta] : shifts) {
+                const auto place = std::find_if(before.begin(), before.end(), [&](const Place& p) { return p.id == id; });
+                if (place != before.end() && c.endPosition() > place->start + kTimeEpsilon
+                    && c.position < place->start + place->length - kTimeEpsilon) {
+                    moved.push_back({c.id, track.id, c.position + delta, delta});
+                    break;
+                }
+            }
+        }
+    }
+    if (moved.empty())
+        return true;
+    const bool forward = std::any_of(shifts.begin(), shifts.end(), [](const auto& s) { return s.second > 0.0; });
+    std::sort(moved.begin(), moved.end(), [&](const Moved& a, const Moved& b) {
+        return forward ? a.position > b.position : a.position < b.position;
+    });
+    AudioTracks scratch = audio_;
+    bool all = true;
+    for (const Moved& m : moved)
+        all = all && m.position >= 0.0 && scratch.moveTo(m.clip, m.track, m.position);
+    if (all) {
+        audio_ = std::move(scratch);
+        if (audioMoved != nullptr)
+            *audioMoved = true;
+    } else if (audioStayed != nullptr) {
+        *audioStayed = true;
+    }
+    return true;
+}
+
+bool Project::audioNeedsMix() const
+{
+    return audio_.needsMix() || std::any_of(sequence_.fragments().begin(), sequence_.fragments().end(),
+                                            [](const Fragment& f) { return !f.envelope.empty(); });
+}
+
 AudioEdit Project::audioEdit(GapExport gaps) const
 {
-    if (gaps == GapExport::Black)
-        return {sequence_.mutedRanges(), audioReplacement()};  // i tempi della sequenza, spazi compresi
-    // GapExport::Close: i tempi della sequenza senza gli spazi vuoti, come nel file esportato.
-    Sequence closed = sequence_;
-    closed.closeAllGaps();
-    return {closed.mutedRanges(), audioReplacement()};
+    AudioEdit edit;
+    edit.replacement = audioReplacement();
+    if (gaps == GapExport::Black) {
+        edit.muted = sequence_.mutedRanges();  // i tempi della sequenza, spazi compresi
+    } else {
+        // GapExport::Close: i tempi della sequenza senza gli spazi vuoti, come nel file esportato.
+        Sequence closed = sequence_;
+        closed.closeAllGaps();
+        edit.muted = closed.mutedRanges();
+    }
+    if (!edit.replacement && !sequence_.empty() && audioNeedsMix()) {
+        edit.mix = std::make_shared<const MixSpec>(mixSpecOf(*this, false));
+        edit.mixClosed = std::make_shared<const MixSpec>(mixSpecOf(*this, true));
+    }
+    return edit;
 }
 
 }  // namespace editor::core

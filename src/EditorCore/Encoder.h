@@ -131,6 +131,7 @@ struct AudioEncoderSettings
 {
     int sampleRate = 48000;
     int channels = 2;
+    int bitRate = 0;  // bit al secondo (0 = quello di default, 192 kb/s)
 };
 
 // AAC. I tempi dei pacchetti sono in 1/sampleRate, a partire da 0: i campioni dati a encode() sono considerati uno dopo

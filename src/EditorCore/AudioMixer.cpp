@@ -7,10 +7,11 @@
 
 namespace editor::core {
 
-std::vector<MixSegment> mixSegmentsOf(const Project& project)
+namespace {
+
+std::vector<MixSegment> mixSegmentsOf(const Project& project, const Sequence& sequence)
 {
     std::vector<MixSegment> segments;
-    const Sequence& sequence = project.sequence();
     const std::vector<double> starts = sequence.starts();
     const auto& fragments = sequence.fragments();
     for (std::size_t i = 0; i < fragments.size(); ++i) {
@@ -25,6 +26,7 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project)
         s.position = starts[i];
         s.trackId = AudioTracks::kOriginalTrack;
         s.muted = f.muted;
+        s.envelope = f.envelope;
         segments.push_back(std::move(s));
     }
     for (const AudioTrack& track : project.audioTracks().tracks()) {
@@ -37,12 +39,93 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project)
             s.fileEnd = clip.end;
             s.position = clip.position;
             s.trackId = track.id;
+            s.envelope = clip.envelope;
             segments.push_back(std::move(s));
         }
     }
     std::stable_sort(segments.begin(), segments.end(),
                      [](const MixSegment& a, const MixSegment& b) { return a.position < b.position; });
     return segments;
+}
+
+}  // namespace
+
+std::vector<MixSegment> mixSegmentsOf(const Project& project)
+{
+    return mixSegmentsOf(project, project.sequence());
+}
+
+namespace {
+
+// I tratti delle tracce aggiunte quando gli spazi vuoti del montaggio si chiudono: come per i pezzi video, il tempo degli
+// spazi si toglie da tutte le tracce, quindi la parte di una clip dentro uno spazio sparisce e il resto scorre indietro.
+std::vector<MixSegment> closeGapsInAddedTracks(const std::vector<MixSegment>& segments, const std::vector<TimeRange>& gaps)
+{
+    std::vector<MixSegment> result;
+    for (const MixSegment& s : segments) {
+        if (s.trackId == AudioTracks::kOriginalTrack) {
+            result.push_back(s);
+            continue;
+        }
+        // Le parti di s fuori dagli spazi, nei tempi della sequenza di prima.
+        double from = s.position;
+        const double end = s.position + s.length();
+        double removed = 0.0;  // somma degli spazi prima di `from`
+        const auto emit = [&](double a, double b) {
+            if (b - a <= 1e-6)
+                return;
+            MixSegment part = s;
+            part.fileStart = s.fileStart + (a - s.position);
+            part.fileEnd = s.fileStart + (b - s.position);
+            part.position = a - removed;
+            result.push_back(std::move(part));
+        };
+        double gapsBefore = 0.0;
+        for (const TimeRange& g : gaps) {
+            if (g.end <= from) {
+                gapsBefore += g.length();
+                continue;
+            }
+            if (g.start >= end)
+                break;
+            removed = gapsBefore;
+            emit(from, std::min(g.start, end));
+            gapsBefore += g.length();
+            from = std::max(from, g.end);
+            removed = gapsBefore;
+        }
+        removed = gapsBefore;
+        if (from < end)
+            emit(from, end);
+    }
+    return result;
+}
+
+}  // namespace
+
+MixSpec mixSpecOf(const Project& project, bool closeGaps)
+{
+    Sequence sequence = project.sequence();
+    std::vector<TimeRange> gaps;
+    if (closeGaps) {
+        double start = 0.0;
+        for (const Fragment& f : sequence.fragments()) {
+            if (f.gap > 0.0)
+                gaps.push_back({start, start + f.gap});
+            start += f.gap + f.length();
+        }
+        sequence.closeAllGaps();
+    }
+    MixSpec spec;
+    spec.segments = mixSegmentsOf(project, sequence);
+    if (closeGaps && !gaps.empty()) {
+        spec.segments = closeGapsInAddedTracks(spec.segments, gaps);
+        std::stable_sort(spec.segments.begin(), spec.segments.end(),
+                         [](const MixSegment& a, const MixSegment& b) { return a.position < b.position; });
+    }
+    spec.gains = trackGainsOf(project.audioTracks());
+    spec.length = sequence.totalLength();
+    return spec;
 }
 
 std::map<int, float> trackGainsOf(const AudioTracks& tracks)
@@ -52,6 +135,14 @@ std::map<int, float> trackGainsOf(const AudioTracks& tracks)
     for (const AudioTrack& track : tracks.tracks())
         gains[track.id] = static_cast<float>(tracks.gain(track.id));
     return gains;
+}
+
+std::vector<std::vector<LevelPoint>> segmentEnvelopesOf(const Project& project)
+{
+    std::vector<std::vector<LevelPoint>> envelopes;
+    for (const MixSegment& s : mixSegmentsOf(project))
+        envelopes.push_back(s.envelope);
+    return envelopes;
 }
 
 // Il file di un tratto, letto in avanti: ricorda dove è arrivato e si riposiziona solo se il blocco richiesto non
@@ -72,7 +163,8 @@ struct AudioMixer::Reader
     // (la rampa è calcolata sul blocco intero, non sulla parte che riguarda questo tratto).
     void read(const MixSegment& segment, long long segmentFirst, long long from, std::size_t count,
               std::vector<float>& acc, std::size_t offset, std::size_t totalFrames, float g0, float g1,
-              const std::vector<std::pair<long long, long long>>& mutedFrames)
+              const std::vector<std::pair<long long, long long>>& mutedFrames,
+              const std::vector<LevelPoint>& envelope)
     {
         if (failed)
             return;
@@ -133,7 +225,11 @@ struct AudioMixer::Reader
                 continue;
             const std::size_t at = offset + i;
             const float t = totalFrames > 1 ? static_cast<float>(at) / static_cast<float>(totalFrames) : 1.0f;
-            const float gain = g0 + (g1 - g0) * t;
+            float gain = g0 + (g1 - g0) * t;
+            if (!envelope.empty()) {
+                const double fileTime = segment.fileStart + static_cast<double>(frame - segmentFirst) / kMixSampleRate;
+                gain *= static_cast<float>(envelopeGain(envelopeDbAt(envelope, fileTime)));
+            }
             const std::size_t src = (pendingPos + i) * kMixChannels;
             acc[at * 2] += pending[src] * (1.0f / 32768.0f) * gain;
             acc[at * 2 + 1] += pending[src + 1] * (1.0f / 32768.0f) * gain;
@@ -152,6 +248,7 @@ struct AudioMixer::Shared
 {
     std::mutex mutex;
     std::map<int, float> gains;
+    std::vector<std::vector<LevelPoint>> envelopes;  // uno per tratto
 };
 
 AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains)
@@ -161,6 +258,7 @@ AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> ga
     shared_->gains = std::move(gains);
     applied_ = shared_->gains;
     for (const MixSegment& s : segments_) {
+        shared_->envelopes.push_back(s.envelope);
         first_.push_back(std::llround(s.position * kMixSampleRate));
         length_.push_back(std::max<long long>(1, std::llround(s.length() * kMixSampleRate)));
         readers_.push_back(std::make_unique<Reader>());
@@ -184,6 +282,13 @@ void AudioMixer::setGains(const std::map<int, float>& gains)
     shared_->gains = gains;
 }
 
+void AudioMixer::setEnvelopes(std::vector<std::vector<LevelPoint>> envelopes)
+{
+    std::lock_guard lock(shared_->mutex);
+    if (envelopes.size() == shared_->envelopes.size())
+        shared_->envelopes = std::move(envelopes);
+}
+
 float AudioMixer::limit(float value)
 {
     constexpr float knee = 0.95f;
@@ -198,9 +303,11 @@ float AudioMixer::limit(float value)
 void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<std::int16_t>& out)
 {
     std::map<int, float> targets;
+    std::vector<std::vector<LevelPoint>> envelopes;
     {
         std::lock_guard lock(shared_->mutex);
         targets = shared_->gains;
+        envelopes = shared_->envelopes;
     }
     std::vector<float> acc(frames * 2, 0.0f);
     const long long blockEnd = firstFrame + static_cast<long long>(frames);
@@ -231,7 +338,8 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
                                      segFirst + static_cast<long long>(std::ceil((m.end - segment.fileStart) * kMixSampleRate)));
         }
         readers_[i]->read(segment, segFirst, from, static_cast<std::size_t>(to - from), acc,
-                          static_cast<std::size_t>(from - firstFrame), frames, g0, g1, mutedFrames);
+                          static_cast<std::size_t>(from - firstFrame), frames, g0, g1, mutedFrames,
+                          envelopes[i]);
     }
     for (const auto& [trackId, gain] : targets)
         applied_[trackId] = gain;

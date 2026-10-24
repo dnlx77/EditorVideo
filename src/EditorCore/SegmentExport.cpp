@@ -3,6 +3,7 @@
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/H264Params.h"
+#include "EditorCore/MixExport.h"
 #include "EditorCore/NalUnits.h"
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/TimeUtil.h"
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -1763,12 +1765,56 @@ ExportResult ExportJob::run()
 
 }  // namespace
 
+namespace {
+
+// Il file temporaneo del mix, cancellato alla fine.
+struct TempMixFile
+{
+    std::filesystem::path path;
+    ~TempMixFile()
+    {
+        if (!path.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+    }
+};
+
+}  // namespace
+
 ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,
                          const ExportProgress& progress, MuteMethod muteMethod, const ProjectFormat* format,
                          const ReencodeOptions& reencode)
 {
-    ExportJob job(clips, outputPath, audio, progress, muteMethod, format, reencode);
-    return job.run();
+    if (!audio.mix) {
+        ExportJob job(clips, outputPath, audio, progress, muteMethod, format, reencode);
+        return job.run();
+    }
+    // Audio mixato: prima si scrive il mix, poi il video con quell'audio al posto di quello dei file. Se gli spazi vuoti
+    // si chiudono (per scelta o perché il nero non si sa fare) vale il mix con gli spazi chiusi.
+    const PlanAnalysis plan = analyzePlan(clips, format, true, reencode.all, reencode.closeGaps);
+    if (!plan.problem.empty())
+        throw ClipsNotJoinable(plan.problem);
+    const MixSpec& spec = !plan.blackGaps && audio.mixClosed ? *audio.mixClosed : *audio.mix;
+    static std::atomic<int> counter{0};
+    TempMixFile temp;
+    temp.path = std::filesystem::temp_directory_path()
+              / ("editorvideo_mix_" + std::to_string(counter.fetch_add(1)) + "_"
+                 + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".m4a");
+    constexpr double kMixShare = 0.15;
+    const auto scaled = [&](double from, double to) -> ExportProgress {
+        if (!progress)
+            return {};
+        return [&progress, from, to](double fraction) { return progress(from + (to - from) * fraction); };
+    };
+    const double duration = renderMixToFile(spec, utf8FromPath(temp.path), scaled(0.0, kMixShare));
+    AudioEdit replaced;
+    replaced.replacement = AudioReplacement{utf8FromPath(temp.path), 0.0, duration};
+    const ExportProgress videoProgress = scaled(kMixShare, 1.0);  // ExportJob tiene un riferimento
+    ExportJob job(clips, outputPath, replaced, videoProgress, muteMethod, format, reencode);
+    ExportResult result = job.run();
+    result.mixedAudioFiles = mixFileCount(spec);
+    return result;
 }
 
 ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdit& audio, const ProjectFormat* format,
@@ -1779,7 +1825,8 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
         return preview;
     try {
         const PlanAnalysis plan =
-            analyzePlan(clips, format, audio.replacement.has_value(), reencode.all, reencode.closeGaps);
+            analyzePlan(clips, format, audio.replacement.has_value() || audio.mix != nullptr, reencode.all,
+                        reencode.closeGaps);
         preview.problem = plan.problem;
         preview.impreciseCuts = plan.impreciseCuts;
         preview.closedGaps = plan.closedGaps;

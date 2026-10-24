@@ -583,7 +583,7 @@ AudioEncoder::AudioEncoder(const AudioEncoderSettings& settings)
     ctx->sample_rate = settings.sampleRate;
     ctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
     av_channel_layout_default(&ctx->ch_layout, std::max(1, settings.channels));
-    ctx->bit_rate = kAudioBitRate;
+    ctx->bit_rate = settings.bitRate > 0 ? settings.bitRate : kAudioBitRate;
     ctx->time_base = {1, settings.sampleRate};
     ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;  // dati extra nel contenitore (MP4, MKV)
     if (const int ret = avcodec_open2(ctx, codec, nullptr); ret < 0)

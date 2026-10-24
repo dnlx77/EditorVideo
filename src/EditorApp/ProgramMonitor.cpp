@@ -564,6 +564,7 @@ void ProgramMonitor::applyVolume()
 void ProgramMonitor::audioMixChanged()
 {
     sequenceAudio_.setTrackGains(core::trackGainsOf(project_.audioTracks()));
+    sequenceAudio_.setSegmentEnvelopes(core::segmentEnvelopesOf(project_));
 }
 
 void ProgramMonitor::updateLabels()

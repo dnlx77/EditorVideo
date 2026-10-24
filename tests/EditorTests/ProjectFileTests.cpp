@@ -413,21 +413,28 @@ TEST_F(ProjectFileTest, AudioTracksAreSavedWithLevelsMuteAndSolo)
     audio.setLevel(a2, -12.25);
     audio.setSolo(a2, true);
     audio.setMuted(a3, true);
+    audio.setMagnet(a2, true);
     ASSERT_NE(audio.add(a2, AudioClip{0, file("voce.wav"), 0.5, 2.0 + 1.0 / 48000, 1.0, 9.5}), 0);
     ASSERT_NE(audio.add(a2, AudioClip{0, file("musica.mp3"), 10.0, 70.0, 4.0, 181.3}), 0);
     ASSERT_NE(audio.add(a3, AudioClip{0, file("effetto.wav"), 0.0, 1001.0 / 30000, 2.5, 0.0}), 0);
     ASSERT_FALSE(project.audioReplacement().has_value());
+    ASSERT_TRUE(audio.setClipEnvelope(audio.tracks()[0].clips[0].id, {{0.5, -6.5}, {1.25, 3.0}, {2.0, 3.0}}));
+    ASSERT_TRUE(project.sequence().setEnvelope(project.sequence().fragments()[0].id, {{0.0, 0.0}, {0.5, -60.0}}));
 
     saveProjectFile(projectPath(), project, view);
     const std::string text = read(projectPath());
     EXPECT_NE(text.find("\"versione\": 3"), std::string::npos);
     EXPECT_NE(text.find("\"tracceAudio\""), std::string::npos);
     EXPECT_NE(text.find("\"livello\": -12.25"), std::string::npos) << text;
+    EXPECT_NE(text.find("\"linea\""), std::string::npos) << text;
+    EXPECT_NE(text.find("\"calamita\": true"), std::string::npos) << text;
 
     const LoadedProject loaded = loadProjectFile(projectPath());
     EXPECT_TRUE(loaded.missing.empty());
     expectSame(project, loaded.project);
     EXPECT_FALSE(loaded.project.audioTracks().audible(loaded.project.audioTracks().tracks()[1].id));
+    EXPECT_EQ(loaded.project.audioTracks().tracks()[0].clips[0].envelope.size(), 3u);
+    EXPECT_EQ(loaded.project.sequence().fragments()[0].envelope.size(), 2u);
 
     // Salvato di nuovo (con i file analizzati di nuovo): lo stesso testo.
     Project reopened = loaded.project;

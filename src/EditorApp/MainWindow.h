@@ -140,9 +140,11 @@ public:
     int addAudioFiles(const QStringList& paths, int trackId, double seconds);
     bool moveAudioClip(int clipId, int trackId, double position);
     bool trimAudioClip(int clipId, bool atStart, double value, bool ripple);
+    void moveFragment(int fragmentId, double start);  // sposta un pezzo (con la calamita, anche le clip audio sotto)
     void setTrackMuted(int trackId, bool muted);
     void setTrackSolo(int trackId, bool solo);
     void setTrackLevel(int trackId, double db);
+    void setEnvelope(bool fragment, int id, const std::vector<core::LevelPoint>& points);  // linea del livello di un pezzo o clip
     // "Sostituisci audio qui": il file va su una traccia aggiunta nel tratto selezionato (lungo al massimo quanto il
     // tratto) e A1 sotto di lui si silenzia. false, con un messaggio, se manca il tratto o il file non ha audio.
     bool replaceAudioHere(const QString& path);

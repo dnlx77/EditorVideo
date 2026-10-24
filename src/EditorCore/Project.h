@@ -2,6 +2,7 @@
 
 #include "EditorCore/AudioTracks.h"
 #include "EditorCore/Compatibility.h"
+#include "EditorCore/MixSpec.h"
 #include "EditorCore/Sequence.h"
 
 #include <memory>
@@ -58,8 +59,13 @@ struct AudioEdit
     std::vector<TimeRange> muted;
     // Se c'è, l'audio originale dei file viene escluso e al suo posto va questo.
     std::optional<AudioReplacement> replacement;
+    // Se c'è, l'audio esportato è il mix delle tracce audio (A1 e le aggiunte, con livelli, linee del livello, muto e
+    // solo), ricodificato in AAC 48 kHz stereo 256 kb/s; `muted` e `replacement` non contano. `mix` ha gli spazi vuoti
+    // del montaggio (nero e silenzio), `mixClosed` li ha chiusi: vale quest'ultimo se l'esportazione chiude gli spazi.
+    std::shared_ptr<const MixSpec> mix;
+    std::shared_ptr<const MixSpec> mixClosed;
 
-    bool empty() const { return muted.empty() && !replacement; }
+    bool empty() const { return muted.empty() && !replacement && !mix; }
 };
 
 // Cosa diventano gli spazi vuoti del montaggio nel file esportato: nero e silenzio (lunghi come nel montaggio,
@@ -109,6 +115,14 @@ public:
     // Tratti silenziati e traccia sostitutiva, per l'esportazione: nei tempi del file esportato (con gli spazi vuoti
     // trattati come dice `gaps`).
     AudioEdit audioEdit(GapExport gaps = GapExport::Close) const;
+    // Sposta il pezzo a `start` (vedi Sequence::moveTo: verso destra spinge i pezzi dopo) e, per le tracce con la calamita accesa (AudioMix::magnet), anche
+    // le loro clip che stanno sotto il pezzo (nella posizione di prima) dello stesso spostamento. Se una clip non ci sta
+    // nel nuovo punto resta tutto com'è per l'audio (si sposta solo il pezzo) e *audioStayed diventa true. Restituisce
+    // false (e non cambia niente) se il pezzo non si può spostare lì; *audioMoved dice se qualche clip è andata con lui.
+    bool moveFragment(int fragmentId, double start, bool* audioMoved = nullptr, bool* audioStayed = nullptr);
+    // Se esportando l'audio non basta copiarlo com'è (vedi AudioTracks::needsMix) o i pezzi video hanno una linea del
+    // livello: allora audioEdit() ha il mix.
+    bool audioNeedsMix() const;
 
     // Formato del progetto (vedi ProjectFormat): vuoto finché non lo si decide, di solito al primo pezzo messo nel
     // montaggio. Fa parte delle modifiche (Annulla e Ripeti lo riportano com'era).

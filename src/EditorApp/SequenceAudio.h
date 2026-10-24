@@ -36,6 +36,7 @@ public:
     // Volume dell'anteprima (0-1), e livelli delle tracce che cambiano mentre si suona.
     void setVolume(float gain) { volume_ = gain; }
     void setTrackGains(const std::map<int, float>& gains);
+    void setSegmentEnvelopes(std::vector<std::vector<core::LevelPoint>> envelopes);  // le linee del livello dei tratti
 
 private:
     void work();

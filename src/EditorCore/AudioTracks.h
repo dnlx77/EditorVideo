@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EditorCore/LevelEnvelope.h"
 #include "EditorCore/Sequence.h"
 
 #include <string>
@@ -20,6 +21,9 @@ struct AudioClip
 
     double length() const { return end - start; }
     double endPosition() const { return position + length(); }
+    // Linea del livello della clip (vedi LevelPoint), nei tempi del file: segue la clip.
+    std::vector<LevelPoint> envelope;
+
     bool operator==(const AudioClip&) const = default;
 };
 
@@ -29,6 +33,9 @@ struct AudioMix
     double levelDb = 0.0;  // volume della traccia, in dB (0 = com'è nel file)
     bool muted = false;
     bool solo = false;
+    // Calamita: se è attiva, trascinando un pezzo video si spostano anche le clip di questa traccia che stanno sotto di
+    // lui. Non cambia il suono.
+    bool magnet = false;
 
     bool operator==(const AudioMix&) const = default;
 };
@@ -53,8 +60,8 @@ class AudioTracks
 {
 public:
     static constexpr int kOriginalTrack = 0;  // id della traccia A1 (l'audio dei pezzi video)
-    static constexpr double kMinLevelDb = -60.0;
-    static constexpr double kMaxLevelDb = 12.0;
+    static constexpr double kMinLevelDb = kLevelMinDb;
+    static constexpr double kMaxLevelDb = kLevelMaxDb;
 
     // Tracce. addTrack aggiunge una traccia vuota in fondo e ne restituisce l'id; removeTrack la toglie con le sue clip.
     int addTrack();
@@ -69,6 +76,9 @@ public:
     bool setLevel(int trackId, double db);
     bool setMuted(int trackId, bool muted);
     bool setSolo(int trackId, bool solo);
+    bool setMagnet(int trackId, bool magnet);
+    // La linea del livello di una clip (normalizzata); false se la clip non c'è o non cambia nulla.
+    bool setClipEnvelope(int clipId, std::vector<LevelPoint> points);
     // Se la traccia si sente nel mix (muto e solo di tutte le tracce compresi).
     bool audible(int trackId) const;
     // Quanto si moltiplica il segnale della traccia nel mix: 0 se non si sente.
@@ -116,6 +126,10 @@ public:
     void restoreEdits(const AudioTracks& snapshot);
     void clear();
 
+    // Se esportando l'audio dei pezzi video non basta copiarlo com'è: A1 ha un livello, il muto o il solo di un'altra
+    // traccia, oppure le tracce aggiunte hanno clip (vanno mixate). Le linee del livello dei pezzi video non contano
+    // qui (vedi Project::audioNeedsMix).
+    bool needsMix() const;
     // Nessuna traccia aggiunta e A1 com'è all'inizio.
     bool isDefault() const { return tracks_.empty() && original_ == AudioMix{}; }
     double endTime() const;  // fine dell'ultima clip, 0 senza clip

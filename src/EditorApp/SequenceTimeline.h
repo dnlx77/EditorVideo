@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EditorApp/ZoomableTimeline.h"
+#include "EditorCore/AudioTracks.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <QtCore/QStringList>
@@ -50,6 +51,7 @@ public:
         int fit = 0;
         QString fitNote;
         int proxyDivisor = 1;  // l'anteprima legge il video da un proxy a 1/proxyDivisor (1 = dall'originale)
+        std::vector<core::LevelPoint> envelope;  // linea del livello dell'audio del pezzo (tempi del file)
     };
 
     // Una clip audio su una traccia aggiunta.
@@ -63,6 +65,7 @@ public:
         double length = 0.0;
         double sourceStart = 0.0;  // inizio nel file
         std::shared_ptr<const core::Waveform> waveform;  // nullptr = in calcolo
+        std::vector<core::LevelPoint> envelope;  // linea del livello (tempi del file)
     };
 
     // Una corsia audio: A1 (trackId 0: le sue forme d'onda sono quelle dei pezzi video, `clips` non conta) o una
@@ -76,6 +79,7 @@ public:
         bool solo = false;
         bool audible = true;  // si sente nel mix (muto e solo di tutte le tracce compresi)
         std::vector<AudioBlock> clips;
+        bool magnet = false;  // calamita: i pezzi video trascinano le clip di questa traccia
     };
 
     explicit SequenceTimeline(QWidget* parent = nullptr);
@@ -135,6 +139,12 @@ public:
     std::function<void(int trackId, bool muted)> onTrackMuted;
     std::function<void(int trackId, bool solo)> onTrackSolo;
     std::function<void(int trackId, double db)> onTrackLevel;
+    std::function<void(int trackId, bool magnet)> onTrackMagnet;  // calamita della traccia
+    // Linea del livello (al centro di ogni pezzo e di ogni clip audio, nei suoi tempi del file, così li segue): il clic
+    // sulla linea aggiunge un punto, trascinandolo si cambiano tempo e livello (vicino a 0 dB si aggancia al centro),
+    // il doppio clic su un punto lo toglie. Lasciando il mouse si chiama onEnvelopeChanged con la linea nuova, di un
+    // pezzo (fragment) o di una clip audio.
+    std::function<void(bool fragment, int id, const std::vector<core::LevelPoint>& points)> onEnvelopeChanged;
     // Clip audio: selezione, spostamento (dove può andare sulla traccia `trackId` se la si vuole a `desired`, e dove è
     // stata lasciata), bordi (come trimLimit/onTrim dei pezzi video, nei tempi del file della clip).
     std::function<void(int clipId)> onAudioClipSelected;
@@ -192,8 +202,31 @@ private:
     // Pulsanti di una corsia audio nel suo riquadro a sinistra: muto, solo, livello.
     QRectF muteBox(int index) const;
     QRectF soloBox(int index) const;
+    QRectF magnetBox(int index) const;
     QRectF levelBar(int index) const;
     double levelForX(int index, double x) const;  // dB del cursore del livello quando il mouse è in x
+    // Linea del livello: dove sta un valore (dB) nella corsia e il contrario. Sopra il centro 0..+12 dB, sotto 0..-60
+    // (con più precisione vicino a 0).
+    double envelopeY(const QRectF& lane, double db) const;
+    double envelopeDbForY(const QRectF& lane, double y) const;
+    // Il pezzo o la clip a cui appartiene una linea del livello.
+    struct EnvTarget
+    {
+        int lane = -1;         // corsia audio (0 = A1)
+        bool fragment = false;  // pezzo video (A1) o clip audio
+        int id = 0;
+        double position = 0.0;  // dove inizia nella sequenza
+        double length = 0.0;
+        double source = 0.0;    // inizio nel file
+        const std::vector<core::LevelPoint>* line = nullptr;
+    };
+    EnvTarget targetOfBlock(std::size_t index) const;
+    EnvTarget targetOfClip(int lane, std::size_t index) const;
+    bool sameTarget(const EnvTarget& a, const EnvTarget& b) const { return a.fragment == b.fragment && a.id == b.id; }
+    const std::vector<core::LevelPoint>& lineOf(const EnvTarget& target) const;
+    // Punto della linea (point >= 0) o tratto di linea (point = -1) sotto il mouse; false se nessuno dei due.
+    bool envelopeHit(const QPointF& pos, EnvTarget& target, int& point) const;
+    void paintEnvelope(QPainter& p, const EnvTarget& target, const QRectF& lane);
     std::vector<QRectF> blockRects(const QRectF& lane) const;  // il riquadro di ogni blocco nella corsia
     double total() const { return total_; }
     // La parte visibile di `r` (con un po' di margine): con lo zoom un blocco può essere largo milioni di pixel.
@@ -276,6 +309,11 @@ private:
     bool audioTrimRipple_ = false;
     double audioTrimValue_ = 0.0;
     double audioTrimGrab_ = 0.0;
+    bool envActive_ = false;       // si sta modificando una linea del livello
+    EnvTarget envTarget_;          // di quale pezzo o clip
+    int envPoint_ = -1;            // punto preso
+    bool envMoved_ = false;        // la linea è cambiata (punto aggiunto o spostato)
+    std::vector<core::LevelPoint> envPoints_;  // la linea in modifica
     int levelLane_ = -1;           // corsia di cui si trascina il livello
     double levelValue_ = 0.0;
 

@@ -94,6 +94,15 @@ bool AudioTracks::setSolo(int trackId, bool solo)
     return true;
 }
 
+bool AudioTracks::setMagnet(int trackId, bool magnet)
+{
+    AudioMix* m = mutableMix(trackId);
+    if (m == nullptr || m->magnet == magnet)
+        return false;
+    m->magnet = magnet;
+    return true;
+}
+
 bool AudioTracks::audible(int trackId) const
 {
     if (trackId != kOriginalTrack && track(trackId) == nullptr)
@@ -103,6 +112,29 @@ bool AudioTracks::audible(int trackId) const
                          });
     const AudioMix& m = mix(trackId);
     return !m.muted && (!anySolo || m.solo);
+}
+
+bool AudioTracks::setClipEnvelope(int clipId, std::vector<LevelPoint> points)
+{
+    int t = 0;
+    int index = 0;
+    if (!locate(clipId, t, index))
+        return false;
+    AudioClip& clip = tracks_[static_cast<std::size_t>(t)].clips[static_cast<std::size_t>(index)];
+    points = normalizeEnvelope(std::move(points));
+    if (clip.envelope == points)
+        return false;
+    clip.envelope = std::move(points);
+    return true;
+}
+
+bool AudioTracks::needsMix() const
+{
+    if (isDefault())
+        return false;
+    if (!audible(kOriginalTrack) || original_.levelDb != 0.0)
+        return true;
+    return std::any_of(tracks_.begin(), tracks_.end(), [](const AudioTrack& t) { return !t.clips.empty(); });
 }
 
 double AudioTracks::gain(int trackId) const

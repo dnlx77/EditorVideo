@@ -1695,7 +1695,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                                   type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
                     QCoreApplication::sendEvent(line, &e);
                 };
-                mouse(QEvent::MouseButtonPress, x0, line->audioLaneCenter(1), Qt::LeftButton);
+                mouse(QEvent::MouseButtonPress, x0, line->audioLaneCenter(1) - 6, Qt::LeftButton);
                 mouse(QEvent::MouseMove, (x0 + x1) / 2, line->audioLaneCenter(2), Qt::LeftButton);
                 mouse(QEvent::MouseMove, x1, line->audioLaneCenter(2), Qt::LeftButton);
                 mouse(QEvent::MouseButtonRelease, x1, line->audioLaneCenter(2), Qt::NoButton);
@@ -1805,8 +1805,10 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 window->setTrackLevel(track, -12.0);
                 window->setTrackSolo(track, true);
                 window->setTrackMuted(core::AudioTracks::kOriginalTrack, true);
+                const int musicClip = audio.tracks().empty() || audio.tracks()[0].clips.empty() ? 0 : audio.tracks()[0].clips[0].id;
+                window->setEnvelope(false, musicClip, {{0.2, 0.0}, {0.8, -30.0}});  // dissolvenza: la linea del livello
                 const bool keepsPlaying = window->programMonitor()->isPlaying() && audio.audible(track)
-                                       && !audio.audible(core::AudioTracks::kOriginalTrack);
+                                       && !audio.audible(core::AudioTracks::kOriginalTrack) && audio.tracks()[0].clips[0].envelope.size() == 2;
                 window->programMonitor()->setPlaying(false);
                 bool undone = true;
                 for (int i = 0; i < 12 && !(audio.isDefault() && window->project().find(wavId) == nullptr); ++i)
