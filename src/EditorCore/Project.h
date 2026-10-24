@@ -115,7 +115,7 @@ public:
     // Tratti silenziati e traccia sostitutiva, per l'esportazione: nei tempi del file esportato (con gli spazi vuoti
     // trattati come dice `gaps`).
     AudioEdit audioEdit(GapExport gaps = GapExport::Close) const;
-    // Sposta il pezzo a `start` (vedi Sequence::moveTo) e, per le tracce con la calamita accesa (AudioMix::magnet), anche
+    // Sposta il pezzo a `start` (vedi Sequence::moveTo: verso destra spinge i pezzi dopo) e, per le tracce con la calamita accesa (AudioMix::magnet), anche
     // le loro clip che stanno sotto il pezzo (nella posizione di prima) dello stesso spostamento. Se una clip non ci sta
     // nel nuovo punto resta tutto com'è per l'audio (si sposta solo il pezzo) e *audioStayed diventa true. Restituisce
     // false (e non cambia niente) se il pezzo non si può spostare lì; *audioMoved dice se qualche clip è andata con lui.

@@ -196,19 +196,44 @@ TEST(SequenceGaps, MovingAPieceLeavesTheOthersWhereTheyAre)
     EXPECT_EQ(p.s.gapIndexAt(0.5), -1);
     EXPECT_EQ(p.s.indexAt(6.5), 2);
 
-    EXPECT_TRUE(p.s.moveTo(p.a, 4.0));  // A nello spazio: B e C non si muovono, l'ordine cambia
-    expectPieces(p.s, {{2, 2.0, 4.0}, {2, 0.0, 1.0}, {2, 5.0, 6.0}});
-    EXPECT_NEAR(p.s.startOf(0), 1.0, 1e-9);
-    EXPECT_NEAR(p.s.startOf(1), 4.0, 1e-9);
-    EXPECT_NEAR(p.s.startOf(2), 6.0, 1e-9);
-    EXPECT_EQ(p.s.gapCount(), 3);  // prima di B, fra B e A, fra A e C
+    // Verso sinistra un pezzo passa in un altro spazio senza muovere gli altri: C (1 s) davanti a B... non ci sta (B 1 .. 3),
+    // ma nello spazio 3 .. 6 sì, e lì B resta dov'è.
+    EXPECT_TRUE(p.s.moveTo(p.c, 4.0));
+    EXPECT_NEAR(p.s.startOf(1), 1.0, 1e-9);
+    EXPECT_NEAR(p.s.startOf(2), 4.0, 1e-9);
+}
+
+TEST(SequenceGaps, MovingForwardPushesThePiecesAfter)
+{
+    ThreePieces p;  // A 0 .. 1, B 1 .. 3, C 3 .. 4
+    std::vector<std::pair<int, double>> shifts;
+    EXPECT_TRUE(p.s.moveTo(p.a, 0.5, &shifts));  // A 0,5 .. 1,5 urta B: B e C scorrono di 0,5
+    expectPieces(p.s, {{2, 0.0, 1.0}, {2, 2.0, 4.0}, {2, 5.0, 6.0}});
+    EXPECT_NEAR(p.s.startOf(0), 0.5, 1e-9);
+    EXPECT_NEAR(p.s.startOf(1), 1.5, 1e-9);
+    EXPECT_NEAR(p.s.startOf(2), 3.5, 1e-9);
+    EXPECT_EQ(p.s.gapCount(), 1);  // solo lo spazio prima di A
+    ASSERT_EQ(shifts.size(), 3u);
+    for (const auto& [id, delta] : shifts)
+        EXPECT_NEAR(delta, 0.5, 1e-9);
+
+    // Uno spazio vuoto dopo il pezzo assorbe la spinta: i pezzi dopo lo spazio non si muovono finché non ci arriva.
+    ThreePieces q;
+    ASSERT_TRUE(q.s.moveTo(q.c, 6.0));  // A 0 .. 1, B 1 .. 3, spazio, C 6 .. 7
+    EXPECT_TRUE(q.s.moveTo(q.a, 1.0));  // A 1 .. 2 tocca B (1 .. 3), che scorre a 2 .. 4; C resta
+    EXPECT_NEAR(q.s.startOf(1), 2.0, 1e-9);
+    EXPECT_NEAR(q.s.startOf(2), 6.0, 1e-9);
+    EXPECT_TRUE(q.s.moveTo(q.a, 4.5));  // A 4,5 .. 5,5: B spinta a 5,5 .. 7,5, C a 7,5
+    EXPECT_NEAR(q.s.startOf(1), 5.5, 1e-9);
+    EXPECT_NEAR(q.s.startOf(2), 7.5, 1e-9);
+    // Verso destra non si può andare prima della fine del pezzo che sta prima (qui nessuno): niente da fermare.
+    EXPECT_TRUE(p.s.moveTo(p.b, 20.0));
 }
 
 TEST(SequenceGaps, PiecesNeverOverlap)
 {
     ThreePieces p;
-    EXPECT_FALSE(p.s.moveTo(p.a, 0.5));  // su B
-    EXPECT_FALSE(p.s.moveTo(p.c, 2.5));  // su B
+    EXPECT_FALSE(p.s.moveTo(p.c, 2.5));  // su B (verso sinistra non si spinge)
     EXPECT_FALSE(p.s.moveTo(p.b, -1.0));
     expectPieces(p.s, {{2, 0.0, 1.0}, {2, 2.0, 4.0}, {2, 5.0, 6.0}});  // niente è cambiato
     EXPECT_EQ(p.s.gapCount(), 0);
@@ -221,12 +246,12 @@ TEST(SequenceGaps, NearestFreeStartStopsAgainstTheNeighbours)
     ASSERT_TRUE(p.s.moveTo(p.c, 6.0));  // A 0 .. 1, B 1 .. 3, spazio 3 .. 6, C 6 .. 7
     // B (2 s) fra A e C: ci sta da 1 a 4.
     EXPECT_NEAR(p.s.nearestFreeStart(p.b, 2.0), 2.0, 1e-9);
-    EXPECT_NEAR(p.s.nearestFreeStart(p.b, 5.2), 4.0, 1e-9);  // si ferma contro C
-    EXPECT_NEAR(p.s.nearestFreeStart(p.b, 0.0), 1.0, 1e-9);  // si ferma contro A
-    EXPECT_NEAR(p.s.nearestFreeStart(p.b, 6.6), 7.0, 1e-9);  // trascinata oltre C: dopo C, più vicino
-    // A (1 s) trascinata su B: va nello spazio libero più vicino.
-    EXPECT_NEAR(p.s.nearestFreeStart(p.a, 2.5), 3.0, 1e-9);
-    EXPECT_NEAR(p.s.nearestFreeStart(p.a, 1.2), 0.0, 1e-9);
+    EXPECT_NEAR(p.s.nearestFreeStart(p.b, 5.2), 5.2, 1e-9);  // verso destra spinge C: nessun limite
+    EXPECT_NEAR(p.s.nearestFreeStart(p.b, 0.0), 1.0, 1e-9);  // verso sinistra si ferma contro A
+    EXPECT_NEAR(p.s.nearestFreeStart(p.b, 6.6), 6.6, 1e-9);
+    // A (1 s) trascinata verso destra: spinge B (nessun limite, salvo la fine del pezzo prima: nessuno).
+    EXPECT_NEAR(p.s.nearestFreeStart(p.a, 2.5), 2.5, 1e-9);
+    EXPECT_NEAR(p.s.nearestFreeStart(p.a, 1.2), 1.2, 1e-9);
     EXPECT_NEAR(p.s.nearestFreeStart(p.a, -3.0), 0.0, 1e-9);
     EXPECT_LT(p.s.nearestFreeStart(999, 1.0), 0.0);  // pezzo che non c'è
 }
