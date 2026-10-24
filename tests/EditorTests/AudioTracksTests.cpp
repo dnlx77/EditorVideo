@@ -81,6 +81,9 @@ TEST(AudioTracks, ClipsDoNotOverlapOnTheSameTrack)
     EXPECT_DOUBLE_EQ(audio.nearestFreePosition(second, a2, 1.5), 5.0);  // prima della prima non ci sta
     EXPECT_DOUBLE_EQ(audio.nearestFreePosition(second, a3, 3.5), 2.0);  // su A3: prima di quella che c'è
     EXPECT_DOUBLE_EQ(audio.nearestFreePosition(second, a2, -3.0), 5.0);
+    EXPECT_DOUBLE_EQ(audio.freePosition(a2, 1.0, 4.5), 7.0);   // una clip nuova di 1 s: dopo le due
+    EXPECT_DOUBLE_EQ(audio.freePosition(a2, 1.0, 0.2), 0.0);   // prima della prima, a 0
+    EXPECT_DOUBLE_EQ(audio.freePosition(99, 1.0, 0.0), -1.0);
 
     // Spostare: non sopra un'altra; anche su un'altra traccia.
     EXPECT_FALSE(audio.moveTo(second, a2, 3.0));

@@ -13,6 +13,7 @@
 #include <vector>
 
 class QMimeData;
+class QToolButton;
 
 namespace editor::core {
 struct Waveform;
@@ -20,13 +21,16 @@ struct Waveform;
 
 namespace editor::app {
 
-// Linea del tempo del montaggio, su due corsie.
+// Linea del tempo del montaggio: una corsia video (V1) e sotto le corsie audio (A1 = l'audio dei pezzi video, poi le
+// tracce audio aggiunte A2, A3...). A sinistra di ogni corsia il nome e, per l'audio, i pulsanti muto (M) e solo (S) e
+// il livello; in alto a sinistra i pulsanti "+" e "−" aggiungono e tolgono una traccia audio.
 // Video: un blocco colorato per ogni pezzo della sequenza (un colore per file), largo quanto dura, con il nome del
 // file. Clic = seleziona e sposta l'anteprima del montaggio lì; trascinamento = sposta il pezzo avanti o indietro
 // (da solo: gli altri restano dove sono, e fra i pezzi restano spazi vuoti); doppio clic = riapre il pezzo
 // nell'anteprima di partenza. Clic su uno spazio vuoto = lo seleziona (Canc lo chiude).
-// Audio: la forma d'onda di ogni pezzo (o della traccia sostitutiva), i tratti senza audio barrati e il tratto
-// selezionato. Trascinando si seleziona un tratto; la traccia sostitutiva si sposta trascinando la sua maniglia.
+// A1: la forma d'onda di ogni pezzo, i tratti senza audio barrati. Tracce aggiunte: le clip audio, che si spostano
+// trascinandole (anche su un'altra traccia, in verticale) e si accorciano dai bordi come i pezzi video. Trascinando
+// sullo sfondo di una corsia audio si seleziona un tratto.
 // Si può ingrandire (vedi ZoomableTimeline).
 class SequenceTimeline : public ZoomableTimeline
 {
@@ -48,13 +52,30 @@ public:
         int proxyDivisor = 1;  // l'anteprima legge il video da un proxy a 1/proxyDivisor (1 = dall'originale)
     };
 
-    // La traccia audio sostitutiva, nella sequenza.
-    struct Replacement
+    // Una clip audio su una traccia aggiunta.
+    struct AudioBlock
     {
-        QString label;
-        double offset = 0.0;  // dove inizia (negativo = l'inizio è prima della sequenza)
-        double duration = 0.0;
+        int clipId = 0;
+        QString path;    // il file (per la forma d'onda)
+        QString label;   // es. "musica.mp3"
+        int colorIndex = 0;
+        double position = 0.0;     // dove inizia nella sequenza
+        double length = 0.0;
+        double sourceStart = 0.0;  // inizio nel file
         std::shared_ptr<const core::Waveform> waveform;  // nullptr = in calcolo
+    };
+
+    // Una corsia audio: A1 (trackId 0: le sue forme d'onda sono quelle dei pezzi video, `clips` non conta) o una
+    // traccia aggiunta.
+    struct AudioLane
+    {
+        int trackId = 0;
+        QString name;  // "A1", "A2"...
+        double levelDb = 0.0;
+        bool muted = false;
+        bool solo = false;
+        bool audible = true;  // si sente nel mix (muto e solo di tutte le tracce compresi)
+        std::vector<AudioBlock> clips;
     };
 
     explicit SequenceTimeline(QWidget* parent = nullptr);
@@ -68,17 +89,26 @@ public:
     void setSelectedGap(int fragmentId);
     int selectedGap() const { return selectedGap_; }
 
-    void setMuted(std::vector<core::TimeRange> ranges);  // tempi della sequenza
-    void setReplacement(std::optional<Replacement> replacement);
-    // Quando finisce una forma d'onda: aggiorna solo quelle dei blocchi (`forClip` dà quella di un file) e della traccia
-    // sostitutiva, senza rifare il resto.
+    void setMuted(std::vector<core::TimeRange> ranges);  // tratti senza audio di A1, nei tempi della sequenza
+    // Corsie audio: la prima è sempre A1. Se c'erano più corsie (o meno) il widget cambia altezza.
+    void setAudioLanes(std::vector<AudioLane> lanes);
+    const std::vector<AudioLane>& audioLanes() const { return lanes_; }
+    // Quando finisce una forma d'onda: aggiorna solo quelle dei blocchi (`forClip` dà quella di un file del progetto) e
+    // delle clip audio (`forPath`), senza rifare il resto.
     void setWaveforms(const std::function<std::shared_ptr<const core::Waveform>(int clipId)>& forClip,
-                      const std::shared_ptr<const core::Waveform>& replacement);
-    // Tratto selezionato sulla corsia audio (tempi della sequenza); to <= from = nessuno.
-    void setAudioSelection(double from, double to);
+                      const std::function<std::shared_ptr<const core::Waveform>(const QString& path)>& forPath);
+    // Tratto selezionato su una corsia audio (tempi della sequenza; `trackId` 0 = A1); to <= from = nessuno.
+    void setAudioSelection(double from, double to, int trackId = 0);
     bool hasAudioSelection() const { return selectionTo_ > selectionFrom_; }
     double audioSelectionFrom() const { return selectionFrom_; }
     double audioSelectionTo() const { return selectionTo_; }
+    int audioSelectionTrack() const { return selectionTrack_; }
+    // Clip audio selezionata (0 = nessuna): selezionarla toglie la selezione del pezzo video e viceversa.
+    void setSelectedAudioClip(int clipId);
+    int selectedAudioClip() const { return selectedAudioClip_; }
+    // Traccia audio scelta (clic sul suo nome o su una sua clip): quella che toglie il pulsante "−". 0 = A1.
+    void setSelectedTrack(int trackId);
+    int selectedTrack() const { return selectedTrack_; }
 
     std::function<void(double)> onSeek;               // clic: tempo della sequenza
     std::function<void(int)> onSelect;                // pezzo selezionato
@@ -95,9 +125,25 @@ public:
     std::function<void(int fragmentId, bool atStart, double value, bool ripple)> onTrim;
     std::function<void(int)> onActivate;              // doppio clic
     std::function<void(double from, double to)> onAudioSelection;  // tratto selezionato (vuoto = tolto)
-    std::function<void(double offset)> onReplacementMoved;         // traccia sostitutiva spostata
     // File trascinati da Esplora file e lasciati qui: vanno nella sequenza a partire dalla posizione `index`.
     std::function<void(const QStringList& paths, int index)> onFilesDropped;
+
+    // Tracce audio: pulsanti "+" e "−" in alto a sinistra, muto, solo e livello di una corsia (onLevel si chiama
+    // lasciando il cursore del livello, o con un doppio clic che lo riporta a 0 dB).
+    std::function<void()> onAddTrack;
+    std::function<void(int trackId)> onRemoveTrack;
+    std::function<void(int trackId, bool muted)> onTrackMuted;
+    std::function<void(int trackId, bool solo)> onTrackSolo;
+    std::function<void(int trackId, double db)> onTrackLevel;
+    // Clip audio: selezione, spostamento (dove può andare sulla traccia `trackId` se la si vuole a `desired`, e dove è
+    // stata lasciata), bordi (come trimLimit/onTrim dei pezzi video, nei tempi del file della clip).
+    std::function<void(int clipId)> onAudioClipSelected;
+    std::function<double(int clipId, int trackId, double desired)> audioFreePosition;
+    std::function<void(int clipId, int trackId, double position)> onAudioClipMoveTo;
+    std::function<double(int clipId, bool atStart, double desired, bool ripple)> audioTrimLimit;
+    std::function<void(int clipId, bool atStart, double value, bool ripple)> onAudioTrim;
+    // File trascinati su una traccia aggiunta: vanno su quella traccia a partire da `seconds` della sequenza.
+    std::function<void(const QStringList& paths, int trackId, double seconds)> onAudioFilesDropped;
     // Miniatura del file `clipId` al tempo `sourceTime` (nei tempi del file); un'immagine vuota se non è ancora
     // pronta (chi la fornisce la prepara in background e poi chiede di ridisegnare).
     std::function<QImage(int clipId, double sourceTime)> thumbnailFor;
@@ -110,6 +156,9 @@ public:
     // Solo per le prove: dove sta un tempo della sequenza e il centro della corsia video, in coordinate del widget.
     double xForSequenceTime(double seconds) const { return xForTime(seconds); }
     double videoLaneCenter() const { return videoLane().center().y(); }
+    double audioLaneCenter(int laneIndex) const { return audioLane(laneIndex).center().y(); }  // 0 = A1
+    QToolButton* addTrackButton() const { return addTrack_; }
+    QToolButton* removeTrackButton() const { return removeTrack_; }
     double xForBlockEdge(int index, bool atStart) const;  // dove sta il bordo del blocco `index`
 
 protected:
@@ -137,9 +186,15 @@ private:
     QRect cursorRect(double seconds) const;
     double videoHeight() const;
     QRectF videoLane() const;
-    QRectF audioLane() const;
+    QRectF audioLane(int index = 0) const;  // corsia audio `index` (0 = A1)
+    int laneAt(double y) const;             // corsia audio sotto y (-1 = nessuna)
+    QRectF headerRect(const QRectF& lane) const;  // il riquadro a sinistra della corsia, con nome e pulsanti
+    // Pulsanti di una corsia audio nel suo riquadro a sinistra: muto, solo, livello.
+    QRectF muteBox(int index) const;
+    QRectF soloBox(int index) const;
+    QRectF levelBar(int index) const;
+    double levelForX(int index, double x) const;  // dB del cursore del livello quando il mouse è in x
     std::vector<QRectF> blockRects(const QRectF& lane) const;  // il riquadro di ogni blocco nella corsia
-    QRectF replacementHandle() const;  // maniglia della traccia sostitutiva (vuoto se non c'è)
     double total() const { return total_; }
     // La parte visibile di `r` (con un po' di margine): con lo zoom un blocco può essere largo milioni di pixel.
     QRectF visiblePart(const QRectF& r) const;
@@ -151,6 +206,22 @@ private:
     // all'inizio, poi spostato dove c'è posto (freeStart).
     double dragTarget(double x) const;
     void paintAudio(QPainter& p);
+    void paintVideo(QPainter& p);
+    void paintA1(QPainter& p, const QRectF& lane);
+    void paintTrack(QPainter& p, int index, const QRectF& lane);
+    void paintHeaders(QPainter& p);
+    // Clip audio sotto il punto: indice della corsia e della clip (false se nessuna).
+    bool audioClipAt(const QPointF& pos, int& lane, int& clip) const;
+    // Bordo di una clip audio sotto il punto (entro pochi pixel): come edgeAt, per le tracce aggiunte.
+    bool audioEdgeAt(const QPointF& pos, int& lane, int& clip, bool& atStart) const;
+    const AudioBlock* findAudioClip(int clipId, int* lane = nullptr) const;
+    // Inizio della clip audio trascinata quando il mouse è in x, sulla corsia `lane` (agganciata ai bordi e al cursore).
+    double audioDragTarget(double x, int lane) const;
+    double audioTrimTarget(double x, bool ripple) const;
+    // Agganci magnetici: inizio della sequenza, cursore, bordi dei pezzi video e delle clip audio (tranne `ignoredClip`).
+    std::vector<double> snapMarks(int ignoredClip) const;
+    void syncTrackButtons();
+    void updateDuration();  // durata mostrata: fino alla fine dei pezzi o delle clip audio, più un po' di posto
     // Bordo di un blocco sotto il punto (corsia video, entro pochi pixel): indice del blocco, -1 se nessuno; atStart
     // dice se è l'inizio o la fine.
     int edgeAt(const QPointF& pos, bool& atStart) const;
@@ -163,12 +234,13 @@ private:
     double total_ = 0.0;  // durata della sequenza: somma dei blocchi, calcolata in setBlocks
     std::vector<double> starts_;  // inizio di ogni blocco (dopo il suo spazio vuoto), calcolato in setBlocks
     std::vector<core::TimeRange> muted_;
-    std::optional<Replacement> replacement_;
+    std::vector<AudioLane> lanes_{AudioLane{0, QStringLiteral("A1")}};
     double playhead_ = 0.0;
     int selected_ = 0;
     int selectedGap_ = 0;
     int dragIndex_ = -1;      // blocco che si sta trascinando
     double pressX_ = 0.0;
+    double pressY_ = 0.0;
     bool dragging_ = false;
     double dragGrab_ = 0.0;   // distanza (in secondi) fra l'inizio del blocco e il punto in cui lo si è preso
     double dragStart_ = 0.0;  // dove andrà il blocco trascinato se lo si lascia adesso
@@ -182,11 +254,30 @@ private:
 
     double selectionFrom_ = 0.0;
     double selectionTo_ = 0.0;
-    bool selecting_ = false;     // si sta trascinando una selezione sulla corsia audio
+    int selectionTrack_ = 0;
+    bool selecting_ = false;     // si sta trascinando una selezione su una corsia audio
     double selectionAnchor_ = 0.0;
     bool scrubbing_ = false;     // si sta trascinando il cursore sul righello
-    bool movingReplacement_ = false;
-    double replacementStart_ = 0.0;  // offset all'inizio del trascinamento
+
+    int selectedAudioClip_ = 0;
+    int selectedTrack_ = -1;      // -1 = nessuna scelta
+    int audioDragClip_ = 0;       // clip audio presa (spostamento)
+    bool audioDragging_ = false;
+    double audioDragGrab_ = 0.0;
+    double audioDragStart_ = 0.0;  // dove andrà
+    int audioDragLane_ = -1;       // su quale corsia
+    int audioTrimClip_ = 0;        // clip audio di cui si trascina un bordo
+    bool audioTrimAtStart_ = false;
+    bool audioTrimming_ = false;
+    bool audioTrimRipple_ = false;
+    double audioTrimValue_ = 0.0;
+    double audioTrimGrab_ = 0.0;
+    int levelLane_ = -1;           // corsia di cui si trascina il livello
+    double levelValue_ = 0.0;
+
+    QToolButton* addTrack_ = nullptr;
+    QToolButton* removeTrack_ = nullptr;
+    int fileDropLane_ = -1;    // file trascinati sopra una traccia aggiunta: quale (-1 = sopra il video o A1)
 
     double fileDropX_ = -1.0;  // file trascinati sopra la linea del tempo: dove (-1 = nessuno)
 

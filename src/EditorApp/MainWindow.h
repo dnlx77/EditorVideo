@@ -120,12 +120,27 @@ public:
     void selectClip(int id);
 
     // Audio della sequenza: comandi del menu Audio (usati anche dalle prove automatiche).
-    void setAudioSelection(double from, double to);  // tratto (tempi della sequenza) su cui agiscono M e Maiusc+M
+    // Tratto (tempi della sequenza) su cui agiscono M e Maiusc+M (su A1) o Canc (su una traccia aggiunta, trackId).
+    void setAudioSelection(double from, double to, int trackId = 0);
     void muteSelection();    // M: niente audio nel tratto selezionato
     void unmuteSelection();  // Maiusc+M: l'audio torna nel tratto selezionato
     // La traccia audio di tutta la sequenza diventa questo file. false, con un messaggio, se non si può usare.
     bool replaceAudio(const QString& path, bool showProblems = true);
     void restoreOriginalAudio();
+    // Tracce audio (menu Audio e pulsanti "+" e "−" della linea del tempo). addAudioTrack restituisce l'id della traccia.
+    int addAudioTrack();
+    bool removeAudioTrack(int trackId);
+    // File audio (anche video, di cui si usa l'audio) sulla traccia `trackId` dal punto `seconds` della sequenza, uno
+    // dopo l'altro dove c'è posto; i file entrano anche nell'elenco dei file. Restituisce quante clip ha messo.
+    int addAudioFiles(const QStringList& paths, int trackId, double seconds);
+    bool moveAudioClip(int clipId, int trackId, double position);
+    bool trimAudioClip(int clipId, bool atStart, double value, bool ripple);
+    void setTrackMuted(int trackId, bool muted);
+    void setTrackSolo(int trackId, bool solo);
+    void setTrackLevel(int trackId, double db);
+    // "Sostituisci audio qui": il file va su una traccia aggiunta nel tratto selezionato (lungo al massimo quanto il
+    // tratto) e A1 sotto di lui si silenzia. false, con un messaggio, se manca il tratto o il file non ha audio.
+    bool replaceAudioHere(const QString& path);
     // Forme d'onda ancora da calcolare (0 = tutte pronte).
     int pendingWaveforms() const;
 
@@ -203,6 +218,12 @@ private:
     QDockWidget* dockedPanelAt(const QPoint& pos) const;
     void showInfo(const core::MediaInfo& info);
     void replaceAudioDialog();
+    void replaceAudioHereDialog();
+    void addAudioFilesDialog();  // al cursore, sulla traccia scelta (o su una nuova)
+    // Durata dell'audio di un file; std::nullopt (con il motivo in `problem`) se non ha audio leggibile.
+    std::optional<double> audioDurationOf(const std::string& path, QString* problem = nullptr);
+    void requestAudioWaveforms();  // forme d'onda di tutte le clip audio
+    int colorIndexFor(const std::string& path) const;  // colore di una clip audio: quello del file, se è nel progetto
     void openProjectDialog();
     bool saveProjectAsDialog();
     // Modifiche non salvate: chiede se salvarle. false = l'utente ha annullato.
@@ -331,6 +352,7 @@ private:
     QAction* exportAction_ = nullptr;
     QAction* removeClipAction_ = nullptr;
     QAction* originalAudioAction_ = nullptr;
+    QAction* removeTrackAction_ = nullptr;
     QMenu* recentMenu_ = nullptr;
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;
