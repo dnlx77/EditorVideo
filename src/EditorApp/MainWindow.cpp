@@ -2,6 +2,7 @@
 
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
+#include "EditorApp/ProxyManager.h"
 #include "EditorApp/UiText.h"
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/TimelineWidget.h"
@@ -11,6 +12,7 @@
 #include "EditorCore/Encoder.h"
 #include "EditorCore/LibraryInfo.h"
 #include "EditorCore/MediaProbe.h"
+#include "EditorCore/Proxy.h"
 #include "EditorCore/SegmentExport.h"
 #include "EditorApp/ThumbnailCache.h"
 #include "EditorApp/WaveformStore.h"
@@ -22,6 +24,7 @@
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QFileInfo>
 #include <QtCore/QSettings>
+#include <QtCore/QStandardPaths>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtCore/QMimeData>
@@ -164,6 +167,17 @@ QSettings settings()
     return QSettings(QSettings::NativeFormat, QSettings::UserScope, QStringLiteral("EditorVideo"), QStringLiteral("EditorVideo"));
 }
 
+// Cartella di lavoro: lì si aprono il salvataggio dei progetti e dell'esportazione e vanno i proxy dei progetti mai
+// salvati. Di solito "Documenti\Editor video project"; si cambia da File > Cartella di lavoro. Si crea se manca.
+QString workFolder()
+{
+    QString folder = settings().value(QStringLiteral("cartellaDiLavoro")).toString();
+    if (folder.isEmpty())
+        folder = QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).filePath(QStringLiteral("Editor video project"));
+    QDir().mkpath(folder);
+    return QDir::toNativeSeparators(folder);
+}
+
 // Il doppio clic sul titolo di una finestra staccata è di Windows (la barra del titolo è sua) e a Qt non arriva come
 // evento che si possa intercettare: lo si prende fra i messaggi di Windows, prima che Windows lo gestisca da sé.
 // EDITORVIDEO_DEBUG_DOCK=1: scrive su stderr cosa succede staccando e riagganciando la linea del tempo.
@@ -217,6 +231,7 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , thumbnails_(std::make_unique<ThumbnailCache>(this, [this] { timeline_->thumbnailsChanged(); }))
     , waveforms_(std::make_unique<WaveformStore>(this, [this] { refreshWaveforms(); }))
+    , proxies_(std::make_unique<ProxyManager>(this))
 {
     setWindowTitle(QStringLiteral("EditorVideo"));
     resize(1500, 900);
@@ -307,6 +322,31 @@ MainWindow::MainWindow(QWidget* parent)
     program_->onCacheRangeChanged = [this](double from, double to) { timeline_->setCacheRange(from, to); };
     program_->onPlaybackStarted = [this] { timeline_->resumeFollowing(); };
     program_->onVideoDoubleClicked = [this] { toggleFullScreen(programDock_); };
+
+    // Proxy: le due anteprime leggono il video dal proxy quando è pronto; la qualità si sceglie dal menu di tutte e due.
+    const auto videoSource = [this](const QString& path) { return proxies_->videoSource(path); };
+    player_->videoSourceFor = videoSource;
+    program_->setVideoSource(videoSource);
+    player_->onPreviewQualityChosen = [this](int divisor) { setPreviewQuality(divisor); };
+    program_->onPreviewQualityChosen = [this](int divisor) { setPreviewQuality(divisor); };
+    proxies_->onReady = [this](const QString& original, const QString& how) {
+        statusBar()->showMessage(QStringLiteral("Proxy di %1 pronto (%2)").arg(QFileInfo(original).fileName(), how), 15000);
+        proxyChanged(original);
+    };
+    proxies_->onProgress = [this](const QString&) { refreshClipList(); };
+    proxies_->onFailed = [this](const QString& original, const QString& error) {
+        statusBar()->showMessage(QStringLiteral("Proxy di %1 non creato: %2").arg(QFileInfo(original).fileName(), error), 15000);
+        refreshClipList();
+    };
+    proxies_->setFolder(proxyFolder());
+    {
+        int divisor = settings().value(QStringLiteral("anteprima/qualita"), 1).toInt();
+        if (std::find(std::begin(core::kPreviewDivisors), std::end(core::kPreviewDivisors), divisor) == std::end(core::kPreviewDivisors))
+            divisor = 1;
+        proxies_->setDivisor(divisor);
+        player_->setPreviewQuality(divisor);
+        program_->setPreviewQuality(divisor);
+    }
 
     // --- In basso: la sequenza
     timeline_ = new SequenceTimeline;
@@ -507,6 +547,7 @@ MainWindow::~MainWindow()
         probeThread_->wait();
     }
     waveforms_.reset();  // aspetta il calcolo in corso
+    proxies_.reset();    // interrompe il proxy in lavoro
     thumbnails_.reset();
     // Lo stesso per un'esportazione: viene annullata e il file a metà cancellato.
     if (exportThread_ != nullptr) {
@@ -801,6 +842,7 @@ void MainWindow::sequenceChanged()
     refreshTimeline();
     program_->sequenceChanged();
     updateSourceBands();
+    updateProxies();
     refreshClipList();
     updateExportAction();
 }
@@ -1167,11 +1209,11 @@ void MainWindow::exportDialog()
     if (plan.empty() || exportThread_ != nullptr)
         return;
 
-    // Stesso contenitore del primo file: si propone "<nome>_montaggio.<estensione>" (o "_taglio") nella sua cartella.
+    // Stesso contenitore del primo file: si propone "<nome>_montaggio.<estensione>" (o "_taglio") nella cartella di lavoro.
     const QFileInfo source(qs(plan.front().path));
     const QString extension = source.suffix();
     const QString suffix = project_.sequence().empty() ? QStringLiteral("_taglio.") : QStringLiteral("_montaggio.");
-    const QString suggested = source.dir().filePath(source.completeBaseName() + suffix + extension);
+    const QString suggested = QDir(workFolder()).filePath(source.completeBaseName() + suffix + extension);
     if (!project_.sequence().empty() && !exportOptionsDialog())
         return;
     QString target = QFileDialog::getSaveFileName(
@@ -1618,6 +1660,11 @@ void MainWindow::createMenus()
             removeClip(currentClipId_, QStringLiteral("Togli il file"));
     });
     fileMenu->addSeparator();
+    fileMenu->addAction(QStringLiteral("Cartella di &lavoro..."), this, &MainWindow::chooseWorkFolder)
+        ->setStatusTip(QStringLiteral("Dove si aprono il salvataggio dei progetti e dell'esportazione"));
+    fileMenu->addAction(QStringLiteral("Elimina i pro&xy del progetto"), this, &MainWindow::deleteProxies)
+        ->setStatusTip(QStringLiteral("Cancella le copie leggere per l'anteprima (si ricreano se servono)"));
+    fileMenu->addSeparator();
     exportAction_ = fileMenu->addAction(QStringLiteral("&Esporta..."), this, &MainWindow::exportDialog);
     exportAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
     exportAction_->setStatusTip(QStringLiteral("Salva il montaggio in un nuovo file, ricodificando solo dove serve"));
@@ -1802,6 +1849,7 @@ void MainWindow::resetProject()
     history_.clear();
     updateUndoActions();
     player_->closeFile();
+    proxies_->setFolder(proxyFolder());
 }
 
 void MainWindow::openPath(const QString& path)
@@ -1831,6 +1879,7 @@ void MainWindow::addFiles(const QStringList& paths)
     refreshClipList();
     if (currentClipId_ == 0 && first != 0)
         selectClip(first);
+    updateProxies();
     startNextProbe();
     updateExportAction();
     if (!loading_) {
@@ -2004,6 +2053,13 @@ void MainWindow::refreshClipList()
         QString detail = clip.analyzed ? timeText(clip.duration) : QStringLiteral("analisi in corso...");
         if (count > 0)
             detail += QStringLiteral(", %1 pezzi nel montaggio").arg(count);
+        if (const int divisor = proxies_->divisor(); divisor > 1) {
+            const QString path = qs(clip.path);
+            if (const double progress = proxies_->progress(path); progress >= 0)
+                detail += QStringLiteral(", proxy 1/%1: %2%").arg(divisor).arg(static_cast<int>(progress * 100));
+            else if (proxies_->hasProxy(path))
+                detail += QStringLiteral(", proxy 1/%1").arg(divisor);
+        }
         const QString text = QStringLiteral("%1  —  %2").arg(fileNameOf(clip.path), detail);
         QListWidgetItem* item = sameFiles ? clipList_->item(static_cast<int>(row)) : new QListWidgetItem;
         if (item->text() != text)
@@ -2600,7 +2656,7 @@ bool MainWindow::saveProjectAsDialog()
     QString suggested = projectPath_;
     if (suggested.isEmpty() && !project_.empty()) {
         const QFileInfo first(qs(project_.clips().front().path));
-        suggested = first.dir().filePath(first.completeBaseName() + kProjectExtension);
+        suggested = QDir(workFolder()).filePath(first.completeBaseName() + kProjectExtension);
     }
     QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Salva progetto"), suggested, kProjectFilter);
     if (path.isEmpty())
@@ -2624,6 +2680,15 @@ bool MainWindow::saveProjectAs(const QString& path, bool remember)
     setModified(false);
     if (remember)
         rememberRecent(native);
+    // I proxy vanno accanto al progetto (quelli fatti prima di salvare erano nella cartella provvisoria).
+    QStringList originals;
+    for (const core::Clip& clip : project_.clips())
+        originals << qs(clip.path);
+    proxies_->moveTo(proxyFolder(), originals);
+    player_->reloadVideo();
+    program_->reloadVideo();
+    proxies_->removeLeftovers();
+    updateProxies();
     statusBar()->showMessage(QStringLiteral("Progetto salvato in %1").arg(native), 8000);
     return true;
 }
@@ -2633,7 +2698,7 @@ void MainWindow::openProjectDialog()
     if (!maybeSave())
         return;
     const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Apri progetto"),
-                                                      projectPath_.isEmpty() ? QString() : QFileInfo(projectPath_).path(),
+                                                      projectPath_.isEmpty() ? workFolder() : QFileInfo(projectPath_).path(),
                                                       kProjectFilter);
     if (!path.isEmpty())
         openProject(path);
@@ -2720,6 +2785,7 @@ bool MainWindow::openProject(const QString& path, bool interactive)
         player_->seekTo(loaded.view.sourcePosition);
     }
     program_->seekTo(loaded.view.programPosition);
+    updateProxies();
     startNextProbe();
     loading_ = false;
     history_.clear();
@@ -2733,6 +2799,97 @@ bool MainWindow::openProject(const QString& path, bool interactive)
                                  .arg(project_.sequence().fragments().size()),
                              8000);
     return true;
+}
+
+// Proxy e cartella di lavoro
+
+QString MainWindow::proxyFolder() const
+{
+    if (projectPath_.isEmpty())
+        return QDir::toNativeSeparators(QDir(workFolder()).filePath(QStringLiteral("proxy")));
+    const QFileInfo project(projectPath_);
+    return QDir::toNativeSeparators(project.dir().filePath(project.completeBaseName() + QStringLiteral(".proxy")));
+}
+
+void MainWindow::updateProxies()
+{
+    proxies_->setFolder(proxyFolder());
+    QStringList originals;
+    if (!currentPath_.isEmpty())
+        originals << currentPath_;  // quello nella Sorgente per primo
+    for (const core::Clip& clip : project_.clips())
+        originals << qs(clip.path);
+    proxies_->request(originals);
+    refreshClipList();
+}
+
+int MainWindow::previewQuality() const
+{
+    return proxies_->divisor();
+}
+
+void MainWindow::setPreviewQuality(int divisor)
+{
+    settings().setValue(QStringLiteral("anteprima/qualita"), divisor);
+    proxies_->setDivisor(divisor);
+    player_->setPreviewQuality(divisor);
+    program_->setPreviewQuality(divisor);
+    // Con i proxy già pronti si passa subito; gli altri si creano in sottofondo (e si passa quando sono pronti).
+    player_->reloadVideo();
+    program_->reloadVideo();
+    updateProxies();
+    statusBar()->showMessage(divisor == 1 ? QStringLiteral("Anteprima dai file originali")
+                                          : QStringLiteral("Anteprima dai proxy a 1/%1 della risoluzione (l'esportazione usa "
+                                                           "sempre gli originali)")
+                                                .arg(divisor),
+                             8000);
+}
+
+void MainWindow::proxyChanged(const QString& original)
+{
+    if (currentPath_ == original)
+        player_->reloadVideo();
+    program_->reloadVideo();  // passa al proxy solo se il pezzo mostrato è di quel file
+    refreshClipList();
+}
+
+void MainWindow::deleteProxies()
+{
+    QStringList originals;
+    for (const core::Clip& clip : project_.clips())
+        originals << qs(clip.path);
+    if (originals.isEmpty())
+        return;
+    if (QMessageBox::question(this, QStringLiteral("Elimina i proxy"),
+                              QStringLiteral("Cancellare i proxy dei file del progetto da %1?\n\nL'anteprima torna ai file "
+                                             "originali; scegliendo di nuovo 1/2, 1/4 o 1/8 i proxy si ricreano.")
+                                  .arg(proxies_->folder()))
+        != QMessageBox::Yes)
+        return;
+    // Prima le anteprime tornano agli originali (un file aperto non si può cancellare), poi si cancella.
+    setPreviewQuality(1);
+    proxies_->removeAll(originals);
+    refreshClipList();
+    statusBar()->showMessage(QStringLiteral("Proxy eliminati: l'anteprima usa i file originali."), 8000);
+}
+
+void MainWindow::chooseWorkFolder()
+{
+    const QString folder = QFileDialog::getExistingDirectory(this, QStringLiteral("Cartella di lavoro"), workFolder());
+    if (folder.isEmpty())
+        return;
+    settings().setValue(QStringLiteral("cartellaDiLavoro"), QDir::toNativeSeparators(folder));
+    if (projectPath_.isEmpty()) {
+        QStringList originals;
+        for (const core::Clip& clip : project_.clips())
+            originals << qs(clip.path);
+        proxies_->moveTo(proxyFolder(), originals);
+        player_->reloadVideo();
+        program_->reloadVideo();
+        proxies_->removeLeftovers();
+        updateProxies();
+    }
+    statusBar()->showMessage(QStringLiteral("Cartella di lavoro: %1").arg(QDir::toNativeSeparators(folder)), 8000);
 }
 
 void MainWindow::rememberRecent(const QString& path)

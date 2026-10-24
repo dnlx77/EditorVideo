@@ -14,7 +14,8 @@ namespace editor::tests {
 // File di prova generati al volo con FFmpeg, così non serve committare video binari.
 struct SampleSpec
 {
-    bool video = true;  // 25 fps, senza B-frame
+    bool video = true;  // 25 fps
+    int bFrames = 0;    // B-frame consecutivi al massimo (0 = nessuno)
     bool audio = false; // PCM 16 bit, 48 kHz, stereo
     int frames = 30;    // durata = frames / 25 secondi
     int gopSize = 10;   // un fotogramma chiave ogni gopSize fotogrammi

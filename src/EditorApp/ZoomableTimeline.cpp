@@ -134,12 +134,13 @@ QRectF ZoomableTimeline::rulerRect() const
 
 QString ZoomableTimeline::timecode(double seconds) const
 {
-    // Fotogrammi interi: il tempo di una tacca è un multiplo del fotogramma o del secondo, a meno degli arrotondamenti.
+    // Secondi interi dal tempo, fotogrammi dal resto: così con 29,97 o 59,94 fps i secondi tondi restano ":00".
     const double fps = 1.0 / frameDuration_;
-    const auto totalFrames = static_cast<long long>(std::floor(std::max(0.0, seconds) * fps + 0.001));
-    const auto framesPerSecond = std::max<long long>(1, std::llround(fps));
-    const long long secondsPart = static_cast<long long>(std::floor(totalFrames / fps + 0.001));
-    const long long frame = std::clamp<long long>(totalFrames - std::llround(secondsPart * fps), 0, framesPerSecond - 1);
+    const double t = std::max(0.0, seconds) + 1e-6;
+    const auto secondsPart = static_cast<long long>(std::floor(t));
+    const auto framesPerSecond = std::max<long long>(1, static_cast<long long>(std::ceil(fps - 0.001)));
+    const long long frame = std::clamp<long long>(static_cast<long long>(std::floor((t - secondsPart) * fps + 0.001)), 0,
+                                                  framesPerSecond - 1);
     return QStringLiteral("%1:%2:%3:%4")
         .arg(secondsPart / 3600, 2, 10, QLatin1Char('0'))
         .arg(secondsPart / 60 % 60, 2, 10, QLatin1Char('0'))

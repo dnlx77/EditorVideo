@@ -39,6 +39,7 @@ namespace editor::app {
 
 class PlayerWidget;
 class ThumbnailCache;
+class ProxyManager;
 class WaveformStore;
 class ProgramMonitor;
 class SequenceTimeline;
@@ -103,6 +104,11 @@ public:
     QString currentFile() const { return currentPath_; }
     const core::Project& project() const { return project_; }
     int currentClipId() const { return currentClipId_; }
+    // Qualità dell'anteprima (menu dei player): 1 = file originali, 2, 4, 8 = proxy a quella frazione della risoluzione.
+    void setPreviewQuality(int divisor);
+    int previewQuality() const;
+    // Cartella dei proxy: accanto al progetto (<nome>.proxy), o <cartella di lavoro>\proxy se mai salvato.
+    QString proxyFolder() const;
 
     // Sequenza: comandi del menu Montaggio (usati anche dalle prove automatiche).
     void addToSequence();        // A: IN-OUT della Sorgente (o il file intero) dopo il pezzo selezionato o in fondo
@@ -353,6 +359,14 @@ private:
 
     // Forme d'onda dei file (per percorso), calcolate una alla volta in background e tenute da parte.
     std::unique_ptr<WaveformStore> waveforms_;
+
+    // Proxy per l'anteprima (vedi ProxyManager): la qualità scelta nel menu dei player e la cartella dei proxy.
+    std::unique_ptr<ProxyManager> proxies_;
+    void updateProxies();         // cartella giusta e proxy mancanti chiesti (prima quello del file nella Sorgente)
+    void proxyChanged(const QString& original);  // proxy pronto: le anteprime che mostrano quel file lo usano
+    void deleteProxies();         // File > Elimina i proxy
+    // Cartella di lavoro: dove si aprono i salvataggi di progetti ed esportazioni (vedi workFolder in .cpp).
+    void chooseWorkFolder();
 
     QThread* exportThread_ = nullptr;
     core::ReencodeOptions reencodeOptions_;

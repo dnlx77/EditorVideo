@@ -49,6 +49,12 @@ public:
     int currentIndex() const { return index_; }  // pezzo mostrato (-1 = sequenza vuota o spazio vuoto)
     bool inGap() const { return gapIndex_ >= 0; }  // in uno spazio vuoto
 
+    // Proxy (vedi PlayerWidget::videoSourceFor e reloadVideo) e menu della qualità dell'anteprima.
+    void setVideoSource(std::function<QString(const QString& path)> source);
+    void reloadVideo();
+    void setPreviewQuality(int divisor);
+    std::function<void(int divisor)> onPreviewQualityChosen;
+
     std::function<void(double)> onPositionChanged;
     // Tratto già in memoria del pezzo mostrato, nei tempi della sequenza (from == to = niente), per la barretta celeste.
     std::function<void(double from, double to)> onCacheRangeChanged;

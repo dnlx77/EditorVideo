@@ -148,6 +148,10 @@ PlayerWidget::PlayerWidget(QWidget* parent)
     transport_->onLoopToggled = [this](bool loop) { setLoop(loop); };
     transport_->onVolumeChanged = [this](int percent) { setVolume(percent); };
     transport_->onMuteToggled = [this](bool muted) { setMuted(muted); };
+    transport_->onQualityChosen = [this](int divisor) {
+        if (onPreviewQualityChosen)
+            onPreviewQualityChosen(divisor);
+    };
 
     timeline_ = new TimelineWidget;
     timeline_->onScrub = [this](double seconds) { updatePositionLabel(seconds); };
@@ -232,8 +236,18 @@ void PlayerWidget::openFile(const QString& path)
 
     QString videoError;
     bool noVideoStream = false;  // un file solo audio: niente da segnalare
+    videoPath_ = path;
+    if (const QString source = videoSourceFor ? videoSourceFor(path) : path; source != path) {
+        try {
+            video_ = std::make_unique<core::VideoDecoder>(QDir::toNativeSeparators(source).toStdString());
+            videoPath_ = source;
+        } catch (const std::exception&) {
+            // Proxy non leggibile: si usa l'originale.
+        }
+    }
     try {
-        video_ = std::make_unique<core::VideoDecoder>(utf8Path);
+        if (!video_)
+            video_ = std::make_unique<core::VideoDecoder>(utf8Path);
     } catch (const core::NoStreamError& e) {
         videoError = QString::fromUtf8(e.what());
         noVideoStream = true;
@@ -280,6 +294,40 @@ void PlayerWidget::openFile(const QString& path)
 
     updateControls();
     updatePositionLabel(0.0);
+}
+
+void PlayerWidget::reloadVideo()
+{
+    if (path_.isEmpty() || !video_)
+        return;
+    const QString source = videoSourceFor ? videoSourceFor(path_) : path_;
+    if (source == videoPath_)
+        return;
+    std::unique_ptr<core::VideoDecoder> decoder;
+    try {
+        decoder = std::make_unique<core::VideoDecoder>(QDir::toNativeSeparators(source).toStdString());
+    } catch (const std::exception&) {
+        return;  // non leggibile: si resta su quello aperto
+    }
+    // Stesso punto: in riproduzione si riparte da dove si è, in pausa si rimostra lo stesso fotogramma.
+    const bool wasPlaying = playing_;
+    const double at = wasPlaying ? currentPosition() : displayedTime_;
+    if (wasPlaying)
+        stopWorkers();
+    video_ = std::move(decoder);
+    videoPath_ = source;
+    const QSize pixels = view_->pixelSize();
+    video_->setOutputSize(pixels.width(), pixels.height());
+    position_ = at;
+    if (wasPlaying)
+        startWorkers(at);
+    else
+        showFrameAt(at);
+}
+
+void PlayerWidget::setPreviewQuality(int divisor)
+{
+    transport_->setQuality(divisor);
 }
 
 void PlayerWidget::openAudio(std::unique_ptr<core::AudioDecoder> own)
@@ -342,6 +390,7 @@ void PlayerWidget::closeFile()
     audio_.reset();
     audioOut_.close();
     path_.clear();
+    videoPath_.clear();
     ownAudio_ = false;
     ownAudioDuration_ = 0.0;
     decoderText_.clear();
@@ -842,6 +891,8 @@ void PlayerWidget::showFrameAt(double seconds)
     }
     // Qui i thread sono fermi: si può leggere in sicurezza quale decoder è in uso.
     decoderText_ = QStringLiteral("Decodifica: %1").arg(QString::fromStdString(video_->decoderDescription()));
+    if (videoPath_ != path_)
+        decoderText_ += QStringLiteral(", dal proxy");
     updateControls();
 }
 

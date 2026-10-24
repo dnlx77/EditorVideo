@@ -13,6 +13,7 @@
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/Project.h"
 #include "EditorCore/ProjectFile.h"
+#include "EditorCore/Proxy.h"
 #include "EditorCore/SegmentExport.h"
 #include "EditorCore/Thumbnails.h"
 #include "EditorCore/TimeUtil.h"
@@ -1022,7 +1023,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
             player->togglePlayPause();
             playStart->start();
         });
-        QTimer::singleShot(kSmokePlayMilliseconds, &app, [&app, player, playStart, window = &window] {
+        QTimer::singleShot(kSmokePlayMilliseconds, &app, [&app, player, playStart, window = &window, file] {
             const double position = player->currentPosition();
             const double expected = playStart->isValid() ? playStart->elapsed() / 1000.0 : kSmokePlayMilliseconds / 1000.0;
             std::printf("Riproduzione: %s, posizione %.3f s dopo %.1f s (passati davvero %.3f s), %s\n",
@@ -1096,6 +1097,32 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                             reverseOk ? "ok" : "NO");
                 std::fflush(stdout);
                 ok = ok && fastOk && stopOk && reverseOk;
+            }
+
+            // Proxy: anteprima a 1/2, si aspetta il proxy del file (creato in sottofondo con l'encoder della scheda
+            // video o di Windows) e la Sorgente passa a leggerlo restando allo stesso punto; poi la qualità torna com'era
+            // e il proxy fatto per la prova si cancella.
+            if (player->statusText().contains(QStringLiteral("Decodifica")) && core::preferredVideoEncoder(core::VideoCodec::H264)) {
+                const int quality = window->previewQuality();
+                const double at = std::min(pausedAt, 0.5);
+                player->seekTo(at);
+                QElapsedTimer wait;
+                wait.start();
+                window->setPreviewQuality(2);
+                while (!player->statusText().contains(QStringLiteral("proxy")) && wait.elapsed() < 60000)
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                const bool usesProxy = player->statusText().contains(QStringLiteral("proxy"));
+                const double position = player->currentPosition();
+                const bool positionOk = std::abs(position - at) < 0.05;
+                std::printf("Proxy 1/2: %s in %.1f s, posizione %.3f s (era %.3f) %s\n",
+                            usesProxy ? "in uso" : "NON in uso", wait.elapsed() / 1000.0, position, at, positionOk ? "ok" : "NO");
+                std::fflush(stdout);
+                window->setPreviewQuality(quality);
+                if (quality != 2) {
+                    const std::string name = core::proxyFileName(QDir::toNativeSeparators(QFileInfo(file).absoluteFilePath()).toStdString(), 2);
+                    QFile::remove(QDir(window->proxyFolder()).filePath(QString::fromStdString(name)));
+                }
+                ok = ok && usesProxy && positionOk;
             }
 
             const auto finish = [&app, window](bool success) {
