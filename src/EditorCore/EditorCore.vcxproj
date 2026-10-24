@@ -36,6 +36,7 @@
   <ItemGroup>
     <ClInclude Include="AudioDecoder.h" />
     <ClInclude Include="AudioMixer.h" />
+    <ClInclude Include="LevelEnvelope.h" />
     <ClInclude Include="MixExport.h" />
     <ClInclude Include="MixSpec.h" />
     <ClInclude Include="AudioTracks.h" />
@@ -68,6 +69,7 @@
   <ItemGroup>
     <ClCompile Include="AudioDecoder.cpp" />
     <ClCompile Include="AudioMixer.cpp" />
+    <ClCompile Include="LevelEnvelope.cpp" />
     <ClCompile Include="MixExport.cpp" />
     <ClCompile Include="AudioTracks.cpp" />
     <ClCompile Include="Compatibility.cpp" />
