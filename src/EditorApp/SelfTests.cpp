@@ -1689,11 +1689,10 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 // Accorciata di 0,2 s alla fine, divisa a metà con S, la seconda parte tolta con Canc.
                 const bool trimmed = moved != nullptr && window->trimAudioClip(clipId, false, moved->end - 0.2, false)
                                   && std::abs(audio.find(clipId)->length() - (length - 0.2)) < 1e-6;
-                // Il cursore del montaggio non va oltre la fine dei pezzi video: si divide dentro quella parte della clip.
-                const double middle = audio.find(clipId) != nullptr
-                                        ? audio.find(clipId)->position
-                                              + std::min(audio.find(clipId)->length(), sequence.totalLength() - audio.find(clipId)->position) / 2
-                                        : 0.0;
+                // Il cursore del montaggio non va oltre la fine dei pezzi video: la clip torna all'inizio e si divide dentro
+                // quella parte.
+                const bool back = window->moveAudioClip(clipId, a3, 0.0);
+                const double middle = std::min(length - 0.2, sequence.totalLength()) / 2;
                 line->setSelectedAudioClip(clipId);
                 // Il monitor arriva al punto quando il fotogramma è decodificato: si aspetta che ci sia.
                 window->programMonitor()->seekTo(middle);
@@ -1703,7 +1702,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
                 const double splitAt = window->programMonitor()->position();
                 window->splitAtPlayhead();
-                const bool split = audio.track(a3) != nullptr && audio.track(a3)->clips.size() == 2;
+                const bool split = back && audio.track(a3) != nullptr && audio.track(a3)->clips.size() == 2;
                 if (!split)
                     std::printf("  divisione: cursore a %.3f s (voluto %.3f s), clip audio scelta %d\n", splitAt, middle,
                                 line->selectedAudioClip());
