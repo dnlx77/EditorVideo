@@ -8,6 +8,7 @@
 #include <QtCore/QMetaObject>
 
 #include <algorithm>
+#include <cmath>
 #include <exception>
 
 namespace editor::app {
@@ -60,12 +61,35 @@ QString ProxyManager::proxyPath(const QString& original, int divisor) const
     return name.empty() ? QString() : QDir::toNativeSeparators(QDir(folder_).filePath(QString::fromStdString(name)));
 }
 
-QString ProxyManager::videoSource(const QString& original) const
+QString ProxyManager::readyProxy(const QString& original, int divisor) const
+{
+    const QString proxy = proxyPath(original, divisor);
+    return !proxy.isEmpty() && QFileInfo::exists(proxy) ? proxy : QString();
+}
+
+int ProxyManager::sourceDivisor(const QString& original) const
 {
     if (divisor_ <= 1)
-        return original;
-    const QString proxy = proxyPath(original, divisor_);
-    return !proxy.isEmpty() && QFileInfo::exists(proxy) ? proxy : original;
+        return 1;
+    if (!readyProxy(original, divisor_).isEmpty())
+        return divisor_;
+    // Quello della qualità scelta non è ancora pronto: meglio un proxy di un'altra qualità che l'originale. Il più
+    // vicino alla qualità scelta, a pari distanza quello più definito.
+    const auto distance = [&](int d) { return std::abs(std::log2(static_cast<double>(d) / divisor_)); };
+    int best = 1;
+    for (const int divisor : core::kPreviewDivisors) {
+        if (divisor <= 1 || divisor == divisor_ || readyProxy(original, divisor).isEmpty())
+            continue;
+        if (best == 1 || distance(divisor) < distance(best) - 1e-9)
+            best = divisor;
+    }
+    return best;
+}
+
+QString ProxyManager::videoSource(const QString& original) const
+{
+    const int divisor = sourceDivisor(original);
+    return divisor > 1 ? readyProxy(original, divisor) : original;
 }
 
 double ProxyManager::progress(const QString& original) const
@@ -84,7 +108,7 @@ void ProxyManager::request(const QStringList& originals)
     // Quelli chiesti ora passano davanti, nel loro ordine.
     std::deque<QString> wanted;
     for (const QString& original : originals) {
-        if (original == working_ || hasProxy(original) || failed_.contains(failureKey(divisor_, original))
+        if (original == working_ || !readyProxy(original, divisor_).isEmpty() || failed_.contains(failureKey(divisor_, original))
             || std::find(wanted.begin(), wanted.end(), original) != wanted.end() || proxyPath(original, divisor_).isEmpty())
             continue;
         wanted.push_back(original);

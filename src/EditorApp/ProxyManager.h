@@ -30,9 +30,13 @@ public:
     void setDivisor(int divisor);
     int divisor() const { return divisor_; }
 
-    // Il file da cui leggere il video di `original`: il suo proxy se è pronto, altrimenti `original`.
+    // Il file da cui leggere il video di `original`: il suo proxy della qualità scelta se è pronto, altrimenti un suo
+    // proxy di un'altra qualità già pronto (es. 1/2 mentre si crea quello a 1/4), altrimenti `original`.
     QString videoSource(const QString& original) const;
-    bool hasProxy(const QString& original) const { return videoSource(original) != original; }
+    // La qualità del file che dà videoSource: 1 = l'originale, 2, 4, 8 = un proxy.
+    int sourceDivisor(const QString& original) const;
+    // true se il proxy della qualità scelta è pronto.
+    bool hasProxy(const QString& original) const { return divisor_ > 1 && !readyProxy(original, divisor_).isEmpty(); }
     // Crea i proxy mancanti di questi file, nell'ordine (il primo per primo: di solito quello che si sta guardando).
     void request(const QStringList& originals);
     // Avanzamento (0-1) del proxy di `original` se è in coda o in lavoro; -1 altrimenti.
@@ -51,6 +55,7 @@ public:
 
 private:
     QString proxyPath(const QString& original, int divisor) const;  // vuoto se l'originale non c'è
+    QString readyProxy(const QString& original, int divisor) const;  // il proxy se esiste, altrimenti vuoto
     void startNext();
     void cancelCurrent();
 

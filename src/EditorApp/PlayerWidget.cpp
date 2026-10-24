@@ -9,6 +9,7 @@
 #include "EditorCore/TimeStretch.h"
 #include "EditorCore/VideoDecoder.h"
 
+#include <QtCore/QRegularExpression>
 #include <QtCore/QDir>
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
@@ -891,8 +892,13 @@ void PlayerWidget::showFrameAt(double seconds)
     }
     // Qui i thread sono fermi: si può leggere in sicurezza quale decoder è in uso.
     decoderText_ = QStringLiteral("Decodifica: %1").arg(QString::fromStdString(video_->decoderDescription()));
-    if (videoPath_ != path_)
-        decoderText_ += QStringLiteral(", dal proxy");
+    if (videoPath_ != path_) {
+        // Il nome del proxy finisce con la qualità ("..._1-2.mp4"): si dice quale si sta usando.
+        static const QRegularExpression quality(QStringLiteral("_(1-\\d+)\\.mp4$"));
+        const QRegularExpressionMatch match = quality.match(videoPath_);
+        decoderText_ += match.hasMatch() ? QStringLiteral(", dal proxy %1").arg(match.captured(1).replace(QLatin1Char('-'), QLatin1Char('/')))
+                                         : QStringLiteral(", dal proxy");
+    }
     updateControls();
 }
 
