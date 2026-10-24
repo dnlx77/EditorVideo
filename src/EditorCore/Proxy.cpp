@@ -46,6 +46,45 @@ struct OutputDeleter
     }
 };
 
+// La GPU NVIDIA ha dato errore: si rifà il proxy da capo con il processore.
+struct GpuFailure
+{
+};
+
+// Formato in memoria normale (il primo che non è della scheda video): il decoder NVIDIA copia lui i fotogrammi, già
+// ridotti, dalla GPU.
+AVPixelFormat softwareFormat(AVCodecContext*, const AVPixelFormat* formats)
+{
+    for (const AVPixelFormat* p = formats; *p != AV_PIX_FMT_NONE; ++p) {
+        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(*p);
+        if (desc != nullptr && (desc->flags & AV_PIX_FMT_FLAG_HWACCEL) == 0)
+            return *p;
+    }
+    return AV_PIX_FMT_NONE;
+}
+
+// Decoder della scheda video NVIDIA (NVDEC, "<codec>_cuvid") che riduce i fotogrammi alle misure del proxy già sulla
+// GPU. Vuoto se non c'è (niente scheda NVIDIA, codec o profilo non gestito).
+CodecContextPtr openGpuDecoder(const AVCodec* codec, const AVStream* stream, int width, int height)
+{
+    const AVCodec* gpu = avcodec_find_decoder_by_name((std::string(codec->name) + "_cuvid").c_str());
+    if (gpu == nullptr)
+        return {};
+    CodecContextPtr ctx(avcodec_alloc_context3(gpu));
+    if (!ctx || avcodec_parameters_to_context(ctx.get(), stream->codecpar) < 0)
+        return {};
+    ctx->pkt_timebase = stream->time_base;
+    ctx->get_format = &softwareFormat;
+    AVDictionary* options = nullptr;
+    av_dict_set(&options, "resize", (std::to_string(width) + "x" + std::to_string(height)).c_str(), 0);
+    const int ret = avcodec_open2(ctx.get(), gpu, &options);
+    av_dict_free(&options);
+    return ret < 0 ? CodecContextPtr() : std::move(ctx);
+}
+
+ProxyInfo buildProxyWith(const std::string& originalUtf8Path, const std::string& proxyUtf8Path, int divisor,
+                         const std::function<void(double)>& progress, const std::atomic<bool>* cancel, bool gpu);
+
 }  // namespace
 
 std::string proxyFileName(const std::string& originalUtf8Path, int divisor)
@@ -72,27 +111,51 @@ std::pair<int, int> proxySize(double displayWidth, double displayHeight, int div
     return {even(displayWidth), even(displayHeight)};
 }
 
-void buildProxy(const std::string& originalUtf8Path, const std::string& proxyUtf8Path, int divisor,
-                const std::function<void(double)>& progress, const std::atomic<bool>* cancel)
+ProxyInfo buildProxy(const std::string& originalUtf8Path, const std::string& proxyUtf8Path, int divisor,
+                     const std::function<void(double)>& progress, const std::atomic<bool>* cancel, bool allowGpu)
+{
+    if (allowGpu) {
+        try {
+            return buildProxyWith(originalUtf8Path, proxyUtf8Path, divisor, progress, cancel, true);
+        } catch (const GpuFailure&) {
+            // Niente GPU NVIDIA, o ha dato errore a metà: tutto con il processore.
+        }
+    }
+    return buildProxyWith(originalUtf8Path, proxyUtf8Path, divisor, progress, cancel, false);
+}
+
+namespace {
+
+ProxyInfo buildProxyWith(const std::string& originalUtf8Path, const std::string& proxyUtf8Path, int divisor,
+                         const std::function<void(double)>& progress, const std::atomic<bool>* cancel, bool gpu)
 {
     namespace fs = std::filesystem;
     OpenedStream in = openMainStream(originalUtf8Path, AVMEDIA_TYPE_VIDEO);
     AVStream* stream = in.stream;
     const double duration = durationOf(in.fmt.get(), stream);
 
-    CodecContextPtr decoder(avcodec_alloc_context3(in.codec));
-    if (!decoder || avcodec_parameters_to_context(decoder.get(), stream->codecpar) < 0)
-        throw MediaError("Decoder video non disponibile per il proxy.");
-    decoder->pkt_timebase = stream->time_base;
-    decoder->thread_count = 0;  // tutti i core
-    if (const int ret = avcodec_open2(decoder.get(), in.codec, nullptr); ret < 0)
-        throw MediaError("Impossibile aprire il decoder video per il proxy (" + ffmpegError(ret) + ").");
-
     // Misure: quelle di visualizzazione (proporzioni dei pixel applicate), divise.
     const AVCodecParameters* par = stream->codecpar;
     const AVRational sar = av_guess_sample_aspect_ratio(in.fmt.get(), stream, nullptr);
     const double displayWidth = sar.num > 0 && sar.den > 0 ? par->width * av_q2d(sar) : par->width;
     const auto [width, height] = proxySize(displayWidth, par->height, divisor);
+
+    // Con la GPU NVIDIA decodifica e riduzione si fanno sulla scheda video; altrimenti con il processore (tutti i core)
+    // e la riduzione la fa l'encoder.
+    CodecContextPtr decoder;
+    if (gpu) {
+        decoder = openGpuDecoder(in.codec, stream, width, height);
+        if (!decoder)
+            throw GpuFailure{};
+    } else {
+        decoder.reset(avcodec_alloc_context3(in.codec));
+        if (!decoder || avcodec_parameters_to_context(decoder.get(), stream->codecpar) < 0)
+            throw MediaError("Decoder video non disponibile per il proxy.");
+        decoder->pkt_timebase = stream->time_base;
+        decoder->thread_count = 0;  // tutti i core
+        if (const int ret = avcodec_open2(decoder.get(), in.codec, nullptr); ret < 0)
+            throw MediaError("Impossibile aprire il decoder video per il proxy (" + ffmpegError(ret) + ").");
+    }
     AVRational rate = av_guess_frame_rate(in.fmt.get(), stream, nullptr);
     if (rate.num <= 0 || rate.den <= 0)
         rate = {25, 1};
@@ -172,6 +235,8 @@ void buildProxy(const std::string& originalUtf8Path, const std::string& proxyUtf
             throw MediaError("Memoria insufficiente per il proxy.");
         int count = 0;
         const auto encodeFrame = [&] {
+            if (gpu)
+                frame->sample_aspect_ratio = {1, 1};  // già ridotto alle misure di visualizzazione
             std::int64_t t = frameTimestamp(frame.get());
             if (t == AV_NOPTS_VALUE)
                 t = lastTime == AV_NOPTS_VALUE ? 0 : lastTime + frameTicks;
@@ -190,8 +255,11 @@ void buildProxy(const std::string& originalUtf8Path, const std::string& proxyUtf
                 const int ret = avcodec_receive_frame(decoder.get(), frame.get());
                 if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
                     return;
-                if (ret < 0)
+                if (ret < 0) {
+                    if (gpu)
+                        throw GpuFailure{};
                     continue;  // fotogramma danneggiato: si salta
+                }
                 encodeFrame();
                 av_frame_unref(frame.get());
             }
@@ -200,7 +268,9 @@ void buildProxy(const std::string& originalUtf8Path, const std::string& proxyUtf
             if (isCancelled(cancel))
                 throw MediaError("Creazione del proxy interrotta.");
             if (packet->stream_index == in.index) {
-                avcodec_send_packet(decoder.get(), packet.get());  // un pacchetto danneggiato si salta
+                const int sent = avcodec_send_packet(decoder.get(), packet.get());  // un pacchetto danneggiato si salta
+                if (sent < 0 && sent != AVERROR(EAGAIN) && gpu)
+                    throw GpuFailure{};
                 receive();
             }
             av_packet_unref(packet.get());
@@ -231,6 +301,9 @@ void buildProxy(const std::string& originalUtf8Path, const std::string& proxyUtf
     }
     if (progress)
         progress(1.0);
+    return {.gpuResize = gpu, .encoder = describe(encoder.info())};
 }
+
+}  // namespace
 
 }  // namespace editor::core

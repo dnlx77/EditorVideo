@@ -13,6 +13,7 @@ extern "C" {
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <cstdio>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -207,6 +208,26 @@ TEST_F(ProxyTest, CancelLeavesNoFiles)
     EXPECT_THROW(buildProxy(path("lontani.mkv"), proxy, 4, {}, &cancel), MediaError);
     EXPECT_FALSE(fs::exists(pathFromUtf8(proxy)));
     EXPECT_FALSE(fs::exists(pathFromUtf8(proxy + ".part")));
+}
+
+// Misura (non parte da sola: --gtest_also_run_disabled_tests --gtest_filter=*MisuraProxy4K*): proxy 1/2 di un video
+// 4K H.264 di 10 s, con la GPU (se c'è una scheda NVIDIA) e con il solo processore.
+TEST_F(ProxyTest, DISABLED_MisuraProxy4K)
+{
+    // Il 4K H.264 si fa dall'MPEG-2 generato, con l'encoder del PC (un "proxy" a piena risoluzione).
+    writeSampleFile(dir_ / "4k.mkv", {.video = true, .audio = false, .frames = 250, .gopSize = 100, .mpeg2 = true,
+                                      .width = 3840, .height = 2160});
+    const std::string original = utf8FromPath(dir_ / "4k_h264.mp4");
+    buildProxy(path("4k.mkv"), original, 1);
+    for (const bool gpu : {true, false}) {
+        const auto start = std::chrono::steady_clock::now();
+        const ProxyInfo info = buildProxy(original, utf8FromPath(dir_ / (gpu ? "gpu.mp4" : "cpu.mp4")), 2, {}, nullptr, gpu);
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        std::printf("Proxy 1/2 di 10 s di 4K: %.1f s, %s, codifica %s\n", seconds,
+                    info.gpuResize ? "decodifica e riduzione con la GPU NVIDIA" : "decodifica e riduzione con il processore",
+                    info.encoder.c_str());
+        EXPECT_EQ(frameTimes(utf8FromPath(dir_ / (gpu ? "gpu.mp4" : "cpu.mp4"))).size(), 250u);
+    }
 }
 
 }  // namespace

@@ -329,7 +329,10 @@ MainWindow::MainWindow(QWidget* parent)
     program_->setVideoSource(videoSource);
     player_->onPreviewQualityChosen = [this](int divisor) { setPreviewQuality(divisor); };
     program_->onPreviewQualityChosen = [this](int divisor) { setPreviewQuality(divisor); };
-    proxies_->onReady = [this](const QString& original) { proxyChanged(original); };
+    proxies_->onReady = [this](const QString& original, const QString& how) {
+        statusBar()->showMessage(QStringLiteral("Proxy di %1 pronto (%2)").arg(QFileInfo(original).fileName(), how), 15000);
+        proxyChanged(original);
+    };
     proxies_->onProgress = [this](const QString&) { refreshClipList(); };
     proxies_->onFailed = [this](const QString& original, const QString& error) {
         statusBar()->showMessage(QStringLiteral("Proxy di %1 non creato: %2").arg(QFileInfo(original).fileName(), error), 15000);

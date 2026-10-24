@@ -108,13 +108,14 @@ void ProxyManager::startNext()
     auto progress = std::make_shared<std::atomic<double>>(0.0);
     auto cancel = std::make_shared<std::atomic<bool>>(false);
     auto error = std::make_shared<QString>();
+    auto how = std::make_shared<QString>();
     workingProgress_ = progress;
     cancel_ = cancel;
     QObject* owner = owner_;
-    thread_ = QThread::create([this, owner, original = working_, target, divisor, progress, cancel, error] {
+    thread_ = QThread::create([this, owner, original = working_, target, divisor, progress, cancel, error, how] {
         int lastPercent = -1;
         try {
-            core::buildProxy(
+            const core::ProxyInfo info = core::buildProxy(
                 QDir::toNativeSeparators(original).toStdString(), target.toStdString(), divisor,
                 [&](double p) {
                     progress->store(p);
@@ -128,12 +129,16 @@ void ProxyManager::startNext()
                     }, Qt::QueuedConnection);
                 },
                 cancel.get());
+            *how = QStringLiteral("%1, codifica %2")
+                       .arg(info.gpuResize ? QStringLiteral("decodifica e riduzione con la GPU NVIDIA")
+                                           : QStringLiteral("decodifica e riduzione con il processore"),
+                            QString::fromStdString(info.encoder));
         } catch (const std::exception& e) {
             *error = QString::fromUtf8(e.what());
         }
     });
     thread_->setParent(owner_);
-    QObject::connect(thread_, &QThread::finished, owner_, [this, cancel, error, divisor] {
+    QObject::connect(thread_, &QThread::finished, owner_, [this, cancel, error, how, divisor] {
         thread_->deleteLater();
         thread_ = nullptr;
         const QString original = working_;
@@ -142,7 +147,7 @@ void ProxyManager::startNext()
         if (!cancel->load()) {
             if (error->isEmpty()) {
                 if (onReady)
-                    onReady(original);
+                    onReady(original, *how);
             } else {
                 failed_.insert(failureKey(divisor, original));
                 if (onFailed)

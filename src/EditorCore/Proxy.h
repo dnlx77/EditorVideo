@@ -29,11 +29,21 @@ std::string proxyFileName(const std::string& originalUtf8Path, int divisor);
 // Dimensioni del proxy (pari) per un video di quelle dimensioni di visualizzazione.
 std::pair<int, int> proxySize(double displayWidth, double displayHeight, int divisor);
 
+// Come è stato creato un proxy.
+struct ProxyInfo
+{
+    bool gpuResize = false;  // decodificato e ridotto dalla scheda video NVIDIA (NVDEC); false = con il processore
+    std::string encoder;     // es. "H.264 - NVIDIA NVENC (h264_nvenc)"
+};
+
 // Crea il proxy di `originalUtf8Path` in `proxyUtf8Path` (MP4, H.264 con l'encoder della scheda video se c'è). Scrive
 // prima "<proxy>.part" e lo rinomina solo alla fine, così un proxy a metà non viene mai usato. `progress` riceve
 // l'avanzamento (0-1); `cancel` (se c'è) interrompe. Lancia MediaError (in italiano) se non riesce o se è interrotto.
-void buildProxy(const std::string& originalUtf8Path, const std::string& proxyUtf8Path, int divisor,
-                const std::function<void(double)>& progress = {}, const std::atomic<bool>* cancel = nullptr);
+// Con una scheda NVIDIA decodifica e riduzione si fanno sulla GPU (se la GPU dà errore si ricomincia con il
+// processore; `allowGpu` = false lo usa sempre, per le prove); la codifica usa l'encoder della scheda video se c'è.
+ProxyInfo buildProxy(const std::string& originalUtf8Path, const std::string& proxyUtf8Path, int divisor,
+                     const std::function<void(double)>& progress = {}, const std::atomic<bool>* cancel = nullptr,
+                     bool allowGpu = true);
 
 // Chiave dei dati del file proxy con l'inizio (start_time, in secondi) dell'originale: con VideoDecoder il proxy
 // ha gli stessi tempi dell'originale anche se l'originale inizia con l'audio prima del video.

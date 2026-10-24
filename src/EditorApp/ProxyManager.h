@@ -45,7 +45,7 @@ public:
     // Elimina i proxy (di tutte le qualità) di questi file dalla cartella; ferma quello in lavoro.
     void removeAll(const QStringList& originals);
 
-    std::function<void(const QString& original)> onReady;
+    std::function<void(const QString& original, const QString& how)> onReady;  // how: come è stato creato
     std::function<void(const QString& original)> onProgress;  // l'avanzamento è cambiato di almeno un punto
     std::function<void(const QString& original, const QString& error)> onFailed;
 
