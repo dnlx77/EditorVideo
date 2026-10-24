@@ -278,4 +278,63 @@ TEST(AudioTracks, UndoAndRedoBringBackTracksAndClips)
     EXPECT_NE(project.audioTracks().addTrack(), a2);
 }
 
+TEST(AudioTracks, EnvelopeIsSortedClampedAndInterpolatedInDecibels)
+{
+    AudioTracks tracks;
+    const int a2 = tracks.addTrack();
+    EXPECT_TRUE(tracks.setEnvelope(a2, {{4.0, 0.0}, {-1.0, 40.0}, {2.0, -90.0}, {2.0000000001, -20.0}}));
+    const auto& line = tracks.envelope(a2);
+    ASSERT_EQ(line.size(), 3u);
+    EXPECT_DOUBLE_EQ(line[0].time, 0.0);  // il tempo negativo si porta a 0
+    EXPECT_DOUBLE_EQ(line[0].db, AudioTracks::kMaxLevelDb);
+    EXPECT_NEAR(line[1].time, 2.0, 1e-6);  // due punti nello stesso istante: l'ultimo vince
+    EXPECT_DOUBLE_EQ(line[1].db, -20.0);
+    EXPECT_DOUBLE_EQ(line[2].time, 4.0);
+
+    EXPECT_FALSE(tracks.setEnvelope(a2, line));  // niente di nuovo
+    EXPECT_FALSE(tracks.setEnvelope(99, line));  // la traccia non c'è
+
+    EXPECT_DOUBLE_EQ(AudioTracks::envelopeDbAt(line, -5.0), AudioTracks::kMaxLevelDb);  // prima del primo punto
+    EXPECT_NEAR(AudioTracks::envelopeDbAt(line, 1.0), (AudioTracks::kMaxLevelDb - 20.0) / 2.0, 1e-6);
+    EXPECT_NEAR(AudioTracks::envelopeDbAt(line, 3.0), -10.0, 1e-6);
+    EXPECT_DOUBLE_EQ(AudioTracks::envelopeDbAt(line, 100.0), 0.0);  // dopo l'ultimo
+    EXPECT_DOUBLE_EQ(AudioTracks::envelopeDbAt({}, 1.0), 0.0);
+    EXPECT_DOUBLE_EQ(AudioTracks::envelopeGain(AudioTracks::kMinLevelDb), 0.0);
+    EXPECT_NEAR(AudioTracks::envelopeGain(-6.0), 0.5012, 1e-4);
+
+    // La linea fa parte dell'istantanea di Annulla / Ripeti e della traccia A1.
+    EXPECT_TRUE(tracks.setEnvelope(AudioTracks::kOriginalTrack, {{1.0, -12.0}}));
+    EXPECT_FALSE(tracks.isDefault());
+    AudioTracks copy;
+    copy.restoreEdits(tracks);
+    EXPECT_TRUE(copy == tracks);
+}
+
+TEST(AudioTracks, NeedsMixOnlyWhenTheOriginalAudioCannotJustBeCopied)
+{
+    AudioTracks tracks;
+    EXPECT_FALSE(tracks.needsMix());
+    const int a2 = tracks.addTrack();
+    EXPECT_FALSE(tracks.needsMix());  // traccia vuota
+    tracks.setLevel(a2, -6.0);
+    EXPECT_FALSE(tracks.needsMix());  // il livello di una traccia senza clip non cambia nulla
+    AudioClip clip;
+    clip.path = "voce.wav";
+    clip.end = 2.0;
+    const int id = tracks.add(a2, clip);
+    ASSERT_NE(id, 0);
+    EXPECT_TRUE(tracks.needsMix());
+    tracks.remove(id);
+    EXPECT_FALSE(tracks.needsMix());
+    tracks.setLevel(AudioTracks::kOriginalTrack, -3.0);
+    EXPECT_TRUE(tracks.needsMix());
+    tracks.setLevel(AudioTracks::kOriginalTrack, 0.0);
+    EXPECT_FALSE(tracks.needsMix());
+    tracks.setEnvelope(AudioTracks::kOriginalTrack, {{0.0, -6.0}});
+    EXPECT_TRUE(tracks.needsMix());
+    tracks.setEnvelope(AudioTracks::kOriginalTrack, {});
+    tracks.setSolo(a2, true);  // A1 non si sente più
+    EXPECT_TRUE(tracks.needsMix());
+}
+
 }  // namespace

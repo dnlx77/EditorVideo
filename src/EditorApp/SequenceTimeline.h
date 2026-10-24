@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EditorApp/ZoomableTimeline.h"
+#include "EditorCore/AudioTracks.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <QtCore/QStringList>
@@ -76,6 +77,7 @@ public:
         bool solo = false;
         bool audible = true;  // si sente nel mix (muto e solo di tutte le tracce compresi)
         std::vector<AudioBlock> clips;
+        std::vector<core::LevelPoint> envelope;  // la linea del livello
     };
 
     explicit SequenceTimeline(QWidget* parent = nullptr);
@@ -135,6 +137,10 @@ public:
     std::function<void(int trackId, bool muted)> onTrackMuted;
     std::function<void(int trackId, bool solo)> onTrackSolo;
     std::function<void(int trackId, double db)> onTrackLevel;
+    // Linea del livello (al centro della corsia): il clic sulla linea aggiunge un punto, trascinandolo si cambiano
+    // tempo e livello (vicino a 0 dB si aggancia al centro), il doppio clic su un punto lo toglie. Lasciando il mouse si
+    // chiama onEnvelopeChanged con la linea nuova.
+    std::function<void(int trackId, const std::vector<core::LevelPoint>& points)> onEnvelopeChanged;
     // Clip audio: selezione, spostamento (dove può andare sulla traccia `trackId` se la si vuole a `desired`, e dove è
     // stata lasciata), bordi (come trimLimit/onTrim dei pezzi video, nei tempi del file della clip).
     std::function<void(int clipId)> onAudioClipSelected;
@@ -193,6 +199,15 @@ private:
     QRectF muteBox(int index) const;
     QRectF soloBox(int index) const;
     QRectF levelBar(int index) const;
+    // Linea del livello: dove sta un valore (dB) nella corsia e il contrario. Sopra il centro 0..+12 dB, sotto 0..-60
+    // (con più precisione vicino a 0).
+    double envelopeY(const QRectF& lane, double db) const;
+    double envelopeDbForY(const QRectF& lane, double y) const;
+    // La linea mostrata per la corsia: quella che si sta trascinando, o quella del progetto.
+    const std::vector<core::LevelPoint>& lineOf(int laneIndex) const;
+    // Punto della linea (point >= 0) o tratto di linea (point = -1) sotto il mouse; false se nessuno dei due.
+    bool envelopeHit(const QPointF& pos, int& laneIndex, int& point) const;
+    void paintEnvelope(QPainter& p, int index, const QRectF& lane);
     double levelForX(int index, double x) const;  // dB del cursore del livello quando il mouse è in x
     std::vector<QRectF> blockRects(const QRectF& lane) const;  // il riquadro di ogni blocco nella corsia
     double total() const { return total_; }
@@ -276,6 +291,10 @@ private:
     bool audioTrimRipple_ = false;
     double audioTrimValue_ = 0.0;
     double audioTrimGrab_ = 0.0;
+    int envLane_ = -1;             // corsia di cui si modifica la linea del livello
+    int envPoint_ = -1;            // punto preso
+    bool envMoved_ = false;        // la linea è cambiata (punto aggiunto o spostato)
+    std::vector<core::LevelPoint> envPoints_;  // la linea in modifica
     int levelLane_ = -1;           // corsia di cui si trascina il livello
     double levelValue_ = 0.0;
 

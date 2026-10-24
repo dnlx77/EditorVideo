@@ -2,6 +2,7 @@
 
 #include "EditorCore/AudioTracks.h"
 #include "EditorCore/Compatibility.h"
+#include "EditorCore/MixSpec.h"
 #include "EditorCore/Sequence.h"
 
 #include <memory>
@@ -58,8 +59,13 @@ struct AudioEdit
     std::vector<TimeRange> muted;
     // Se c'è, l'audio originale dei file viene escluso e al suo posto va questo.
     std::optional<AudioReplacement> replacement;
+    // Se c'è, l'audio esportato è il mix delle tracce audio (A1 e le aggiunte, con livelli, linee del livello, muto e
+    // solo), ricodificato in AAC 48 kHz stereo 256 kb/s; `muted` e `replacement` non contano. `mix` ha gli spazi vuoti
+    // del montaggio (nero e silenzio), `mixClosed` li ha chiusi: vale quest'ultimo se l'esportazione chiude gli spazi.
+    std::shared_ptr<const MixSpec> mix;
+    std::shared_ptr<const MixSpec> mixClosed;
 
-    bool empty() const { return muted.empty() && !replacement; }
+    bool empty() const { return muted.empty() && !replacement && !mix; }
 };
 
 // Cosa diventano gli spazi vuoti del montaggio nel file esportato: nero e silenzio (lunghi come nel montaggio,

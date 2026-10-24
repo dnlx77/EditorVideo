@@ -7,10 +7,11 @@
 
 namespace editor::core {
 
-std::vector<MixSegment> mixSegmentsOf(const Project& project)
+namespace {
+
+std::vector<MixSegment> mixSegmentsOf(const Project& project, const Sequence& sequence)
 {
     std::vector<MixSegment> segments;
-    const Sequence& sequence = project.sequence();
     const std::vector<double> starts = sequence.starts();
     const auto& fragments = sequence.fragments();
     for (std::size_t i = 0; i < fragments.size(); ++i) {
@@ -45,6 +46,26 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project)
     return segments;
 }
 
+}  // namespace
+
+std::vector<MixSegment> mixSegmentsOf(const Project& project)
+{
+    return mixSegmentsOf(project, project.sequence());
+}
+
+MixSpec mixSpecOf(const Project& project, bool closeGaps)
+{
+    Sequence sequence = project.sequence();
+    if (closeGaps)
+        sequence.closeAllGaps();
+    MixSpec spec;
+    spec.segments = mixSegmentsOf(project, sequence);
+    spec.gains = trackGainsOf(project.audioTracks());
+    spec.envelopes = trackEnvelopesOf(project.audioTracks());
+    spec.length = sequence.totalLength();
+    return spec;
+}
+
 std::map<int, float> trackGainsOf(const AudioTracks& tracks)
 {
     std::map<int, float> gains;
@@ -52,6 +73,18 @@ std::map<int, float> trackGainsOf(const AudioTracks& tracks)
     for (const AudioTrack& track : tracks.tracks())
         gains[track.id] = static_cast<float>(tracks.gain(track.id));
     return gains;
+}
+
+TrackEnvelopes trackEnvelopesOf(const AudioTracks& tracks)
+{
+    TrackEnvelopes envelopes;
+    if (!tracks.envelope(AudioTracks::kOriginalTrack).empty())
+        envelopes[AudioTracks::kOriginalTrack] = tracks.envelope(AudioTracks::kOriginalTrack);
+    for (const AudioTrack& track : tracks.tracks()) {
+        if (!track.mix.envelope.empty())
+            envelopes[track.id] = track.mix.envelope;
+    }
+    return envelopes;
 }
 
 // Il file di un tratto, letto in avanti: ricorda dove è arrivato e si riposiziona solo se il blocco richiesto non
@@ -72,7 +105,8 @@ struct AudioMixer::Reader
     // (la rampa è calcolata sul blocco intero, non sulla parte che riguarda questo tratto).
     void read(const MixSegment& segment, long long segmentFirst, long long from, std::size_t count,
               std::vector<float>& acc, std::size_t offset, std::size_t totalFrames, float g0, float g1,
-              const std::vector<std::pair<long long, long long>>& mutedFrames)
+              const std::vector<std::pair<long long, long long>>& mutedFrames,
+              const std::vector<LevelPoint>* envelope)
     {
         if (failed)
             return;
@@ -133,7 +167,11 @@ struct AudioMixer::Reader
                 continue;
             const std::size_t at = offset + i;
             const float t = totalFrames > 1 ? static_cast<float>(at) / static_cast<float>(totalFrames) : 1.0f;
-            const float gain = g0 + (g1 - g0) * t;
+            float gain = g0 + (g1 - g0) * t;
+            if (envelope != nullptr) {
+                gain *= static_cast<float>(
+                    AudioTracks::envelopeGain(AudioTracks::envelopeDbAt(*envelope, static_cast<double>(frame) / kMixSampleRate)));
+            }
             const std::size_t src = (pendingPos + i) * kMixChannels;
             acc[at * 2] += pending[src] * (1.0f / 32768.0f) * gain;
             acc[at * 2 + 1] += pending[src + 1] * (1.0f / 32768.0f) * gain;
@@ -152,13 +190,15 @@ struct AudioMixer::Shared
 {
     std::mutex mutex;
     std::map<int, float> gains;
+    TrackEnvelopes envelopes;
 };
 
-AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains)
+AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, TrackEnvelopes envelopes)
     : segments_(std::move(segments))
     , shared_(std::make_unique<Shared>())
 {
     shared_->gains = std::move(gains);
+    shared_->envelopes = std::move(envelopes);
     applied_ = shared_->gains;
     for (const MixSegment& s : segments_) {
         first_.push_back(std::llround(s.position * kMixSampleRate));
@@ -184,6 +224,12 @@ void AudioMixer::setGains(const std::map<int, float>& gains)
     shared_->gains = gains;
 }
 
+void AudioMixer::setEnvelopes(const TrackEnvelopes& envelopes)
+{
+    std::lock_guard lock(shared_->mutex);
+    shared_->envelopes = envelopes;
+}
+
 float AudioMixer::limit(float value)
 {
     constexpr float knee = 0.95f;
@@ -198,9 +244,11 @@ float AudioMixer::limit(float value)
 void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<std::int16_t>& out)
 {
     std::map<int, float> targets;
+    TrackEnvelopes envelopes;
     {
         std::lock_guard lock(shared_->mutex);
         targets = shared_->gains;
+        envelopes = shared_->envelopes;
     }
     std::vector<float> acc(frames * 2, 0.0f);
     const long long blockEnd = firstFrame + static_cast<long long>(frames);
@@ -230,8 +278,10 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
             mutedFrames.emplace_back(segFirst + static_cast<long long>(std::ceil((m.start - segment.fileStart) * kMixSampleRate)),
                                      segFirst + static_cast<long long>(std::ceil((m.end - segment.fileStart) * kMixSampleRate)));
         }
+        const auto envelope = envelopes.find(segment.trackId);
         readers_[i]->read(segment, segFirst, from, static_cast<std::size_t>(to - from), acc,
-                          static_cast<std::size_t>(from - firstFrame), frames, g0, g1, mutedFrames);
+                          static_cast<std::size_t>(from - firstFrame), frames, g0, g1, mutedFrames,
+                          envelope != envelopes.end() ? &envelope->second : nullptr);
     }
     for (const auto& [trackId, gain] : targets)
         applied_[trackId] = gain;

@@ -133,7 +133,15 @@ std::string text(const JsonValue& value)
 
 JsonValue mixToJson(const AudioMix& mix)
 {
-    return JsonValue::Object{{"livello", mix.levelDb}, {"muto", mix.muted}, {"solo", mix.solo}};
+    JsonValue::Object json{{"livello", mix.levelDb}, {"muto", mix.muted}, {"solo", mix.solo}};
+    if (!mix.envelope.empty()) {
+        // La linea del livello: coppie [tempo in tick, dB].
+        JsonValue::Array line;
+        for (const LevelPoint& p : mix.envelope)
+            line.emplace_back(JsonValue::Array{ticks(p.time), p.db});
+        json["linea"] = std::move(line);
+    }
+    return json;
 }
 
 AudioMix mixFromJson(const JsonValue& value)
@@ -145,6 +153,16 @@ AudioMix mixFromJson(const JsonValue& value)
         mix.levelDb = std::clamp(value["livello"].asNumber(), AudioTracks::kMinLevelDb, AudioTracks::kMaxLevelDb);
     mix.muted = value["muto"].isBool() && value["muto"].asBool();
     mix.solo = value["solo"].isBool() && value["solo"].asBool();
+    if (value["linea"].isArray()) {
+        std::vector<LevelPoint> points;
+        for (const JsonValue& p : value["linea"].asArray()) {
+            if (p.isArray() && p.asArray().size() == 2 && p.asArray()[0].isNumber() && p.asArray()[1].isNumber())
+                points.push_back({ticksToSeconds(static_cast<std::int64_t>(p.asArray()[0].asNumber())), p.asArray()[1].asNumber()});
+        }
+        AudioTracks tracks;  // per normalizzarla come setEnvelope (ordine, limiti)
+        tracks.setEnvelope(AudioTracks::kOriginalTrack, std::move(points));
+        mix.envelope = tracks.envelope(AudioTracks::kOriginalTrack);
+    }
     return mix;
 }
 

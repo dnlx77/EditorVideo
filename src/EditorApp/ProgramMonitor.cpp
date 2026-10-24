@@ -543,7 +543,8 @@ bool ProgramMonitor::startAudio(double from)
         return false;
     }
     applyVolume();
-    core::AudioMixer mixer(core::mixSegmentsOf(project_), core::trackGainsOf(project_.audioTracks()));
+    core::AudioMixer mixer(core::mixSegmentsOf(project_), core::trackGainsOf(project_.audioTracks()),
+                           core::trackEnvelopesOf(project_.audioTracks()));
     const bool started = sequenceAudio_.start(std::move(mixer), from, sequence.totalLength(), speed_);
     player_->setAudioNote(started ? QString() : QStringLiteral("audio non disponibile"));
     return started;
@@ -564,6 +565,7 @@ void ProgramMonitor::applyVolume()
 void ProgramMonitor::audioMixChanged()
 {
     sequenceAudio_.setTrackGains(core::trackGainsOf(project_.audioTracks()));
+    sequenceAudio_.setTrackEnvelopes(core::trackEnvelopesOf(project_.audioTracks()));
 }
 
 void ProgramMonitor::updateLabels()

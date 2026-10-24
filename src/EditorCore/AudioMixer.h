@@ -1,7 +1,7 @@
 #pragma once
 
+#include "EditorCore/MixSpec.h"
 #include "EditorCore/Project.h"
-#include "EditorCore/TimeUtil.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -15,31 +15,17 @@ namespace editor::core {
 
 class AudioDecoder;
 
-// Frequenza e canali del mix (stereo a 48 kHz, come l'audio che si esporterà).
-inline constexpr int kMixSampleRate = 48000;
-inline constexpr int kMixChannels = 2;
-
-// Un tratto di un file messo in un punto della sequenza: o l'audio di un pezzo video (traccia A1) o una clip di una
-// traccia audio aggiunta.
-struct MixSegment
-{
-    std::string path;        // UTF-8
-    double fileStart = 0.0;  // nel file
-    double fileEnd = 0.0;
-    double position = 0.0;   // dove inizia nella sequenza
-    int trackId = AudioTracks::kOriginalTrack;
-    std::vector<TimeRange> muted;  // tratti senza audio, nei tempi del file
-
-    double length() const { return fileEnd - fileStart; }
-};
-
 // I tratti da mixare per il progetto (A1 e tracce aggiunte), in ordine di posizione.
 std::vector<MixSegment> mixSegmentsOf(const Project& project);
 // Quanto si moltiplica ogni traccia nel mix (A1 compresa), come AudioTracks::gain.
 std::map<int, float> trackGainsOf(const AudioTracks& tracks);
+// Tutto quello che serve per mixare il progetto (con gli spazi vuoti di A1 chiusi se `closeGaps`, come nel file esportato).
+MixSpec mixSpecOf(const Project& project, bool closeGaps = false);
+// Le linee del livello non vuote (A1 compresa).
+TrackEnvelopes trackEnvelopesOf(const AudioTracks& tracks);
 
 // Il mixer della sequenza: somma, a 48 kHz stereo, l'audio di tutti i tratti presenti in ogni istante, ognuno con il
-// livello e il muto/solo della sua traccia e senza i tratti silenziati. Un limitatore dolce evita la saturazione.
+// livello, linea del livello e muto/solo della sua traccia e senza i tratti silenziati. Un limitatore dolce evita la saturazione.
 //
 // render() si usa di seguito (blocchi uno dopo l'altro) da un solo thread; un salto a un altro punto va bene, costa
 // solo il riposizionamento dei file. setGain() si può chiamare anche da un altro thread, mentre si suona: il livello
@@ -47,7 +33,7 @@ std::map<int, float> trackGainsOf(const AudioTracks& tracks);
 class AudioMixer
 {
 public:
-    AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains);
+    AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, TrackEnvelopes envelopes = {});
     ~AudioMixer();
     AudioMixer(AudioMixer&&) noexcept;
     AudioMixer& operator=(AudioMixer&&) noexcept;
@@ -57,6 +43,9 @@ public:
 
     void setGain(int trackId, float gain);
     void setGains(const std::map<int, float>& gains);
+    // Le linee del livello (al posto di quelle di prima): il valore al tempo t della sequenza moltiplica il livello della
+    // traccia, campione per campione.
+    void setEnvelopes(const TrackEnvelopes& envelopes);
 
     // Scrive in `out` (stereo interlacciato, `frames` * 2 campioni) l'audio dal fotogramma `firstFrame` (contato dal
     // tempo 0 della sequenza). Dove non c'è niente: silenzio.
