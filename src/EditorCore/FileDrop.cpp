@@ -104,6 +104,19 @@ std::optional<double> inspectMedia(const std::string& utf8Path)
     }
 }
 
+bool isAudioOnly(const std::string& utf8Path)
+{
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(pathFromUtf8(utf8Path), ec))
+        return false;
+    try {
+        const FormatContextPtr ctx = openInput(utf8Path);
+        return findMainStream(ctx.get(), AVMEDIA_TYPE_VIDEO) < 0 && findMainStream(ctx.get(), AVMEDIA_TYPE_AUDIO) >= 0;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 std::vector<int> applyDrop(Project& project, const std::vector<DroppedMedia>& media, int sequenceIndex,
                            std::vector<int>* fragments)
 {

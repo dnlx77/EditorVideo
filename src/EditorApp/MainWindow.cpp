@@ -751,6 +751,10 @@ void MainWindow::addToSequence()
     const core::CutSegment& segment = player_->segment();
     const double in = segment.hasIn() ? segment.in() : 0.0;
     const double out = segment.hasOut() ? segment.out() : clip->duration;
+    if (core::isAudioOnly(clip->path)) {
+        addSourceAudioToTrack(*clip, in, out);
+        return;
+    }
 
     const core::Project before = project_;
     core::Sequence& sequence = project_.sequence();
@@ -913,6 +917,16 @@ void MainWindow::recordEdit(const QString& label, const core::Project& before)
 {
     recordHistory(label, before);
     sequenceChanged();
+}
+
+void MainWindow::recordMixEdit(const QString& label, const core::Project& before)
+{
+    // Livello, muto e solo si sentono subito, anche suonando: la riproduzione non si ferma.
+    recordHistory(label, before);
+    if (!loading_)
+        setModified(true);
+    refreshTimeline();
+    program_->audioMixChanged();
 }
 
 void MainWindow::updateUndoActions()
@@ -1126,7 +1140,7 @@ void MainWindow::refreshTimeline()
     if (replacement)
         text += QStringLiteral("  ·  audio: <b>%1</b> (al posto dell'originale)").arg(fileNameOf(replacement->path).toHtmlEscaped());
     else if (audioClips > 0)
-        text += QStringLiteral("  ·  %1 clip audio su %2 tracce (per ora anteprima ed esportazione usano solo A1)")
+        text += QStringLiteral("  ·  %1 clip audio su %2 tracce (l'anteprima le suona; l'esportazione solo A1, per ora)")
                     .arg(audioClips)
                     .arg(audio.tracks().size());
     if (!muted.empty())
@@ -1417,13 +1431,49 @@ void MainWindow::addAudioFilesDialog()
         QFileDialog::getOpenFileNames(this, QStringLiteral("File audio da mettere sulla traccia"), QString(), kAudioFilter);
     if (paths.isEmpty())
         return;
+    addAudioFiles(paths, audioTrackForNewClips(), program_->position());
+}
+
+int MainWindow::audioTrackForNewClips()
+{
     // Sulla traccia scelta, altrimenti sulla prima aggiunta, altrimenti su una nuova.
     int track = timeline_->selectedTrack();
     if (project_.audioTracks().track(track) == nullptr)
         track = project_.audioTracks().tracks().empty() ? 0 : project_.audioTracks().tracks().front().id;
     if (track == 0)
         track = addAudioTrack();
-    addAudioFiles(paths, track, program_->position());
+    return track;
+}
+
+void MainWindow::addSourceAudioToTrack(const core::Clip& clip, double in, double out)
+{
+    // Un file solo audio non va mai nella traccia video: diventa una clip di una traccia audio, nel tratto IN-OUT, dal
+    // cursore del montaggio (nel punto libero più vicino).
+    const double length = out - in;
+    if (length < kMinAudioClip) {
+        player_->showNote(QStringLiteral("Tratto vuoto: OUT deve stare dopo IN."));
+        return;
+    }
+    const int track = audioTrackForNewClips();
+    const core::Project before = project_;
+    core::AudioTracks& audio = project_.audioTracks();
+    core::AudioClip audioClip;
+    audioClip.path = clip.path;
+    audioClip.start = in;
+    audioClip.end = out;
+    audioClip.sourceDuration = clip.duration;
+    audioClip.position = audio.freePosition(track, length, program_->position());
+    const int id = audio.add(track, audioClip);
+    if (id == 0) {
+        player_->showNote(QStringLiteral("Non c'è posto sulla traccia %1.").arg(qs(audio.trackName(track))));
+        return;
+    }
+    const double position = audio.find(id)->position;
+    player_->clearSegment();
+    player_->showNote(QStringLiteral("Aggiunto alla traccia %1 del montaggio: %2 - %3, da %4.")
+                          .arg(qs(audio.trackName(track)), timeText(in), timeText(out), timeText(position)));
+    timeline_->setSelectedAudioClip(id);
+    recordEdit(QStringLiteral("Aggiungi audio"), before);
 }
 
 bool MainWindow::moveAudioClip(int clipId, int trackId, double position)
@@ -1452,21 +1502,21 @@ void MainWindow::setTrackMuted(int trackId, bool muted)
 {
     const core::Project before = project_;
     if (project_.audioTracks().setMuted(trackId, muted))
-        recordEdit(muted ? QStringLiteral("Traccia muta") : QStringLiteral("Traccia non più muta"), before);
+        recordMixEdit(muted ? QStringLiteral("Traccia muta") : QStringLiteral("Traccia non più muta"), before);
 }
 
 void MainWindow::setTrackSolo(int trackId, bool solo)
 {
     const core::Project before = project_;
     if (project_.audioTracks().setSolo(trackId, solo))
-        recordEdit(solo ? QStringLiteral("Traccia in solo") : QStringLiteral("Traccia non più in solo"), before);
+        recordMixEdit(solo ? QStringLiteral("Traccia in solo") : QStringLiteral("Traccia non più in solo"), before);
 }
 
 void MainWindow::setTrackLevel(int trackId, double db)
 {
     const core::Project before = project_;
     if (project_.audioTracks().setLevel(trackId, db))
-        recordEdit(QStringLiteral("Livello della traccia"), before);
+        recordMixEdit(QStringLiteral("Livello della traccia"), before);
     else
         refreshTimeline();  // il cursore del livello torna dov'era
 }
@@ -1523,8 +1573,8 @@ bool MainWindow::replaceAudioHere(const QString& path)
     recordEdit(QStringLiteral("Sostituisci audio qui"), before);
     refreshClipList();
     startNextProbe();
-    statusBar()->showMessage(QStringLiteral("%1 sulla traccia %2 da %3 a %4, con A1 silenziata sotto (per ora l'anteprima e "
-                                            "l'esportazione usano solo A1: il mix delle tracce arriva col prossimo passo).")
+    statusBar()->showMessage(QStringLiteral("%1 sulla traccia %2 da %3 a %4, con A1 silenziata sotto (per ora l'esportazione "
+                                            "usa solo A1: il mix delle tracce arriva col prossimo passo).")
                                  .arg(fileNameOf(utf8), qs(audio.trackName(track)), timeText(from), timeText(from + length)),
                              12000);
     return true;
@@ -1661,8 +1711,9 @@ void MainWindow::exportDialog()
     const QString suggested = QDir(workFolder()).filePath(source.completeBaseName() + suffix + extension);
     if (!project_.sequence().empty() && !project_.audioReplacement() && project_.audioTracks().endTime() > 0.0
         && QMessageBox::question(this, QStringLiteral("Esporta"),
-                                 QStringLiteral("Le clip sulle tracce audio aggiunte non sono ancora esportate: per ora il file "
-                                                "avrà solo l'audio di A1 (il mix delle tracce arriva con un prossimo passo). "
+                                 QStringLiteral("Le clip sulle tracce audio aggiunte non sono ancora esportate (nell'anteprima "
+                                                "si sentono): per ora il file avrà solo l'audio di A1, senza i livelli delle "
+                                                "tracce (il mix esportato arriva con un prossimo passo). "
                                                 "Esportare lo stesso?"))
                != QMessageBox::Yes)
         return;
@@ -2031,7 +2082,7 @@ void MainWindow::dropFiles(const QStringList& paths, DropTarget target, int sequ
     std::vector<std::string> utf8;
     for (const QString& path : paths)
         utf8.push_back(nativeAbsolute(path).toStdString());
-    const core::DropPlan plan = core::planDrop(utf8, project_, core::inspectMedia);
+    core::DropPlan plan = core::planDrop(utf8, project_, core::inspectMedia);
 
     // Un progetto si apre (chiedendo se salvare quello di adesso).
     if (plan.project) {
@@ -2046,6 +2097,24 @@ void MainWindow::dropFiles(const QStringList& paths, DropTarget target, int sequ
         QMessageBox::warning(this, QStringLiteral("File non aggiunti"),
                              QStringLiteral("Questi file non sono video o audio leggibili e non sono stati aggiunti:%1%2")
                                  .arg(list, plan.media.empty() ? QString() : QStringLiteral("\n\nGli altri sì.")));
+    }
+    // Sulla traccia video del montaggio non vanno i file solo audio: vanno su una traccia audio, nel punto di rilascio.
+    QStringList audioOnly;
+    if (target == DropTarget::Sequence) {
+        std::vector<core::DroppedMedia> video;
+        for (const core::DroppedMedia& media : plan.media) {
+            if (core::isAudioOnly(media.path))
+                audioOnly.append(qs(media.path));
+            else
+                video.push_back(media);
+        }
+        plan.media = std::move(video);
+    }
+    if (!audioOnly.isEmpty()) {
+        const core::Sequence& sequence = project_.sequence();
+        const int index = std::max(0, sequenceIndex);
+        const double seconds = index < static_cast<int>(sequence.fragments().size()) ? sequence.startOf(index) : sequence.totalLength();
+        addAudioFiles(audioOnly, audioTrackForNewClips(), seconds);
     }
     if (plan.media.empty())
         return;

@@ -205,6 +205,10 @@ private:
     // Inizio del blocco trascinato quando il mouse è in x: agganciato (se vicino) ai bordi degli altri blocchi e
     // all'inizio, poi spostato dove c'è posto (freeStart).
     double dragTarget(double x) const;
+    // Quale corsia è quella scelta (evidenziata): la video se è scelto un pezzo o uno spazio vuoto, l'audio della
+    // traccia scelta (nome, clip o tratto).
+    bool videoLaneSelected() const;
+    bool audioLaneSelected(int index) const;
     void paintAudio(QPainter& p);
     void paintVideo(QPainter& p);
     void paintA1(QPainter& p, const QRectF& lane);
