@@ -318,17 +318,30 @@ MainWindow::MainWindow(QWidget* parent)
 
     program_ = new ProgramMonitor(project_);
     program_->onActivated = [this] { setProgramActive(true); };
-    program_->onPositionChanged = [this](double seconds) { timeline_->setPlayhead(seconds); };
+    program_->onPositionChanged = [this](double seconds) {
+        timeline_->setPlayhead(seconds);
+        syncQualityMenus();  // il menu del Montaggio mostra la qualità del file del pezzo mostrato
+    };
     program_->onCacheRangeChanged = [this](double from, double to) { timeline_->setCacheRange(from, to); };
     program_->onPlaybackStarted = [this] { timeline_->resumeFollowing(); };
     program_->onVideoDoubleClicked = [this] { toggleFullScreen(programDock_); };
 
-    // Proxy: le due anteprime leggono il video dal proxy quando è pronto; la qualità si sceglie dal menu di tutte e due.
+    // Proxy: le due anteprime leggono il video dal proxy quando è pronto. Ogni file ha la sua qualità: il menu della
+    // Sorgente cambia quella del file nella Sorgente, quello del Montaggio quella del file del pezzo mostrato.
     const auto videoSource = [this](const QString& path) { return proxies_->videoSource(path); };
     player_->videoSourceFor = videoSource;
     program_->setVideoSource(videoSource);
-    player_->onPreviewQualityChosen = [this](int divisor) { setPreviewQuality(divisor); };
-    program_->onPreviewQualityChosen = [this](int divisor) { setPreviewQuality(divisor); };
+    player_->onPreviewQualityChosen = [this](int divisor) {
+        if (!currentPath_.isEmpty())
+            setPreviewQuality(currentPath_, divisor);
+    };
+    program_->onPreviewQualityChosen = [this](int divisor) {
+        const core::Clip* clip = project_.find(program_->currentClipId());
+        if (clip != nullptr)
+            setPreviewQuality(qs(clip->path), divisor);
+        else
+            syncQualityMenus();  // nessun pezzo mostrato (spazio vuoto): il menu torna com'era
+    };
     proxies_->onReady = [this](const QString& original, const QString& how) {
         statusBar()->showMessage(QStringLiteral("Proxy di %1 pronto (%2)").arg(QFileInfo(original).fileName(), how), 15000);
         proxyChanged(original);
@@ -339,14 +352,6 @@ MainWindow::MainWindow(QWidget* parent)
         refreshClipList();
     };
     proxies_->setFolder(proxyFolder());
-    {
-        int divisor = settings().value(QStringLiteral("anteprima/qualita"), 1).toInt();
-        if (std::find(std::begin(core::kPreviewDivisors), std::end(core::kPreviewDivisors), divisor) == std::end(core::kPreviewDivisors))
-            divisor = 1;
-        proxies_->setDivisor(divisor);
-        player_->setPreviewQuality(divisor);
-        program_->setPreviewQuality(divisor);
-    }
 
     // --- In basso: la sequenza
     timeline_ = new SequenceTimeline;
@@ -1910,7 +1915,9 @@ void MainWindow::resetProject()
     history_.clear();
     updateUndoActions();
     player_->closeFile();
+    proxies_->clearDivisors();
     proxies_->setFolder(proxyFolder());
+    syncQualityMenus();
 }
 
 void MainWindow::openPath(const QString& path)
@@ -2040,6 +2047,7 @@ void MainWindow::selectClip(int id)
 
     currentClipId_ = id;
     currentPath_ = qs(clip->path);
+    syncQualityMenus();
     player_->openFile(currentPath_);
     if (clip->analyzed) {
         showInfo(clipInfo_[id]);
@@ -2114,7 +2122,7 @@ void MainWindow::refreshClipList()
         QString detail = clip.analyzed ? timeText(clip.duration) : QStringLiteral("analisi in corso...");
         if (count > 0)
             detail += QStringLiteral(", %1 pezzi nel montaggio").arg(count);
-        if (const int divisor = proxies_->divisor(); divisor > 1) {
+        if (const int divisor = proxies_->divisor(qs(clip.path)); divisor > 1) {
             const QString path = qs(clip.path);
             if (const double progress = proxies_->progress(path); progress >= 0)
                 detail += QStringLiteral(", proxy 1/%1: %2%").arg(divisor).arg(static_cast<int>(progress * 100));
@@ -2241,6 +2249,10 @@ core::ProjectView MainWindow::currentView() const
         view.out = segment.out();
     view.sourcePosition = player_->currentPosition();
     view.programPosition = program_->position();
+    for (const core::Clip& clip : project_.clips()) {
+        if (const int divisor = proxies_->divisor(qs(clip.path)); divisor > 1)
+            view.proxyDivisors[clip.id] = divisor;
+    }
     return view;
 }
 
@@ -2831,6 +2843,10 @@ bool MainWindow::openProject(const QString& path, bool interactive)
     projectPath_ = native;
     savedDurations_ = std::move(loaded.savedDurations);
     pendingView_ = loaded.view;
+    for (const auto& [clipId, divisor] : loaded.view.proxyDivisors) {
+        if (const core::Clip* clip = project_.find(clipId))
+            proxies_->setDivisor(qs(clip->path), divisor);
+    }
     for (const core::Clip& clip : project_.clips()) {
         probeQueue_.push_back(clip.id);
         waveforms_->request(clip.path);
@@ -2846,6 +2862,7 @@ bool MainWindow::openProject(const QString& path, bool interactive)
         player_->seekTo(loaded.view.sourcePosition);
     }
     program_->seekTo(loaded.view.programPosition);
+    syncQualityMenus();
     updateProxies();
     startNextProbe();
     loading_ = false;
@@ -2884,27 +2901,41 @@ void MainWindow::updateProxies()
     refreshClipList();
 }
 
-int MainWindow::previewQuality() const
+int MainWindow::previewQuality(const QString& path) const
 {
-    return proxies_->divisor();
+    return proxies_->divisor(path);
 }
 
-void MainWindow::setPreviewQuality(int divisor)
+void MainWindow::setPreviewQuality(const QString& path, int divisor)
 {
-    settings().setValue(QStringLiteral("anteprima/qualita"), divisor);
-    proxies_->setDivisor(divisor);
-    player_->setPreviewQuality(divisor);
-    program_->setPreviewQuality(divisor);
-    // Con i proxy già pronti si passa subito; gli altri si creano in sottofondo (e si passa quando sono pronti).
-    player_->reloadVideo();
+    if (proxies_->divisor(path) == divisor)
+        return;
+    proxies_->setDivisor(path, divisor);
+    setModified(true);  // la qualità di ogni file si salva nel progetto
+    syncQualityMenus();
+    // Con un proxy già pronto si passa subito; altrimenti si crea in sottofondo (e si passa quando è pronto). Gli altri
+    // file non cambiano.
+    if (currentPath_ == path)
+        player_->reloadVideo();
     program_->reloadVideo();
     updateProxies();
     refreshTimeline();
-    statusBar()->showMessage(divisor == 1 ? QStringLiteral("Anteprima dai file originali")
-                                          : QStringLiteral("Anteprima dai proxy a 1/%1 della risoluzione (l'esportazione usa "
-                                                           "sempre gli originali)")
+    const QString name = QFileInfo(path).fileName();
+    statusBar()->showMessage(divisor == 1 ? QStringLiteral("Anteprima di %1 dal file originale").arg(name)
+                                          : QStringLiteral("Anteprima di %1 dal proxy a 1/%2 della risoluzione (l'esportazione "
+                                                           "usa sempre l'originale)")
+                                                .arg(name)
                                                 .arg(divisor),
                              8000);
+}
+
+void MainWindow::syncQualityMenus()
+{
+    if (!proxies_)
+        return;  // in chiusura
+    player_->setPreviewQuality(currentPath_.isEmpty() ? 1 : proxies_->divisor(currentPath_));
+    const core::Clip* clip = project_.find(program_->currentClipId());
+    program_->setPreviewQuality(clip != nullptr ? proxies_->divisor(qs(clip->path)) : 1);
 }
 
 void MainWindow::proxyChanged(const QString& original)
@@ -2930,9 +2961,15 @@ void MainWindow::deleteProxies()
         != QMessageBox::Yes)
         return;
     // Prima le anteprime tornano agli originali (un file aperto non si può cancellare), poi si cancella.
-    setPreviewQuality(1);
+    if (!proxies_->divisors().empty())
+        setModified(true);
+    proxies_->clearDivisors();
+    syncQualityMenus();
+    player_->reloadVideo();
+    program_->reloadVideo();
     proxies_->removeAll(originals);
     refreshClipList();
+    refreshTimeline();
     statusBar()->showMessage(QStringLiteral("Proxy eliminati: l'anteprima usa i file originali."), 8000);
 }
 

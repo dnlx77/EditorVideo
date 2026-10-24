@@ -7,14 +7,16 @@
 #include <atomic>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 
 namespace editor::app {
 
-// I proxy dei file (vedi core::buildProxy) per la qualità dell'anteprima scelta: si chiedono con request(), si creano
-// uno alla volta in background (con la scheda video) nella cartella dei proxy, e videoSource() dice da dove leggere il
-// video: il proxy se è pronto, altrimenti l'originale. Le funzioni on... si chiamano nel thread della finestra.
+// I proxy dei file (vedi core::buildProxy). Ogni file ha la sua qualità dell'anteprima (setDivisor): i proxy si
+// chiedono con request(), si creano uno alla volta in background (con la scheda video) nella cartella dei proxy, e
+// videoSource() dice da dove leggere il video: il proxy se è pronto, altrimenti l'originale. Le funzioni on... si
+// chiamano nel thread della finestra.
 class ProxyManager
 {
 public:
@@ -26,17 +28,23 @@ public:
     // Cartella dei proxy (accanto al progetto, o quella provvisoria per un progetto mai salvato).
     void setFolder(const QString& folder);
     QString folder() const { return folder_; }
-    // 1 = originali (nessun proxy), 2, 4, 8 = frazione della risoluzione. Cambiandola la coda si svuota.
-    void setDivisor(int divisor);
-    int divisor() const { return divisor_; }
+    // Qualità dell'anteprima di un file: 1 = l'originale (nessun proxy), 2, 4, 8 = frazione della risoluzione. Cambiandola
+    // si interrompe solo il proxy di quel file (se era in creazione); gli altri vanno avanti.
+    void setDivisor(const QString& original, int divisor);
+    int divisor(const QString& original) const;
+    const std::map<QString, int>& divisors() const { return divisors_; }  // solo i file con un proxy (2, 4, 8)
+    void clearDivisors();  // tutti i file tornano all'originale (es. nuovo progetto)
 
     // Il file da cui leggere il video di `original`: il suo proxy della qualità scelta se è pronto, altrimenti un suo
     // proxy di un'altra qualità già pronto (es. 1/2 mentre si crea quello a 1/4), altrimenti `original`.
     QString videoSource(const QString& original) const;
     // La qualità del file che dà videoSource: 1 = l'originale, 2, 4, 8 = un proxy.
     int sourceDivisor(const QString& original) const;
-    // true se il proxy della qualità scelta è pronto.
-    bool hasProxy(const QString& original) const { return divisor_ > 1 && !readyProxy(original, divisor_).isEmpty(); }
+    // true se il proxy della qualità scelta per il file è pronto.
+    bool hasProxy(const QString& original) const
+    {
+        return divisor(original) > 1 && !readyProxy(original, divisor(original)).isEmpty();
+    }
     // Crea i proxy mancanti di questi file, nell'ordine (il primo per primo: di solito quello che si sta guardando).
     void request(const QStringList& originals);
     // Avanzamento (0-1) del proxy di `original` se è in coda o in lavoro; -1 altrimenti.
@@ -61,9 +69,10 @@ private:
 
     QObject* owner_;
     QString folder_;
-    int divisor_ = 1;
+    std::map<QString, int> divisors_;  // qualità scelta per file (manca = l'originale)
     std::deque<QString> queue_;
     QString working_;  // in lavoro
+    int workingDivisor_ = 0;
     std::shared_ptr<std::atomic<double>> workingProgress_;
     QThread* thread_ = nullptr;
     std::shared_ptr<std::atomic<bool>> cancel_;

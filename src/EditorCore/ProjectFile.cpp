@@ -151,6 +151,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
     for (const Clip& clip : project.clips()) {
         JsonValue::Object file{{"id", clip.id}, {"percorso", clip.path}, {"relativo", relativeTo(dir, clip.path)}};
         file["durata"] = clip.analyzed ? ticks(clip.duration) : JsonValue();
+        if (const auto proxy = view.proxyDivisors.find(clip.id); proxy != view.proxyDivisors.end() && proxy->second > 1)
+            file["proxy"] = proxy->second;
         files.emplace_back(std::move(file));
     }
 
@@ -263,6 +265,11 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                 loaded.missing.push_back({id, absolute, fileNameOf(absolute.empty() ? relative : absolute)});
             if (file["durata"].isInteger())
                 loaded.savedDurations[id] = ticksToSeconds(file["durata"].asInteger());
+            if (file["proxy"].isInteger()) {
+                const auto divisor = file["proxy"].asInteger();
+                if (divisor == 2 || divisor == 4 || divisor == 8)  // valori diversi: si ignora, anteprima dall'originale
+                    loaded.view.proxyDivisors[id] = static_cast<int>(divisor);
+            }
         }
 
         std::vector<Fragment> fragments;

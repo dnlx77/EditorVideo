@@ -44,13 +44,32 @@ void ProxyManager::setFolder(const QString& folder)
     folder_ = folder;
 }
 
-void ProxyManager::setDivisor(int divisor)
+int ProxyManager::divisor(const QString& original) const
 {
-    if (divisor == divisor_)
+    const auto found = divisors_.find(original);
+    return found != divisors_.end() ? found->second : 1;
+}
+
+void ProxyManager::setDivisor(const QString& original, int divisor)
+{
+    if (divisor == this->divisor(original))
         return;
+    if (divisor <= 1)
+        divisors_.erase(original);
+    else
+        divisors_[original] = divisor;
+    // Solo questo file: se si stava creando il suo proxy di un'altra qualità si interrompe; quelli degli altri file
+    // vanno avanti.
+    queue_.erase(std::remove(queue_.begin(), queue_.end(), original), queue_.end());
+    if (thread_ != nullptr && working_ == original)
+        cancelCurrent();
+}
+
+void ProxyManager::clearDivisors()
+{
+    divisors_.clear();
     queue_.clear();
     cancelCurrent();
-    divisor_ = divisor;
 }
 
 QString ProxyManager::proxyPath(const QString& original, int divisor) const
@@ -69,16 +88,17 @@ QString ProxyManager::readyProxy(const QString& original, int divisor) const
 
 int ProxyManager::sourceDivisor(const QString& original) const
 {
-    if (divisor_ <= 1)
+    const int chosen = divisor(original);
+    if (chosen <= 1)
         return 1;
-    if (!readyProxy(original, divisor_).isEmpty())
-        return divisor_;
+    if (!readyProxy(original, chosen).isEmpty())
+        return chosen;
     // Quello della qualità scelta non è ancora pronto: meglio un proxy di un'altra qualità che l'originale. Il più
     // vicino alla qualità scelta, a pari distanza quello più definito.
-    const auto distance = [&](int d) { return std::abs(std::log2(static_cast<double>(d) / divisor_)); };
+    const auto distance = [&](int d) { return std::abs(std::log2(static_cast<double>(d) / chosen)); };
     int best = 1;
     for (const int divisor : core::kPreviewDivisors) {
-        if (divisor <= 1 || divisor == divisor_ || readyProxy(original, divisor).isEmpty())
+        if (divisor <= 1 || divisor == chosen || readyProxy(original, divisor).isEmpty())
             continue;
         if (best == 1 || distance(divisor) < distance(best) - 1e-9)
             best = divisor;
@@ -94,22 +114,24 @@ QString ProxyManager::videoSource(const QString& original) const
 
 double ProxyManager::progress(const QString& original) const
 {
-    if (divisor_ <= 1)
+    if (divisor(original) <= 1)
         return -1.0;
-    if (original == working_ && workingProgress_)
+    if (original == working_ && workingDivisor_ == divisor(original) && workingProgress_)
         return workingProgress_->load();
     return std::find(queue_.begin(), queue_.end(), original) != queue_.end() ? 0.0 : -1.0;
 }
 
 void ProxyManager::request(const QStringList& originals)
 {
-    if (divisor_ <= 1 || folder_.isEmpty())
+    if (folder_.isEmpty())
         return;
-    // Quelli chiesti ora passano davanti, nel loro ordine.
+    // Quelli chiesti ora passano davanti, nel loro ordine. Ognuno con la qualità scelta per lui.
     std::deque<QString> wanted;
     for (const QString& original : originals) {
-        if (original == working_ || !readyProxy(original, divisor_).isEmpty() || failed_.contains(failureKey(divisor_, original))
-            || std::find(wanted.begin(), wanted.end(), original) != wanted.end() || proxyPath(original, divisor_).isEmpty())
+        const int chosen = divisor(original);
+        if (chosen <= 1 || (original == working_ && workingDivisor_ == chosen) || !readyProxy(original, chosen).isEmpty()
+            || failed_.contains(failureKey(chosen, original)) || std::find(wanted.begin(), wanted.end(), original) != wanted.end()
+            || proxyPath(original, chosen).isEmpty())
             continue;
         wanted.push_back(original);
     }
@@ -123,12 +145,16 @@ void ProxyManager::request(const QStringList& originals)
 
 void ProxyManager::startNext()
 {
+    // Salta quelli tornati all'originale o già pronti nel frattempo.
+    while (!queue_.empty() && (divisor(queue_.front()) <= 1 || !readyProxy(queue_.front(), divisor(queue_.front())).isEmpty()))
+        queue_.pop_front();
     if (thread_ != nullptr || queue_.empty())
         return;
     working_ = queue_.front();
     queue_.pop_front();
-    const QString target = proxyPath(working_, divisor_);
-    const int divisor = divisor_;
+    const int divisor = this->divisor(working_);
+    workingDivisor_ = divisor;
+    const QString target = proxyPath(working_, divisor);
     auto progress = std::make_shared<std::atomic<double>>(0.0);
     auto cancel = std::make_shared<std::atomic<bool>>(false);
     auto error = std::make_shared<QString>();
@@ -167,6 +193,7 @@ void ProxyManager::startNext()
         thread_ = nullptr;
         const QString original = working_;
         working_.clear();
+        workingDivisor_ = 0;
         workingProgress_.reset();
         if (!cancel->load()) {
             if (error->isEmpty()) {

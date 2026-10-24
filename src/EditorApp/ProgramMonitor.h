@@ -51,6 +51,7 @@ public:
     double position() const { return position_; }
     int currentIndex() const { return index_; }  // pezzo mostrato (-1 = sequenza vuota o spazio vuoto)
     bool inGap() const { return gapIndex_ >= 0; }  // in uno spazio vuoto
+    int currentClipId() const;  // file del pezzo mostrato (0 = nessuno)
 
     // Proxy (vedi PlayerWidget::videoSourceFor e reloadVideo) e menu della qualità dell'anteprima.
     void setVideoSource(std::function<QString(const QString& path)> source);
