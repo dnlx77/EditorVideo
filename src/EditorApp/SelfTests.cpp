@@ -8,6 +8,7 @@
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/CutSegment.h"
+#include "EditorCore/FileDrop.h"
 #include "EditorCore/H264Params.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/PathUtil.h"
@@ -1136,6 +1137,20 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 }
                 app.exit(success ? 0 : 2);
             };
+
+            // Un file solo audio non entra mai nella traccia video: con A va su una traccia audio. Il resto della prova
+            // (pezzi, giunzioni, esportazione) ha bisogno di un video.
+            if (core::isAudioOnly(window->currentFile().toStdString())) {
+                window->addToSequence();
+                const core::AudioTracks& audioTracks = window->project().audioTracks();
+                const bool onAudioTrack = window->project().sequence().empty() && audioTracks.tracks().size() == 1
+                                       && audioTracks.tracks()[0].clips.size() == 1;
+                std::printf("Solo audio: con A il file va su una traccia audio e non su quella video %s\n",
+                            onAudioTrack ? "sì" : "NO");
+                std::fflush(stdout);
+                finish(ok && onAudioTrack);
+                return;
+            }
 
             // Montaggio: il pezzo appena segnato, poi uno all'inizio dello stesso file (A), poi gli altri file
             // interi.
