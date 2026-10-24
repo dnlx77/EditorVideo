@@ -1,5 +1,7 @@
 #include "EditorCore/VideoDecoder.h"
 
+#include "EditorCore/Proxy.h"
+
 #include "EditorCore/FfmpegUtil.h"
 
 extern "C" {
@@ -11,6 +13,7 @@ extern "C" {
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -518,6 +521,9 @@ VideoDecoder::VideoDecoder(const std::string& utf8Path, const Options& options)
         throw MediaError("Memoria insufficiente per il decoder video.");
 
     static_cast<OpenedStream&>(d) = openMainStream(utf8Path, AVMEDIA_TYPE_VIDEO);
+    // Proxy (vedi Proxy.h): i tempi partono dall'inizio dell'originale, non da quello del proxy.
+    if (const AVDictionaryEntry* start = av_dict_get(d.fmt->metadata, kProxyStartTag, nullptr, 0))
+        d.startOffset = std::strtod(start->value, nullptr);
     d.hwPixelFormat = d3d11PixelFormat(d.codec);
 
     d.fps = guessFrameRate(d.fmt.get(), d.stream);
