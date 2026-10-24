@@ -60,7 +60,7 @@ void Project::clear()
 {
     clips_.clear();
     sequence_.clear();
-    replacement_.reset();
+    audio_.clear();
     format_ = {};
 }
 
@@ -103,13 +103,44 @@ std::vector<ClipRanges> Project::exportPlan(GapExport gaps) const
 
 void Project::setAudioReplacement(std::optional<AudioReplacement> replacement)
 {
-    replacement_ = std::move(replacement);
+    if (!replacement) {
+        audio_.clear();
+        return;
+    }
+    // Offset negativo: se ne salta l'inizio, cioè la clip parte da 0 nella sequenza e da -offset nel file.
+    AudioTrack track;
+    AudioClip clip;
+    clip.path = std::move(replacement->path);
+    clip.position = std::max(0.0, replacement->offset);
+    clip.start = std::max(0.0, -replacement->offset);
+    clip.sourceDuration = std::max(0.0, replacement->duration);
+    clip.end = std::max(clip.start, clip.sourceDuration);
+    track.clips.push_back(std::move(clip));
+    AudioMix original;
+    original.muted = true;
+    audio_.clear();
+    audio_.restore(original, {std::move(track)});
+}
+
+std::optional<AudioReplacement> Project::audioReplacement() const
+{
+    const AudioMix silenced{0.0, true, false};
+    const auto& tracks = audio_.tracks();
+    if (!(audio_.mix(AudioTracks::kOriginalTrack) == silenced) || tracks.size() != 1 || !(tracks[0].mix == AudioMix{})
+        || tracks[0].clips.size() != 1)
+        return std::nullopt;
+    const AudioClip& clip = tracks[0].clips[0];
+    if (clip.end != std::max(clip.start, clip.sourceDuration) || (clip.position > 0.0 && clip.start > 0.0))
+        return std::nullopt;
+    return AudioReplacement{clip.path, clip.position - clip.start, clip.sourceDuration};
 }
 
 void Project::setAudioOffset(double offset)
 {
-    if (replacement_)
-        replacement_->offset = offset;
+    if (auto replacement = audioReplacement()) {
+        replacement->offset = offset;
+        setAudioReplacement(std::move(replacement));
+    }
 }
 
 void Project::restoreEdits(const Project& snapshot)
@@ -125,7 +156,7 @@ void Project::restoreEdits(const Project& snapshot)
     }
     clips_ = std::move(clips);
     sequence_ = snapshot.sequence_;
-    replacement_ = snapshot.replacement_;
+    audio_.restoreEdits(snapshot.audio_);
     format_ = snapshot.format_;
     nextId_ = std::max(nextId_, snapshot.nextId_);  // un file aggiunto dopo non riprende l'id di uno tolto
 }
@@ -133,11 +164,11 @@ void Project::restoreEdits(const Project& snapshot)
 AudioEdit Project::audioEdit(GapExport gaps) const
 {
     if (gaps == GapExport::Black)
-        return {sequence_.mutedRanges(), replacement_};  // i tempi della sequenza, spazi compresi
+        return {sequence_.mutedRanges(), audioReplacement()};  // i tempi della sequenza, spazi compresi
     // GapExport::Close: i tempi della sequenza senza gli spazi vuoti, come nel file esportato.
     Sequence closed = sequence_;
     closed.closeAllGaps();
-    return {closed.mutedRanges(), replacement_};
+    return {closed.mutedRanges(), audioReplacement()};
 }
 
 }  // namespace editor::core

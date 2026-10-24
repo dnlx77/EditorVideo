@@ -81,7 +81,7 @@ protected:
         fs::remove_all(dir_);
         fs::create_directories(dir_ / "progetto" / "video");
         // Per il progetto i file devono solo esistere: non vengono né letti né modificati.
-        for (const char* name : {"video/gita.mp4", "video/città.mkv", "musica.mp3"})
+        for (const char* name : {"video/gita.mp4", "video/città.mkv", "musica.mp3", "voce.wav", "effetto.wav"})
             write(dir_ / "progetto" / pathFromUtf8(name), "contenuto originale");
     }
 
@@ -155,11 +155,33 @@ protected:
                 EXPECT_NEAR(fa[i].muted[m].end, fe[i].muted[m].end, 1e-9);
             }
         }
+        expectSameAudio(expected.audioTracks(), actual.audioTracks());
         ASSERT_EQ(actual.audioReplacement().has_value(), expected.audioReplacement().has_value());
         if (expected.audioReplacement()) {
             EXPECT_EQ(actual.audioReplacement()->path, expected.audioReplacement()->path);
             EXPECT_EQ(actual.audioReplacement()->offset, expected.audioReplacement()->offset);
             EXPECT_EQ(actual.audioReplacement()->duration, expected.audioReplacement()->duration);
+        }
+    }
+
+    // Le stesse tracce audio (gli id possono cambiare), con i tempi esatti.
+    static void expectSameAudio(const AudioTracks& expected, const AudioTracks& actual)
+    {
+        EXPECT_EQ(actual.mix(AudioTracks::kOriginalTrack), expected.mix(AudioTracks::kOriginalTrack));
+        ASSERT_EQ(actual.tracks().size(), expected.tracks().size());
+        for (std::size_t t = 0; t < expected.tracks().size(); ++t) {
+            const AudioTrack& te = expected.tracks()[t];
+            const AudioTrack& ta = actual.tracks()[t];
+            EXPECT_EQ(ta.mix, te.mix) << "traccia " << t;
+            ASSERT_EQ(ta.clips.size(), te.clips.size()) << "traccia " << t;
+            for (std::size_t c = 0; c < te.clips.size(); ++c) {
+                const auto exact = [](double s) { return ticksToSeconds(secondsToTicks(s)); };
+                EXPECT_EQ(ta.clips[c].path, te.clips[c].path);
+                EXPECT_EQ(ta.clips[c].start, exact(te.clips[c].start));
+                EXPECT_EQ(ta.clips[c].end, exact(te.clips[c].end));
+                EXPECT_EQ(ta.clips[c].position, exact(te.clips[c].position));
+                EXPECT_EQ(ta.clips[c].sourceDuration, exact(te.clips[c].sourceDuration));
+            }
         }
     }
 
@@ -338,6 +360,117 @@ TEST_F(ProjectFileTest, ProxyQualityIsSavedForEachFile)
     ASSERT_NE(at, std::string::npos) << text;
     text.replace(at, saved.size(), "\"proxy\": 3");
     EXPECT_TRUE(projectFromJson(projectPath(), text).view.proxyDivisors.empty());
+}
+
+// Un progetto di prima, con la traccia sostitutiva, si apre come clip su A2 con A1 silenziata; salvato di nuovo resta
+// nel formato di prima, e riaperto è identico.
+TEST_F(ProjectFileTest, OldProjectWithReplacementOpensSavesAndReopensTheSame)
+{
+    const std::string old = R"({
+  "formato": "EditorVideo progetto",
+  "versione": 1,
+  "file": [{"id": 4, "percorso": "", "relativo": "video/gita.mp4", "durata": 7056000000}],
+  "sequenza": [{"file": 4, "inizio": 0, "fine": 3528000000, "senzaAudio": []}],
+  "audioSostitutivo": {"percorso": "", "relativo": "musica.mp3", "scostamento": -882000000, "durata": 127008000000},
+  "sorgente": {"file": 4, "in": null, "out": null, "posizione": 0},
+  "montaggio": {"posizione": 0}
+})";
+    const LoadedProject loaded = projectFromJson(projectPath(), old);
+    EXPECT_TRUE(loaded.missing.empty());
+    const AudioTracks& audio = loaded.project.audioTracks();
+    EXPECT_TRUE(audio.mix(AudioTracks::kOriginalTrack).muted);  // A1 silenziata
+    ASSERT_EQ(audio.tracks().size(), 1u);
+    ASSERT_EQ(audio.tracks()[0].clips.size(), 1u);
+    const AudioClip& clip = audio.tracks()[0].clips[0];
+    EXPECT_EQ(clip.path, file("musica.mp3"));
+    EXPECT_EQ(clip.start, 1.25);  // scostamento -1,25 s: se ne salta l'inizio
+    EXPECT_EQ(clip.position, 0.0);
+    EXPECT_EQ(clip.end, 180.0);
+    ASSERT_TRUE(loaded.project.audioReplacement().has_value());
+    EXPECT_EQ(loaded.project.audioReplacement()->offset, -1.25);
+
+    saveProjectFile(projectPath(), loaded.project, loaded.view);
+    const std::string saved = read(projectPath());
+    EXPECT_NE(saved.find("\"versione\": 1"), std::string::npos);
+    EXPECT_NE(saved.find("\"scostamento\": -882000000"), std::string::npos) << saved;
+    EXPECT_EQ(saved.find("tracceAudio"), std::string::npos);
+
+    const LoadedProject again = loadProjectFile(projectPath());
+    expectSame(loaded.project, again.project);
+    saveProjectFile(projectPath(), again.project, again.view);
+    EXPECT_EQ(read(projectPath()), saved);
+}
+
+TEST_F(ProjectFileTest, AudioTracksAreSavedWithLevelsMuteAndSolo)
+{
+    ProjectView view;
+    Project project = sample(view);
+    project.setAudioReplacement(std::nullopt);
+    AudioTracks& audio = project.audioTracks();
+    audio.setLevel(AudioTracks::kOriginalTrack, -3.5);
+    const int a2 = audio.addTrack();
+    const int a3 = audio.addTrack();
+    audio.setLevel(a2, -12.25);
+    audio.setSolo(a2, true);
+    audio.setMuted(a3, true);
+    ASSERT_NE(audio.add(a2, AudioClip{0, file("voce.wav"), 0.5, 2.0 + 1.0 / 48000, 1.0, 9.5}), 0);
+    ASSERT_NE(audio.add(a2, AudioClip{0, file("musica.mp3"), 10.0, 70.0, 4.0, 181.3}), 0);
+    ASSERT_NE(audio.add(a3, AudioClip{0, file("effetto.wav"), 0.0, 1001.0 / 30000, 2.5, 0.0}), 0);
+    ASSERT_FALSE(project.audioReplacement().has_value());
+
+    saveProjectFile(projectPath(), project, view);
+    const std::string text = read(projectPath());
+    EXPECT_NE(text.find("\"versione\": 3"), std::string::npos);
+    EXPECT_NE(text.find("\"tracceAudio\""), std::string::npos);
+    EXPECT_NE(text.find("\"livello\": -12.25"), std::string::npos) << text;
+
+    const LoadedProject loaded = loadProjectFile(projectPath());
+    EXPECT_TRUE(loaded.missing.empty());
+    expectSame(project, loaded.project);
+    EXPECT_FALSE(loaded.project.audioTracks().audible(loaded.project.audioTracks().tracks()[1].id));
+
+    // Salvato di nuovo (con i file analizzati di nuovo): lo stesso testo.
+    Project reopened = loaded.project;
+    for (const auto& [id, duration] : loaded.savedDurations)
+        reopened.setAnalysis(id, {}, duration);
+    saveProjectFile(projectPath(), reopened, loaded.view);
+    EXPECT_EQ(read(projectPath()), text);
+
+    // Una clip audio rovinata si rifiuta.
+    std::string damaged = text;
+    const std::string end = "\"fine\": " + std::to_string(secondsToTicks(70.0));
+    const auto at = damaged.find(end);
+    ASSERT_NE(at, std::string::npos) << text;
+    damaged.replace(at, end.size(), "\"fine\": 0");
+    EXPECT_THROW(projectFromJson(projectPath(), damaged), ProjectFileError);
+}
+
+TEST_F(ProjectFileTest, MissingAudioFilesOfTheTracks)
+{
+    ProjectView view;
+    Project project = sample(view);
+    project.setAudioReplacement(std::nullopt);
+    AudioTracks& audio = project.audioTracks();
+    const int a2 = audio.addTrack();
+    audio.add(a2, AudioClip{0, file("voce.wav"), 0.0, 1.0, 0.0, 9.5});
+    audio.add(a2, AudioClip{0, file("voce.wav"), 3.0, 4.0, 2.0, 9.5});
+    audio.add(a2, AudioClip{0, file("effetto.wav"), 0.0, 1.0, 5.0, 1.0});
+    saveProjectFile(projectPath(), project, view);
+    fs::rename(dir_ / "progetto" / "voce.wav", dir_ / "voce.wav");
+
+    LoadedProject loaded = loadProjectFile(projectPath());
+    ASSERT_EQ(loaded.missing.size(), 1u);  // una volta sola, anche se lo usano due clip
+    EXPECT_EQ(loaded.missing[0].clipId, 0);
+    EXPECT_EQ(loaded.missing[0].fileName, "voce.wav");
+
+    LoadedProject found = loaded;
+    relocateMissing(found, found.missing[0], utf8FromPath(dir_ / "voce.wav"));
+    EXPECT_TRUE(found.missing.empty());
+    EXPECT_EQ(found.project.audioTracks().tracks()[0].clips[1].path, utf8FromPath(dir_ / "voce.wav"));
+
+    EXPECT_EQ(dropMissing(loaded), 0);  // nessun pezzo video tolto
+    ASSERT_EQ(loaded.project.audioTracks().tracks()[0].clips.size(), 1u);
+    EXPECT_EQ(loaded.project.audioTracks().tracks()[0].clips[0].path, file("effetto.wav"));
 }
 
 TEST(GapExport, GapsAreClosedInTheExportedFile)
