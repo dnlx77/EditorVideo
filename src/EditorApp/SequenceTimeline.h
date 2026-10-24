@@ -45,6 +45,7 @@ public:
         // ricodificare. Con 1 e 2 un segno sul blocco, e fitNote nel suggerimento.
         int fit = 0;
         QString fitNote;
+        int proxyDivisor = 1;  // l'anteprima legge il video da un proxy a 1/proxyDivisor (1 = dall'originale)
     };
 
     // La traccia audio sostitutiva, nella sequenza.
@@ -85,6 +86,13 @@ public:
     // Sequence::nearestFreeStart), e dove è stato lasciato.
     std::function<double(int fragmentId, double desired)> freeStart;
     std::function<void(int fragmentId, double start)> onMoveTo;
+    // Bordi dei pezzi: vicino al bordo sinistro o destro di un blocco il cursore diventa ⟷ e trascinando si sposta
+    // l'inizio (atStart) o la fine del pezzo nel file (Alt premuto = ripple: i pezzi dopo scorrono). trimLimit dice
+    // dove può andare il bordo se lo si vuole a `desired` (tempo nel file); onTrimPreview si chiama durante il
+    // trascinamento con il nuovo bordo, onTrim quando lo si lascia.
+    std::function<double(int fragmentId, bool atStart, double desired, bool ripple)> trimLimit;
+    std::function<void(int fragmentId, bool atStart, double value)> onTrimPreview;
+    std::function<void(int fragmentId, bool atStart, double value, bool ripple)> onTrim;
     std::function<void(int)> onActivate;              // doppio clic
     std::function<void(double from, double to)> onAudioSelection;  // tratto selezionato (vuoto = tolto)
     std::function<void(double offset)> onReplacementMoved;         // traccia sostitutiva spostata
@@ -102,6 +110,7 @@ public:
     // Solo per le prove: dove sta un tempo della sequenza e il centro della corsia video, in coordinate del widget.
     double xForSequenceTime(double seconds) const { return xForTime(seconds); }
     double videoLaneCenter() const { return videoLane().center().y(); }
+    double xForBlockEdge(int index, bool atStart) const;  // dove sta il bordo del blocco `index`
 
 protected:
     bool event(QEvent* event) override;
@@ -142,6 +151,13 @@ private:
     // all'inizio, poi spostato dove c'è posto (freeStart).
     double dragTarget(double x) const;
     void paintAudio(QPainter& p);
+    // Bordo di un blocco sotto il punto (corsia video, entro pochi pixel): indice del blocco, -1 se nessuno; atStart
+    // dice se è l'inizio o la fine.
+    int edgeAt(const QPointF& pos, bool& atStart) const;
+    // Tempo nel file del bordo trascinato quando il mouse è in x (agganciato al cursore e ai bordi degli altri blocchi,
+    // poi limitato da trimLimit).
+    double trimTarget(double x, bool ripple) const;
+    double trimEdgeSequenceTime(double value) const;  // dove cade nella sequenza il bordo trascinato a `value`
 
     std::vector<Block> blocks_;
     double total_ = 0.0;  // durata della sequenza: somma dei blocchi, calcolata in setBlocks
@@ -156,6 +172,13 @@ private:
     bool dragging_ = false;
     double dragGrab_ = 0.0;   // distanza (in secondi) fra l'inizio del blocco e il punto in cui lo si è preso
     double dragStart_ = 0.0;  // dove andrà il blocco trascinato se lo si lascia adesso
+
+    int trimIndex_ = -1;       // blocco di cui si trascina un bordo
+    bool trimAtStart_ = false;
+    bool trimming_ = false;    // il bordo si è mosso
+    bool trimRipple_ = false;
+    double trimValue_ = 0.0;   // nuovo bordo, tempo nel file
+    double trimGrab_ = 0.0;    // distanza (in secondi) fra il bordo e il punto in cui lo si è preso
 
     double selectionFrom_ = 0.0;
     double selectionTo_ = 0.0;

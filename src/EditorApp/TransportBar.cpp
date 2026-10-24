@@ -187,9 +187,14 @@ TransportBar::TransportBar(Kind kind, QWidget* parent)
     quality_ = new QComboBox;
     quality_->setFocusPolicy(Qt::NoFocus);
     quality_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-    quality_->setToolTip(QStringLiteral("Qualità dell'anteprima: Originale mostra i file così come sono; 1/2, 1/4 e 1/8 "
-                                        "usano un proxy (una copia più leggera, creata in sottofondo) per muoversi "
-                                        "senza attese. L'esportazione usa sempre gli originali."));
+    quality_->setToolTip(source ? QStringLiteral("Qualità dell'anteprima del file nella Sorgente (ogni file ha la sua): "
+                                                 "Originale mostra il file così com'è; 1/2, 1/4 e 1/8 usano un proxy (una "
+                                                 "copia più leggera, creata in sottofondo) per muoversi senza attese. "
+                                                 "L'esportazione usa sempre gli originali.")
+                                : QStringLiteral("Qualità dell'anteprima del file del pezzo mostrato (ogni file ha la sua): "
+                                                 "Originale mostra il file così com'è; 1/2, 1/4 e 1/8 usano un proxy (una "
+                                                 "copia più leggera, creata in sottofondo) per muoversi senza attese. "
+                                                 "L'esportazione usa sempre gli originali."));
     for (const int divisor : core::kPreviewDivisors)
         quality_->addItem(divisor == 1 ? QStringLiteral("Originale") : QStringLiteral("1/%1").arg(divisor), divisor);
     connect(quality_, &QComboBox::activated, this, [this](int index) {

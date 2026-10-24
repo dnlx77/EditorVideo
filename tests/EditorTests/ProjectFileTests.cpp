@@ -318,6 +318,28 @@ TEST_F(ProjectFileTest, GapsAreSavedAndOldProjectsHaveNone)
     EXPECT_NEAR(loaded.project.sequence().totalLength(), project.sequence().totalLength(), 1e-6);
 }
 
+TEST_F(ProjectFileTest, ProxyQualityIsSavedForEachFile)
+{
+    ProjectView view;
+    const Project project = sample(view);
+    const std::string plain = projectToJson(projectPath(), project, view);
+    EXPECT_EQ(plain.find("\"proxy\""), std::string::npos);  // nessun proxy: niente di nuovo nel file
+
+    view.proxyDivisors[project.clips()[1].id] = 4;  // solo il secondo file
+    saveProjectFile(projectPath(), project, view);
+    const LoadedProject loaded = loadProjectFile(projectPath());
+    ASSERT_EQ(loaded.view.proxyDivisors.size(), 1u);
+    EXPECT_EQ(loaded.view.proxyDivisors.at(loaded.project.clips()[1].id), 4);
+
+    // Un valore sconosciuto si ignora: anteprima dall'originale.
+    std::string text = read(projectPath());
+    const std::string saved = "\"proxy\": 4";
+    const auto at = text.find(saved);
+    ASSERT_NE(at, std::string::npos) << text;
+    text.replace(at, saved.size(), "\"proxy\": 3");
+    EXPECT_TRUE(projectFromJson(projectPath(), text).view.proxyDivisors.empty());
+}
+
 TEST(GapExport, GapsAreClosedInTheExportedFile)
 {
     Project project;

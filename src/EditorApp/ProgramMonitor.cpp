@@ -128,6 +128,34 @@ void ProgramMonitor::load(int index, double offset)
     player_->seekTo(f.start + std::clamp(offset, 0.0, f.length()));
 }
 
+int ProgramMonitor::currentClipId() const
+{
+    const auto& fragments = project_.sequence().fragments();
+    return index_ >= 0 && index_ < static_cast<int>(fragments.size()) ? fragments[static_cast<std::size_t>(index_)].clipId : 0;
+}
+
+void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QString& note)
+{
+    const core::Clip* clip = project_.find(clipId);
+    if (clip == nullptr)
+        return;
+    if (playing_) {
+        player_->pause();
+        playing_ = false;
+        poll_->stop();
+        updateLabels();
+    }
+    gapIndex_ = -1;
+    index_ = -1;  // nessun pezzo: il prossimo seekTo riapre quello giusto
+    player_->setBlank(false);
+    if (clipId != loadedClipId_) {
+        player_->openFile(QString::fromStdString(clip->path));
+        loadedClipId_ = clipId;
+    }
+    player_->seekTo(sourceTime);
+    fragmentLabel_->setText(note);
+}
+
 void ProgramMonitor::seekTo(double seconds)
 {
     const core::Sequence& sequence = project_.sequence();

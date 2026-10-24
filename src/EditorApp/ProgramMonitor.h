@@ -44,10 +44,14 @@ public:
     void stepFrame(int direction);  // un fotogramma avanti (+1) o indietro (-1), in pausa
     void stepToCut(int direction);  // inizio del pezzo successivo (+1) o di questo / del precedente (-1)
     void seekToEnd();
+    // Mostra il fotogramma del file `clipId` al tempo `sourceTime` (es. il bordo di un pezzo mentre lo si trascina),
+    // con `note` sotto, senza cambiare la sequenza; seekTo() o sequenceChanged() tornano al montaggio.
+    void showSourceFrame(int clipId, double sourceTime, const QString& note);
     bool isPlaying() const { return playing_; }
     double position() const { return position_; }
     int currentIndex() const { return index_; }  // pezzo mostrato (-1 = sequenza vuota o spazio vuoto)
     bool inGap() const { return gapIndex_ >= 0; }  // in uno spazio vuoto
+    int currentClipId() const;  // file del pezzo mostrato (0 = nessuno)
 
     // Proxy (vedi PlayerWidget::videoSourceFor e reloadVideo) e menu della qualità dell'anteprima.
     void setVideoSource(std::function<QString(const QString& path)> source);

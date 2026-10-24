@@ -33,6 +33,9 @@ struct ProjectView
     std::optional<double> out;
     double sourcePosition = 0.0;
     double programPosition = 0.0;
+    // Qualità dell'anteprima scelta per ogni file (id del file -> 2, 4 o 8, cioè proxy a 1/2, 1/4, 1/8); un file che non
+    // c'è usa l'originale. Salvata con il file ("proxy").
+    std::map<int, int> proxyDivisors;
 
     bool operator==(const ProjectView&) const = default;
 };

@@ -248,6 +248,79 @@ QRectF SequenceTimeline::replacementHandle() const
     return QRectF(QPointF(left, lane.top()), QPointF(right, lane.top() + kHandleHeight));
 }
 
+double SequenceTimeline::xForBlockEdge(int index, bool atStart) const
+{
+    if (index < 0 || index >= static_cast<int>(blocks_.size()))
+        return 0.0;
+    const double start = starts_[static_cast<std::size_t>(index)];
+    return xForTime(atStart ? start : start + blocks_[static_cast<std::size_t>(index)].length);
+}
+
+int SequenceTimeline::edgeAt(const QPointF& pos, bool& atStart) const
+{
+    const QRectF lane = videoLane();
+    if (pos.y() < lane.top() || pos.y() > lane.bottom())
+        return -1;
+    constexpr double kReach = 5.0;  // pixel
+    int best = -1;
+    double bestDistance = kReach + 1;
+    for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
+        const double left = xForBlockEdge(i, true);
+        const double right = xForBlockEdge(i, false);
+        if (right - left < 12)
+            continue;  // blocco troppo stretto: si prende per spostarlo
+        // Dove due blocchi si toccano vince il lato del bordo su cui sta il mouse.
+        for (const bool start : {true, false}) {
+            const double edge = start ? left : right;
+            const double distance = std::abs(pos.x() - edge);
+            const bool inside = start ? pos.x() >= edge : pos.x() <= edge;
+            if (distance <= kReach && (distance < bestDistance || (distance == bestDistance && inside))) {
+                best = i;
+                bestDistance = distance;
+                atStart = start;
+            }
+        }
+    }
+    return best;
+}
+
+double SequenceTimeline::trimTarget(double x, bool ripple) const
+{
+    if (trimIndex_ < 0 || trimIndex_ >= static_cast<int>(blocks_.size()))
+        return 0.0;
+    const Block& b = blocks_[static_cast<std::size_t>(trimIndex_)];
+    const double start = starts_[static_cast<std::size_t>(trimIndex_)];
+    const double edge = trimAtStart_ ? start : start + b.length;
+    double t = timeForX(x) - trimGrab_;
+    // Aggancio magnetico a meno di 10 pixel: cursore, inizio della sequenza e bordi degli altri blocchi.
+    std::vector<double> marks{0.0, playhead_};
+    for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
+        if (i != trimIndex_) {
+            marks.push_back(starts_[static_cast<std::size_t>(i)]);
+            marks.push_back(starts_[static_cast<std::size_t>(i)] + blocks_[static_cast<std::size_t>(i)].length);
+        }
+    }
+    double best = 10.0 / zoom().pixelsPerSecond();
+    double snapped = t;
+    for (const double mark : marks) {
+        if (std::abs(t - mark) < best) {
+            best = std::abs(t - mark);
+            snapped = mark;
+        }
+    }
+    t = snapped;
+    const double desired = (trimAtStart_ ? b.sourceStart : b.sourceStart + b.length) + (t - edge);
+    return trimLimit ? trimLimit(b.fragmentId, trimAtStart_, desired, ripple) : desired;
+}
+
+double SequenceTimeline::trimEdgeSequenceTime(double value) const
+{
+    const Block& b = blocks_[static_cast<std::size_t>(trimIndex_)];
+    const double start = starts_[static_cast<std::size_t>(trimIndex_)];
+    // Come se il bordo si spostasse nella sequenza della stessa quantità che nel file.
+    return trimAtStart_ ? start + (value - b.sourceStart) : start + b.length + (value - b.sourceStart - b.length);
+}
+
 int SequenceTimeline::blockAt(double x) const
 {
     const double t = timeForX(x);
@@ -330,8 +403,12 @@ bool SequenceTimeline::event(QEvent* event)
         if (index >= 0) {
             const std::vector<QRectF> rects = blockRects(lane);
             const Block& b = blocks_[static_cast<std::size_t>(index)];
-            if (!b.fitNote.isEmpty() && rects[static_cast<std::size_t>(index)].contains(help->pos())) {
-                QToolTip::showText(help->globalPos(), QStringLiteral("%1\n%2").arg(b.label, b.fitNote), this);
+            QString note = b.fitNote;
+            if (b.proxyDivisor > 1)
+                note = QStringLiteral("Anteprima dal proxy 1/%1 (l'esportazione usa l'originale)").arg(b.proxyDivisor)
+                     + (note.isEmpty() ? QString() : QStringLiteral("\n") + note);
+            if (!note.isEmpty() && rects[static_cast<std::size_t>(index)].contains(help->pos())) {
+                QToolTip::showText(help->globalPos(), QStringLiteral("%1\n%2").arg(b.label, note), this);
                 return true;
             }
         }
@@ -373,6 +450,18 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
     }
     if (blocks_.empty())
         return;
+
+    if (trimming_ && trimIndex_ >= 0 && trimIndex_ < static_cast<int>(blocks_.size())) {
+        // Bordo trascinato: la parte aggiunta chiara, quella tolta scurita, e una riga dove sarà il bordo.
+        const QRectF lane = videoLane();
+        const double oldX = xForBlockEdge(trimIndex_, trimAtStart_);
+        const double newX = xForTime(trimEdgeSequenceTime(trimValue_));
+        const bool longer = trimAtStart_ ? newX < oldX : newX > oldX;
+        const QRectF changed(QPointF(std::min(oldX, newX), lane.top()), QPointF(std::max(oldX, newX), lane.bottom()));
+        p.fillRect(changed, longer ? QColor(255, 255, 255, 110) : QColor(0, 0, 0, 120));
+        p.setPen(QPen(palette().color(QPalette::Highlight), 3));
+        p.drawLine(QPointF(newX, lane.top() - 3), QPointF(newX, lane.bottom() + 3));
+    }
 
     // Cursore, su tutte e due le corsie
     p.setRenderHint(QPainter::Antialiasing);
@@ -502,6 +591,26 @@ void SequenceTimeline::paintStatic(QPainter& p)
             p.setFont(bold);
             p.setPen(b.fit == 1 ? Qt::black : Qt::white);
             p.drawText(badge, Qt::AlignCenter, b.fit == 1 ? QStringLiteral("P") : QStringLiteral("R"));
+            p.restore();
+        }
+        // Segno in alto a destra (a sinistra di P/R), celeste come la barretta della cache: l'anteprima legge dal proxy,
+        // con la sua qualità.
+        if (b.proxyDivisor > 1 && r.width() > 50) {
+            QFont small = p.font();
+            small.setBold(true);
+            small.setPointSizeF(small.pointSizeF() * 0.85);
+            p.save();
+            p.setFont(small);
+            const QString text = QStringLiteral("proxy 1/%1").arg(b.proxyDivisor);
+            const QSizeF size(p.fontMetrics().horizontalAdvance(text) + 8, p.fontMetrics().height() + 1);
+            const QRectF badge(QPointF(r.right() - (b.fit != 0 ? 20 : 3) - size.width(), r.top() + 3), size);
+            if (badge.left() > r.left() + 3) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(110, 190, 240));
+                p.drawRoundedRect(badge, 3, 3);
+                p.setPen(Qt::black);
+                p.drawText(badge, Qt::AlignCenter, text);
+            }
             p.restore();
         }
         if (thumbnails && r.width() > 30) {
@@ -672,6 +781,23 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         return;
     }
 
+    // Vicino al bordo di un blocco: si sposta il bordo (inizio o fine del pezzo nel file).
+    bool atStart = false;
+    if (const int edge = edgeAt(event->position(), atStart); edge >= 0) {
+        trimIndex_ = edge;
+        trimAtStart_ = atStart;
+        trimming_ = false;
+        const Block& b = blocks_[static_cast<std::size_t>(edge)];
+        trimValue_ = atStart ? b.sourceStart : b.sourceStart + b.length;
+        trimGrab_ = t - (atStart ? starts_[static_cast<std::size_t>(edge)] : starts_[static_cast<std::size_t>(edge)] + b.length);
+        selected_ = b.fragmentId;
+        selectedGap_ = 0;
+        if (onSelect)
+            onSelect(selected_);
+        invalidate();
+        return;
+    }
+
     dragIndex_ = blockAt(pressX_);
     dragging_ = false;
     if (dragIndex_ >= 0) {
@@ -697,8 +823,39 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
 {
     const double x = event->position().x();
     if (!(event->buttons() & Qt::LeftButton)) {
-        // Sulla maniglia della traccia sostitutiva il cursore diventa una mano.
-        setCursor(visiblePart(replacementHandle()).contains(event->position()) ? Qt::OpenHandCursor : Qt::ArrowCursor);
+        // Sulla maniglia della traccia sostitutiva il cursore diventa una mano, sul bordo di un blocco ⟷.
+        bool atStart = false;
+        if (visiblePart(replacementHandle()).contains(event->position()))
+            setCursor(Qt::OpenHandCursor);
+        else if (edgeAt(event->position(), atStart) >= 0)
+            setCursor(Qt::SizeHorCursor);
+        else
+            setCursor(Qt::ArrowCursor);
+        return;
+    }
+    if (trimIndex_ >= 0) {
+        if (!trimming_ && std::abs(x - pressX_) < 2)
+            return;
+        trimming_ = true;
+        trimRipple_ = (event->modifiers() & Qt::AltModifier) != 0;
+        const double value = trimTarget(x, trimRipple_);
+        const Block& b = blocks_[static_cast<std::size_t>(trimIndex_)];
+        const double before = trimAtStart_ ? b.sourceStart : b.sourceStart + b.length;
+        const bool changed = std::abs(value - trimValue_) > 1e-9;
+        trimValue_ = value;
+        const double delta = value - before;
+        QToolTip::showText(event->globalPosition().toPoint(),
+                           QStringLiteral("%1 %2 (%3%4 s)%5")
+                               .arg(trimAtStart_ ? QStringLiteral("Inizio") : QStringLiteral("Fine"),
+                                    QString::fromStdString(core::formatDuration(value)),
+                                    delta >= 0 ? QStringLiteral("+") : QString(),
+                                    QString::number(delta, 'f', 3),
+                                    trimRipple_ ? QStringLiteral("\nAlt: i pezzi dopo scorrono")
+                                                : QStringLiteral("\nCon Alt i pezzi dopo scorrono")),
+                           this);
+        update();
+        if (changed && onTrimPreview)
+            onTrimPreview(b.fragmentId, trimAtStart_, value);
         return;
     }
     if (scrubbing_) {
@@ -752,6 +909,17 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
             setAudioSelection(0.0, 0.0);
         if (onAudioSelection)
             onAudioSelection(selectionFrom_, selectionTo_);
+        return;
+    }
+    if (trimIndex_ >= 0) {
+        const int fragment = blocks_[static_cast<std::size_t>(trimIndex_)].fragmentId;
+        const bool trimmed = trimming_;
+        trimIndex_ = -1;
+        trimming_ = false;
+        QToolTip::hideText();
+        update();
+        if (trimmed && onTrim)
+            onTrim(fragment, trimAtStart_, trimValue_, trimRipple_);
         return;
     }
     if (dragging_ && dragIndex_ >= 0) {

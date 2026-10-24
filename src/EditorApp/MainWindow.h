@@ -105,8 +105,9 @@ public:
     const core::Project& project() const { return project_; }
     int currentClipId() const { return currentClipId_; }
     // Qualità dell'anteprima (menu dei player): 1 = file originali, 2, 4, 8 = proxy a quella frazione della risoluzione.
-    void setPreviewQuality(int divisor);
-    int previewQuality() const;
+    // Qualità dell'anteprima di un file (1 = originale, 2, 4, 8 = proxy), indipendente da quella degli altri file.
+    void setPreviewQuality(const QString& path, int divisor);
+    int previewQuality(const QString& path) const;
     // Cartella dei proxy: accanto al progetto (<nome>.proxy), o <cartella di lavoro>\proxy se mai salvato.
     QString proxyFolder() const;
 
@@ -164,6 +165,7 @@ public:
     bool hasExportPlan() const;  // come !exportPlan().empty(), senza costruire il piano
     double exportLength();  // durata del file che si esporterebbe (per le prove)
     std::vector<core::ClipRanges> previewPlan();  // come exportPlan(), con le caratteristiche dei file già lette
+    double frameDurationOf(int clipId) const;  // un fotogramma del video del file (1/30 s se non si sa)
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -252,6 +254,7 @@ private:
     void refreshClipList();
     void sequenceChanged();
     void refreshTimeline();
+    void syncQualityMenus();  // i menu della qualità mostrano quella del file nella Sorgente e del pezzo nel Montaggio
     void addKeyframeRows();  // aggiunge il blocco successivo di fotogrammi chiave all'elenco
     void refreshWaveforms();  // solo le forme d'onda dei blocchi (quando ne finisce una)
     // Formato del progetto: se non c'è ancora e il montaggio ha dei pezzi, quello del file del primo pezzo.

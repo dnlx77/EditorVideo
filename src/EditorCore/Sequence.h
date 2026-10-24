@@ -58,6 +58,23 @@ public:
     void closeAllGaps();
     int gapCount() const;
 
+    // Bordi dei pezzi: si sposta l'inizio (Edge::Start) o la fine (Edge::End) del pezzo nel file.
+    // - Normale: gli altri pezzi restano dove sono. Il bordo che non si tocca resta fermo nella sequenza: allungando
+    //   ci si ferma contro il vicino, accorciando resta (o cresce) uno spazio vuoto.
+    // - ripple: il pezzo resta dove inizia nella sequenza e quelli dopo scorrono avanti o indietro della differenza.
+    // Il pezzo resta dentro il file [0, sourceDuration] e lungo almeno minLength. I tratti senza audio che finiscono
+    // fuori dal pezzo si tagliano.
+    enum class Edge
+    {
+        Start,
+        End,
+    };
+    // Dove può andare il bordo se lo si vuole a `desired` (tempo nel file): `desired` limitato come sopra. -1 se il
+    // pezzo non c'è.
+    double trimLimit(int fragmentId, Edge edge, double desired, double sourceDuration, double minLength, bool ripple) const;
+    // Sposta il bordo a `value` (limitato con trimLimit). true se è cambiato qualcosa.
+    bool trim(int fragmentId, Edge edge, double value, double sourceDuration, double minLength, bool ripple);
+
     // Divide il pezzo che si trova al tempo `seconds` della sequenza, proprio lì. Restituisce l'id della seconda
     // parte, 0 se lì non si può dividere (fuori dai pezzi, in uno spazio vuoto o sul bordo di un pezzo).
     int split(double seconds);

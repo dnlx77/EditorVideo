@@ -142,6 +142,64 @@ double Sequence::nearestFreeStart(int fragmentId, double desired) const
     return best;
 }
 
+double Sequence::trimLimit(int fragmentId, Edge edge, double desired, double sourceDuration, double minLength,
+                           bool ripple) const
+{
+    const int self = indexOf(fragmentId);
+    if (self < 0)
+        return -1.0;
+    const Fragment& f = fragments_[static_cast<std::size_t>(self)];
+    minLength = std::max(minLength, kTimeEpsilon);
+    if (edge == Edge::Start) {
+        // Senza ripple l'inizio nella sequenza si sposta: non prima della fine del pezzo precedente.
+        const double lowest = std::max(0.0, ripple ? 0.0 : f.start - f.gap);
+        return std::clamp(desired, std::min(lowest, f.start), std::max(f.start, f.end - minLength));
+    }
+    // Senza ripple la fine nella sequenza si sposta: non oltre l'inizio del pezzo dopo.
+    double highest = sourceDuration > 0 ? sourceDuration : std::numeric_limits<double>::max();
+    if (!ripple && static_cast<std::size_t>(self) + 1 < fragments_.size())
+        highest = std::min(highest, f.end + fragments_[static_cast<std::size_t>(self) + 1].gap);
+    return std::clamp(desired, std::min(f.start + minLength, f.end), std::max(highest, f.end));
+}
+
+bool Sequence::trim(int fragmentId, Edge edge, double value, double sourceDuration, double minLength, bool ripple)
+{
+    const int self = indexOf(fragmentId);
+    if (self < 0)
+        return false;
+    value = trimLimit(fragmentId, edge, value, sourceDuration, minLength, ripple);
+    Fragment& f = fragments_[static_cast<std::size_t>(self)];
+    const double old = edge == Edge::Start ? f.start : f.end;
+    if (std::abs(value - old) <= kTimeEpsilon)
+        return false;
+    const double delta = value - old;
+    if (edge == Edge::Start) {
+        f.start = value;
+        if (!ripple)
+            f.gap = std::max(0.0, f.gap + delta);  // la fine resta ferma nella sequenza
+    } else {
+        f.end = value;
+        if (!ripple && static_cast<std::size_t>(self) + 1 < fragments_.size()) {
+            Fragment& next = fragments_[static_cast<std::size_t>(self) + 1];
+            next.gap = std::max(0.0, next.gap - delta);  // il pezzo dopo resta fermo
+            if (next.gap <= kTimeEpsilon)
+                next.gap = 0.0;
+        }
+    }
+    if (f.gap <= kTimeEpsilon)
+        f.gap = 0.0;
+    // Tratti senza audio: solo la parte dentro il pezzo.
+    std::vector<TimeRange> kept;
+    for (const TimeRange& r : f.muted) {
+        const double from = std::max(r.start, f.start);
+        const double to = std::min(r.end, f.end);
+        if (to - from > kTimeEpsilon)
+            kept.push_back({from, to});
+    }
+    f.muted = std::move(kept);
+    return true;
+}
+
 bool Sequence::moveTo(int fragmentId, double start)
 {
     const int self = indexOf(fragmentId);
