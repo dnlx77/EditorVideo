@@ -191,17 +191,27 @@ double AudioTracks::nearestFreePosition(int clipId, int trackId, double desired)
     const AudioTrack* t = track(trackId);
     if (clip == nullptr || t == nullptr)
         return -1.0;
-    const double length = clip->length();
+    return freeSpot(*t, clip->length(), desired, clipId);
+}
+
+double AudioTracks::freePosition(int trackId, double length, double desired) const
+{
+    const AudioTrack* t = track(trackId);
+    return t == nullptr ? -1.0 : freeSpot(*t, length, desired, 0);
+}
+
+double AudioTracks::freeSpot(const AudioTrack& track, double length, double desired, int ignoredClip)
+{
     desired = std::max(0.0, desired);
-    if (!overlaps(*t, desired, length, clipId))
+    if (!overlaps(track, desired, length, ignoredClip))
         return desired;
     // Contro una delle altre clip, prima o dopo: il punto libero più vicino.
     double best = -1.0;
-    for (const AudioClip& other : t->clips) {
-        if (other.id == clipId)
+    for (const AudioClip& other : track.clips) {
+        if (other.id == ignoredClip)
             continue;
         for (const double candidate : {other.endPosition(), other.position - length}) {
-            if (candidate < 0.0 || overlaps(*t, candidate, length, clipId))
+            if (candidate < 0.0 || overlaps(track, candidate, length, ignoredClip))
                 continue;
             if (best < 0.0 || std::abs(candidate - desired) < std::abs(best - desired))
                 best = candidate;

@@ -30,6 +30,7 @@
 #include <QtGui/QDragEnterEvent>
 #include <QtGui/QDropEvent>
 #include <QtGui/QMouseEvent>
+#include <QtWidgets/QToolButton>
 #include <QtGui/QWheelEvent>
 #include <QtGui/QWindow>
 #include <QtWidgets/QDockWidget>
@@ -1649,6 +1650,89 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                             undone && rippleUndone ? "sì" : "NO");
                 std::fflush(stdout);
                 ok = ok && shortenOk && undone && rippleOk && rippleUndone;
+            }
+            // Tracce audio (step 18): "+" aggiunge A2 e A3, l'audio del file va su A2, trascinato col mouse su A3, accorciato,
+            // diviso con S e tolto con Canc; "−" toglie una traccia; Annulla riporta tutto com'era.
+            {
+                auto* line = window->sequenceTimeline();
+                const core::AudioTracks& audio = window->project().audioTracks();
+                line->addTrackButton()->click();
+                line->addTrackButton()->click();
+                QCoreApplication::processEvents();
+                const bool added = audio.tracks().size() == 2 && line->audioLanes().size() == 3;
+                const int a2 = added ? audio.tracks()[0].id : 0;
+                const int a3 = added ? audio.tracks()[1].id : 0;
+                const int clips = window->addAudioFiles({window->currentFile()}, a2, 0.25);
+                const core::AudioClip* clip = added && !audio.tracks()[0].clips.empty() ? &audio.tracks()[0].clips.front() : nullptr;
+                const bool placed = clips == 1 && clip != nullptr && std::abs(clip->position - 0.25) < 1e-6;
+                const int clipId = clip != nullptr ? clip->id : 0;
+                const double length = clip != nullptr ? clip->length() : 0.0;
+                // Trascinata col mouse dal centro della clip su A3, 0,5 s più avanti.
+                window->programMonitor()->seekTo(0.0);
+                line->fitAll();
+                QCoreApplication::processEvents();
+                const double pixelsPerSecond = line->xForSequenceTime(1.0) - line->xForSequenceTime(0.0);
+                const double x0 = line->xForSequenceTime(0.25 + std::min(length / 2, 0.4));
+                const double x1 = x0 + 0.5 * pixelsPerSecond;
+                const auto mouse = [&](QEvent::Type type, double x, double y, Qt::MouseButtons buttons) {
+                    QMouseEvent e(type, QPointF(x, y), line->mapToGlobal(QPointF(x, y)),
+                                  type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
+                    QCoreApplication::sendEvent(line, &e);
+                };
+                mouse(QEvent::MouseButtonPress, x0, line->audioLaneCenter(1), Qt::LeftButton);
+                mouse(QEvent::MouseMove, (x0 + x1) / 2, line->audioLaneCenter(2), Qt::LeftButton);
+                mouse(QEvent::MouseMove, x1, line->audioLaneCenter(2), Qt::LeftButton);
+                mouse(QEvent::MouseButtonRelease, x1, line->audioLaneCenter(2), Qt::NoButton);
+                QCoreApplication::processEvents();
+                const core::AudioClip* moved = audio.find(clipId);
+                const bool dragged = moved != nullptr && audio.trackOf(clipId) == a3 && std::abs(moved->position - 0.75) < 0.15;
+                // Accorciata di 0,2 s alla fine, divisa a metà con S, la seconda parte tolta con Canc.
+                const bool trimmed = moved != nullptr && window->trimAudioClip(clipId, false, moved->end - 0.2, false)
+                                  && std::abs(audio.find(clipId)->length() - (length - 0.2)) < 1e-6;
+                // Il cursore del montaggio non va oltre la fine dei pezzi video: la clip torna all'inizio e si divide dentro
+                // quella parte.
+                const bool back = window->moveAudioClip(clipId, a3, 0.0);
+                const double middle = std::min(length - 0.2, sequence.totalLength()) / 2;
+                line->setSelectedAudioClip(clipId);
+                // Il monitor arriva al punto quando il fotogramma è decodificato: si aspetta che ci sia.
+                window->programMonitor()->seekTo(middle);
+                QElapsedTimer seeking;
+                seeking.start();
+                while (std::abs(window->programMonitor()->position() - middle) > 0.1 && seeking.elapsed() < 3000)
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                const double splitAt = window->programMonitor()->position();
+                window->splitAtPlayhead();
+                const bool split = back && audio.track(a3) != nullptr && audio.track(a3)->clips.size() == 2;
+                if (!split)
+                    std::printf("  divisione: cursore a %.3f s (voluto %.3f s), clip audio scelta %d\n", splitAt, middle,
+                                line->selectedAudioClip());
+                line->setFocus(Qt::MouseFocusReason);
+                if (split)
+                    line->setSelectedAudioClip(audio.track(a3)->clips[1].id);
+                window->deleteSelection();
+                const bool deleted = audio.track(a3) != nullptr && audio.track(a3)->clips.size() == 1;
+                // Livello, muto e solo dalle corsie.
+                window->setTrackLevel(a3, -6.0);
+                window->setTrackSolo(a3, true);
+                const bool mix = audio.mix(a3).levelDb == -6.0 && !audio.audible(core::AudioTracks::kOriginalTrack) && audio.audible(a3);
+                if (const QString image = qEnvironmentVariable("EDITORVIDEO_SMOKE_TRACKS_SCREENSHOT"); !image.isEmpty())
+                    line->grab().save(image);
+                // "−" toglie la traccia scelta (A3, quella dell'ultima clip toccata).
+                line->removeTrackButton()->click();
+                QCoreApplication::processEvents();
+                const bool removed = audio.tracks().size() == 1 && audio.track(a3) == nullptr && line->audioLanes().size() == 2;
+                // Annulla tutto: tracce e clip spariscono, il montaggio torna com'era.
+                bool undone = true;
+                for (int i = 0; i < 12 && !audio.isDefault(); ++i)
+                    undone = window->undo() && undone;
+                undone = undone && audio.isDefault() && line->audioLanes().size() == 1;
+                std::printf("Tracce audio: aggiunte %s, file su A2 %s, trascinato su A3 %s, accorciato %s, diviso %s, tolto con "
+                            "Canc %s, livello e solo %s, traccia tolta %s, annulla %s\n",
+                            added ? "sì" : "NO", placed ? "sì" : "NO", dragged ? "sì" : "NO", trimmed ? "sì" : "NO",
+                            split ? "sì" : "NO", deleted ? "sì" : "NO", mix ? "sì" : "NO", removed ? "sì" : "NO",
+                            undone ? "sì" : "NO");
+                std::fflush(stdout);
+                ok = ok && added && placed && dragged && trimmed && split && deleted && mix && removed && undone;
             }
             const double expectedLength = window->exportLength();
 

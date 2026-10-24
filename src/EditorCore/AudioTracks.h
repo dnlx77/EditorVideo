@@ -85,6 +85,8 @@ public:
     // Dove può iniziare la clip sulla traccia `trackId` se la si vuole a `desired`: il punto libero più vicino (vedi
     // Sequence::nearestFreeStart). -1 se la clip o la traccia non c'è.
     double nearestFreePosition(int clipId, int trackId, double desired) const;
+    // Lo stesso per una clip nuova lunga `length` (es. un file da mettere sulla traccia). -1 se la traccia non c'è.
+    double freePosition(int trackId, double length, double desired) const;
     // Sposta la clip a `position` sulla traccia `trackId` (anche un'altra); false (e nessuna modifica) se si
     // sovrapporrebbe ad altre clip o se la traccia non c'è.
     bool moveTo(int clipId, int trackId, double position);
@@ -131,6 +133,8 @@ private:
     // Se [position, position + length) si sovrappone a una clip della traccia diversa da `ignoredClip`.
     static bool overlaps(const AudioTrack& track, double position, double length, int ignoredClip);
     static void sortClips(AudioTrack& track);
+    // Il punto libero più vicino a `desired` sulla traccia per una clip lunga `length` (ignorando `ignoredClip`).
+    static double freeSpot(const AudioTrack& track, double length, double desired, int ignoredClip);
 
     AudioMix original_;
     std::vector<AudioTrack> tracks_;

@@ -28,6 +28,7 @@
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
 #include <QtCore/QMimeData>
+#include <QtCore/QUrl>
 #include <QtGui/QCloseEvent>
 #include <QtGui/QDragEnterEvent>
 #include <QtGui/QDropEvent>
@@ -143,6 +144,9 @@ struct ProbeOutcome
     bool cancelled = false;
 };
 
+// Una clip audio non diventa più corta di così accorciandola dai bordi.
+constexpr double kMinAudioClip = 0.05;
+
 const QString kAudioFilter = QStringLiteral(
     "File audio (*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus *.wma *.ac3 *.mka);;"
     "Audio di un video (*.mp4 *.mkv *.mov *.avi *.webm);;Tutti i file (*.*)");
@@ -225,6 +229,29 @@ QString nativeAbsolute(const QString& path)
     return QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
 }
 
+// Elenco dei file del progetto: i file si possono trascinare sulla linea del tempo, come da Esplora file (sulla corsia
+// video vanno nel montaggio, su una traccia audio aggiunta diventano clip audio).
+class ClipListWidget : public QListWidget
+{
+public:
+    std::function<QString(int clipId)> pathOf;
+
+protected:
+    QStringList mimeTypes() const override { return {QStringLiteral("text/uri-list")}; }
+    QMimeData* mimeData(const QList<QListWidgetItem*>& items) const override
+    {
+        auto* mime = new QMimeData;
+        QList<QUrl> urls;
+        for (const QListWidgetItem* item : items) {
+            const QString path = pathOf ? pathOf(item->data(Qt::UserRole).toInt()) : QString();
+            if (!path.isEmpty())
+                urls.append(QUrl::fromLocalFile(path));
+        }
+        mime->setUrls(urls);
+        return mime;
+    }
+};
+
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent)
@@ -237,9 +264,19 @@ MainWindow::MainWindow(QWidget* parent)
     resize(1500, 900);
 
     // --- Sinistra: file del progetto, informazioni, fotogrammi chiave
-    clipList_ = new QListWidget;
+    auto* clipList = new ClipListWidget;
+    clipList->pathOf = [this](int clipId) {
+        const core::Clip* clip = project_.find(clipId);
+        return clip != nullptr ? qs(clip->path) : QString();
+    };
+    clipList_ = clipList;
     clipList_->setSelectionMode(QAbstractItemView::SingleSelection);
-    clipList_->setToolTip(QStringLiteral("Clic: mostra il file nella Sorgente · Canc: toglie il file dal progetto"));
+    clipList_->setDragEnabled(true);
+    clipList_->setDragDropMode(QAbstractItemView::DragOnly);
+    clipList_->setDefaultDropAction(Qt::CopyAction);
+    clipList_->setToolTip(QStringLiteral("Clic: mostra il file nella Sorgente · Canc: toglie il file dal progetto · "
+                                         "trascina un file sulla linea del tempo per metterlo nel montaggio o su una "
+                                         "traccia audio"));
     clipList_->installEventFilter(this);
     connect(clipList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* item) {
         if (item != nullptr && !updatingList_) {
@@ -443,13 +480,26 @@ MainWindow::MainWindow(QWidget* parent)
                                          .arg(timeText(from), timeText(to)),
                                      8000);
     };
-    timeline_->onReplacementMoved = [this](double offset) {
-        const core::Project before = project_;
-        project_.setAudioOffset(offset);
-        recordEdit(QStringLiteral("Sposta l'audio"), before);
-        statusBar()->showMessage(offset >= 0 ? QStringLiteral("L'audio sostitutivo ora parte a %1 della sequenza.").arg(timeText(offset))
-                                             : QStringLiteral("L'audio sostitutivo ora parte dal suo punto %1.").arg(timeText(-offset)),
-                                 8000);
+    // Tracce audio (step 18).
+    timeline_->onAddTrack = [this] { addAudioTrack(); };
+    timeline_->onRemoveTrack = [this](int trackId) { removeAudioTrack(trackId); };
+    timeline_->onTrackMuted = [this](int trackId, bool muted) { setTrackMuted(trackId, muted); };
+    timeline_->onTrackSolo = [this](int trackId, bool solo) { setTrackSolo(trackId, solo); };
+    timeline_->onTrackLevel = [this](int trackId, double db) { setTrackLevel(trackId, db); };
+    timeline_->onAudioClipSelected = [this](int) { setProgramActive(true); };
+    timeline_->audioFreePosition = [this](int clipId, int trackId, double desired) {
+        return project_.audioTracks().nearestFreePosition(clipId, trackId, desired);
+    };
+    timeline_->onAudioClipMoveTo = [this](int clipId, int trackId, double position) { moveAudioClip(clipId, trackId, position); };
+    timeline_->audioTrimLimit = [this](int clipId, bool atStart, double desired, bool ripple) {
+        return project_.audioTracks().trimLimit(clipId, atStart ? core::Sequence::Edge::Start : core::Sequence::Edge::End,
+                                                desired, kMinAudioClip, ripple);
+    };
+    timeline_->onAudioTrim = [this](int clipId, bool atStart, double value, bool ripple) {
+        trimAudioClip(clipId, atStart, value, ripple);
+    };
+    timeline_->onAudioFilesDropped = [this](const QStringList& paths, int trackId, double seconds) {
+        addAudioFiles(paths, trackId, seconds);
     };
     sequenceLabel_ = new QLabel;
     sequenceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -762,6 +812,21 @@ void MainWindow::splitAtPlayhead()
 {
     const double at = program_->position();
     const core::Project before = project_;
+    // Clip audio selezionata: si divide la clip della sua traccia sotto il cursore.
+    if (const int clip = timeline_->selectedAudioClip(); clip != 0) {
+        core::AudioTracks& audio = project_.audioTracks();
+        const int track = audio.trackOf(clip);
+        if (const int id = audio.split(track, at); id != 0) {
+            timeline_->setSelectedAudioClip(id);
+            recordEdit(QStringLiteral("Dividi clip audio"), before);
+            statusBar()->showMessage(QStringLiteral("Clip audio divisa a %1.").arg(timeText(at)), 8000);
+        } else {
+            statusBar()->showMessage(QStringLiteral("Qui non si può dividere: porta il cursore dentro una clip della traccia %1.")
+                                         .arg(qs(audio.trackName(track))),
+                                     8000);
+        }
+        return;
+    }
     const int id = project_.sequence().split(at);
     if (id == 0) {
         statusBar()->showMessage(QStringLiteral("Qui non si può dividere: porta il cursore dentro un pezzo, non su un "
@@ -785,6 +850,14 @@ void MainWindow::deleteSelection()
         return;
     }
     const core::Project before = project_;
+    if (const int clip = timeline_->selectedAudioClip(); clip != 0) {
+        // Clip audio selezionata: si toglie (lì resta silenzio).
+        if (project_.audioTracks().remove(clip)) {
+            timeline_->setSelectedAudioClip(0);
+            recordEdit(QStringLiteral("Togli clip audio"), before);
+        }
+        return;
+    }
     if (const int gap = timeline_->selectedGap(); gap != 0) {
         // Spazio vuoto selezionato: si chiude, i pezzi dopo scorrono indietro.
         if (project_.sequence().closeGap(project_.sequence().indexOf(gap))) {
@@ -796,6 +869,25 @@ void MainWindow::deleteSelection()
     if (project_.sequence().remove(timeline_->selected())) {
         timeline_->setSelected(0);
         recordEdit(QStringLiteral("Elimina pezzo"), before);
+        return;
+    }
+    // Tratto selezionato su una corsia audio: su A1 si toglie l'audio (come M), su una traccia aggiunta si toglie quel
+    // tratto dalle clip (lì resta silenzio).
+    if (timeline_->hasAudioSelection()) {
+        const int track = timeline_->audioSelectionTrack();
+        if (track == core::AudioTracks::kOriginalTrack) {
+            muteSelection();
+            return;
+        }
+        const double from = timeline_->audioSelectionFrom();
+        const double to = timeline_->audioSelectionTo();
+        if (project_.audioTracks().removeRange(track, from, to)) {
+            timeline_->setAudioSelection(0.0, 0.0);
+            recordEdit(QStringLiteral("Togli tratto audio"), before);
+            statusBar()->showMessage(QStringLiteral("Tolto da %1 a %2 sulla traccia %3.")
+                                         .arg(timeText(from), timeText(to), qs(project_.audioTracks().trackName(track))),
+                                     8000);
+        }
     }
 }
 
@@ -866,8 +958,7 @@ void MainWindow::afterHistoryChange(const QString& message)
             && std::find(probeQueue_.begin(), probeQueue_.end(), clip.id) == probeQueue_.end())
             probeQueue_.push_back(clip.id);
     }
-    if (const auto& replacement = project_.audioReplacement())
-        waveforms_->request(replacement->path);
+    requestAudioWaveforms();
     if (currentClipId_ != 0 && project_.find(currentClipId_) == nullptr) {
         currentClipId_ = 0;
         currentPath_.clear();
@@ -930,13 +1021,12 @@ void MainWindow::ensureProjectFormat()
 void MainWindow::refreshWaveforms()
 {
     // Una forma d'onda finita non cambia altro nella linea del tempo: basta aggiornare quelle dei blocchi.
-    const auto& replacement = project_.audioReplacement();
     timeline_->setWaveforms(
         [this](int clipId) {
             const core::Clip* clip = project_.find(clipId);
             return clip != nullptr ? waveforms_->get(clip->path) : nullptr;
         },
-        replacement ? waveforms_->get(replacement->path) : nullptr);
+        [this](const QString& path) { return waveforms_->get(path.toStdString()); });
 }
 
 double MainWindow::frameDurationOf(int clipId) const
@@ -1000,17 +1090,32 @@ void MainWindow::refreshTimeline()
     timeline_->setFrameDuration(frame);
     const std::vector<core::TimeRange> muted = sequence.mutedRanges();
     timeline_->setMuted(muted);
-    const auto& replacement = project_.audioReplacement();
-    if (replacement) {
-        timeline_->setReplacement(SequenceTimeline::Replacement{fileNameOf(replacement->path), replacement->offset,
-                                                                replacement->duration, waveforms_->get(replacement->path)});
-    } else {
-        timeline_->setReplacement(std::nullopt);
+    // Corsie audio: A1 e le tracce aggiunte con le loro clip.
+    const core::AudioTracks& audio = project_.audioTracks();
+    std::vector<SequenceTimeline::AudioLane> lanes;
+    const auto laneOf = [&](int trackId) {
+        const core::AudioMix& mix = audio.mix(trackId);
+        return SequenceTimeline::AudioLane{trackId, qs(audio.trackName(trackId)), mix.levelDb, mix.muted, mix.solo,
+                                           audio.audible(trackId), {}};
+    };
+    lanes.push_back(laneOf(core::AudioTracks::kOriginalTrack));
+    int audioClips = 0;
+    for (const core::AudioTrack& track : audio.tracks()) {
+        lanes.push_back(laneOf(track.id));
+        for (const core::AudioClip& c : track.clips) {
+            lanes.back().clips.push_back({c.id, qs(c.path), fileNameOf(c.path), colorIndexFor(c.path), c.position, c.length(),
+                                          c.start, waveforms_->get(c.path)});
+            ++audioClips;
+        }
     }
-    if (timeline_->hasAudioSelection() && timeline_->audioSelectionFrom() >= sequence.totalLength())
+    timeline_->setAudioLanes(std::move(lanes));
+    const auto replacement = project_.audioReplacement();
+    if (timeline_->hasAudioSelection() && timeline_->audioSelectionFrom() >= std::max(sequence.totalLength(), audio.endTime()))
         timeline_->setAudioSelection(0.0, 0.0);
     if (originalAudioAction_ != nullptr)
         originalAudioAction_->setEnabled(replacement.has_value());
+    if (removeTrackAction_ != nullptr)
+        removeTrackAction_->setEnabled(!audio.tracks().empty());
 
     QString text = sequence.empty() ? QStringLiteral("<b>Montaggio</b>: vuoto")
                                     : QStringLiteral("<b>Montaggio</b>: %1 pezzi  ·  durata <b>%2</b>")
@@ -1020,6 +1125,10 @@ void MainWindow::refreshTimeline()
         text += gaps == 1 ? QStringLiteral("  ·  1 spazio vuoto") : QStringLiteral("  ·  %1 spazi vuoti").arg(gaps);
     if (replacement)
         text += QStringLiteral("  ·  audio: <b>%1</b> (al posto dell'originale)").arg(fileNameOf(replacement->path).toHtmlEscaped());
+    else if (audioClips > 0)
+        text += QStringLiteral("  ·  %1 clip audio su %2 tracce (per ora anteprima ed esportazione usano solo A1)")
+                    .arg(audioClips)
+                    .arg(audio.tracks().size());
     if (!muted.empty())
         text += QStringLiteral("  ·  %1 tratti senza audio").arg(muted.size());
     sequenceLabel_->setText(text);
@@ -1028,10 +1137,10 @@ void MainWindow::refreshTimeline()
 // ---------------------------------------------------------------------------------------------------------------
 // Audio
 
-void MainWindow::setAudioSelection(double from, double to)
+void MainWindow::setAudioSelection(double from, double to, int trackId)
 {
-    const double total = project_.sequence().totalLength();
-    timeline_->setAudioSelection(std::clamp(from, 0.0, total), std::clamp(to, 0.0, total));
+    const double total = std::max(project_.sequence().totalLength(), project_.audioTracks().endTime());
+    timeline_->setAudioSelection(std::clamp(from, 0.0, total), std::clamp(to, 0.0, total), trackId);
 }
 
 void MainWindow::markAudioIn()
@@ -1041,7 +1150,7 @@ void MainWindow::markAudioIn()
     const double to = timeline_->hasAudioSelection() && timeline_->audioSelectionTo() > at + 0.001
                         ? timeline_->audioSelectionTo()
                         : project_.sequence().totalLength();
-    setAudioSelection(at, to);
+    setAudioSelection(at, to, timeline_->audioSelectionTrack());
     statusBar()->showMessage(QStringLiteral("Tratto audio %1 - %2: segna la fine con O, poi M toglie l'audio.")
                                  .arg(timeText(at), timeText(to)),
                              8000);
@@ -1053,7 +1162,7 @@ void MainWindow::markAudioOut()
     const double from = timeline_->hasAudioSelection() && timeline_->audioSelectionFrom() < at - 0.001
                           ? timeline_->audioSelectionFrom()
                           : 0.0;
-    setAudioSelection(from, at);
+    setAudioSelection(from, at, timeline_->audioSelectionTrack());
     statusBar()->showMessage(QStringLiteral("Tratto audio %1 - %2: M toglie l'audio, Maiusc+M lo rimette.")
                                  .arg(timeText(from), timeText(at)),
                              8000);
@@ -1064,6 +1173,12 @@ void MainWindow::muteSelection()
     if (!timeline_->hasAudioSelection()) {
         statusBar()->showMessage(QStringLiteral("Seleziona un tratto trascinando sulla corsia audio (o segna I e O con il "
                                                 "Montaggio attivo), poi premi M."),
+                                 8000);
+        return;
+    }
+    if (timeline_->audioSelectionTrack() != core::AudioTracks::kOriginalTrack) {
+        statusBar()->showMessage(QStringLiteral("M toglie l'audio di A1: seleziona il tratto sulla corsia A1. Sulle tracce "
+                                                "aggiunte Canc toglie il tratto selezionato."),
                                  8000);
         return;
     }
@@ -1086,6 +1201,10 @@ void MainWindow::unmuteSelection()
         statusBar()->showMessage(QStringLiteral("Seleziona sulla corsia audio il tratto in cui rimettere l'audio, poi "
                                                 "premi Maiusc+M."),
                                  8000);
+        return;
+    }
+    if (timeline_->audioSelectionTrack() != core::AudioTracks::kOriginalTrack) {
+        statusBar()->showMessage(QStringLiteral("Maiusc+M rimette l'audio di A1: seleziona il tratto sulla corsia A1."), 8000);
         return;
     }
     const double from = timeline_->audioSelectionFrom();
@@ -1141,11 +1260,18 @@ bool MainWindow::replaceAudio(const QString& path, bool showProblems)
             return refuse(QString::fromUtf8(e.what()));
         }
     }
+    const core::AudioTracks& tracks = project_.audioTracks();
+    if (showProblems && !project_.audioReplacement() && tracks.endTime() > 0.0
+        && QMessageBox::question(this, QStringLiteral("Sostituisci l'audio"),
+                                 QStringLiteral("Il file diventa l'audio di tutto il montaggio e le tracce audio aggiunte, "
+                                                "con le loro clip, vengono tolte (Ctrl+Z le rimette). Continuare?"))
+               != QMessageBox::Yes)
+        return false;
     const core::Project before = project_;
     project_.setAudioReplacement(core::AudioReplacement{utf8, 0.0, duration});
     waveforms_->request(utf8);
-    statusBar()->showMessage(QStringLiteral("L'audio del montaggio ora è %1 (l'audio originale è escluso). Trascina la "
-                                            "sua maniglia sulla corsia audio per spostarlo.")
+    statusBar()->showMessage(QStringLiteral("L'audio del montaggio ora è %1, sulla traccia A2 (A1, l'audio originale, è "
+                                            "silenziata). Trascina la clip per spostarla.")
                                  .arg(fileNameOf(utf8)),
                              10000);
     recordEdit(QStringLiteral("Sostituisci audio"), before);
@@ -1160,6 +1286,259 @@ void MainWindow::restoreOriginalAudio()
     project_.setAudioReplacement(std::nullopt);
     statusBar()->showMessage(QStringLiteral("Il montaggio usa di nuovo l'audio originale dei file."), 8000);
     recordEdit(QStringLiteral("Usa l'audio originale"), before);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Tracce audio
+
+int MainWindow::colorIndexFor(const std::string& path) const
+{
+    for (const core::Clip& clip : project_.clips()) {
+        if (clip.path == path)
+            return project_.indexOf(clip.id);
+    }
+    return static_cast<int>(qHash(qs(path)) % 10);
+}
+
+void MainWindow::requestAudioWaveforms()
+{
+    for (const core::AudioTrack& track : project_.audioTracks().tracks()) {
+        for (const core::AudioClip& c : track.clips)
+            waveforms_->request(c.path);
+    }
+}
+
+std::optional<double> MainWindow::audioDurationOf(const std::string& path, QString* problem)
+{
+    try {
+        const core::AudioDecoder decoder(path);
+        const double duration = decoder.durationSeconds();
+        if (duration > 0.0)
+            return duration;
+        if (problem != nullptr)
+            *problem = QStringLiteral("%1: durata dell'audio sconosciuta.").arg(fileNameOf(path));
+    } catch (const std::exception& e) {
+        if (problem != nullptr)
+            *problem = QStringLiteral("%1: %2").arg(fileNameOf(path), QString::fromUtf8(e.what()));
+    }
+    return std::nullopt;
+}
+
+int MainWindow::addAudioTrack()
+{
+    const core::Project before = project_;
+    const int id = project_.audioTracks().addTrack();
+    timeline_->setSelectedTrack(id);
+    recordEdit(QStringLiteral("Aggiungi traccia audio"), before);
+    statusBar()->showMessage(QStringLiteral("Aggiunta la traccia audio %1: trascinaci un file audio, o usa Audio > Aggiungi "
+                                            "file audio al cursore.")
+                                 .arg(qs(project_.audioTracks().trackName(id))),
+                             8000);
+    return id;
+}
+
+bool MainWindow::removeAudioTrack(int trackId)
+{
+    const core::AudioTrack* track = project_.audioTracks().track(trackId);
+    if (track == nullptr)
+        return false;
+    const QString name = qs(project_.audioTracks().trackName(trackId));
+    const std::size_t clips = track->clips.size();
+    const core::Project before = project_;
+    project_.audioTracks().removeTrack(trackId);
+    recordEdit(QStringLiteral("Togli traccia audio"), before);
+    statusBar()->showMessage(clips == 0 ? QStringLiteral("Tolta la traccia audio %1.").arg(name)
+                                        : QStringLiteral("Tolta la traccia audio %1 con %2 clip (Ctrl+Z la rimette).").arg(name).arg(clips),
+                             8000);
+    return true;
+}
+
+int MainWindow::addAudioFiles(const QStringList& paths, int trackId, double seconds)
+{
+    if (project_.audioTracks().track(trackId) == nullptr)
+        return 0;
+    std::vector<std::string> utf8;
+    for (const QString& path : paths)
+        utf8.push_back(nativeAbsolute(path).toStdString());
+    const core::DropPlan plan = core::planDrop(utf8, project_, core::inspectMedia);
+    QStringList problems;
+    for (const std::string& name : plan.unreadable)
+        problems.append(QStringLiteral("%1: non è un video o un audio leggibile").arg(qs(name)));
+
+    // Una sola modifica: i file nuovi nell'elenco dei file e le clip sulla traccia, una dopo l'altra.
+    const core::Project before = project_;
+    std::vector<core::DroppedMedia> withAudio;
+    std::vector<double> durations;
+    for (const core::DroppedMedia& media : plan.media) {
+        QString problem;
+        if (const auto duration = audioDurationOf(media.path, &problem)) {
+            withAudio.push_back(media);
+            durations.push_back(*duration);
+        } else {
+            problems.append(problem);
+        }
+    }
+    const std::vector<int> ids = core::applyDrop(project_, withAudio, -1);
+    core::AudioTracks& audio = project_.audioTracks();
+    int added = 0;
+    int first = 0;
+    double at = std::max(0.0, seconds);
+    for (std::size_t i = 0; i < withAudio.size(); ++i) {
+        if (withAudio[i].existingClipId == 0)
+            probeQueue_.push_back(ids[i]);
+        waveforms_->request(withAudio[i].path);
+        core::AudioClip clip;
+        clip.path = withAudio[i].path;
+        clip.end = durations[i];
+        clip.sourceDuration = durations[i];
+        clip.position = audio.freePosition(trackId, durations[i], at);
+        if (const int id = audio.add(trackId, clip); id != 0) {
+            ++added;
+            first = first == 0 ? id : first;
+            at = clip.position + durations[i];
+        }
+    }
+    if (!problems.isEmpty())
+        QMessageBox::warning(this, QStringLiteral("File audio non aggiunti"),
+                             QStringLiteral("Questi file non sono stati messi sulla traccia:\n• %1").arg(problems.join(QStringLiteral("\n• "))));
+    if (added == 0)
+        return 0;
+    timeline_->setSelectedAudioClip(first);
+    recordEdit(QStringLiteral("Aggiungi audio"), before);
+    refreshClipList();
+    startNextProbe();
+    statusBar()->showMessage(QStringLiteral("%1 clip audio sulla traccia %2.").arg(added).arg(qs(audio.trackName(trackId))), 8000);
+    return added;
+}
+
+void MainWindow::addAudioFilesDialog()
+{
+    const QStringList paths =
+        QFileDialog::getOpenFileNames(this, QStringLiteral("File audio da mettere sulla traccia"), QString(), kAudioFilter);
+    if (paths.isEmpty())
+        return;
+    // Sulla traccia scelta, altrimenti sulla prima aggiunta, altrimenti su una nuova.
+    int track = timeline_->selectedTrack();
+    if (project_.audioTracks().track(track) == nullptr)
+        track = project_.audioTracks().tracks().empty() ? 0 : project_.audioTracks().tracks().front().id;
+    if (track == 0)
+        track = addAudioTrack();
+    addAudioFiles(paths, track, program_->position());
+}
+
+bool MainWindow::moveAudioClip(int clipId, int trackId, double position)
+{
+    core::AudioTracks& audio = project_.audioTracks();
+    if (audio.find(clipId) == nullptr)
+        return false;
+    const core::Project before = project_;
+    if (!audio.moveTo(clipId, trackId, position))
+        return false;
+    recordEdit(QStringLiteral("Sposta clip audio"), before);
+    return true;
+}
+
+bool MainWindow::trimAudioClip(int clipId, bool atStart, double value, bool ripple)
+{
+    const core::Project before = project_;
+    if (!project_.audioTracks().trim(clipId, atStart ? core::Sequence::Edge::Start : core::Sequence::Edge::End, value,
+                                     kMinAudioClip, ripple))
+        return false;
+    recordEdit(atStart ? QStringLiteral("Sposta inizio della clip audio") : QStringLiteral("Sposta fine della clip audio"), before);
+    return true;
+}
+
+void MainWindow::setTrackMuted(int trackId, bool muted)
+{
+    const core::Project before = project_;
+    if (project_.audioTracks().setMuted(trackId, muted))
+        recordEdit(muted ? QStringLiteral("Traccia muta") : QStringLiteral("Traccia non più muta"), before);
+}
+
+void MainWindow::setTrackSolo(int trackId, bool solo)
+{
+    const core::Project before = project_;
+    if (project_.audioTracks().setSolo(trackId, solo))
+        recordEdit(solo ? QStringLiteral("Traccia in solo") : QStringLiteral("Traccia non più in solo"), before);
+}
+
+void MainWindow::setTrackLevel(int trackId, double db)
+{
+    const core::Project before = project_;
+    if (project_.audioTracks().setLevel(trackId, db))
+        recordEdit(QStringLiteral("Livello della traccia"), before);
+    else
+        refreshTimeline();  // il cursore del livello torna dov'era
+}
+
+bool MainWindow::replaceAudioHere(const QString& path)
+{
+    if (!timeline_->hasAudioSelection()) {
+        statusBar()->showMessage(QStringLiteral("Seleziona prima il tratto in cui sostituire l'audio, trascinando su una "
+                                                "corsia audio (o con I e O nel Montaggio)."),
+                                 8000);
+        return false;
+    }
+    const std::string utf8 = nativeAbsolute(path).toStdString();
+    QString problem;
+    const auto duration = audioDurationOf(utf8, &problem);
+    if (!duration) {
+        QMessageBox::warning(this, QStringLiteral("Audio non utilizzabile"), problem);
+        return false;
+    }
+    const double from = timeline_->audioSelectionFrom();
+    const double length = std::min(timeline_->audioSelectionTo() - from, *duration);
+    const core::Project before = project_;
+    core::AudioTracks& audio = project_.audioTracks();
+    // La prima traccia aggiunta libera in quel tratto, altrimenti una nuova.
+    int track = 0;
+    for (const core::AudioTrack& t : audio.tracks()) {
+        if (std::abs(audio.freePosition(t.id, length, from) - from) < 1e-9) {
+            track = t.id;
+            break;
+        }
+    }
+    if (track == 0)
+        track = audio.addTrack();
+    core::AudioClip clip;
+    clip.path = utf8;
+    clip.end = length;
+    clip.position = from;
+    clip.sourceDuration = *duration;
+    const int id = audio.add(track, clip);
+    if (id == 0)
+        return false;
+    project_.sequence().muteRange(from, from + length);
+    std::vector<core::DroppedMedia> media{{utf8, *duration, 0}};
+    for (const core::Clip& c : project_.clips()) {
+        if (c.path == utf8)
+            media.front().existingClipId = c.id;
+    }
+    const std::vector<int> ids = core::applyDrop(project_, media, -1);
+    if (media.front().existingClipId == 0)
+        probeQueue_.push_back(ids.front());
+    waveforms_->request(utf8);
+    timeline_->setAudioSelection(0.0, 0.0);
+    timeline_->setSelectedAudioClip(id);
+    recordEdit(QStringLiteral("Sostituisci audio qui"), before);
+    refreshClipList();
+    startNextProbe();
+    statusBar()->showMessage(QStringLiteral("%1 sulla traccia %2 da %3 a %4, con A1 silenziata sotto (per ora l'anteprima e "
+                                            "l'esportazione usano solo A1: il mix delle tracce arriva col prossimo passo).")
+                                 .arg(fileNameOf(utf8), qs(audio.trackName(track)), timeText(from), timeText(from + length)),
+                             12000);
+    return true;
+}
+
+void MainWindow::replaceAudioHereDialog()
+{
+    if (!timeline_->hasAudioSelection()) {
+        replaceAudioHere(QString());  // spiega cosa manca
+        return;
+    }
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Audio da mettere nel tratto selezionato"), QString(), kAudioFilter);
+    if (!path.isEmpty())
+        replaceAudioHere(path);
 }
 
 int MainWindow::pendingWaveforms() const
@@ -1280,6 +1659,13 @@ void MainWindow::exportDialog()
     const QString extension = source.suffix();
     const QString suffix = project_.sequence().empty() ? QStringLiteral("_taglio.") : QStringLiteral("_montaggio.");
     const QString suggested = QDir(workFolder()).filePath(source.completeBaseName() + suffix + extension);
+    if (!project_.sequence().empty() && !project_.audioReplacement() && project_.audioTracks().endTime() > 0.0
+        && QMessageBox::question(this, QStringLiteral("Esporta"),
+                                 QStringLiteral("Le clip sulle tracce audio aggiunte non sono ancora esportate: per ora il file "
+                                                "avrà solo l'audio di A1 (il mix delle tracce arriva con un prossimo passo). "
+                                                "Esportare lo stesso?"))
+               != QMessageBox::Yes)
+        return;
     if (!project_.sequence().empty() && !exportOptionsDialog())
         return;
     QString target = QFileDialog::getSaveFileName(
@@ -1837,6 +2223,22 @@ void MainWindow::createMenus()
     replace->setStatusTip(QStringLiteral("Un file audio (es. MP3 o M4A) al posto dell'audio originale di tutto il montaggio"));
     originalAudioAction_ = audioMenu->addAction(QStringLiteral("Usa l'audio &originale"), this, [this] { restoreOriginalAudio(); });
     originalAudioAction_->setEnabled(false);
+    audioMenu->addSeparator();
+    audioMenu->addAction(QStringLiteral("&Aggiungi traccia audio"), this, [this] { addAudioTrack(); })
+        ->setStatusTip(QStringLiteral("Una traccia A2, A3... sotto A1, per mettere file audio dove si vuole"));
+    removeTrackAction_ = audioMenu->addAction(QStringLiteral("Togli traccia audio"), this, [this] {
+        // Quella scelta sulla linea del tempo, altrimenti l'ultima.
+        const auto& tracks = project_.audioTracks().tracks();
+        if (tracks.empty())
+            return;
+        const int selected = timeline_->selectedTrack();
+        removeAudioTrack(project_.audioTracks().track(selected) != nullptr ? selected : tracks.back().id);
+    });
+    removeTrackAction_->setEnabled(false);
+    audioMenu->addAction(QStringLiteral("Aggiungi &file audio al cursore..."), this, [this] { addAudioFilesDialog(); })
+        ->setStatusTip(QStringLiteral("Sulla traccia scelta (o su una nuova), dal punto del cursore del montaggio"));
+    audioMenu->addAction(QStringLiteral("Sostituisci audio &qui..."), this, [this] { replaceAudioHereDialog(); })
+        ->setStatusTip(QStringLiteral("Un file audio nel tratto selezionato, su una traccia aggiunta, con A1 silenziata sotto"));
 
     QMenu* windowMenu = menuBar()->addMenu(QStringLiteral("Fi&nestra"));
     for (QDockWidget* dock : docks()) {
@@ -2851,8 +3253,7 @@ bool MainWindow::openProject(const QString& path, bool interactive)
         probeQueue_.push_back(clip.id);
         waveforms_->request(clip.path);
     }
-    if (const auto& replacement = project_.audioReplacement())
-        waveforms_->request(replacement->path);
+    requestAudioWaveforms();
     sequenceChanged();  // aggiorna anche l'elenco dei file
     const int source = project_.find(loaded.view.sourceClipId) != nullptr ? loaded.view.sourceClipId
                      : project_.empty()                                   ? 0
