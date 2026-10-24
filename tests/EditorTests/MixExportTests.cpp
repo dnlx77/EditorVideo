@@ -265,7 +265,7 @@ TEST_F(MixExportTest, LevelOfTheVideoAudioAloneIsAppliedToo)
     EXPECT_EQ(exportClips(plain.exportPlan(GapExport::Black), path("copia.mkv"), plain.audioEdit(GapExport::Black)).mixedAudioFiles, 0);
 }
 
-TEST_F(MixExportTest, ClosedGapsMoveThePiecesButNotTheAddedClips)
+TEST_F(MixExportTest, ClosedGapsMoveThePiecesAndTheAddedClipsAlike)
 {
     Project project;
     const int clip = project.add(path("video.mkv"));
@@ -290,7 +290,38 @@ TEST_F(MixExportTest, ClosedGapsMoveThePiecesButNotTheAddedClips)
             found = true;
         }
         if (s.trackId == a2)
-            EXPECT_DOUBLE_EQ(s.position, 2.5);
+            EXPECT_DOUBLE_EQ(s.position, 1.5);  // anche la musica scorre indietro dello spazio tolto
     }
     EXPECT_TRUE(found);
+}
+
+TEST_F(MixExportTest, ClosingGapsKeepsTheAudioWithTheVideo)
+{
+    // Spazio vuoto di 1 s prima del pezzo, con la musica su A2 che inizia a 1 s (insieme al video).
+    Project project;
+    const int clip = project.add(path("video.mkv"));
+    project.setAnalysis(clip, {0.0, 1.0, 2.0, 3.0}, 4.0);
+    const int piece = project.sequence().insert(-1, clip, 0.0, 3.0);
+    ASSERT_TRUE(project.sequence().moveTo(piece, 1.0));
+    const int a2 = project.audioTracks().addTrack();
+    ASSERT_NE(project.audioTracks().add(a2, clipOf("la.wav", 0.0, 3.0, 1.0)), 0);
+    const AudioEdit edit = project.audioEdit(GapExport::Black);
+    ASSERT_TRUE(edit.mix);
+
+    ReencodeOptions closed;
+    closed.closeGaps = true;
+    const std::string out = path("chiuso.mkv");
+    exportClips(project.exportPlan(GapExport::Black), out, edit, {}, MuteMethod::Silence, nullptr, closed);
+    const auto actual = decodeAll(out);
+    EXPECT_NEAR(static_cast<double>(actual.size()) / 2 / kRate, 3.0, 0.06);
+    // La musica deve suonare dall'inizio del file, come il video: il mix di riferimento è quello senza lo spazio.
+    const MixSpec reference = *edit.mixClosed;
+    // Una sinusoide si ripete ogni 109 campioni (e ogni 2400): si cerca lo scarto solo entro mezzo periodo.
+    const Comparison c = compare(mixOffline(reference, 3.0), actual, kRate / 10, kRate * 5 / 2, 50);
+    EXPECT_EQ(c.bestLag, 0);
+    EXPECT_LT(c.error, 0.01);
+    long long head = 0;
+    for (long long i = 0; i < kRate / 2; ++i)
+        head += std::abs(actual[static_cast<std::size_t>(i) * 2]);
+    EXPECT_GT(head / (kRate / 2), 2000) << "la musica manca all'inizio";
 }

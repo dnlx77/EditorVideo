@@ -55,13 +55,74 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project)
     return mixSegmentsOf(project, project.sequence());
 }
 
+namespace {
+
+// I tratti delle tracce aggiunte quando gli spazi vuoti del montaggio si chiudono: come per i pezzi video, il tempo degli
+// spazi si toglie da tutte le tracce, quindi la parte di una clip dentro uno spazio sparisce e il resto scorre indietro.
+std::vector<MixSegment> closeGapsInAddedTracks(const std::vector<MixSegment>& segments, const std::vector<TimeRange>& gaps)
+{
+    std::vector<MixSegment> result;
+    for (const MixSegment& s : segments) {
+        if (s.trackId == AudioTracks::kOriginalTrack) {
+            result.push_back(s);
+            continue;
+        }
+        // Le parti di s fuori dagli spazi, nei tempi della sequenza di prima.
+        double from = s.position;
+        const double end = s.position + s.length();
+        double removed = 0.0;  // somma degli spazi prima di `from`
+        const auto emit = [&](double a, double b) {
+            if (b - a <= 1e-6)
+                return;
+            MixSegment part = s;
+            part.fileStart = s.fileStart + (a - s.position);
+            part.fileEnd = s.fileStart + (b - s.position);
+            part.position = a - removed;
+            result.push_back(std::move(part));
+        };
+        double gapsBefore = 0.0;
+        for (const TimeRange& g : gaps) {
+            if (g.end <= from) {
+                gapsBefore += g.length();
+                continue;
+            }
+            if (g.start >= end)
+                break;
+            removed = gapsBefore;
+            emit(from, std::min(g.start, end));
+            gapsBefore += g.length();
+            from = std::max(from, g.end);
+            removed = gapsBefore;
+        }
+        removed = gapsBefore;
+        if (from < end)
+            emit(from, end);
+    }
+    return result;
+}
+
+}  // namespace
+
 MixSpec mixSpecOf(const Project& project, bool closeGaps)
 {
     Sequence sequence = project.sequence();
-    if (closeGaps)
+    std::vector<TimeRange> gaps;
+    if (closeGaps) {
+        double start = 0.0;
+        for (const Fragment& f : sequence.fragments()) {
+            if (f.gap > 0.0)
+                gaps.push_back({start, start + f.gap});
+            start += f.gap + f.length();
+        }
         sequence.closeAllGaps();
+    }
     MixSpec spec;
     spec.segments = mixSegmentsOf(project, sequence);
+    if (closeGaps && !gaps.empty()) {
+        spec.segments = closeGapsInAddedTracks(spec.segments, gaps);
+        std::stable_sort(spec.segments.begin(), spec.segments.end(),
+                         [](const MixSegment& a, const MixSegment& b) { return a.position < b.position; });
+    }
     spec.gains = trackGainsOf(project.audioTracks());
     spec.length = sequence.totalLength();
     return spec;
