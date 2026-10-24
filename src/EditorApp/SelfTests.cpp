@@ -1689,7 +1689,11 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 // Accorciata di 0,2 s alla fine, divisa a metà con S, la seconda parte tolta con Canc.
                 const bool trimmed = moved != nullptr && window->trimAudioClip(clipId, false, moved->end - 0.2, false)
                                   && std::abs(audio.find(clipId)->length() - (length - 0.2)) < 1e-6;
-                const double middle = audio.find(clipId) != nullptr ? audio.find(clipId)->position + audio.find(clipId)->length() / 2 : 0.0;
+                // Il cursore del montaggio non va oltre la fine dei pezzi video: si divide dentro quella parte della clip.
+                const double middle = audio.find(clipId) != nullptr
+                                        ? audio.find(clipId)->position
+                                              + std::min(audio.find(clipId)->length(), sequence.totalLength() - audio.find(clipId)->position) / 2
+                                        : 0.0;
                 line->setSelectedAudioClip(clipId);
                 window->programMonitor()->seekTo(middle);
                 QCoreApplication::processEvents();
