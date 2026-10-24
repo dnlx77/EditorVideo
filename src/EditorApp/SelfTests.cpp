@@ -1695,7 +1695,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                                   type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
                     QCoreApplication::sendEvent(line, &e);
                 };
-                mouse(QEvent::MouseButtonPress, x0, line->audioLaneCenter(1), Qt::LeftButton);
+                mouse(QEvent::MouseButtonPress, x0, line->audioLaneCenter(1) - 6, Qt::LeftButton);
                 mouse(QEvent::MouseMove, (x0 + x1) / 2, line->audioLaneCenter(2), Qt::LeftButton);
                 mouse(QEvent::MouseMove, x1, line->audioLaneCenter(2), Qt::LeftButton);
                 mouse(QEvent::MouseButtonRelease, x1, line->audioLaneCenter(2), Qt::NoButton);
