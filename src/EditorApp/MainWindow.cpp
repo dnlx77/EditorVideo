@@ -12,6 +12,7 @@
 #include "EditorCore/Encoder.h"
 #include "EditorCore/LibraryInfo.h"
 #include "EditorCore/MediaProbe.h"
+#include "EditorCore/MixExport.h"
 #include "EditorCore/Proxy.h"
 #include "EditorCore/SegmentExport.h"
 #include "EditorApp/ThumbnailCache.h"
@@ -486,6 +487,9 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onTrackMuted = [this](int trackId, bool muted) { setTrackMuted(trackId, muted); };
     timeline_->onTrackSolo = [this](int trackId, bool solo) { setTrackSolo(trackId, solo); };
     timeline_->onTrackLevel = [this](int trackId, double db) { setTrackLevel(trackId, db); };
+    timeline_->onEnvelopeChanged = [this](int trackId, const std::vector<core::LevelPoint>& points) {
+        setTrackEnvelope(trackId, points);
+    };
     timeline_->onAudioClipSelected = [this](int) { setProgramActive(true); };
     timeline_->audioFreePosition = [this](int clipId, int trackId, double desired) {
         return project_.audioTracks().nearestFreePosition(clipId, trackId, desired);
@@ -1113,9 +1117,11 @@ void MainWindow::refreshTimeline()
                                            audio.audible(trackId), {}};
     };
     lanes.push_back(laneOf(core::AudioTracks::kOriginalTrack));
+    lanes.back().envelope = audio.envelope(core::AudioTracks::kOriginalTrack);
     int audioClips = 0;
     for (const core::AudioTrack& track : audio.tracks()) {
         lanes.push_back(laneOf(track.id));
+        lanes.back().envelope = track.mix.envelope;
         for (const core::AudioClip& c : track.clips) {
             lanes.back().clips.push_back({c.id, qs(c.path), fileNameOf(c.path), colorIndexFor(c.path), c.position, c.length(),
                                           c.start, waveforms_->get(c.path)});
@@ -1140,7 +1146,7 @@ void MainWindow::refreshTimeline()
     if (replacement)
         text += QStringLiteral("  ·  audio: <b>%1</b> (al posto dell'originale)").arg(fileNameOf(replacement->path).toHtmlEscaped());
     else if (audioClips > 0)
-        text += QStringLiteral("  ·  %1 clip audio su %2 tracce (l'anteprima le suona; l'esportazione solo A1, per ora)")
+        text += QStringLiteral("  ·  %1 clip audio su %2 tracce (audio mixato in esportazione)")
                     .arg(audioClips)
                     .arg(audio.tracks().size());
     if (!muted.empty())
@@ -1521,6 +1527,15 @@ void MainWindow::setTrackLevel(int trackId, double db)
         refreshTimeline();  // il cursore del livello torna dov'era
 }
 
+void MainWindow::setTrackEnvelope(int trackId, const std::vector<core::LevelPoint>& points)
+{
+    const core::Project before = project_;
+    if (project_.audioTracks().setEnvelope(trackId, points))
+        recordMixEdit(QStringLiteral("Linea del livello"), before);
+    else
+        refreshTimeline();  // il punto trascinato torna dov'era
+}
+
 bool MainWindow::replaceAudioHere(const QString& path)
 {
     if (!timeline_->hasAudioSelection()) {
@@ -1573,8 +1588,7 @@ bool MainWindow::replaceAudioHere(const QString& path)
     recordEdit(QStringLiteral("Sostituisci audio qui"), before);
     refreshClipList();
     startNextProbe();
-    statusBar()->showMessage(QStringLiteral("%1 sulla traccia %2 da %3 a %4, con A1 silenziata sotto (per ora l'esportazione "
-                                            "usa solo A1: il mix delle tracce arriva col prossimo passo).")
+    statusBar()->showMessage(QStringLiteral("%1 sulla traccia %2 da %3 a %4, con A1 silenziata sotto.")
                                  .arg(fileNameOf(utf8), qs(audio.trackName(track)), timeText(from), timeText(from + length)),
                              12000);
     return true;
@@ -1709,14 +1723,6 @@ void MainWindow::exportDialog()
     const QString extension = source.suffix();
     const QString suffix = project_.sequence().empty() ? QStringLiteral("_taglio.") : QStringLiteral("_montaggio.");
     const QString suggested = QDir(workFolder()).filePath(source.completeBaseName() + suffix + extension);
-    if (!project_.sequence().empty() && !project_.audioReplacement() && project_.audioTracks().endTime() > 0.0
-        && QMessageBox::question(this, QStringLiteral("Esporta"),
-                                 QStringLiteral("Le clip sulle tracce audio aggiunte non sono ancora esportate (nell'anteprima "
-                                                "si sentono): per ora il file avrà solo l'audio di A1, senza i livelli delle "
-                                                "tracce (il mix esportato arriva con un prossimo passo). "
-                                                "Esportare lo stesso?"))
-               != QMessageBox::Yes)
-        return;
     if (!project_.sequence().empty() && !exportOptionsDialog())
         return;
     QString target = QFileDialog::getSaveFileName(
@@ -1822,6 +1828,7 @@ bool MainWindow::exportOptionsDialog()
     const std::vector<core::ClipRanges> plan = previewPlan();
     const core::AudioEdit audio = project_.audioEdit(core::GapExport::Black);
     const core::ProjectFormat& format = project_.format();
+    const int mixedAudioFiles = audio.mix ? core::mixFileCount(*audio.mix) : 0;
     // Quanti tratti si copiano e quanti si ricodificano (la prima volta prova anche gli encoder: qualche secondo).
     const auto preview = [&](bool all, bool closeGaps) {
         QApplication::setOverrideCursor(Qt::WaitCursor);
@@ -1877,6 +1884,10 @@ bool MainWindow::exportOptionsDialog()
             text += p.blackGaps == 1 ? QStringLiteral(", <b>1 spazio nero</b> (%1)").arg(timeText(p.blackSeconds))
                                      : QStringLiteral(", <b>%1 spazi neri</b> (%2)").arg(p.blackGaps).arg(timeText(p.blackSeconds));
         text += QStringLiteral(".<br>Durata del file: <b>%1</b>.").arg(timeText(p.outputSeconds));
+        if (mixedAudioFiles > 0)
+            text += QStringLiteral("<br>Audio: <b>mixato e ricodificato</b> in AAC 256 kb/s (%1 file audio), con livelli, linee "
+                                   "del livello, muto e solo delle tracce.")
+                        .arg(mixedAudioFiles);
         if (!p.closedGaps.empty())
             text += QStringLiteral("<br><span style='color:#d08a1a'>%1</span>").arg(qs(p.closedGaps).toHtmlEscaped());
         if (!p.impreciseCuts.empty())
@@ -1913,13 +1924,14 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
     const int count = outcome.result->segmentCount;
     const QString what = count > 1 ? QStringLiteral("Montaggio di %1 pezzi salvato").arg(count)
                                    : QStringLiteral("Segmento salvato");
-    QMessageBox::information(
-        this, QStringLiteral("Esportazione completata"),
-        QStringLiteral("%1 in:\n%2\n\nDurata: %3\n%4")
-            .arg(what, target, timeText(outcome.result->durationSeconds),
-                 outcome.result->reencodedSegments == 0
-                     ? QStringLiteral("Senza ricodifica: stessa qualità dell'originale.")
-                     : QStringLiteral("%1 tratti ricodificati, gli altri copiati senza ricodifica.").arg(outcome.result->reencodedSegments)));
+    QString recoding = outcome.result->reencodedSegments == 0
+                           ? QStringLiteral("Senza ricodifica del video: stessa qualità dell'originale.")
+                           : QStringLiteral("%1 tratti ricodificati, gli altri copiati senza ricodifica.").arg(outcome.result->reencodedSegments);
+    if (outcome.result->mixedAudioFiles > 0)
+        recoding += QStringLiteral("\nAudio ricodificato: %1 file audio mixati (AAC 256 kb/s).").arg(outcome.result->mixedAudioFiles);
+    QMessageBox::information(this, QStringLiteral("Esportazione completata"),
+                             QStringLiteral("%1 in:\n%2\n\nDurata: %3\n%4")
+                                 .arg(what, target, timeText(outcome.result->durationSeconds), recoding));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

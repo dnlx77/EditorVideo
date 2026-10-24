@@ -67,6 +67,12 @@ void SequenceAudio::setTrackGains(const std::map<int, float>& gains)
         mixer_->setGains(gains);
 }
 
+void SequenceAudio::setTrackEnvelopes(const core::TrackEnvelopes& envelopes)
+{
+    if (running_ && mixer_)
+        mixer_->setEnvelopes(envelopes);
+}
+
 double SequenceAudio::position() const
 {
     const double played = static_cast<double>(out_.playedFrames()) / core::kMixSampleRate;

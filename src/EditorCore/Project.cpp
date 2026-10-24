@@ -1,5 +1,6 @@
 #include "EditorCore/Project.h"
 
+#include "EditorCore/AudioMixer.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <algorithm>
@@ -163,12 +164,21 @@ void Project::restoreEdits(const Project& snapshot)
 
 AudioEdit Project::audioEdit(GapExport gaps) const
 {
-    if (gaps == GapExport::Black)
-        return {sequence_.mutedRanges(), audioReplacement()};  // i tempi della sequenza, spazi compresi
-    // GapExport::Close: i tempi della sequenza senza gli spazi vuoti, come nel file esportato.
-    Sequence closed = sequence_;
-    closed.closeAllGaps();
-    return {closed.mutedRanges(), audioReplacement()};
+    AudioEdit edit;
+    edit.replacement = audioReplacement();
+    if (gaps == GapExport::Black) {
+        edit.muted = sequence_.mutedRanges();  // i tempi della sequenza, spazi compresi
+    } else {
+        // GapExport::Close: i tempi della sequenza senza gli spazi vuoti, come nel file esportato.
+        Sequence closed = sequence_;
+        closed.closeAllGaps();
+        edit.muted = closed.mutedRanges();
+    }
+    if (!edit.replacement && !sequence_.empty() && audio_.needsMix()) {
+        edit.mix = std::make_shared<const MixSpec>(mixSpecOf(*this, false));
+        edit.mixClosed = std::make_shared<const MixSpec>(mixSpecOf(*this, true));
+    }
+    return edit;
 }
 
 }  // namespace editor::core

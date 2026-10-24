@@ -156,6 +156,27 @@ TEST_F(AudioMixerTest, LevelChangesWithARampNotAJump)
         ASSERT_EQ(out[i * 2], 0);
 }
 
+TEST_F(AudioMixerTest, EnvelopeFollowsTheLineSampleBySample)
+{
+    // Dissolvenza: 0 dB fino a 0,5 s, poi giù fino al silenzio a 1,5 s; l'altra traccia non ha linea.
+    TrackEnvelopes line;
+    line[0] = {{0.5, 0.0}, {1.5, AudioTracks::kMinLevelDb}};
+    AudioMixer mixer({segment("a.wav", 0.0, 2.0, 0.0)}, {{0, 1.0f}}, line);
+    const auto out = renderAll(mixer, 2.0, 1000);
+    for (long long f = 0; f < 2 * kRate; ++f) {
+        const double gain = AudioTracks::envelopeGain(AudioTracks::envelopeDbAt(line[0], static_cast<double>(f) / kRate));
+        ASSERT_NEAR(out[f * 2], sampleAudio(f) * gain, 2) << "fotogramma " << f;
+    }
+    EXPECT_EQ(out[(kRate * 3 / 2 + 10) * 2], 0);  // dopo la fine della dissolvenza: silenzio
+
+    // La linea si cambia mentre si suona e conta dal blocco dopo.
+    mixer.setEnvelopes({});
+    std::vector<std::int16_t> after;
+    mixer.render(kRate * 3 / 2, 100, after);
+    for (long long i = 0; i < 100; ++i)
+        ASSERT_EQ(after[i * 2], sampleAudio(kRate * 3 / 2 + i));
+}
+
 TEST_F(AudioMixerTest, LimiterNeverExceedsFullScale)
 {
     EXPECT_FLOAT_EQ(AudioMixer::limit(0.5f), 0.5f);
@@ -235,6 +256,13 @@ TEST_F(AudioMixerTest, ProjectGivesPiecesAndTracks)
     EXPECT_DOUBLE_EQ(segments[1].position, 0.75);
     EXPECT_EQ(segments[2].trackId, AudioTracks::kOriginalTrack);
     EXPECT_DOUBLE_EQ(segments[2].position, 1.0);
+
+    audio.setEnvelope(a2, {{0.0, -3.0}, {2.0, -9.0}});
+    const MixSpec spec = mixSpecOf(project);
+    EXPECT_EQ(spec.segments.size(), 3u);
+    EXPECT_DOUBLE_EQ(spec.length, 2.0);
+    ASSERT_EQ(spec.envelopes.size(), 1u);  // solo le linee non vuote
+    EXPECT_EQ(spec.envelopes.at(a2).size(), 2u);
 
     const auto gains = trackGainsOf(audio);
     EXPECT_FLOAT_EQ(gains.at(AudioTracks::kOriginalTrack), 0.0f);  // A1 muta

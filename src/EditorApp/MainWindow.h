@@ -143,6 +143,7 @@ public:
     void setTrackMuted(int trackId, bool muted);
     void setTrackSolo(int trackId, bool solo);
     void setTrackLevel(int trackId, double db);
+    void setTrackEnvelope(int trackId, const std::vector<core::LevelPoint>& points);
     // "Sostituisci audio qui": il file va su una traccia aggiunta nel tratto selezionato (lungo al massimo quanto il
     // tratto) e A1 sotto di lui si silenzia. false, con un messaggio, se manca il tratto o il file non ha audio.
     bool replaceAudioHere(const QString& path);

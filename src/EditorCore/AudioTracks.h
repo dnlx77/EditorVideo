@@ -23,12 +23,24 @@ struct AudioClip
     bool operator==(const AudioClip&) const = default;
 };
 
+// Un punto della linea del livello di una traccia: dal suo istante (nella sequenza) il volume vale `db` rispetto al
+// livello della traccia; fra due punti la linea sale o scende in modo lineare (in dB), prima del primo e dopo l'ultimo
+// resta al valore del punto più vicino. Serve per le sfumature (dissolvenze) e per abbassare solo una parte.
+struct LevelPoint
+{
+    double time = 0.0;  // in secondi, nella sequenza
+    double db = 0.0;    // 0 = com'è; AudioTracks::kMinLevelDb = silenzio
+
+    bool operator==(const LevelPoint&) const = default;
+};
+
 // Livello e muto/solo di una traccia audio.
 struct AudioMix
 {
     double levelDb = 0.0;  // volume della traccia, in dB (0 = com'è nel file)
     bool muted = false;
     bool solo = false;
+    std::vector<LevelPoint> envelope;  // la linea del livello, in ordine di tempo; vuota = sempre 0 dB
 
     bool operator==(const AudioMix&) const = default;
 };
@@ -69,6 +81,14 @@ public:
     bool setLevel(int trackId, double db);
     bool setMuted(int trackId, bool muted);
     bool setSolo(int trackId, bool solo);
+    // La linea del livello (vedi LevelPoint). setEnvelope la mette in ordine di tempo (un solo punto per istante, l'ultimo
+    // vince), limita i tempi a >= 0 e i dB a [kMinLevelDb, kMaxLevelDb]; false se non cambia nulla o la traccia non c'è.
+    const std::vector<LevelPoint>& envelope(int trackId) const { return mix(trackId).envelope; }
+    bool setEnvelope(int trackId, std::vector<LevelPoint> points);
+    // Il valore della linea (dB) al tempo `seconds`; 0 se la linea è vuota.
+    static double envelopeDbAt(const std::vector<LevelPoint>& points, double seconds);
+    // Quanto moltiplica il segnale un valore della linea: 0 al minimo (silenzio), altrimenti dbToGain.
+    static double envelopeGain(double db);
     // Se la traccia si sente nel mix (muto e solo di tutte le tracce compresi).
     bool audible(int trackId) const;
     // Quanto si moltiplica il segnale della traccia nel mix: 0 se non si sente.
@@ -116,6 +136,9 @@ public:
     void restoreEdits(const AudioTracks& snapshot);
     void clear();
 
+    // Se esportando l'audio dei pezzi video non basta copiarlo com'è: A1 ha un livello, una linea del livello, il muto o
+    // il solo di un'altra traccia, oppure le tracce aggiunte hanno clip (vanno mixate).
+    bool needsMix() const;
     // Nessuna traccia aggiunta e A1 com'è all'inizio.
     bool isDefault() const { return tracks_.empty() && original_ == AudioMix{}; }
     double endTime() const;  // fine dell'ultima clip, 0 senza clip

@@ -39,6 +39,7 @@ struct ExportResult
     int reencodedSegments = 0;  // tratti ricodificati (gli altri sono copiati)
     int preciseCuts = 0;        // bordi ricodificati per il taglio preciso (da IN al fotogramma chiave, ...)
     int blackGaps = 0;          // spazi vuoti diventati nero e silenzio
+    int mixedAudioFiles = 0;    // file audio mixati e ricodificati in AAC (AudioEdit::mix); 0 = audio copiato
 };
 
 // Ricodifica all'esportazione (vedi exportClips).
@@ -122,6 +123,9 @@ using ExportProgress = std::function<bool(double fraction)>;
 // creato) e traccia sostitutiva. Con la traccia sostitutiva l'audio dei file non si copia: il file creato ha il video
 // dei file e l'audio del file sostitutivo (copiato senza ricodifica, spostato di `offset` e tagliato alla fine del
 // video).
+// Con AudioEdit::mix l'audio è il mix delle tracce audio (vedi MixExport.h), scritto prima in un file temporaneo
+// (AAC 256 kb/s) che poi prende il posto dell'audio dei file come la traccia sostitutiva; il file creato ha il video dei
+// file e quell'audio. Il 15% iniziale dell'avanzamento è per il mix.
 ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,
                          const ExportProgress& progress = {}, MuteMethod muteMethod = MuteMethod::Silence,
                          const ProjectFormat* format = nullptr, const ReencodeOptions& reencode = {});
