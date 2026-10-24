@@ -18,12 +18,13 @@ struct AudioChunk
 };
 
 // Decodifica il flusso audio principale e lo converte in PCM 16 bit, stereo (o mono se la sorgente è mono),
-// alla frequenza di campionamento originale. Non è thread-safe: va usato da un thread alla volta.
+// alla frequenza di campionamento originale (o a `targetSampleRate`, se indicata). Non è thread-safe: va usato da un
+// thread alla volta.
 class AudioDecoder
 {
 public:
-    // Lancia MediaError se il file non si apre o non ha un flusso audio.
-    explicit AudioDecoder(const std::string& utf8Path);
+    // Lancia MediaError se il file non si apre o non ha un flusso audio. targetSampleRate 0 = quella del file.
+    explicit AudioDecoder(const std::string& utf8Path, int targetSampleRate = 0);
     ~AudioDecoder();
 
     AudioDecoder(const AudioDecoder&) = delete;

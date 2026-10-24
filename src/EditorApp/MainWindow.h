@@ -130,6 +130,11 @@ public:
     // Tracce audio (menu Audio e pulsanti "+" e "−" della linea del tempo). addAudioTrack restituisce l'id della traccia.
     int addAudioTrack();
     bool removeAudioTrack(int trackId);
+    // La traccia audio dove mettere dei file nuovi: quella scelta, altrimenti la prima aggiunta, altrimenti una nuova.
+    int audioTrackForNewClips();
+    // Il tratto [in, out) di un file solo audio della Sorgente su una traccia audio, dal cursore del montaggio (è il
+    // "Aggiungi al montaggio" dei file senza video).
+    void addSourceAudioToTrack(const core::Clip& clip, double in, double out);
     // File audio (anche video, di cui si usa l'audio) sulla traccia `trackId` dal punto `seconds` della sequenza, uno
     // dopo l'altro dove c'è posto; i file entrano anche nell'elenco dei file. Restituisce quante clip ha messo.
     int addAudioFiles(const QStringList& paths, int trackId, double seconds);
@@ -236,6 +241,8 @@ private:
     void resetProject();  // ferma le analisi e svuota tutto (prima di aprire un altro progetto)
     // Dopo una modifica fatta dall'utente: `before` è lo stato di prima, da ritrovare con Annulla.
     void recordEdit(const QString& label, const core::Project& before);
+    // Per livello, muto e solo delle tracce audio: aggiorna la linea del tempo e il mix senza fermare la riproduzione.
+    void recordMixEdit(const QString& label, const core::Project& before);
     // Come recordEdit, per le modifiche che non toccano la sequenza (nessun aggiornamento dell'interfaccia).
     void recordHistory(const QString& label, const core::Project& before);
     void updateUndoActions();

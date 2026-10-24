@@ -336,8 +336,9 @@ void PlayerWidget::openAudio(std::unique_ptr<core::AudioDecoder> own)
     audio_.reset();
     audioOut_.close();
     externalActive_ = false;
-    audioNote_.clear();
-    if (path_.isEmpty() || (externalAudio_.isEmpty() && !ownAudio_))
+    if (audioEnabled_)
+        audioNote_.clear();
+    if (!audioEnabled_ || path_.isEmpty() || (externalAudio_.isEmpty() && !ownAudio_))
         return;
     const QString source = externalAudio_.isEmpty() ? path_ : externalAudio_;
     try {
@@ -354,6 +355,29 @@ void PlayerWidget::openAudio(std::unique_ptr<core::AudioDecoder> own)
     const bool audioDisabled = qEnvironmentVariableIntValue("EDITORVIDEO_NO_AUDIO") != 0;
     if (audioDisabled || !audioOut_.open(audio_->sampleRate(), audio_->channels()))
         audioNote_ = QStringLiteral("audio non disponibile");
+}
+
+void PlayerWidget::setAudioEnabled(bool enabled)
+{
+    if (enabled == audioEnabled_)
+        return;
+    audioEnabled_ = enabled;
+    if (!path_.isEmpty())
+        openAudio();
+}
+
+void PlayerWidget::setExternalClock(std::function<std::optional<double>()> sequenceClock, double delta)
+{
+    externalClock_ = std::move(sequenceClock);
+    externalClockDelta_ = delta;
+}
+
+void PlayerWidget::setAudioNote(const QString& note)
+{
+    if (audioNote_ == note)
+        return;
+    audioNote_ = note;
+    updateControls();
 }
 
 void PlayerWidget::setAudioMutes(std::vector<core::TimeRange> ranges)
@@ -748,6 +772,10 @@ void PlayerWidget::audioWorker()
 
 double PlayerWidget::clock()
 {
+    if (externalClock_) {
+        if (const std::optional<double> sequenceTime = externalClock_())
+            return *sequenceTime - externalClockDelta_;
+    }
     if (audioClock_) {
         const double now =
             audioStart_.load() + audioOut_.playedFrames() / double(audioOut_.sampleRate()) * workerSpeed_;

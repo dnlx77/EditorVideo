@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -104,6 +105,16 @@ public:
     // (silenzio dove `path` non arriva). path vuoto = l'audio del file.
     void setExternalAudio(const QString& path, double delta);
 
+    // Per l'anteprima del montaggio: l'audio lo suona il mixer della sequenza (SequenceAudio), non questo lettore.
+    // setAudioEnabled(false): il lettore non apre né suona nessun audio. setExternalClock: l'orologio della
+    // riproduzione è questo (secondi della sequenza, quindi dell'audio che si sente) meno `delta` (secondi della
+    // sequenza meno secondi del file); nessuna funzione = l'orologio di prima (audio del file o tempo reale). Da
+    // chiamare a riproduzione ferma. La funzione può restituire std::nullopt (es. l'audio non sta suonando): allora
+    // l'orologio è quello di sempre (tempo reale).
+    void setAudioEnabled(bool enabled);
+    void setExternalClock(std::function<std::optional<double>()> sequenceClock, double delta);
+    void setAudioNote(const QString& note);
+
     void seekTo(double seconds);
     void seekRelative(double deltaSeconds);
 
@@ -188,6 +199,9 @@ private:
     QString videoPath_;              // file da cui si legge il video: path_ o il suo proxy
     double ownAudioDuration_ = 0.0;  // durata dell'audio del file (anche quando suona quello esterno)
     bool ownAudio_ = false;          // il file ha un audio
+    bool audioEnabled_ = true;                 // vedi setAudioEnabled()
+    std::function<std::optional<double>()> externalClock_;  // vedi setExternalClock()
+    double externalClockDelta_ = 0.0;
     std::vector<core::TimeRange> audioMutes_;
     QString externalAudio_;
     double externalDelta_ = 0.0;

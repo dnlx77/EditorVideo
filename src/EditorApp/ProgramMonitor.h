@@ -1,9 +1,12 @@
 #pragma once
 
+#include "EditorApp/SequenceAudio.h"
+
 #include <QtCore/QElapsedTimer>
 #include <QtWidgets/QWidget>
 
 #include <functional>
+#include <optional>
 
 class QLabel;
 class QTimer;
@@ -24,10 +27,13 @@ class ProgramMonitor : public QWidget
 {
 public:
     explicit ProgramMonitor(const core::Project& project, QWidget* parent = nullptr);
+    ~ProgramMonitor() override;
 
     // Da chiamare dopo ogni modifica della sequenza, dei file del progetto o dell'audio (tratti silenziati, traccia
     // sostitutiva).
     void sequenceChanged();
+    // Livello, muto o solo di una traccia audio cambiati: si sente subito, senza fermare la riproduzione.
+    void audioMixChanged();
     void seekTo(double seconds);  // tempo della sequenza
     void seekRelative(double deltaSeconds);
     void togglePlayPause();  // mettendo in pausa la velocità torna quella scelta (finisce la spola)
@@ -73,6 +79,11 @@ protected:
 
 private:
     void load(int index, double offset);
+    // L'audio del montaggio: il mix della sequenza dal punto `from` (secondi della sequenza), alla velocità attuale.
+    // false se a questa velocità non si sente o non c'è una scheda audio: la riproduzione va a tempo reale.
+    bool startAudio(double from);
+    void stopAudio();
+    void applyVolume();
     void start();     // parte la riproduzione dalla posizione attuale, alla velocità attuale
     void reachedEdge();  // arrivati alla fine (o all'inizio, all'indietro) del montaggio
     void setCurrentSpeed(double speed);
@@ -84,6 +95,7 @@ private:
 
     const core::Project& project_;
     PlayerWidget* player_ = nullptr;
+    SequenceAudio sequenceAudio_;
     TransportBar* transport_ = nullptr;
     QLabel* timeLabel_ = nullptr;
     QLabel* fragmentLabel_ = nullptr;

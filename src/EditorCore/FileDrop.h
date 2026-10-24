@@ -41,6 +41,10 @@ DropPlan planDrop(const std::vector<std::string>& paths, const Project& project,
 // Il vero controllo per planDrop: apre il file e guarda se ha un video o un audio (veloce: non legge tutto il file).
 std::optional<double> inspectMedia(const std::string& utf8Path);
 
+// true se il file ha un audio ma nessun video (un MP3, un WAV...): un file così va su una traccia audio, mai nella
+// traccia video del montaggio. false anche se il file non si apre.
+bool isAudioOnly(const std::string& utf8Path);
+
 // Aggiunge al progetto i file nuovi del piano e, se sequenceIndex >= 0, mette tutti i file (anche quelli che c'erano
 // già) interi nella sequenza a partire da quella posizione, nell'ordine del piano. Restituisce l'id del file di ogni
 // elemento di plan.media (nell'ordine) e, in `fragments`, gli id dei pezzi inseriti.

@@ -3,6 +3,7 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/TransportBar.h"
 #include "EditorApp/UiText.h"
+#include "EditorCore/AudioMixer.h"
 #include "EditorCore/Playback.h"
 #include "EditorCore/Project.h"
 
@@ -22,6 +23,7 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
 {
     player_ = new PlayerWidget;
     player_->setChromeVisible(false);
+    player_->setAudioEnabled(false);  // l'audio del montaggio lo suona il mixer della sequenza (SequenceAudio)
     player_->onVideoDoubleClicked = [this] {
         if (onVideoDoubleClicked)
             onVideoDoubleClicked();
@@ -76,6 +78,13 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     updateLabels();
 }
 
+ProgramMonitor::~ProgramMonitor()
+{
+    // Il lettore (figlio di questo widget) sopravvive ai membri: non deve più chiedere l'orologio all'audio.
+    player_->setExternalClock(nullptr, 0.0);
+    sequenceAudio_.stop();
+}
+
 void ProgramMonitor::mousePressEvent(QMouseEvent* event)
 {
     if (onActivated)
@@ -116,14 +125,15 @@ void ProgramMonitor::load(int index, double offset)
         loadedClipId_ = f.clipId;
     }
     index_ = index;
-    // Audio del pezzo: i suoi tratti silenziati e, se c'è, la traccia sostitutiva (al tempo t del file si sente
-    // il punto della traccia che cade lì nella sequenza).
-    player_->setAudioMutes(f.muted);
-    if (const auto& replacement = project_.audioReplacement())
-        player_->setExternalAudio(QString::fromStdString(replacement->path),
-                                  project_.sequence().startOf(index) - f.start - replacement->offset);
-    else
-        player_->setExternalAudio(QString(), 0.0);
+    // L'orologio è quello dell'audio del montaggio (che non si ferma ai cambi di pezzo), se sta suonando: al tempo t
+    // del file corrisponde il tempo t + (inizio del pezzo - inizio nel file) della sequenza.
+    player_->setExternalClock(
+        [this]() -> std::optional<double> {
+            if (!sequenceAudio_.running())
+                return std::nullopt;
+            return sequenceAudio_.position();
+        },
+        project_.sequence().startOf(index) - f.start);
     player_->setPlaybackWindow(f.start, f.end);
     player_->seekTo(f.start + std::clamp(offset, 0.0, f.length()));
 }
@@ -141,6 +151,7 @@ void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QStrin
         return;
     if (playing_) {
         player_->pause();
+        stopAudio();
         playing_ = false;
         poll_->stop();
         updateLabels();
@@ -165,17 +176,25 @@ void ProgramMonitor::seekTo(double seconds)
     int index = sequence.indexAt(t);
     if (index < 0) {
         if (const int gap = sequence.gapIndexAt(t); gap >= 0) {
+            if (playing_) {
+                player_->pause();
+                startAudio(t);  // l'audio continua anche nello spazio vuoto
+            }
             enterGap(gap, t);
             return;
         }
         index = static_cast<int>(sequence.fragments().size()) - 1;  // alla fine: ultimo pezzo
     }
     const bool wasPlaying = playing_;
-    if (wasPlaying)
+    if (wasPlaying) {
         player_->pause();
+        stopAudio();
+    }
     load(index, t - sequence.startOf(index));
-    if (wasPlaying)
+    if (wasPlaying) {
+        startAudio(t);
         player_->play();
+    }
     updatePosition();
 }
 
@@ -205,6 +224,7 @@ void ProgramMonitor::togglePlayPause()
     if (playing_) {
         updatePosition();  // nello spazio vuoto: il tempo arrivato fin qui
         player_->pause();
+        stopAudio();
         playing_ = false;
         poll_->stop();
         setCurrentSpeed(baseSpeed_);  // finisce la spola
@@ -236,6 +256,7 @@ void ProgramMonitor::start()
     playing_ = true;
     if (onPlaybackStarted)
         onPlaybackStarted();
+    startAudio(position_);
     if (gapIndex_ >= 0) {
         gapBase_ = position_;  // nello spazio vuoto scorre solo il tempo
         gapClock_.restart();
@@ -278,8 +299,22 @@ void ProgramMonitor::setCurrentSpeed(double speed)
         gapBase_ = position_;
         gapClock_.restart();
     }
+    // Il mix riparte da qui alla nuova velocità (a quelle in cui non si sente, e all'indietro, si va a tempo reale).
+    const bool restartAudio = playing_ && speed != speed_;
+    const bool playerRunning = player_->isPlaying();
+    if (restartAudio) {
+        updatePosition();
+        if (playerRunning)
+            player_->pause();
+        stopAudio();
+    }
     speed_ = speed;
     player_->setSpeed(speed);
+    if (restartAudio) {
+        startAudio(position_);
+        if (playerRunning)
+            player_->play();
+    }
     updateLabels();
 }
 
@@ -306,15 +341,14 @@ void ProgramMonitor::setVolume(int percent)
     volume_ = std::clamp(percent, 0, 100);
     if (volume_ > 0)
         muted_ = false;
-    player_->setVolume(volume_);
-    player_->setMuted(muted_);
+    applyVolume();
     updateLabels();
 }
 
 void ProgramMonitor::setMuted(bool muted)
 {
     muted_ = muted;
-    player_->setMuted(muted);
+    applyVolume();
     updateLabels();
 }
 
@@ -421,6 +455,7 @@ void ProgramMonitor::reachedEdge()
         return;
     }
     playing_ = false;  // fine (o inizio) del montaggio
+    stopAudio();
     poll_->stop();
     if (speed_ < 0)
         seekTo(0.0);
@@ -433,6 +468,7 @@ void ProgramMonitor::sequenceChanged()
     const core::Sequence& sequence = project_.sequence();
     if (playing_) {
         player_->pause();
+        stopAudio();
         playing_ = false;
         poll_->stop();
     }
@@ -458,7 +494,9 @@ void ProgramMonitor::updatePosition()
     if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
         const double gapEnd = sequence.startOf(gapIndex_);
         const double gapStart = gapEnd - sequence.fragments()[static_cast<std::size_t>(gapIndex_)].gap;
-        if (playing_)
+        if (playing_ && sequenceAudio_.running())
+            position_ = std::clamp(sequenceAudio_.position(), gapStart, gapEnd);  // lo scandisce l'audio
+        else if (playing_)
             position_ = std::clamp(gapBase_ + speed_ * static_cast<double>(gapClock_.nsecsElapsed()) / 1e9, gapStart, gapEnd);
         if (playing_ && speed_ > 0 && position_ >= gapEnd - 1e-6) {
             load(gapIndex_, 0.0);  // finito lo spazio vuoto: il pezzo dopo
@@ -494,6 +532,38 @@ void ProgramMonitor::updatePosition()
         }
         onCacheRangeChanged(from, to);
     }
+}
+
+bool ProgramMonitor::startAudio(double from)
+{
+    stopAudio();
+    const core::Sequence& sequence = project_.sequence();
+    if (sequence.empty() || !core::audibleAtSpeed(speed_)) {
+        player_->setAudioNote(QString());
+        return false;
+    }
+    applyVolume();
+    core::AudioMixer mixer(core::mixSegmentsOf(project_), core::trackGainsOf(project_.audioTracks()));
+    const bool started = sequenceAudio_.start(std::move(mixer), from, sequence.totalLength(), speed_);
+    player_->setAudioNote(started ? QString() : QStringLiteral("audio non disponibile"));
+    return started;
+}
+
+void ProgramMonitor::stopAudio()
+{
+    sequenceAudio_.stop();
+}
+
+void ProgramMonitor::applyVolume()
+{
+    // Al quadrato: il cursore segue meglio come si sente il volume.
+    const float level = static_cast<float>(volume_) / 100.0f;
+    sequenceAudio_.setVolume(muted_ ? 0.0f : level * level);
+}
+
+void ProgramMonitor::audioMixChanged()
+{
+    sequenceAudio_.setTrackGains(core::trackGainsOf(project_.audioTracks()));
 }
 
 void ProgramMonitor::updateLabels()

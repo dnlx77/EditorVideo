@@ -202,16 +202,24 @@ void SequenceTimeline::changeEvent(QEvent* event)
 void SequenceTimeline::setSelected(int fragmentId)
 {
     selected_ = fragmentId;
-    if (fragmentId != 0)
+    if (fragmentId != 0) {
         selectedGap_ = 0;
+        selectedAudioClip_ = 0;
+        selectedTrack_ = -1;  // la traccia scelta è quella video
+        syncTrackButtons();
+    }
     invalidate();
 }
 
 void SequenceTimeline::setSelectedGap(int fragmentId)
 {
     selectedGap_ = fragmentId;
-    if (fragmentId != 0)
+    if (fragmentId != 0) {
         selected_ = 0;
+        selectedAudioClip_ = 0;
+        selectedTrack_ = -1;
+        syncTrackButtons();
+    }
     invalidate();
 }
 
@@ -270,6 +278,12 @@ void SequenceTimeline::setAudioSelection(double from, double to, int trackId)
     selectionFrom_ = from;
     selectionTo_ = std::max(from, to);
     selectionTrack_ = trackId;
+    if (to > from && trackId >= 0 && std::any_of(lanes_.begin(), lanes_.end(), [trackId](const AudioLane& l) { return l.trackId == trackId; })) {
+        selected_ = 0;
+        selectedGap_ = 0;
+        selectedTrack_ = trackId;  // la traccia del tratto scelto è quella evidenziata
+        syncTrackButtons();
+    }
     invalidate();
 }
 
@@ -290,6 +304,10 @@ void SequenceTimeline::setSelectedAudioClip(int clipId)
 void SequenceTimeline::setSelectedTrack(int trackId)
 {
     selectedTrack_ = trackId;
+    if (trackId >= 0) {
+        selected_ = 0;  // una sola traccia è quella scelta: o video o audio
+        selectedGap_ = 0;
+    }
     syncTrackButtons();
     invalidate();
 }
@@ -314,6 +332,16 @@ double SequenceTimeline::videoHeight() const
     const double n = static_cast<double>(lanes_.size());
     const double lanes = height() - kRulerHeight - kTop - 6 - kControlsHeight - n * kLaneGap;
     return std::clamp(lanes / (n + 1) * 1.2, 18.0, kVideoHeight);
+}
+
+bool SequenceTimeline::videoLaneSelected() const
+{
+    return selected_ != 0 || selectedGap_ != 0;
+}
+
+bool SequenceTimeline::audioLaneSelected(int index) const
+{
+    return selectedTrack_ >= 0 && lanes_[static_cast<std::size_t>(index)].trackId == selectedTrack_;
 }
 
 QRectF SequenceTimeline::videoLane() const
@@ -814,6 +842,23 @@ void SequenceTimeline::paintStatic(QPainter& p)
     }
     paintAudio(p);
 
+    // La traccia scelta: contorno evidenziato attorno alla sua corsia.
+    {
+        const auto frame = [&](const QRectF& lane) {
+            QColor tint = pal.color(QPalette::Highlight);
+            tint.setAlpha(28);
+            p.setPen(QPen(pal.color(QPalette::Highlight), 2));
+            p.setBrush(tint);
+            p.drawRoundedRect(lane.adjusted(1, 1, -1, -1), 4, 4);
+        };
+        if (videoLaneSelected())
+            frame(videoLane());
+        for (int i = 0; i < static_cast<int>(lanes_.size()); ++i) {
+            if (audioLaneSelected(i))
+                frame(audioLane(i));
+        }
+    }
+
     // Dove andrà la clip audio trascinata: il suo contorno sulla corsia di arrivo.
     if (audioDragging_ && audioDragLane_ > 0) {
         if (const AudioBlock* c = findAudioClip(audioDragClip_)) {
@@ -991,9 +1036,14 @@ void SequenceTimeline::paintHeaders(QPainter& p)
         p.setPen(Qt::NoPen);
         QColor fill = selected ? pal.color(QPalette::Highlight) : pal.color(QPalette::Button);
         if (selected)
-            fill.setAlpha(90);
+            fill.setAlpha(150);
         p.setBrush(fill);
         p.drawRoundedRect(header, 4, 4);
+        if (selected) {
+            // La traccia scelta: barra piena sul bordo sinistro dell'intestazione.
+            p.setBrush(pal.color(QPalette::Highlight));
+            p.drawRoundedRect(QRectF(header.left(), header.top(), 5, header.height()), 2, 2);
+        }
         QFont bold = p.font();
         bold.setBold(true);
         p.save();
@@ -1002,10 +1052,10 @@ void SequenceTimeline::paintHeaders(QPainter& p)
         p.drawText(QRectF(header.left() + 4, header.top(), 24, header.height()), Qt::AlignLeft | Qt::AlignVCenter, name);
         p.restore();
     };
-    label(headerRect(videoLane()), QStringLiteral("V1"), false, false);
+    label(headerRect(videoLane()), QStringLiteral("V1"), videoLaneSelected(), false);
     for (int i = 0; i < static_cast<int>(lanes_.size()); ++i) {
         const AudioLane& lane = lanes_[static_cast<std::size_t>(i)];
-        label(headerRect(audioLane(i)), lane.name, i > 0 && lane.trackId == selectedTrack_, !lane.audible);
+        label(headerRect(audioLane(i)), lane.name, audioLaneSelected(i), !lane.audible);
         // Muto e solo: quadratini accesi o spenti.
         const auto toggle = [&](const QRectF& box, const QString& text, bool on, const QColor& color) {
             p.setPen(QPen(on ? color.darker(130) : pal.color(QPalette::Mid), 1));
@@ -1184,7 +1234,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
             levelLane_ = lane;
             levelValue_ = levelForX(lane, pos.x());
             invalidate();
-        } else if (lane > 0) {
+        } else {
             setSelectedTrack(l.trackId);
         }
         return;
@@ -1204,8 +1254,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         // Corsie audio: le clip delle tracce aggiunte (bordi o spostamento), altrimenti la selezione di un tratto.
         selected_ = 0;
         selectedGap_ = 0;
-        if (lane > 0)
-            setSelectedTrack(lanes_[static_cast<std::size_t>(lane)].trackId);
+        setSelectedTrack(lanes_[static_cast<std::size_t>(lane)].trackId);
         int clipLane = 0;
         int clip = 0;
         bool atStart = false;
@@ -1251,6 +1300,8 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         return;
 
     selectedAudioClip_ = 0;
+    selectedTrack_ = -1;  // si sceglie un pezzo della traccia video
+    syncTrackButtons();
     // Vicino al bordo di un blocco: si sposta il bordo (inizio o fine del pezzo nel file).
     bool atStart = false;
     if (const int edge = edgeAt(pos, atStart); edge >= 0) {

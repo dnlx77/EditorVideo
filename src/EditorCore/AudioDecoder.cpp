@@ -95,7 +95,7 @@ struct AudioDecoder::Impl : OpenedStream
     }
 };
 
-AudioDecoder::AudioDecoder(const std::string& utf8Path)
+AudioDecoder::AudioDecoder(const std::string& utf8Path, int targetSampleRate)
     : impl_(std::make_unique<Impl>())
 {
     Impl& d = *impl_;
@@ -113,7 +113,7 @@ AudioDecoder::AudioDecoder(const std::string& utf8Path)
 
     if (d.ctx->sample_rate <= 0 || d.ctx->ch_layout.nb_channels <= 0)
         throw MediaError("Parametri del flusso audio sconosciuti: " + utf8Path);
-    d.outRate = d.ctx->sample_rate;
+    d.outRate = targetSampleRate > 0 ? targetSampleRate : d.ctx->sample_rate;
     d.outChannels = std::min(2, d.ctx->ch_layout.nb_channels);
 }
 
@@ -140,6 +140,7 @@ void AudioDecoder::seek(double seconds)
     const double target = std::max(0.0, seconds);
     seekStream(d.fmt.get(), d.index, target, d.startOffset);
     avcodec_flush_buffers(d.ctx.get());
+    d.swr.reset();  // niente campioni di prima del salto rimasti nel resampler (si riconfigura al prossimo blocco)
     d.demuxerAtEnd = false;
     d.nextTime = target;
     d.trimUntil = target;

@@ -19,6 +19,7 @@
 #include "EditorCore/TimeUtil.h"
 #include "EditorCore/VideoDecoder.h"
 
+#include <QtCore/QDataStream>
 #include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
@@ -1733,6 +1734,75 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                             undone ? "sì" : "NO");
                 std::fflush(stdout);
                 ok = ok && added && placed && dragged && trimmed && split && deleted && mix && removed && undone;
+            }
+            // Mix e file solo audio (step 19): un file solo audio non va mai nella traccia video (né rilasciato né con A),
+            // e livello, muto e solo si cambiano suonando senza fermare l'anteprima.
+            {
+                const core::AudioTracks& audio = window->project().audioTracks();
+                const QString wav = QDir::temp().filePath(QStringLiteral("EditorVideoProvaAudio.wav"));
+                {
+                    QFile file(wav);
+                    const int rate = 8000;
+                    if (file.open(QIODevice::WriteOnly)) {
+                        QDataStream out(&file);
+                        out.setByteOrder(QDataStream::LittleEndian);
+                        out.writeRawData("RIFF", 4);
+                        out << quint32(36 + rate * 2);
+                        out.writeRawData("WAVEfmt ", 8);
+                        out << quint32(16) << quint16(1) << quint16(1) << quint32(rate) << quint32(rate * 2) << quint16(2) << quint16(16);
+                        out.writeRawData("data", 4);
+                        out << quint32(rate * 2);
+                        for (int i = 0; i < rate; ++i)
+                            out << qint16(8000 * std::sin(2.0 * 3.14159265358979 * 440.0 * i / rate));  // 1 s, 440 Hz
+                    }
+                }
+                const QString original = window->currentFile();
+                int originalId = 0;
+                for (const core::Clip& c : window->project().clips()) {
+                    if (QString::fromStdString(c.path) == original || QDir::toNativeSeparators(QString::fromStdString(c.path)) == QDir::toNativeSeparators(original))
+                        originalId = c.id;
+                }
+                const std::size_t pieces = sequence.fragments().size();
+                window->dropFiles({QDir::toNativeSeparators(wav)}, MainWindow::DropTarget::Sequence, 0);
+                const bool dropped = sequence.fragments().size() == pieces && audio.tracks().size() == 1
+                                  && audio.tracks()[0].clips.size() == 1;
+                QElapsedTimer analysis;
+                analysis.start();
+                while (analysis.elapsed() < 20000 && !window->project().allAnalyzed())
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                int wavId = 0;
+                for (const core::Clip& c : window->project().clips()) {
+                    if (QString::fromStdString(c.path).endsWith(QStringLiteral("EditorVideoProvaAudio.wav")))
+                        wavId = c.id;
+                }
+                bool withA = false;
+                if (wavId != 0 && !audio.tracks().empty()) {
+                    window->selectClip(wavId);
+                    window->addToSequence();
+                    withA = sequence.fragments().size() == pieces && audio.tracks()[0].clips.size() == 2;
+                }
+                if (originalId != 0)
+                    window->selectClip(originalId);
+                // Livello, muto e solo mentre suona: la riproduzione non si ferma.
+                window->programMonitor()->seekTo(0.0);
+                window->programMonitor()->setPlaying(true);
+                const int track = audio.tracks().empty() ? 0 : audio.tracks()[0].id;
+                window->setTrackLevel(track, -12.0);
+                window->setTrackSolo(track, true);
+                window->setTrackMuted(core::AudioTracks::kOriginalTrack, true);
+                const bool keepsPlaying = window->programMonitor()->isPlaying() && audio.audible(track)
+                                       && !audio.audible(core::AudioTracks::kOriginalTrack);
+                window->programMonitor()->setPlaying(false);
+                bool undone = true;
+                for (int i = 0; i < 12 && !(audio.isDefault() && window->project().find(wavId) == nullptr); ++i)
+                    undone = window->undo() && undone;
+                undone = undone && audio.isDefault() && sequence.fragments().size() == pieces;
+                std::printf("Mix audio: file solo audio rilasciato nel montaggio %s, con A %s, livello/solo/muto suonando %s, annulla %s\n",
+                            dropped ? "su una traccia audio (non su quella video)" : "NO", withA ? "sì" : "NO",
+                            keepsPlaying ? "senza fermare la riproduzione" : "NO", undone ? "sì" : "NO");
+                std::fflush(stdout);
+                ok = ok && dropped && withA && keepsPlaying && undone;
+                QFile::remove(wav);
             }
             const double expectedLength = window->exportLength();
 
