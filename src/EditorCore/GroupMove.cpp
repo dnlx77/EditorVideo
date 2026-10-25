@@ -55,17 +55,18 @@ Scene sceneOf(const Project& project, ObjectRef anchor)
         }
     }
     // Le componenti: oggetti legati fra loro (gruppi dell'utente, pezzo e suo audio).
+    std::map<ObjectRef, std::size_t> indexOf;
+    for (std::size_t i = 0; i < scene.items.size(); ++i) {
+        scene.items[i].component = -1;
+        indexOf[scene.items[i].ref] = i;
+    }
     int next = 0;
-    for (Item& item : scene.items)
-        item.component = -1;
     for (Item& item : scene.items) {
         if (item.component >= 0)
             continue;
         for (const ObjectRef& member : project.groupMembers(item.ref)) {
-            for (Item& other : scene.items) {
-                if (other.ref == member)
-                    other.component = next;
-            }
+            if (const auto found = indexOf.find(member); found != indexOf.end())
+                scene.items[found->second].component = next;
         }
         if (item.component < 0)
             item.component = next;
@@ -80,20 +81,16 @@ Scene sceneOf(const Project& project, ObjectRef anchor)
     return scene;
 }
 
-}  // namespace
-
-int Project::groupMoverCount(ObjectRef anchor) const
+int moverCount(const Scene& scene)
 {
-    const Scene scene = sceneOf(*this, anchor);
     if (scene.anchorComponent < 0)
         return 0;
     return static_cast<int>(std::count_if(scene.items.begin(), scene.items.end(),
                                           [&](const Item& i) { return i.component == scene.anchorComponent; }));
 }
 
-double Project::clampGroupDelta(ObjectRef anchor, double delta, bool push) const
+double clampDelta(const Scene& scene, double delta, bool push)
 {
-    const Scene scene = sceneOf(*this, anchor);
     if (scene.anchorComponent < 0)
         return 0.0;
     double lowest = -std::numeric_limits<double>::infinity();
@@ -116,14 +113,14 @@ double Project::clampGroupDelta(ObjectRef anchor, double delta, bool push) const
     return std::clamp(delta, std::min(lowest, 0.0), std::max(highest, 0.0));
 }
 
-bool Project::moveGroup(ObjectRef anchor, double delta, bool push)
+// Sposta di `delta` il gruppo della scena (e, con la spinta, quelli che urta); false e nessuna modifica se non si può.
+bool applyMove(Project& project, const Scene& scene, double delta, bool push)
 {
-    Scene scene = sceneOf(*this, anchor);
     if (scene.anchorComponent < 0 || !std::isfinite(delta))
         return false;
     if (std::abs(delta) <= kTimeEpsilon)
         return true;
-    if (std::abs(clampGroupDelta(anchor, delta, push) - delta) > kTimeEpsilon)
+    if (std::abs(clampDelta(scene, delta, push) - delta) > kTimeEpsilon)
         return false;
     // Di quanto si sposta ogni gruppo: quello preso `delta`, gli altri solo se spinti (verso destra).
     std::map<int, double> shift;
@@ -172,10 +169,10 @@ bool Project::moveGroup(ObjectRef anchor, double delta, bool push)
         else if (item.ref.kind == ObjectRef::Kind::AudioClip)
             clips.push_back({item.ref.id, item.track, item.start + d});
     }
-    Sequence sequence = sequence_;
+    Sequence sequence = project.sequence();
     if (!pieces.empty() && !sequence.shiftPieces(pieces))
         return false;
-    AudioTracks audio = audio_;
+    AudioTracks audio = project.audioTracks();
     std::stable_sort(clips.begin(), clips.end(), [&](const ClipMove& a, const ClipMove& b) {
         return delta > 0.0 ? a.position > b.position : a.position < b.position;
     });
@@ -183,9 +180,68 @@ bool Project::moveGroup(ObjectRef anchor, double delta, bool push)
         if (!audio.moveTo(m.clip, m.track, m.position))
             return false;
     }
-    sequence_ = std::move(sequence);
-    audio_ = std::move(audio);
+    project.sequence() = std::move(sequence);
+    project.audioTracks() = std::move(audio);
     return true;
+}
+
+}  // namespace
+
+int Project::groupMoverCount(ObjectRef anchor) const
+{
+    return moverCount(sceneOf(*this, anchor));
+}
+
+double Project::clampGroupDelta(ObjectRef anchor, double delta, bool push) const
+{
+    return clampDelta(sceneOf(*this, anchor), delta, push);
+}
+
+bool Project::moveGroup(ObjectRef anchor, double delta, bool push)
+{
+    return applyMove(*this, sceneOf(*this, anchor), delta, push);
+}
+
+double Project::freeSpotFor(ObjectRef object, int track, double desired, bool push) const
+{
+    double now = 0.0;
+    if (object.kind == ObjectRef::Kind::AudioClip) {
+        const AudioClip* clip = audio_.find(object.id);
+        if (clip == nullptr)
+            return -1.0;
+        now = clip->position;
+    } else {
+        const int index = sequence_.indexOf(object.id);
+        if (index < 0)
+            return -1.0;
+        now = sequence_.startOf(index);
+    }
+    const Scene scene = sceneOf(*this, object);
+    if (moverCount(scene) > 1)
+        return now + clampDelta(scene, desired - now, push);
+    return object.kind == ObjectRef::Kind::AudioClip ? audio_.nearestFreePosition(object.id, track, desired)
+                                                      : sequence_.nearestFreeStart(object.id, desired, push);
+}
+
+Project::MoveResult Project::moveObject(ObjectRef object, int track, double start, bool push)
+{
+    MoveResult result;
+    const bool isClip = object.kind == ObjectRef::Kind::AudioClip;
+    const AudioClip* clip = isClip ? audio_.find(object.id) : nullptr;
+    const int index = isClip ? -1 : sequence_.indexOf(object.id);
+    if ((isClip && clip == nullptr) || (!isClip && index < 0))
+        return result;
+    const Scene scene = sceneOf(*this, object);
+    if (moverCount(scene) > 1) {
+        // Nel gruppo si muove tutto insieme, ognuno sulla sua traccia.
+        const double now = isClip ? clip->position : sequence_.startOf(index);
+        const double delta = clampDelta(scene, start - now, push);
+        result.group = true;
+        result.moved = std::abs(delta) >= 0.0005 && applyMove(*this, scene, delta, push);
+        return result;
+    }
+    result.moved = isClip ? audio_.moveTo(object.id, track, start) : sequence_.moveTo(object.id, start, nullptr, push);
+    return result;
 }
 
 }  // namespace editor::core

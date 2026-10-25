@@ -2,6 +2,7 @@
 
 #include "EditorApp/ZoomableTimeline.h"
 #include "EditorCore/AudioTracks.h"
+#include "EditorCore/Groups.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <QtCore/QStringList>
@@ -9,6 +10,7 @@
 #include <QtGui/QPixmap>
 
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -109,13 +111,8 @@ public:
     int audioSelectionTrack() const { return selectionTrack_; }
     // Selezione di più oggetti (Ctrl+clic). Un oggetto è un pezzo video, l'audio di un pezzo (su A1) o una clip audio.
     // Vuota se si è scelto un solo oggetto (o nessuno): allora valgono selected() e selectedAudioClip().
-    struct Object
-    {
-        enum class Kind { Piece, PieceAudio, AudioClip };
-        Kind kind = Kind::Piece;
-        int id = 0;  // id del pezzo (Piece, PieceAudio) o della clip audio
-        bool operator==(const Object&) const = default;
-    };
+    // (id del pezzo per Piece e PieceAudio, della clip per AudioClip)
+    using Object = core::ObjectRef;
     const std::vector<Object>& selectedObjects() const { return multi_; }
     // Gli oggetti selezionati, anche con un oggetto solo.
     std::vector<Object> allSelectedObjects() const;
@@ -271,8 +268,12 @@ private:
     // Inizio della clip audio trascinata quando il mouse è in x, sulla corsia `lane` (agganciata ai bordi e al cursore).
     double audioDragTarget(double x, int lane) const;
     double audioTrimTarget(double x, bool ripple) const;
-    // Agganci ai bordi: inizio della sequenza, cursore, bordi dei pezzi video e delle clip audio (tranne `ignoredClip`).
-    std::vector<double> snapMarks(int ignoredClip) const;
+    // Segni a cui ci si aggancia: l'inizio della sequenza, i bordi dei pezzi video (tranne il blocco `ignoredBlock`),
+    // se richiesti il cursore e i bordi delle clip audio (tranne `ignoredClip`).
+    std::vector<double> snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio) const;
+    // `desired` spostato sul segno più vicino a meno di 10 pixel. Si prova ogni `offset` (0 = il bordo stesso, la
+    // lunghezza del blocco = la sua fine): il blocco si aggancia quando il bordo corrispondente è vicino al segno.
+    double snapped(double desired, const std::vector<double>& marks, std::initializer_list<double> offsets) const;
     void syncTrackButtons();
     void updateDuration();  // durata mostrata: fino alla fine dei pezzi o delle clip audio, più un po' di posto
     // Bordo di un blocco sotto il punto (corsia video, entro pochi pixel): indice del blocco, -1 se nessuno; atStart

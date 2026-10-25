@@ -165,6 +165,18 @@ public:
     double clampGroupDelta(ObjectRef anchor, double delta, bool push) const;
     // Sposta il gruppo; false (e nessuna modifica) se `delta` non è possibile (vedi clampGroupDelta).
     bool moveGroup(ObjectRef anchor, double delta, bool push);
+    // Spostare un pezzo video o una clip audio (`track` = la traccia di destinazione, solo per le clip). Se l'oggetto è
+    // in un gruppo si muove tutto il gruppo (ognuno sulla sua traccia), altrimenti solo lui.
+    // freeSpotFor: dove può andare partendo da `desired` (inizio nella sequenza), il punto più vicino che si può fare; -1
+    // se l'oggetto non esiste.
+    double freeSpotFor(ObjectRef object, int track, double desired, bool push) const;
+    struct MoveResult
+    {
+        bool moved = false;  // qualcosa si è spostato
+        bool group = false;  // si è mosso un gruppo (più oggetti)
+    };
+    // Lo porta (o porta il gruppo) a `start`, entro quello che freeSpotFor permette.
+    MoveResult moveObject(ObjectRef object, int track, double start, bool push);
     // I gruppi dell'utente senza gli oggetti che non esistono più, con almeno due oggetti (per salvarli).
     std::vector<std::vector<ObjectRef>> validGroups() const;
 
