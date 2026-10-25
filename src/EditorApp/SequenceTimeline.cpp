@@ -351,7 +351,7 @@ bool SequenceTimeline::ctrlPress(const QPointF& pos)
         int clip = 0;
         if (audioClipAt(pos, clipLane, clip)) {
             target = {Object::Kind::AudioClip, lanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)].clipId};
-        } else if (const int piece = lane == 0 ? pieceAt() : 0; piece != 0) {
+        } else if (const int piece = lane == 0 ? pieceAt() : 0; piece != 0 && !blocks_[static_cast<std::size_t>(blockAt(pos.x()))].audioDetached) {
             target = {Object::Kind::PieceAudio, piece};
         } else {
             return false;
@@ -1191,8 +1191,10 @@ void SequenceTimeline::paintAudio(QPainter& p)
         }
         p.setRenderHint(QPainter::Antialiasing, true);
         if (i == 0) {
-            for (std::size_t b = 0; b < blocks_.size(); ++b)
-                paintEnvelope(p, targetOfBlock(b), lane);
+            for (std::size_t b = 0; b < blocks_.size(); ++b) {
+                if (!blocks_[b].audioDetached)
+                    paintEnvelope(p, targetOfBlock(b), lane);
+            }
         }
         for (std::size_t c = 0; c < lanes_[static_cast<std::size_t>(i)].clips.size(); ++c)
             paintEnvelope(p, targetOfClip(i, c), lane);
@@ -1282,7 +1284,7 @@ bool SequenceTimeline::envelopeHit(const QPointF& pos, EnvTarget& target, int& p
     }
     if (!any && lane == 0) {  // su A1, sotto le clip libere, l'audio dei pezzi video
         const int block = blockAt(pos.x());
-        if (block >= 0 && t >= starts_[static_cast<std::size_t>(block)]
+        if (block >= 0 && !blocks_[static_cast<std::size_t>(block)].audioDetached && t >= starts_[static_cast<std::size_t>(block)]
             && t <= starts_[static_cast<std::size_t>(block)] + blocks_[static_cast<std::size_t>(block)].length) {
             found = targetOfBlock(static_cast<std::size_t>(block));
             any = true;
@@ -1374,7 +1376,7 @@ void SequenceTimeline::paintA1(QPainter& p, const QRectF& lane)
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
         const Block& b = blocks_[i];
         const QRectF& full = rects[i];
-        if (full.right() < visibleLeft() - 4 || full.left() > visibleRight() + 4)
+        if (b.audioDetached || full.right() < visibleLeft() - 4 || full.left() > visibleRight() + 4)
             continue;
         const QRectF r = visiblePart(full);
         const QColor color = blockColor(b.colorIndex);

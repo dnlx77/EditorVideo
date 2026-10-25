@@ -52,6 +52,7 @@ public:
         QString fitNote;
         int proxyDivisor = 1;  // l'anteprima legge il video da un proxy a 1/proxyDivisor (1 = dall'originale)
         std::vector<core::LevelPoint> envelope;  // linea del livello dell'audio del pezzo (tempi del file)
+        bool audioDetached = false;  // l'audio è una clip a parte: sotto il pezzo, su A1, non si vede niente
     };
 
     // Una clip audio su una traccia aggiunta.

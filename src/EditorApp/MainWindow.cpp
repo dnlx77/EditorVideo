@@ -1069,6 +1069,7 @@ void MainWindow::refreshTimeline()
                           f.clipId, clip ? waveforms_->get(clip->path) : nullptr, f.gap});
         if (clip != nullptr)
             blocks.back().proxyDivisor = proxies_->sourceDivisor(qs(clip->path));
+        blocks.back().audioDetached = f.detached;
         if (withAudio)
             blocks.back().envelope = f.envelope;
         // Come entra nel file esportato, rispetto al formato del progetto: segno sul blocco e spiegazione.
