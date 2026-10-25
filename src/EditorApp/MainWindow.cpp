@@ -401,7 +401,16 @@ MainWindow::MainWindow(QWidget* parent)
         setProgramActive(true);
         program_->seekTo(seconds);
     };
-    timeline_->onSelect = [this](int) { setProgramActive(true); };
+    timeline_->onSelect = [this](int) {
+        setProgramActive(true);
+        showGroupStatus();
+    };
+    timeline_->groupMembers = [this](SequenceTimeline::Object o) {
+        std::vector<SequenceTimeline::Object> out;
+        for (const core::ObjectRef& r : project_.groupMembers({static_cast<core::ObjectRef::Kind>(o.kind), o.id}))
+            out.push_back({static_cast<SequenceTimeline::Object::Kind>(r.kind), r.id});
+        return out;
+    };
     timeline_->freeStart = [this](int fragmentId, double desired) {
         const core::ObjectRef piece{core::ObjectRef::Kind::Piece, fragmentId};
         if (project_.groupMoverCount(piece) > 1) {
@@ -494,7 +503,10 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onEnvelopeChanged = [this](bool fragment, int id, const std::vector<core::LevelPoint>& points) {
         setEnvelope(fragment, id, points);
     };
-    timeline_->onAudioClipSelected = [this](int) { setProgramActive(true); };
+    timeline_->onAudioClipSelected = [this](int) {
+        setProgramActive(true);
+        showGroupStatus();
+    };
     timeline_->audioFreePosition = [this](int clipId, int trackId, double desired) {
         const core::ObjectRef clip{core::ObjectRef::Kind::AudioClip, clipId};
         if (project_.groupMoverCount(clip) > 1) {
@@ -1663,6 +1675,55 @@ void MainWindow::unlinkAudio(bool relink)
     }
 }
 
+std::vector<core::ObjectRef> MainWindow::selectedRefs() const
+{
+    std::vector<core::ObjectRef> refs;
+    for (const SequenceTimeline::Object& o : timeline_->allSelectedObjects())
+        refs.push_back({static_cast<core::ObjectRef::Kind>(o.kind), o.id});
+    return refs;
+}
+
+void MainWindow::groupSelection()
+{
+    const std::vector<core::ObjectRef> refs = selectedRefs();
+    const core::Project before = project_;
+    if (refs.size() < 2 || project_.groupObjects(refs) == 0) {
+        statusBar()->showMessage(QStringLiteral("Per fare un gruppo scegli almeno due oggetti diversi con Ctrl+clic."), 8000);
+        return;
+    }
+    recordEdit(QStringLiteral("Crea gruppo"), before);
+    showGroupStatus();
+}
+
+void MainWindow::ungroupSelection()
+{
+    const std::vector<core::ObjectRef> refs = selectedRefs();
+    if (refs.empty()) {
+        statusBar()->showMessage(QStringLiteral("Scegli prima un oggetto del gruppo."), 6000);
+        return;
+    }
+    const core::Project before = project_;
+    const core::Project::UngroupResult result = project_.ungroupObjects(refs);
+    if (result.dissolved == 0 && result.audioUnlinked == 0) {
+        statusBar()->showMessage(QStringLiteral("L'oggetto scelto non è in nessun gruppo."), 6000);
+        return;
+    }
+    recordEdit(result.dissolved > 0 ? QStringLiteral("Sciogli gruppo") : QStringLiteral("Scollega audio"), before);
+    statusBar()->showMessage(result.dissolved > 0 ? QStringLiteral("Gruppo sciolto.")
+                                                  : QStringLiteral("Video e audio non sono più un gruppo: l'audio è una clip libera su A1."),
+                             8000);
+}
+
+void MainWindow::showGroupStatus()
+{
+    const std::vector<core::ObjectRef> refs = selectedRefs();
+    if (refs.size() != 1)
+        return;
+    const std::size_t count = project_.groupMembers(refs.front()).size();
+    if (count > 1)
+        statusBar()->showMessage(QStringLiteral("Gruppo di %1 oggetti: si muovono insieme.").arg(count), 6000);
+}
+
 void MainWindow::replaceAudioHereDialog()
 {
     if (!timeline_->hasAudioSelection()) {
@@ -2130,7 +2191,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         static const int commandKeys[] = {Qt::Key_Space, Qt::Key_Left, Qt::Key_Right, Qt::Key_Home, Qt::Key_End,
                                           Qt::Key_Comma, Qt::Key_Period, Qt::Key_I, Qt::Key_O, Qt::Key_A, Qt::Key_X,
                                           Qt::Key_S, Qt::Key_M, Qt::Key_J, Qt::Key_K, Qt::Key_L, Qt::Key_Z,
-                                          Qt::Key_Y, Qt::Key_Plus, Qt::Key_Minus, Qt::Key_Equal, Qt::Key_Delete};
+                                          Qt::Key_G, Qt::Key_U, Qt::Key_Y, Qt::Key_Plus, Qt::Key_Minus, Qt::Key_Equal, Qt::Key_Delete};
         const bool commandKey = std::find(std::begin(commandKeys), std::end(commandKeys), key->key())
                              != std::end(commandKeys);
         const auto modifiers = key->modifiers() & ~Qt::KeypadModifier;
@@ -2384,6 +2445,13 @@ void MainWindow::createMenus()
                                              : QStringLiteral("Spinta dei pezzi successivi: spenta."),
                                  6000);
     });
+    editMenu->addSeparator();
+    QAction* group = editMenu->addAction(QStringLiteral("Crea &gruppo"), this, [this] { groupSelection(); });
+    group->setShortcut(QKeySequence(Qt::Key_G));
+    group->setStatusTip(QStringLiteral("Gli oggetti scelti con Ctrl+clic si muovono insieme"));
+    QAction* ungroup = editMenu->addAction(QStringLiteral("Sc&ioglie il gruppo"), this, [this] { ungroupSelection(); });
+    ungroup->setShortcut(QKeySequence(Qt::Key_U));
+    ungroup->setStatusTip(QStringLiteral("Scioglie il gruppo dell'oggetto scelto; un video con il suo audio in gruppo: scollega l'audio"));
     editMenu->addSeparator();
     editMenu->addAction(QStringLiteral("&Svuota il montaggio"), this, [this] { clearSequence(); });
     editMenu->addSeparator();

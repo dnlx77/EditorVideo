@@ -335,6 +335,11 @@ bool SequenceTimeline::isSelected(Object::Kind kind, int id) const
     return (kind == Object::Kind::Piece && id == selected_) || (kind == Object::Kind::AudioClip && id == selectedAudioClip_);
 }
 
+bool SequenceTimeline::isMate(Object::Kind kind, int id) const
+{
+    return !isSelected(kind, id) && std::find(mates_.begin(), mates_.end(), Object{kind, id}) != mates_.end();
+}
+
 bool SequenceTimeline::ctrlPress(const QPointF& pos)
 {
     // L'oggetto sotto il mouse: un pezzo sulla corsia video, sulle corsie audio una clip o (su A1) l'audio di un pezzo.
@@ -907,6 +912,15 @@ void SequenceTimeline::paintStatic(QPainter& p)
     p.setRenderHint(QPainter::Antialiasing);
     const QRectF a = videoLane();
     const QPalette pal = palette();
+    mates_.clear();
+    if (groupMembers) {
+        for (const Object& o : allSelectedObjects()) {
+            for (const Object& mate : groupMembers(o)) {
+                if (std::find(mates_.begin(), mates_.end(), mate) == mates_.end())
+                    mates_.push_back(mate);
+            }
+        }
+    }
     paintRuler(p);
     p.setPen(Qt::NoPen);
     p.setBrush(pal.color(QPalette::Base));
@@ -1055,7 +1069,9 @@ void SequenceTimeline::paintVideo(QPainter& p)
                 p.fillRect(r, QColor(255, 255, 255, 140));
             p.restore();
         }
-        p.setPen(isSelected(Object::Kind::Piece, b.fragmentId) ? QPen(pal.color(QPalette::Highlight), 3) : QPen(color.darker(140), 1));
+        p.setPen(isSelected(Object::Kind::Piece, b.fragmentId) ? QPen(pal.color(QPalette::Highlight), 3)
+                 : isMate(Object::Kind::Piece, b.fragmentId)   ? QPen(pal.color(QPalette::Highlight), 2, Qt::DashLine)
+                                                               : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(r, 3, 3);
         // Segno in alto a destra: P = si copia con i suoi parametri, R = si ricodifica.
@@ -1395,8 +1411,9 @@ void SequenceTimeline::paintA1(QPainter& p, const QRectF& lane)
             drawWave(p, full, *b.waveform, b.sourceStart, b.sourceStart + b.length, color.darker(110), visibleLeft(),
                      visibleRight());
         }
-        if (!multi_.empty() && isSelected(Object::Kind::PieceAudio, b.fragmentId)) {
-            p.setPen(QPen(pal.color(QPalette::Highlight), 3));
+        const bool audioMate = isMate(Object::Kind::PieceAudio, b.fragmentId);
+        if ((!multi_.empty() && isSelected(Object::Kind::PieceAudio, b.fragmentId)) || audioMate) {
+            p.setPen(audioMate ? QPen(pal.color(QPalette::Highlight), 2, Qt::DashLine) : QPen(pal.color(QPalette::Highlight), 3));
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(r, 3, 3);
         }
@@ -1449,7 +1466,9 @@ void SequenceTimeline::paintTrack(QPainter& p, int index, const QRectF& lane)
             p.setPen(pal.color(QPalette::PlaceholderText));
             p.drawText(r, Qt::AlignCenter, QStringLiteral("forma d'onda..."));
         }
-        p.setPen(isSelected(Object::Kind::AudioClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3) : QPen(color.darker(140), 1));
+        p.setPen(isSelected(Object::Kind::AudioClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3)
+                 : isMate(Object::Kind::AudioClip, c.clipId)   ? QPen(pal.color(QPalette::Highlight), 2, Qt::DashLine)
+                                                               : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(r, 3, 3);
         if (r.width() > 40) {
