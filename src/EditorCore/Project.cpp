@@ -62,6 +62,7 @@ void Project::clear()
     clips_.clear();
     sequence_.clear();
     audio_.clear();
+    groups_.clear();
     format_ = {};
 }
 
@@ -159,8 +160,102 @@ void Project::restoreEdits(const Project& snapshot)
     clips_ = std::move(clips);
     sequence_ = snapshot.sequence_;
     audio_.restoreEdits(snapshot.audio_);
+    groups_.restoreEdits(snapshot.groups_);
     format_ = snapshot.format_;
     nextId_ = std::max(nextId_, snapshot.nextId_);  // un file aggiunto dopo non riprende l'id di uno tolto
+}
+
+bool Project::objectExists(ObjectRef object) const
+{
+    switch (object.kind) {
+    case ObjectRef::Kind::Piece:
+        return sequence_.find(object.id) != nullptr;
+    case ObjectRef::Kind::PieceAudio: {
+        const Fragment* f = sequence_.find(object.id);
+        return f != nullptr && !f->detached;
+    }
+    case ObjectRef::Kind::AudioClip:
+        return audio_.find(object.id) != nullptr;
+    }
+    return false;
+}
+
+std::vector<ObjectRef> Project::groupMembers(ObjectRef object) const
+{
+    std::vector<ObjectRef> found;
+    if (!objectExists(object))
+        return found;
+    found.push_back(object);
+    for (std::size_t i = 0; i < found.size(); ++i) {
+        const ObjectRef current = found[i];
+        const auto add = [&](ObjectRef other) {
+            if (objectExists(other) && std::find(found.begin(), found.end(), other) == found.end())
+                found.push_back(other);
+        };
+        // Il pezzo video e il suo audio.
+        if (current.kind == ObjectRef::Kind::Piece)
+            add({ObjectRef::Kind::PieceAudio, current.id});
+        else if (current.kind == ObjectRef::Kind::PieceAudio)
+            add({ObjectRef::Kind::Piece, current.id});
+        // Il gruppo dell'utente.
+        if (const ObjectGroup* group = groups_.find(groups_.groupOf(current))) {
+            for (const ObjectRef& member : group->members)
+                add(member);
+        }
+    }
+    std::sort(found.begin(), found.end());
+    return found;
+}
+
+int Project::groupObjects(const std::vector<ObjectRef>& objects)
+{
+    std::vector<ObjectRef> valid;
+    for (const ObjectRef& o : objects) {
+        if (objectExists(o) && std::find(valid.begin(), valid.end(), o) == valid.end())
+            valid.push_back(o);
+    }
+    if (valid.size() < 2)
+        return 0;
+    const std::vector<ObjectRef> together = groupMembers(valid.front());
+    if (std::all_of(valid.begin(), valid.end(), [&](const ObjectRef& o) { return std::find(together.begin(), together.end(), o) != together.end(); }))
+        return 0;  // sono già legati
+    return groups_.create(valid);
+}
+
+Project::UngroupResult Project::ungroupObjects(const std::vector<ObjectRef>& objects)
+{
+    UngroupResult result;
+    for (const ObjectRef& o : objects) {
+        if (const int id = groups_.groupOf(o); id != 0 && groups_.dissolve(id))
+            ++result.dissolved;
+    }
+    if (result.dissolved > 0)
+        return result;
+    std::vector<int> pieces;
+    for (const ObjectRef& o : objects) {
+        if (o.kind != ObjectRef::Kind::AudioClip && std::find(pieces.begin(), pieces.end(), o.id) == pieces.end())
+            pieces.push_back(o.id);
+    }
+    for (int fragmentId : pieces) {
+        if (unlinkAudio(fragmentId) != 0)
+            ++result.audioUnlinked;
+    }
+    return result;
+}
+
+std::vector<std::vector<ObjectRef>> Project::validGroups() const
+{
+    std::vector<std::vector<ObjectRef>> result;
+    for (const ObjectGroup& g : groups_.all()) {
+        std::vector<ObjectRef> members;
+        for (const ObjectRef& o : g.members) {
+            if (objectExists(o))
+                members.push_back(o);
+        }
+        if (members.size() >= 2)
+            result.push_back(std::move(members));
+    }
+    return result;
 }
 
 int Project::unlinkAudio(int fragmentId, int* track)
