@@ -22,6 +22,9 @@ struct Fragment
     double gap = 0.0;
     // Linea del livello dell'audio del pezzo (vedi LevelPoint), nei tempi del file: segue il pezzo.
     std::vector<LevelPoint> envelope;
+    // L'audio del pezzo è stato scollegato (Project::unlinkAudio): è tutto silenziato perché ora è una clip a parte, e
+    // sul pezzo non si scrive "senza audio".
+    bool detached = false;
 
     double length() const { return end - start; }
 };
@@ -42,6 +45,7 @@ public:
     int insert(int index, int clipId, double start, double end);
     // La linea del livello del pezzo (normalizzata); false se il pezzo non c'è o non cambia nulla.
     bool setEnvelope(int fragmentId, std::vector<LevelPoint> points);
+    bool setDetached(int fragmentId, bool detached);
     // Toglie il pezzo; quelli dopo scorrono indietro della sua durata (lo spazio vuoto prima di lui resta).
     bool remove(int fragmentId);
     void removeClip(int clipId);  // tutti i pezzi di un file (quando il file esce dal progetto)
@@ -106,7 +110,8 @@ public:
     bool muteRange(double from, double to);
     bool unmuteRange(double from, double to);
     // Tutti i tratti senza audio, nei tempi della sequenza, in ordine e uniti se si toccano.
-    std::vector<TimeRange> mutedRanges() const;
+    // Con `includeDetached` false mancano quelli dei pezzi con l'audio scollegato (per disegnarli).
+    std::vector<TimeRange> mutedRanges(bool includeDetached = true) const;
 
     const std::vector<Fragment>& fragments() const { return fragments_; }
     bool empty() const { return fragments_.empty(); }

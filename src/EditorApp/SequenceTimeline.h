@@ -52,6 +52,7 @@ public:
         QString fitNote;
         int proxyDivisor = 1;  // l'anteprima legge il video da un proxy a 1/proxyDivisor (1 = dall'originale)
         std::vector<core::LevelPoint> envelope;  // linea del livello dell'audio del pezzo (tempi del file)
+        bool audioDetached = false;  // l'audio è una clip a parte: sotto il pezzo, su A1, non si vede niente
     };
 
     // Una clip audio su una traccia aggiunta.
@@ -106,6 +107,19 @@ public:
     double audioSelectionFrom() const { return selectionFrom_; }
     double audioSelectionTo() const { return selectionTo_; }
     int audioSelectionTrack() const { return selectionTrack_; }
+    // Selezione di più oggetti (Ctrl+clic). Un oggetto è un pezzo video, l'audio di un pezzo (su A1) o una clip audio.
+    // Vuota se si è scelto un solo oggetto (o nessuno): allora valgono selected() e selectedAudioClip().
+    struct Object
+    {
+        enum class Kind { Piece, PieceAudio, AudioClip };
+        Kind kind = Kind::Piece;
+        int id = 0;  // id del pezzo (Piece, PieceAudio) o della clip audio
+        bool operator==(const Object&) const = default;
+    };
+    const std::vector<Object>& selectedObjects() const { return multi_; }
+    // Gli oggetti selezionati, anche con un oggetto solo.
+    std::vector<Object> allSelectedObjects() const;
+    std::function<void()> onMultiSelection;  // la selezione multipla è cambiata (con Ctrl+clic)
     // Clip audio selezionata (0 = nessuna): selezionarla toglie la selezione del pezzo video e viceversa.
     void setSelectedAudioClip(int clipId);
     int selectedAudioClip() const { return selectedAudioClip_; }
@@ -201,6 +215,8 @@ private:
     QRectF muteBox(int index) const;
     QRectF soloBox(int index) const;
     QRectF levelBar(int index) const;
+    bool isSelected(Object::Kind kind, int id) const;  // nella selezione (singola o multipla)
+    bool ctrlPress(const QPointF& pos);                // Ctrl+clic: aggiunge o toglie un oggetto; false se lì non ce n'è
     double levelForX(int index, double x) const;  // dB del cursore del livello quando il mouse è in x
     // Linea del livello: dove sta un valore (dB) nella corsia e il contrario. Sopra il centro 0..+12 dB, sotto 0..-60
     // (con più precisione vicino a 0).
@@ -294,6 +310,7 @@ private:
     bool scrubbing_ = false;     // si sta trascinando il cursore sul righello
 
     int selectedAudioClip_ = 0;
+    std::vector<Object> multi_;  // vedi selectedObjects()
     int selectedTrack_ = -1;      // -1 = nessuna scelta
     int audioDragClip_ = 0;       // clip audio presa (spostamento)
     bool audioDragging_ = false;

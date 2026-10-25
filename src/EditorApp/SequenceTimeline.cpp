@@ -160,6 +160,12 @@ void SequenceTimeline::setBlocks(std::vector<Block> blocks)
         selected_ = 0;
     if (std::none_of(blocks_.begin(), blocks_.end(), [this](const Block& b) { return b.fragmentId == selectedGap_ && b.gap > 0; }))
         selectedGap_ = 0;
+    std::erase_if(multi_, [this](const Object& o) {
+        return o.kind != Object::Kind::AudioClip
+               && std::none_of(blocks_.begin(), blocks_.end(), [&](const Block& b) { return b.fragmentId == o.id; });
+    });
+    if (multi_.size() < 2)
+        multi_.clear();
     updateDuration();
     invalidate();
 }
@@ -203,6 +209,7 @@ void SequenceTimeline::changeEvent(QEvent* event)
 
 void SequenceTimeline::setSelected(int fragmentId)
 {
+    multi_.clear();
     selected_ = fragmentId;
     if (fragmentId != 0) {
         selectedGap_ = 0;
@@ -215,6 +222,8 @@ void SequenceTimeline::setSelected(int fragmentId)
 
 void SequenceTimeline::setSelectedGap(int fragmentId)
 {
+    if (fragmentId != 0)
+        multi_.clear();
     selectedGap_ = fragmentId;
     if (fragmentId != 0) {
         selected_ = 0;
@@ -242,6 +251,9 @@ void SequenceTimeline::setAudioLanes(std::vector<AudioLane> lanes)
     };
     if (selectedAudioClip_ != 0 && findAudioClip(selectedAudioClip_) == nullptr)
         selectedAudioClip_ = 0;
+    std::erase_if(multi_, [this](const Object& o) { return o.kind == Object::Kind::AudioClip && findAudioClip(o.id) == nullptr; });
+    if (multi_.size() < 2)
+        multi_.clear();
     if (selectedTrack_ >= 0 && !hasTrack(selectedTrack_))
         selectedTrack_ = -1;
     if (!hasTrack(selectionTrack_))
@@ -291,6 +303,7 @@ void SequenceTimeline::setAudioSelection(double from, double to, int trackId)
 
 void SequenceTimeline::setSelectedAudioClip(int clipId)
 {
+    multi_.clear();
     selectedAudioClip_ = clipId;
     if (clipId != 0) {
         selected_ = 0;
@@ -301,6 +314,77 @@ void SequenceTimeline::setSelectedAudioClip(int clipId)
         syncTrackButtons();
     }
     invalidate();
+}
+
+std::vector<SequenceTimeline::Object> SequenceTimeline::allSelectedObjects() const
+{
+    if (!multi_.empty())
+        return multi_;
+    std::vector<Object> one;
+    if (selected_ != 0)
+        one.push_back({Object::Kind::Piece, selected_});
+    if (selectedAudioClip_ != 0)
+        one.push_back({Object::Kind::AudioClip, selectedAudioClip_});
+    return one;
+}
+
+bool SequenceTimeline::isSelected(Object::Kind kind, int id) const
+{
+    if (!multi_.empty())
+        return std::find(multi_.begin(), multi_.end(), Object{kind, id}) != multi_.end();
+    return (kind == Object::Kind::Piece && id == selected_) || (kind == Object::Kind::AudioClip && id == selectedAudioClip_);
+}
+
+bool SequenceTimeline::ctrlPress(const QPointF& pos)
+{
+    // L'oggetto sotto il mouse: un pezzo sulla corsia video, sulle corsie audio una clip o (su A1) l'audio di un pezzo.
+    const double t = timeForX(pos.x());
+    const auto pieceAt = [&]() {
+        const int index = blockAt(pos.x());
+        if (index < 0 || t < starts_[static_cast<std::size_t>(index)] || t >= starts_[static_cast<std::size_t>(index)] + blocks_[static_cast<std::size_t>(index)].length)
+            return 0;
+        return blocks_[static_cast<std::size_t>(index)].fragmentId;
+    };
+    Object target;
+    if (const int lane = laneAt(pos.y()); lane >= 0) {
+        int clipLane = 0;
+        int clip = 0;
+        if (audioClipAt(pos, clipLane, clip)) {
+            target = {Object::Kind::AudioClip, lanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)].clipId};
+        } else if (const int piece = lane == 0 ? pieceAt() : 0; piece != 0 && !blocks_[static_cast<std::size_t>(blockAt(pos.x()))].audioDetached) {
+            target = {Object::Kind::PieceAudio, piece};
+        } else {
+            return false;
+        }
+    } else if (!blocks_.empty() && pos.y() <= videoLane().bottom() + kLaneGap / 2) {
+        const int piece = pieceAt();
+        if (piece == 0)
+            return false;
+        target = {Object::Kind::Piece, piece};
+    } else {
+        return false;
+    }
+    std::vector<Object> set = allSelectedObjects();
+    if (const auto at = std::find(set.begin(), set.end(), target); at != set.end())
+        set.erase(at);
+    else
+        set.push_back(target);
+    // Il "principale" (quello che usano i comandi che lavorano su un solo oggetto) è l'ultimo toccato, o l'ultimo rimasto.
+    const Object primary = std::find(set.begin(), set.end(), target) != set.end() ? target : (set.empty() ? Object{} : set.back());
+    multi_ = set.size() >= 2 ? set : std::vector<Object>{};
+    selected_ = primary.kind == Object::Kind::Piece ? primary.id : 0;
+    selectedAudioClip_ = primary.kind == Object::Kind::AudioClip ? primary.id : 0;
+    selectedGap_ = 0;
+    selectedTrack_ = -1;
+    syncTrackButtons();
+    if (onSelect)
+        onSelect(selected_);
+    if (onAudioClipSelected)
+        onAudioClipSelected(selectedAudioClip_);
+    if (onMultiSelection)
+        onMultiSelection();
+    invalidate();
+    return true;
 }
 
 void SequenceTimeline::setSelectedTrack(int trackId)
@@ -971,7 +1055,7 @@ void SequenceTimeline::paintVideo(QPainter& p)
                 p.fillRect(r, QColor(255, 255, 255, 140));
             p.restore();
         }
-        p.setPen(b.fragmentId == selected_ ? QPen(pal.color(QPalette::Highlight), 3) : QPen(color.darker(140), 1));
+        p.setPen(isSelected(Object::Kind::Piece, b.fragmentId) ? QPen(pal.color(QPalette::Highlight), 3) : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(r, 3, 3);
         // Segno in alto a destra: P = si copia con i suoi parametri, R = si ricodifica.
@@ -1107,8 +1191,10 @@ void SequenceTimeline::paintAudio(QPainter& p)
         }
         p.setRenderHint(QPainter::Antialiasing, true);
         if (i == 0) {
-            for (std::size_t b = 0; b < blocks_.size(); ++b)
-                paintEnvelope(p, targetOfBlock(b), lane);
+            for (std::size_t b = 0; b < blocks_.size(); ++b) {
+                if (!blocks_[b].audioDetached)
+                    paintEnvelope(p, targetOfBlock(b), lane);
+            }
         }
         for (std::size_t c = 0; c < lanes_[static_cast<std::size_t>(i)].clips.size(); ++c)
             paintEnvelope(p, targetOfClip(i, c), lane);
@@ -1198,7 +1284,7 @@ bool SequenceTimeline::envelopeHit(const QPointF& pos, EnvTarget& target, int& p
     }
     if (!any && lane == 0) {  // su A1, sotto le clip libere, l'audio dei pezzi video
         const int block = blockAt(pos.x());
-        if (block >= 0 && t >= starts_[static_cast<std::size_t>(block)]
+        if (block >= 0 && !blocks_[static_cast<std::size_t>(block)].audioDetached && t >= starts_[static_cast<std::size_t>(block)]
             && t <= starts_[static_cast<std::size_t>(block)] + blocks_[static_cast<std::size_t>(block)].length) {
             found = targetOfBlock(static_cast<std::size_t>(block));
             any = true;
@@ -1290,7 +1376,7 @@ void SequenceTimeline::paintA1(QPainter& p, const QRectF& lane)
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
         const Block& b = blocks_[i];
         const QRectF& full = rects[i];
-        if (full.right() < visibleLeft() - 4 || full.left() > visibleRight() + 4)
+        if (b.audioDetached || full.right() < visibleLeft() - 4 || full.left() > visibleRight() + 4)
             continue;
         const QRectF r = visiblePart(full);
         const QColor color = blockColor(b.colorIndex);
@@ -1308,6 +1394,11 @@ void SequenceTimeline::paintA1(QPainter& p, const QRectF& lane)
         } else {
             drawWave(p, full, *b.waveform, b.sourceStart, b.sourceStart + b.length, color.darker(110), visibleLeft(),
                      visibleRight());
+        }
+        if (!multi_.empty() && isSelected(Object::Kind::PieceAudio, b.fragmentId)) {
+            p.setPen(QPen(pal.color(QPalette::Highlight), 3));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(r, 3, 3);
         }
     }
 
@@ -1358,7 +1449,7 @@ void SequenceTimeline::paintTrack(QPainter& p, int index, const QRectF& lane)
             p.setPen(pal.color(QPalette::PlaceholderText));
             p.drawText(r, Qt::AlignCenter, QStringLiteral("forma d'onda..."));
         }
-        p.setPen(c.clipId == selectedAudioClip_ ? QPen(pal.color(QPalette::Highlight), 3) : QPen(color.darker(140), 1));
+        p.setPen(isSelected(Object::Kind::AudioClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3) : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(r, 3, 3);
         if (r.width() > 40) {
@@ -1379,6 +1470,15 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
     pressY_ = pos.y();
     const double t = timeForX(pressX_);
     const bool content = !blocks_.empty() || lanes_.size() > 1;
+    // Ctrl+clic su un oggetto: lo aggiunge alla selezione o lo toglie (nient'altro: niente spostamento del cursore).
+    if ((event->modifiers() & Qt::ControlModifier) && pos.x() >= videoLane().left() && pos.y() >= videoLane().top() - 2 && ctrlPress(pos))
+        return;
+    if (!multi_.empty()) {  // un clic senza Ctrl riparte da un oggetto solo
+        multi_.clear();
+        invalidate();
+        if (onMultiSelection)
+            onMultiSelection();
+    }
 
     // A sinistra delle corsie: nome, muto, solo e livello delle corsie audio.
     if (pos.x() < videoLane().left() - 2) {

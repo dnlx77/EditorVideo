@@ -461,6 +461,7 @@ TEST_F(ProjectFileTest, FreeClipsOnTheA1LaneAreSaved)
     ASSERT_NE(audio.add(a2, AudioClip{0, file("musica.mp3"), 0.0, 5.0, 1.0, 181.3}), 0);
     ASSERT_NE(audio.add(AudioTracks::kOriginalTrack, AudioClip{0, file("voce.wav"), 0.5, 2.0, 1.0, 9.5}), 0);
     ASSERT_TRUE(audio.hasHost());
+    ASSERT_TRUE(project.sequence().setDetached(project.sequence().fragments()[0].id, true));
     saveProjectFile(projectPath(), project, view);
     const std::string text = read(projectPath());
     EXPECT_NE(text.find("\"suA1\": true"), std::string::npos) << text;
@@ -472,6 +473,8 @@ TEST_F(ProjectFileTest, FreeClipsOnTheA1LaneAreSaved)
     EXPECT_EQ(again.tracks()[0].clips.size(), 1u);
     EXPECT_EQ(again.trackName(again.tracks()[1].id), "A2");
     expectSame(project, loaded.project);
+    EXPECT_TRUE(loaded.project.sequence().fragments()[0].detached);
+    EXPECT_FALSE(loaded.project.sequence().fragments()[1].detached);
 }
 
 TEST_F(ProjectFileTest, MissingAudioFilesOfTheTracks)

@@ -91,6 +91,8 @@ TEST(Project, UnlinkedAudioIsAFreeClipAndRelinkPutsItBack)
     EXPECT_TRUE(project.sequence().find(first)->envelope.empty());
     // L'audio del pezzo è tutto silenziato, la clip no.
     EXPECT_NEAR(project.sequence().mutedRanges().front().end, 4.0, 1e-9);
+    EXPECT_TRUE(project.sequence().find(first)->detached);
+    EXPECT_TRUE(project.sequence().mutedRanges(false).empty());  // sul pezzo non si scrive "senza audio"
     EXPECT_EQ(project.unlinkAudio(first), 0);  // già scollegato
     EXPECT_TRUE(project.audioNeedsMix());
     EXPECT_FALSE(project.audioReplacement().has_value());
@@ -106,6 +108,7 @@ TEST(Project, UnlinkedAudioIsAFreeClipAndRelinkPutsItBack)
     EXPECT_EQ(project.sequence().find(first)->envelope.size(), 2u);
     EXPECT_TRUE(project.audioNeedsMix());  // la linea del livello è tornata sul pezzo
     EXPECT_TRUE(project.sequence().mutedRanges().empty());
+    EXPECT_FALSE(project.sequence().find(first)->detached);
     (void)second;
 }
 

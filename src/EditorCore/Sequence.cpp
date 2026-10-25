@@ -325,6 +325,19 @@ void Sequence::restore(std::vector<Fragment> fragments)
     }
 }
 
+bool Sequence::setDetached(int fragmentId, bool detached)
+{
+    for (Fragment& f : fragments_) {
+        if (f.id == fragmentId) {
+            if (f.detached == detached)
+                return false;
+            f.detached = detached;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool Sequence::setEnvelope(int fragmentId, std::vector<LevelPoint> points)
 {
     for (Fragment& f : fragments_) {
@@ -411,6 +424,8 @@ bool Sequence::applyToRange(double from, double to, RangeOp op)
             const auto before = f.muted;
             op(f.muted, f.start + (a - start), f.start + (b - start));
             changed = changed || f.muted != before;
+            if (f.muted != before && op == subtractRange)
+                f.detached = false;  // l'audio torna a sentirsi: non è più scollegato
         }
         start = end;
     }
@@ -427,14 +442,17 @@ bool Sequence::unmuteRange(double from, double to)
     return applyToRange(from, to, subtractRange);
 }
 
-std::vector<TimeRange> Sequence::mutedRanges() const
+std::vector<TimeRange> Sequence::mutedRanges(bool includeDetached) const
 {
     std::vector<TimeRange> result;
     double start = 0.0;
     for (const Fragment& f : fragments_) {
         start += f.gap;
-        for (const TimeRange& r : f.muted)
+        for (const TimeRange& r : f.muted) {
+            if (f.detached && !includeDetached)
+                break;
             addRange(result, start + (r.start - f.start), start + (r.end - f.start));
+        }
         start += f.length();
     }
     return result;
