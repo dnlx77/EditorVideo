@@ -230,6 +230,20 @@ TEST(SequenceGaps, MovingForwardPushesThePiecesAfter)
     EXPECT_TRUE(p.s.moveTo(p.b, 20.0));
 }
 
+TEST(SequenceGaps, WithoutPushingAPieceStopsAgainstTheNext)
+{
+    ThreePieces p;  // A 0 .. 1, B 1 .. 3, C 3 .. 4 (in tempo di sequenza)
+    EXPECT_FALSE(p.s.moveTo(p.a, 0.5, nullptr, false));  // urterebbe B: niente spinta, niente spostamento
+    EXPECT_NEAR(p.s.startOf(1), 1.0, 1e-9);
+    EXPECT_NEAR(p.s.nearestFreeStart(p.a, 2.5, false), 4.0, 1e-9);  // dopo C, lo spazio libero più vicino
+    ThreePieces q;
+    ASSERT_TRUE(q.s.moveTo(q.c, 6.0));  // C 6 .. 7, spazio fra B e C
+    // Senza spinta A può saltare oltre B, nello spazio dopo di lui, e B non si muove.
+    EXPECT_TRUE(q.s.moveTo(q.a, 4.0, nullptr, false));
+    EXPECT_NEAR(q.s.startOf(0), 1.0, 1e-9);  // B è rimasto dov'era
+    EXPECT_NEAR(q.s.startOf(1), 4.0, 1e-9);  // A è dopo di lui
+}
+
 TEST(SequenceGaps, PiecesNeverOverlap)
 {
     ThreePieces p;

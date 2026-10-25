@@ -115,3 +115,60 @@ TEST(Project, MovingAPieceDragsTheAudioOfTracksWithTheMagnet)
     // Pezzo che non si può spostare: niente cambia.
     EXPECT_FALSE(project.moveFragment(999, 1.0));
 }
+
+TEST(Project, UnlinkedAudioIsAFreeClipAndRelinkPutsItBack)
+{
+    Project project;
+    const int clip = project.add("video.mp4");
+    project.setAnalysis(clip, {0.0}, 20.0);
+    const int first = project.sequence().insert(-1, clip, 2.0, 6.0);   // 0 .. 4 (file 2 .. 6)
+    const int second = project.sequence().insert(-1, clip, 8.0, 10.0);  // 4 .. 6
+    project.sequence().setEnvelope(first, {{3.0, 0.0}, {5.0, -20.0}});
+
+    int track = 0;
+    const int audioClip = project.unlinkAudio(first, &track);
+    ASSERT_NE(audioClip, 0);
+    ASSERT_NE(track, 0);
+    const AudioClip* c = project.audioTracks().find(audioClip);
+    ASSERT_NE(c, nullptr);
+    EXPECT_EQ(c->path, "video.mp4");
+    EXPECT_DOUBLE_EQ(c->start, 2.0);
+    EXPECT_DOUBLE_EQ(c->end, 6.0);
+    EXPECT_DOUBLE_EQ(c->position, 0.0);
+    EXPECT_EQ(c->envelope.size(), 2u);                      // la linea è passata alla clip
+    EXPECT_TRUE(project.sequence().find(first)->envelope.empty());
+    // L'audio del pezzo è tutto silenziato, la clip no.
+    EXPECT_NEAR(project.sequence().mutedRanges().front().end, 4.0, 1e-9);
+    EXPECT_EQ(project.unlinkAudio(first), 0);  // già scollegato
+    EXPECT_TRUE(project.audioNeedsMix());
+    EXPECT_FALSE(project.audioReplacement().has_value());
+
+    // La clip si sposta per conto suo (3 fotogrammi a 25 fps) e il pezzo video non si muove.
+    ASSERT_TRUE(project.audioTracks().moveTo(audioClip, track, 0.12));
+    EXPECT_DOUBLE_EQ(project.sequence().starts()[0], 0.0);
+    // Spostata, non è più allineata: non si ricollega.
+    EXPECT_FALSE(project.relinkAudio(first));
+    ASSERT_TRUE(project.audioTracks().moveTo(audioClip, track, 0.0));
+    ASSERT_TRUE(project.relinkAudio(first));
+    EXPECT_EQ(project.audioTracks().find(audioClip), nullptr);
+    EXPECT_EQ(project.sequence().find(first)->envelope.size(), 2u);
+    EXPECT_TRUE(project.audioNeedsMix());  // la linea del livello è tornata sul pezzo
+    EXPECT_TRUE(project.sequence().mutedRanges().empty());
+    (void)second;
+}
+
+TEST(Project, UnlinkedAudioKeepsTheMutedPartsSilent)
+{
+    Project project;
+    const int clip = project.add("video.mp4");
+    project.setAnalysis(clip, {0.0}, 20.0);
+    const int piece = project.sequence().insert(-1, clip, 2.0, 6.0);  // 0 .. 4
+    project.sequence().muteRange(1.0, 1.5);
+    int track = 0;
+    ASSERT_NE(project.unlinkAudio(piece, &track), 0);
+    const AudioTrack* t = project.audioTracks().track(track);
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->clips.size(), 2u);  // la clip ha un buco dove l'audio era tolto
+    EXPECT_DOUBLE_EQ(t->clips[0].endPosition(), 1.0);
+    EXPECT_DOUBLE_EQ(t->clips[1].position, 1.5);
+}

@@ -400,7 +400,7 @@ MainWindow::MainWindow(QWidget* parent)
     };
     timeline_->onSelect = [this](int) { setProgramActive(true); };
     timeline_->freeStart = [this](int fragmentId, double desired) {
-        return project_.sequence().nearestFreeStart(fragmentId, desired);
+        return project_.sequence().nearestFreeStart(fragmentId, desired, pushPieces_);
     };
     timeline_->onMoveTo = [this](int fragmentId, double start) { moveFragment(fragmentId, start); };
     // Bordi dei pezzi (step 16): a passi di un fotogramma dal bordo di partenza, dentro il file, lunghi almeno un
@@ -1510,7 +1510,7 @@ void MainWindow::moveFragment(int fragmentId, double start)
     const core::Project before = project_;
     bool audioMoved = false;
     bool audioStayed = false;
-    if (!project_.moveFragment(fragmentId, start, &audioMoved, &audioStayed))
+    if (!project_.moveFragment(fragmentId, start, &audioMoved, &audioStayed, pushPieces_))
         return;
     if (audioStayed)
         statusBar()->showMessage(QStringLiteral("Le clip audio sotto il pezzo non ci stanno nel nuovo punto: si è spostato solo il pezzo."), 8000);
@@ -1605,6 +1605,36 @@ bool MainWindow::replaceAudioHere(const QString& path)
                                  .arg(fileNameOf(utf8), qs(audio.trackName(track)), timeText(from), timeText(from + length)),
                              12000);
     return true;
+}
+
+void MainWindow::unlinkAudio(bool relink)
+{
+    const int fragment = timeline_->selected();
+    if (project_.sequence().find(fragment) == nullptr) {
+        statusBar()->showMessage(QStringLiteral("Scegli prima un pezzo video nella linea del tempo."), 6000);
+        return;
+    }
+    const core::Project before = project_;
+    if (relink) {
+        if (!project_.relinkAudio(fragment)) {
+            statusBar()->showMessage(QStringLiteral("Nessuna clip audio di questo file è allineata al pezzo."), 8000);
+            return;
+        }
+        recordEdit(QStringLiteral("Ricollega audio"), before);
+        statusBar()->showMessage(QStringLiteral("L'audio è tornato quello del pezzo."), 8000);
+    } else {
+        int track = 0;
+        const int clip = project_.unlinkAudio(fragment, &track);
+        if (clip == 0) {
+            statusBar()->showMessage(QStringLiteral("L'audio di questo pezzo è già silenziato o scollegato."), 8000);
+            return;
+        }
+        timeline_->setSelectedAudioClip(clip);
+        recordEdit(QStringLiteral("Scollega audio"), before);
+        statusBar()->showMessage(QStringLiteral("Audio scollegato: ora è una clip sulla traccia %1, con A1 silenziata sotto il pezzo.")
+                                     .arg(qs(project_.audioTracks().trackName(track))),
+                                 10000);
+    }
 }
 
 void MainWindow::replaceAudioHereDialog()
@@ -2300,6 +2330,17 @@ void MainWindow::createMenus()
     QAction* remove = editMenu->addAction(QStringLiteral("&Elimina il pezzo selezionato"), this, [this] { deleteSelection(); });
     remove->setShortcut(QKeySequence(QKeySequence::Delete));
     editMenu->addSeparator();
+    QAction* push = editMenu->addAction(QStringLiteral("S&pingi i pezzi successivi"));
+    push->setCheckable(true);
+    pushPieces_ = settings().value(QStringLiteral("montaggio/spingiPezzi"), true).toBool();
+    push->setChecked(pushPieces_);
+    push->setStatusTip(QStringLiteral("Acceso: spostando un pezzo verso destra spinge quelli che segue. Spento: si ferma contro il pezzo successivo, o lo supera"));
+    connect(push, &QAction::toggled, this, [this](bool on) {
+        pushPieces_ = on;
+        QSettings s = settings();
+        s.setValue(QStringLiteral("montaggio/spingiPezzi"), on);
+    });
+    editMenu->addSeparator();
     editMenu->addAction(QStringLiteral("&Svuota il montaggio"), this, [this] { clearSequence(); });
     editMenu->addSeparator();
     editMenu->addAction(QStringLiteral("&Impostazioni del progetto..."), this, [this] { projectSettingsDialog(); })
@@ -2333,6 +2374,11 @@ void MainWindow::createMenus()
         ->setStatusTip(QStringLiteral("Sulla traccia scelta (o su una nuova), dal punto del cursore del montaggio"));
     audioMenu->addAction(QStringLiteral("Sostituisci audio &qui..."), this, [this] { replaceAudioHereDialog(); })
         ->setStatusTip(QStringLiteral("Un file audio nel tratto selezionato, su una traccia aggiunta, con A1 silenziata sotto"));
+    audioMenu->addSeparator();
+    audioMenu->addAction(QStringLiteral("Scol&lega l'audio dal pezzo"), this, [this] { unlinkAudio(false); })
+        ->setStatusTip(QStringLiteral("L'audio del pezzo selezionato diventa una clip su una traccia aggiunta, da spostare e tagliare per conto suo"));
+    audioMenu->addAction(QStringLiteral("Ricolle&ga l'audio al pezzo"), this, [this] { unlinkAudio(true); })
+        ->setStatusTip(QStringLiteral("Se la clip è ancora allineata al pezzo selezionato, l'audio torna a essere quello del pezzo"));
 
     QMenu* windowMenu = menuBar()->addMenu(QStringLiteral("Fi&nestra"));
     for (QDockWidget* dock : docks()) {

@@ -109,7 +109,7 @@ void Sequence::move(int fragmentId, int toIndex)
     fragments_.insert(fragments_.begin() + toIndex, fragment);
 }
 
-double Sequence::nearestFreeStart(int fragmentId, double desired) const
+double Sequence::nearestFreeStart(int fragmentId, double desired, bool push) const
 {
     const int self = indexOf(fragmentId);
     if (self < 0)
@@ -127,7 +127,7 @@ double Sequence::nearestFreeStart(int fragmentId, double desired) const
         t += fragments_[static_cast<std::size_t>(i)].length();
     }
     // Verso destra il pezzo spinge quelli dopo di lui: si può andare dovunque, non prima della fine del precedente.
-    if (desired > oldStart + kTimeEpsilon)
+    if (push && desired > oldStart + kTimeEpsilon)
         return std::max(desired, previousEnd);
     double best = -1.0;
     double bestDistance = 0.0;
@@ -214,7 +214,7 @@ bool Sequence::trim(int fragmentId, Edge edge, double value, double sourceDurati
     return true;
 }
 
-bool Sequence::moveTo(int fragmentId, double start, std::vector<std::pair<int, double>>* shifts)
+bool Sequence::moveTo(int fragmentId, double start, std::vector<std::pair<int, double>>* shifts, bool push)
 {
     const int self = indexOf(fragmentId);
     if (self < 0 || start < -kTimeEpsilon)
@@ -231,7 +231,7 @@ bool Sequence::moveTo(int fragmentId, double start, std::vector<std::pair<int, d
     }
     const double oldStart = at[static_cast<std::size_t>(self)];
     std::vector<std::pair<double, Fragment>> placed;
-    if (start > oldStart + kTimeEpsilon) {
+    if (push && start > oldStart + kTimeEpsilon) {
         // Verso destra: i pezzi dopo, se il pezzo li urta, vengono spinti avanti (a catena); quelli prima restano.
         if (self > 0 && start < at[static_cast<std::size_t>(self) - 1] + fragments_[static_cast<std::size_t>(self) - 1].length() - kTimeEpsilon)
             return false;
@@ -247,7 +247,7 @@ bool Sequence::moveTo(int fragmentId, double start, std::vector<std::pair<int, d
             placed.emplace_back(position, fragments_[i]);
         }
     } else {
-        // Verso sinistra (o fermo): il pezzo non si sovrappone a nessun altro e può passare in un altro spazio.
+        // Senza spinta, o verso sinistra (o fermo): il pezzo non si sovrappone a nessun altro e può passare in un altro spazio.
         for (std::size_t i = 0; i < fragments_.size(); ++i) {
             const double end = at[i] + fragments_[i].length();
             if (static_cast<int>(i) != self) {

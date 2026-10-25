@@ -119,7 +119,16 @@ public:
     // le loro clip che stanno sotto il pezzo (nella posizione di prima) dello stesso spostamento. Se una clip non ci sta
     // nel nuovo punto resta tutto com'è per l'audio (si sposta solo il pezzo) e *audioStayed diventa true. Restituisce
     // false (e non cambia niente) se il pezzo non si può spostare lì; *audioMoved dice se qualche clip è andata con lui.
-    bool moveFragment(int fragmentId, double start, bool* audioMoved = nullptr, bool* audioStayed = nullptr);
+    bool moveFragment(int fragmentId, double start, bool* audioMoved = nullptr, bool* audioStayed = nullptr, bool push = true);
+    // Scollega l'audio del pezzo video: diventa una clip audio libera (su una traccia aggiunta, la prima dove ci sta,
+    // altrimenti una nuova) nello stesso punto, con la stessa linea del livello e gli stessi tratti muti; l'audio del
+    // pezzo in A1 viene silenziato. Restituisce l'id della clip, 0 se non si può (pezzo inesistente o con l'audio già
+    // tutto silenziato). *track riceve l'id della traccia.
+    int unlinkAudio(int fragmentId, int* track = nullptr);
+    // Il contrario, se la clip è ancora allineata al pezzo (stesso file, stesso sincronismo): toglie dalle tracce le
+    // clip di quel file nel tratto del pezzo e rimette l'audio del pezzo (con la linea della clip, se era una sola).
+    // false se non ce n'è nessuna allineata.
+    bool relinkAudio(int fragmentId);
     // Se esportando l'audio non basta copiarlo com'è (vedi AudioTracks::needsMix) o i pezzi video hanno una linea del
     // livello: allora audioEdit() ha il mix.
     bool audioNeedsMix() const;

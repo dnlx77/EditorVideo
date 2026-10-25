@@ -163,7 +163,82 @@ void Project::restoreEdits(const Project& snapshot)
     nextId_ = std::max(nextId_, snapshot.nextId_);  // un file aggiunto dopo non riprende l'id di uno tolto
 }
 
-bool Project::moveFragment(int fragmentId, double start, bool* audioMoved, bool* audioStayed)
+int Project::unlinkAudio(int fragmentId, int* track)
+{
+    const Fragment* f = sequence_.find(fragmentId);
+    const Clip* source = f != nullptr ? find(f->clipId) : nullptr;
+    if (source == nullptr)
+        return 0;
+    // Già tutto silenziato: niente da scollegare.
+    if (f->muted.size() == 1 && f->muted.front().start <= f->start + 1e-9 && f->muted.front().end >= f->end - 1e-9)
+        return 0;
+    const double from = sequence_.startOf(sequence_.indexOf(fragmentId));
+    const double length = f->length();
+    int target = 0;
+    for (const AudioTrack& t : audio_.tracks()) {
+        if (std::abs(audio_.freePosition(t.id, length, from) - from) < 1e-9) {
+            target = t.id;
+            break;
+        }
+    }
+    AudioTracks scratch = audio_;
+    if (target == 0)
+        target = scratch.addTrack();
+    AudioClip clip;
+    clip.path = source->path;
+    clip.start = f->start;
+    clip.end = f->end;
+    clip.position = from;
+    clip.sourceDuration = source->duration;
+    clip.envelope = f->envelope;
+    const std::vector<TimeRange> muted = f->muted;
+    const int id = scratch.add(target, clip);
+    if (id == 0)
+        return 0;
+    for (const TimeRange& r : muted)
+        scratch.removeRange(target, from + (r.start - f->start), from + (r.end - f->start));
+    audio_ = std::move(scratch);
+    sequence_.muteRange(from, from + length);
+    sequence_.setEnvelope(fragmentId, {});
+    if (track != nullptr)
+        *track = target;
+    return id;
+}
+
+bool Project::relinkAudio(int fragmentId)
+{
+    const Fragment* f = sequence_.find(fragmentId);
+    const Clip* source = f != nullptr ? find(f->clipId) : nullptr;
+    if (source == nullptr)
+        return false;
+    const double from = sequence_.startOf(sequence_.indexOf(fragmentId));
+    const double to = from + f->length();
+    const double offset = from - f->start;  // sequenza - file, per l'audio del pezzo
+    constexpr double kAligned = 1e-6;
+    std::vector<int> tracks;
+    std::vector<LevelPoint> line;
+    int found = 0;
+    for (const AudioTrack& t : audio_.tracks()) {
+        for (const AudioClip& c : t.clips) {
+            if (c.path == source->path && std::abs((c.position - c.start) - offset) < kAligned && c.position < to - 1e-9
+                && c.endPosition() > from + 1e-9) {
+                tracks.push_back(t.id);
+                line = c.envelope;
+                ++found;
+            }
+        }
+    }
+    if (found == 0)
+        return false;
+    for (int trackId : tracks)
+        audio_.removeRange(trackId, from, to);
+    sequence_.unmuteRange(from, to);
+    if (found == 1)
+        sequence_.setEnvelope(fragmentId, std::move(line));
+    return true;
+}
+
+bool Project::moveFragment(int fragmentId, double start, bool* audioMoved, bool* audioStayed, bool push)
 {
     if (audioMoved != nullptr)
         *audioMoved = false;
@@ -184,7 +259,7 @@ bool Project::moveFragment(int fragmentId, double start, bool* audioMoved, bool*
         t += f.length();
     }
     std::vector<std::pair<int, double>> shifts;
-    if (!sequence_.moveTo(fragmentId, start, &shifts))
+    if (!sequence_.moveTo(fragmentId, start, &shifts, push))
         return false;
     if (shifts.empty())
         return true;

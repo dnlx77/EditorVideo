@@ -226,6 +226,7 @@ private:
     void showInfo(const core::MediaInfo& info);
     void replaceAudioDialog();
     void replaceAudioHereDialog();
+    void unlinkAudio(bool relink);  // Audio > Scollega / Ricollega l'audio del pezzo selezionato
     void addAudioFilesDialog();  // al cursore, sulla traccia scelta (o su una nuova)
     // Durata dell'audio di un file; std::nullopt (con il motivo in `problem`) se non ha audio leggibile.
     std::optional<double> audioDurationOf(const std::string& path, QString* problem = nullptr);
@@ -372,6 +373,7 @@ private:
     int currentClipId_ = 0;                    // file mostrato nella Sorgente (0 = nessuno)
     QString currentPath_;                      // il suo percorso (nativo)
     bool updatingList_ = false;                // mentre si ricostruisce l'elenco dei file
+    bool pushPieces_ = true;                   // Montaggio > Spingi i pezzi successivi
     bool programActive_ = false;               // Spazio e frecce vanno all'anteprima del montaggio
 
     core::EditHistory history_;
