@@ -335,18 +335,15 @@ void PlayerWidget::openAudio(std::unique_ptr<core::AudioDecoder> own)
 {
     audio_.reset();
     audioOut_.close();
-    externalActive_ = false;
     if (audioEnabled_)
         audioNote_.clear();
-    if (!audioEnabled_ || path_.isEmpty() || (externalAudio_.isEmpty() && !ownAudio_))
+    if (!audioEnabled_ || path_.isEmpty() || !ownAudio_)
         return;
-    const QString source = externalAudio_.isEmpty() ? path_ : externalAudio_;
     try {
-        if (externalAudio_.isEmpty() && own)
+        if (own)
             audio_ = std::move(own);
         else
-            audio_ = std::make_unique<core::AudioDecoder>(QDir::toNativeSeparators(source).toStdString());
-        externalActive_ = !externalAudio_.isEmpty();
+            audio_ = std::make_unique<core::AudioDecoder>(QDir::toNativeSeparators(path_).toStdString());
     } catch (const std::exception&) {
         audioNote_ = QStringLiteral("audio non leggibile");
         return;
@@ -378,28 +375,6 @@ void PlayerWidget::setAudioNote(const QString& note)
         return;
     audioNote_ = note;
     updateControls();
-}
-
-void PlayerWidget::setAudioMutes(std::vector<core::TimeRange> ranges)
-{
-    audioMutes_ = std::move(ranges);
-}
-
-void PlayerWidget::setExternalAudio(const QString& path, double delta)
-{
-    externalDelta_ = delta;
-    if (path == externalAudio_)
-        return;
-    externalAudio_ = path;
-    if (path_.isEmpty())
-        return;
-    const bool wasPlaying = playing_;
-    if (wasPlaying)
-        pause();
-    openAudio();
-    updateControls();
-    if (wasPlaying)
-        play();
 }
 
 void PlayerWidget::setBlank(bool blank)
@@ -596,11 +571,9 @@ void PlayerWidget::startWorkers(double from)
     workerSpeed_ = speed_;
     audioActive_ = audio_ != nullptr && audioOut_.isOpen() && core::audibleAtSpeed(speed_);
     audioEnded_ = !audioActive_;
-    audioDelta_ = externalActive_ ? externalDelta_ : 0.0;
     audioFrom_ = from;
-    workerMutes_ = audioMutes_;
     if (audioActive_) {
-        audio_->seek(from + audioDelta_);
+        audio_->seek(from);
         audioOut_.reset();
         audioStart_ = from;
     }
@@ -720,11 +693,11 @@ void PlayerWidget::audioWorker()
             auto chunk = audio_->next();
             if (!chunk)
                 break;
-            const double time = chunk->time - audioDelta_;  // nei tempi del file
+            const double time = chunk->time;
             if (first) {
                 first = false;
                 audioStart_ = time;
-                // L'audio esterno può cominciare più avanti: fino a lì silenzio, così l'orologio parte dal punto giusto.
+                // L'audio può cominciare più avanti di `from`: fino a lì silenzio, così l'orologio parte dal punto giusto.
                 const double gap = std::round((time - audioFrom_) * rate / speed);
                 if (gap > 0 && gap < rate * 3600) {
                     audioStart_ = audioFrom_;
@@ -736,15 +709,6 @@ void PlayerWidget::audioWorker()
                     if (!written)
                         break;
                 }
-            }
-            // Tratti senza audio: silenzio al posto dei campioni.
-            const auto frames = static_cast<double>(chunk->samples.size() / channels);
-            for (const core::TimeRange& m : workerMutes_) {
-                const double from = std::clamp(std::ceil((m.start - time) * rate), 0.0, frames);
-                const double to = std::clamp(std::ceil((m.end - time) * rate), 0.0, frames);
-                if (to > from)
-                    std::fill(chunk->samples.begin() + static_cast<std::ptrdiff_t>(from) * channels,
-                              chunk->samples.begin() + static_cast<std::ptrdiff_t>(to) * channels, std::int16_t{0});
             }
             if (stretch) {
                 out.clear();

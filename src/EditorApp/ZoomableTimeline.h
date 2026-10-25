@@ -27,13 +27,11 @@ public:
     void zoomOut();
     void fitAll();   // "Adatta"
     void zoomAtX(double factor, double widgetX);
-    bool isZoomed() const { return !zoom_.isFit(); }
     const core::TimelineZoom& zoom() const { return zoom_; }
     // Zoom massimo: circa 12 pixel per fotogramma. Serve anche al righello, per i fotogrammi nelle etichette.
     void setFrameDuration(double seconds);
     // La riproduzione è (ri)partita: la vista torna a seguire il cursore.
     void resumeFollowing();
-    bool isFollowing() const { return following_; }
     // Tratto già pronto in memoria per la riproduzione (vedi core::VideoDecoder::cachedRange), nei tempi di questa
     // linea del tempo: una barretta celeste in fondo al righello. to <= from = niente.
     void setCacheRange(double from, double to);

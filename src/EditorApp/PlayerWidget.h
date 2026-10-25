@@ -62,7 +62,6 @@ public:
     void setBaseSpeed(double speed);
     void setSpeed(double speed);
     double speed() const { return speed_; }
-    double baseSpeed() const { return baseSpeed_; }
     // Spola (J = -1, L = +1, premuti più volte): vedi core::shuttleSpeed. Se si è fermi parte la riproduzione.
     void shuttle(int direction);
     // Ripetizione: arrivata a OUT (o alla fine del file) la riproduzione riparte da IN (o dall'inizio).
@@ -97,13 +96,6 @@ public:
     // Imposta IN e OUT (es. per riprendere un pezzo della sequenza) e una nota sotto la linea del tempo.
     void setInOut(double in, double out);
     void showNote(const QString& note);
-
-    // Audio dell'anteprima del montaggio (da chiamare a riproduzione ferma):
-    // tratti senza audio, nei tempi del file aperto (lì si sente silenzio)...
-    void setAudioMutes(std::vector<core::TimeRange> ranges);
-    // ...e un altro file al posto dell'audio del file: al tempo t del file si sente il tempo t + delta di `path`
-    // (silenzio dove `path` non arriva). path vuoto = l'audio del file.
-    void setExternalAudio(const QString& path, double delta);
 
     // Per l'anteprima del montaggio: l'audio lo suona il mixer della sequenza (SequenceAudio), non questo lettore.
     // setAudioEnabled(false): il lettore non apre né suona nessun audio. setExternalClock: l'orologio della
@@ -197,15 +189,11 @@ private:
     AudioOutput audioOut_;
     QString path_;                   // file aperto
     QString videoPath_;              // file da cui si legge il video: path_ o il suo proxy
-    double ownAudioDuration_ = 0.0;  // durata dell'audio del file (anche quando suona quello esterno)
+    double ownAudioDuration_ = 0.0;  // durata dell'audio del file
     bool ownAudio_ = false;          // il file ha un audio
     bool audioEnabled_ = true;                 // vedi setAudioEnabled()
     std::function<std::optional<double>()> externalClock_;  // vedi setExternalClock()
     double externalClockDelta_ = 0.0;
-    std::vector<core::TimeRange> audioMutes_;
-    QString externalAudio_;
-    double externalDelta_ = 0.0;
-    bool externalActive_ = false;    // audio_ è quello esterno
     QString idleMessage_;
     bool chromeVisible_ = true;  // vedi setChromeVisible
     QString audioNote_;    // es. "audio non disponibile"
@@ -242,9 +230,7 @@ private:
     bool videoEnded_ = true;               // protetto da queueMutex_
     std::atomic<bool> audioEnded_{true};
     std::atomic<double> audioStart_{0.0};  // tempo del primo campione mandato alla scheda audio
-    double audioFrom_ = 0.0;   // da dove parte la riproduzione (per il silenzio prima dell'audio esterno)
-    double audioDelta_ = 0.0;  // tempo nell'audio = tempo del file + audioDelta_
-    std::vector<core::TimeRange> workerMutes_;  // copia di audioMutes_ per il thread audio
+    double audioFrom_ = 0.0;   // da dove parte la riproduzione (per il silenzio prima dell'audio, se comincia più avanti)
     double workerSpeed_ = 1.0;  // velocità della riproduzione in corso (ferma mentre i thread lavorano)
     std::atomic<float> gain_{1.0f};  // volume per il thread audio
 

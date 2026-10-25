@@ -223,7 +223,7 @@ TEST(AudioTracks, ReplacementIsAClipOnA2WithA1Silenced)
     EXPECT_DOUBLE_EQ(clip.end, 60.0);
 
     // Spostata prima dell'inizio: se ne salta l'inizio.
-    project.setAudioOffset(-2.25);
+    project.setAudioReplacement(AudioReplacement{"musica.mp3", -2.25, 60.0});
     EXPECT_DOUBLE_EQ(project.audioTracks().tracks()[0].clips[0].position, 0.0);
     EXPECT_DOUBLE_EQ(project.audioTracks().tracks()[0].clips[0].start, 2.25);
     ASSERT_TRUE(project.audioReplacement().has_value());

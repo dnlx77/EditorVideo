@@ -167,9 +167,17 @@ std::vector<std::uint8_t> avcC(const Params& p)
     return out;
 }
 
+std::vector<std::string> compareMessages(const H264Config& other, const H264Config& reference)
+{
+    std::vector<std::string> messages;
+    for (const H264Difference& difference : findH264Differences(other, reference))
+        messages.push_back(difference.message);
+    return messages;
+}
+
 std::vector<std::string> differences(const Params& other, const Params& reference = {})
 {
-    return compareH264(parseH264Config(avcC(other)), parseH264Config(avcC(reference)));
+    return compareMessages(parseH264Config(avcC(other)), parseH264Config(avcC(reference)));
 }
 
 TEST(H264Params, ReadsSpsAndPps)
@@ -229,7 +237,7 @@ TEST(H264Params, GarbageIsNotValid)
 {
     EXPECT_FALSE(parseH264Config({1, 100, 0, 40, 0xff, 0xe1}).valid);
     EXPECT_FALSE(parseH264Config({}).valid);
-    EXPECT_EQ(compareH264(parseH264Config({1, 2, 3}), parseH264Config(avcC({}))),
+    EXPECT_EQ(compareMessages(parseH264Config({1, 2, 3}), parseH264Config(avcC({}))),
               (std::vector<std::string>{"parametri di codifica video diversi (non leggibili)"}));
 }
 
@@ -316,7 +324,7 @@ TEST(H264Params, LevelCanBeRaised)
     EXPECT_EQ(raised[3], 51);
     EXPECT_EQ(maxH264Level(c), 51);
     // Il resto non cambia.
-    EXPECT_TRUE(compareH264(c, parseH264Config(data)).empty());
+    EXPECT_TRUE(compareMessages(c, parseH264Config(data)).empty());
 }
 
 MediaSignature h264File(const std::string& name, const Params& p)

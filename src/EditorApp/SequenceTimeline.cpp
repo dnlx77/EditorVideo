@@ -83,8 +83,7 @@ SequenceTimeline::SequenceTimeline(QWidget* parent)
     setToolTip(QStringLiteral("Video: clic per andare lì · trascina un pezzo per spostarlo avanti o indietro (lascia "
                               "spazi vuoti, da riempire con altri pezzi) · doppio clic per riaprirlo a sinistra · "
                               "Canc: togli il pezzo o chiudi lo spazio vuoto selezionato · S: dividi al cursore\n"
-                              "Audio: trascina per selezionare un tratto (o I e O nel Montaggio) · su A1 M toglie l'audio, "
-                              "Maiusc+M lo rimette · sulle tracce aggiunte trascina le clip (anche su un'altra traccia), "
+                              "Audio: sulle tracce aggiunte trascina lo sfondo per selezionare un tratto · trascina le clip (anche su un'altra traccia), "
                               "i bordi le accorciano, S divide, Canc toglie la clip o il tratto selezionato\n"
                               "Ctrl+rotellina (o + e -): ingrandisci e riduci · rotellina: scorri"));
 
@@ -557,7 +556,7 @@ double SequenceTimeline::trimTarget(double x, bool ripple) const
     const double start = starts_[static_cast<std::size_t>(trimIndex_)];
     const double edge = trimAtStart_ ? start : start + b.length;
     double t = timeForX(x) - trimGrab_;
-    // Aggancio magnetico a meno di 10 pixel: cursore, inizio della sequenza e bordi degli altri blocchi.
+    // Aggancio ai bordi a meno di 10 pixel: cursore, inizio della sequenza e bordi degli altri blocchi.
     std::vector<double> marks{0.0, playhead_};
     for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
         if (i != trimIndex_) {
@@ -633,7 +632,7 @@ double SequenceTimeline::dragTarget(double x) const
         return 0.0;
     const Block& dragged = blocks_[dragIndex_];
     double desired = timeForX(x) - dragGrab_;
-    // Aggancio magnetico: l'inizio o la fine del blocco, se a meno di 10 pixel da un bordo di un altro blocco o
+    // Aggancio ai bordi: l'inizio o la fine del blocco, se a meno di 10 pixel da un bordo di un altro blocco o
     // dall'inizio della sequenza. (Il cursore no: il clic per prendere il blocco lo porta proprio lì.)
     std::vector<double> edges{0.0};
     for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
@@ -778,7 +777,7 @@ double SequenceTimeline::audioDragTarget(double x, int lane) const
     if (c == nullptr || lane < 0)
         return 0.0;
     double desired = timeForX(x) - audioDragGrab_;
-    // Aggancio magnetico dell'inizio o della fine, a meno di 10 pixel.
+    // Aggancio ai bordi dell'inizio o della fine, a meno di 10 pixel.
     double best = 10.0 / zoom().pixelsPerSecond();
     double snapped = desired;
     for (const double mark : snapMarks(c->clipId)) {

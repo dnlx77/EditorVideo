@@ -1181,10 +1181,9 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
             std::fflush(stdout);
             ok = ok && sequence.fragments().size() == expectedPieces;
 
-            // Audio: un tratto silenziato a cavallo della prima giunzione (M), poi le forme d'onda pronte.
+            // Audio: un tratto silenziato a cavallo della prima giunzione, poi le forme d'onda pronte.
             const double muteFrom = std::max(0.0, sequence.startOf(1) - 0.1);
-            window->setAudioSelection(muteFrom, muteFrom + 0.2);
-            window->muteSelection();
+            window->muteRangeForTest(muteFrom, muteFrom + 0.2);
             const auto muted = sequence.mutedRanges();
             QElapsedTimer waves;
             waves.start();

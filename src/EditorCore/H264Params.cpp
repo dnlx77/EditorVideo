@@ -370,14 +370,6 @@ std::vector<H264Difference> findH264Differences(const H264Config& other, const H
     return out;
 }
 
-std::vector<std::string> compareH264(const H264Config& other, const H264Config& reference)
-{
-    std::vector<std::string> messages;
-    for (const H264Difference& difference : findH264Differences(other, reference))
-        messages.push_back(difference.message);
-    return messages;
-}
-
 int maxH264Level(const H264Config& config)
 {
     int level = 0;

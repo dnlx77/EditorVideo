@@ -65,7 +65,7 @@ TEST(EditHistory, EveryActionUndoesAndRedoesExactly)
     apply("Togli audio", [&] { s.muteRange(0.5, 1.5); });
     apply("Rimetti audio", [&] { s.unmuteRange(0.8, 1.0); });
     apply("Sostituisci audio", [&] { project.setAudioReplacement(AudioReplacement{"C:\\musica.mp3", 0.0, 90.0}); });
-    apply("Sposta audio", [&] { project.setAudioOffset(-2.5); });
+    apply("Sposta audio", [&] { project.setAudioReplacement(AudioReplacement{"C:\\musica.mp3", -2.5, 90.0}); });
     apply("Elimina pezzo", [&] { s.remove(s.fragments().front().id); });
     apply("Aggiungi file", [&] { project.add("C:\\video\\c.mov"); });
     apply("Togli file", [&] { project.remove(2); });
