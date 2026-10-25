@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EditorCore/AudioTracks.h"
+#include "EditorCore/Groups.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/MixSpec.h"
 #include "EditorCore/Sequence.h"
@@ -128,6 +129,28 @@ public:
     // livello: allora audioEdit() ha il mix.
     bool audioNeedsMix() const;
 
+    // Gruppi di oggetti (pezzi video, audio dei pezzi, clip audio) che si muovono insieme. Quelli fatti dall'utente
+    // stanno in groups(); in più un pezzo video e il suo audio (su A1) sono legati da quando nascono, finché l'audio non
+    // viene scollegato. groupMembers dà tutti gli oggetti legati a `object` in un modo o nell'altro (lui compreso;
+    // solo quelli che esistono ancora), in ordine; un oggetto senza legami dà solo se stesso.
+    Groups& groups() { return groups_; }
+    const Groups& groups() const { return groups_; }
+    bool objectExists(ObjectRef object) const;
+    std::vector<ObjectRef> groupMembers(ObjectRef object) const;
+    // Mette gli oggetti (quelli che esistono) in un gruppo nuovo; restituisce l'id, 0 se non c'è niente da raggruppare
+    // (meno di due oggetti, o sono già tutti legati fra loro).
+    int groupObjects(const std::vector<ObjectRef>& objects);
+    // Scioglie i gruppi degli oggetti; se non ne ha sciolto nessuno, scollega l'audio dei pezzi video fra gli oggetti
+    // (unlinkAudio): così con U si scioglie prima il gruppo e poi il legame fra il video e il suo audio.
+    struct UngroupResult
+    {
+        int dissolved = 0;      // gruppi sciolti
+        int audioUnlinked = 0;  // audio scollegati dal loro pezzo
+    };
+    UngroupResult ungroupObjects(const std::vector<ObjectRef>& objects);
+    // I gruppi dell'utente senza gli oggetti che non esistono più, con almeno due oggetti (per salvarli).
+    std::vector<std::vector<ObjectRef>> validGroups() const;
+
     // Formato del progetto (vedi ProjectFormat): vuoto finché non lo si decide, di solito al primo pezzo messo nel
     // montaggio. Fa parte delle modifiche (Annulla e Ripeti lo riportano com'era).
     const ProjectFormat& format() const { return format_; }
@@ -142,6 +165,7 @@ private:
     AudioTracks audio_;
     ProjectFormat format_;
     Sequence sequence_;
+    Groups groups_;
     int nextId_ = 1;
 };
 

@@ -263,7 +263,33 @@ std::string projectToJson(const std::string& projectPath, const Project& project
     // vuoti, 2 con gli spazi vuoti, 3 con tracce audio che non sono una semplice traccia sostitutiva.
     const bool pieceLines = std::any_of(project.sequence().fragments().begin(), project.sequence().fragments().end(),
                                         [](const Fragment& f) { return !f.envelope.empty(); });
-    const int version = !audioTracks.isNull() || pieceLines ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
+    // I gruppi: ogni oggetto per posizione (pezzo nella sequenza, clip audio per traccia e posizione nella traccia), gli id
+    // cambiano riaprendo il progetto.
+    JsonValue::Array groups;
+    for (const std::vector<ObjectRef>& members : project.validGroups()) {
+        JsonValue::Array items;
+        for (const ObjectRef& o : members) {
+            if (o.kind == ObjectRef::Kind::AudioClip) {
+                int trackIndex = -1;
+                int clipIndex = -1;
+                for (std::size_t t = 0; t < project.audioTracks().tracks().size(); ++t) {
+                    const auto& clips = project.audioTracks().tracks()[t].clips;
+                    for (std::size_t c = 0; c < clips.size(); ++c) {
+                        if (clips[c].id == o.id) {
+                            trackIndex = static_cast<int>(t);
+                            clipIndex = static_cast<int>(c);
+                        }
+                    }
+                }
+                items.emplace_back(JsonValue::Object{{"tipo", "clip"}, {"traccia", trackIndex}, {"posizione", clipIndex}});
+            } else {
+                items.emplace_back(JsonValue::Object{{"tipo", o.kind == ObjectRef::Kind::Piece ? "pezzo" : "audioPezzo"},
+                                                     {"posizione", project.sequence().indexOf(o.id)}});
+            }
+        }
+        groups.emplace_back(std::move(items));
+    }
+    const int version = !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
     JsonValue::Object root{
         {"formato", kFormatName},
         {"versione", version},
@@ -281,6 +307,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
     };
     if (!audioTracks.isNull())
         root["tracceAudio"] = std::move(audioTracks);
+    if (!groups.empty())
+        root["gruppi"] = std::move(groups);
     return JsonValue(root).dump();
 }
 
@@ -430,6 +458,32 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                 tracks.push_back(std::move(track));
             }
             loaded.project.audioTracks().restore(mixFromJson(a["A1"]), std::move(tracks));
+        }
+
+        // Gruppi: ogni oggetto è dato per posizione (vedi projectToJson); quelli che non ci sono più si scartano.
+        if (root["gruppi"].isArray()) {
+            const Project& built = loaded.project;
+            std::vector<std::vector<ObjectRef>> groups;
+            for (const JsonValue& group : root["gruppi"].asArray()) {
+                std::vector<ObjectRef> members;
+                for (const JsonValue& item : group.asArray()) {
+                    const std::string kind = text(item["tipo"]);
+                    const std::int64_t at = item["posizione"].isInteger() ? item["posizione"].asInteger() : -1;
+                    if (kind == "clip") {
+                        const std::int64_t t = item["traccia"].isInteger() ? item["traccia"].asInteger() : -1;
+                        const auto& tracks = built.audioTracks().tracks();
+                        if (t >= 0 && t < static_cast<std::int64_t>(tracks.size()) && at >= 0
+                            && at < static_cast<std::int64_t>(tracks[static_cast<std::size_t>(t)].clips.size()))
+                            members.push_back({ObjectRef::Kind::AudioClip, tracks[static_cast<std::size_t>(t)].clips[static_cast<std::size_t>(at)].id});
+                    } else if ((kind == "pezzo" || kind == "audioPezzo") && at >= 0
+                               && at < static_cast<std::int64_t>(built.sequence().fragments().size())) {
+                        members.push_back({kind == "pezzo" ? ObjectRef::Kind::Piece : ObjectRef::Kind::PieceAudio,
+                                           built.sequence().fragments()[static_cast<std::size_t>(at)].id});
+                    }
+                }
+                groups.push_back(std::move(members));
+            }
+            loaded.project.groups().restore(groups);
         }
 
         // Formato del progetto. I progetti di prima non ce l'hanno: lo si ricava poi dal primo pezzo.

@@ -38,6 +38,7 @@
     <ClCompile Include="AudioMixerTests.cpp" />
     <ClCompile Include="MixExportTests.cpp" />
     <ClCompile Include="AudioTracksTests.cpp" />
+    <ClCompile Include="GroupsTests.cpp" />
     <ClCompile Include="BlackGapTests.cpp" />
     <ClCompile Include="ComfortTests.cpp" />
     <ClCompile Include="CompatibilityTests.cpp" />
