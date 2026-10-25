@@ -80,11 +80,6 @@
 namespace editor::app {
 namespace {
 
-QString qs(const std::string& utf8)
-{
-    return QString::fromStdString(utf8);
-}
-
 QTreeWidgetItem* addRow(QTreeWidgetItem* parent, const QString& name, const QString& value)
 {
     auto* item = new QTreeWidgetItem(parent, {name, value});
@@ -227,11 +222,6 @@ private:
     std::function<bool(void* hwnd)> onDoubleClick_;
     std::function<void(void* hwnd, bool moving)> onMoveLoop_;
 };
-
-QString nativeAbsolute(const QString& path)
-{
-    return QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
-}
 
 // Elenco dei file del progetto: i file si possono trascinare sulla linea del tempo, come da Esplora file (sulla corsia
 // video vanno nel montaggio, su una traccia audio aggiunta diventano clip audio).
@@ -1088,7 +1078,7 @@ void MainWindow::refreshWaveforms()
         [this](const QString& path) { return waveforms_->get(path.toStdString()); });
 }
 
-double MainWindow::frameDurationOf(int clipId) const
+std::optional<double> MainWindow::knownFrameDurationOf(int clipId) const
 {
     const auto info = clipInfo_.find(clipId);
     if (info != clipInfo_.end()) {
@@ -1097,14 +1087,20 @@ double MainWindow::frameDurationOf(int clipId) const
                 return 1.0 / st.frameRate;
         }
     }
-    return 1.0 / 30;  // non si sa ancora (o solo audio): un trentesimo di secondo
+    return std::nullopt;
+}
+
+double MainWindow::frameDurationOf(int clipId) const
+{
+    return knownFrameDurationOf(clipId).value_or(1.0 / 30);  // non si sa ancora (o solo audio): un trentesimo di secondo
 }
 
 void MainWindow::refreshTimeline()
 {
     const core::Sequence& sequence = project_.sequence();
     std::vector<SequenceTimeline::Block> blocks;
-    const bool withAudio = !project_.audioReplacement().has_value();
+    const auto replacement = project_.audioReplacement();
+    const bool withAudio = !replacement.has_value();
     for (const core::Fragment& f : sequence.fragments()) {
         const core::Clip* clip = project_.find(f.clipId);
         blocks.push_back({f.id, project_.indexOf(f.clipId), clip ? fileNameOf(clip->path) : QString(), f.length(), f.start,
@@ -1138,14 +1134,8 @@ void MainWindow::refreshTimeline()
     // Zoom massimo: 12 pixel per fotogramma del primo file con un video (30 fps se non si sa ancora).
     double frame = 1.0 / 30;
     for (const core::Fragment& f : sequence.fragments()) {
-        const auto info = clipInfo_.find(f.clipId);
-        if (info == clipInfo_.end())
-            continue;
-        const auto video = std::find_if(info->second.streams.begin(), info->second.streams.end(), [](const core::StreamInfo& st) {
-            return st.kind == core::StreamKind::Video && !st.attachedPicture && st.frameRate > 0;
-        });
-        if (video != info->second.streams.end()) {
-            frame = 1.0 / video->frameRate;
+        if (const auto known = knownFrameDurationOf(f.clipId)) {
+            frame = *known;
             break;
         }
     }
@@ -1174,7 +1164,6 @@ void MainWindow::refreshTimeline()
         }
     }
     timeline_->setAudioLanes(std::move(lanes));
-    const auto replacement = project_.audioReplacement();
     if (timeline_->hasAudioSelection() && timeline_->audioSelectionFrom() >= std::max(sequence.totalLength(), audio.endTime()))
         timeline_->setAudioSelection(0.0, 0.0);
     if (originalAudioAction_ != nullptr)
@@ -1219,7 +1208,7 @@ void MainWindow::replaceAudioDialog()
 
 bool MainWindow::replaceAudio(const QString& path, bool showProblems)
 {
-    const std::string utf8 = nativeAbsolute(path).toStdString();
+    const std::string utf8 = nativeAbsoluteUtf8(path);
     const auto refuse = [&](const QString& problem) {
         if (showProblems)
             QMessageBox::warning(this, QStringLiteral("Audio non utilizzabile"), problem);
@@ -1290,6 +1279,12 @@ int MainWindow::colorIndexFor(const std::string& path) const
     return static_cast<int>(qHash(qs(path)) % 10);
 }
 
+void MainWindow::analyzeNewFile(int clipId, const std::string& path)
+{
+    probeQueue_.push_back(clipId);
+    waveforms_->request(path);
+}
+
 void MainWindow::requestAudioWaveforms()
 {
     for (const core::AudioTrack& track : project_.audioTracks().tracks()) {
@@ -1349,7 +1344,7 @@ int MainWindow::addAudioFiles(const QStringList& paths, int trackId, double seco
         return 0;
     std::vector<std::string> utf8;
     for (const QString& path : paths)
-        utf8.push_back(nativeAbsolute(path).toStdString());
+        utf8.push_back(nativeAbsoluteUtf8(path));
     const core::DropPlan plan = core::planDrop(utf8, project_, core::inspectMedia);
     QStringList problems;
     for (const std::string& name : plan.unreadable)
@@ -1375,8 +1370,9 @@ int MainWindow::addAudioFiles(const QStringList& paths, int trackId, double seco
     double at = std::max(0.0, seconds);
     for (std::size_t i = 0; i < withAudio.size(); ++i) {
         if (withAudio[i].existingClipId == 0)
-            probeQueue_.push_back(ids[i]);
-        waveforms_->request(withAudio[i].path);
+            analyzeNewFile(ids[i], withAudio[i].path);
+        else
+            waveforms_->request(withAudio[i].path);
         core::AudioClip clip;
         clip.path = withAudio[i].path;
         clip.end = durations[i];
@@ -2075,7 +2071,7 @@ void MainWindow::dropFiles(const QStringList& paths, DropTarget target, int sequ
 {
     std::vector<std::string> utf8;
     for (const QString& path : paths)
-        utf8.push_back(nativeAbsolute(path).toStdString());
+        utf8.push_back(nativeAbsoluteUtf8(path));
     core::DropPlan plan = core::planDrop(utf8, project_, core::inspectMedia);
 
     // Un progetto si apre (chiedendo se salvare quello di adesso).
@@ -2124,8 +2120,7 @@ void MainWindow::dropFiles(const QStringList& paths, DropTarget target, int sequ
         if (plan.media[i].existingClipId != 0)
             continue;
         ++added;
-        probeQueue_.push_back(ids[i]);
-        waveforms_->request(plan.media[i].path);
+        analyzeNewFile(ids[i], plan.media[i].path);
     }
     if (added > 0 || !fragments.empty())
         recordEdit(QStringLiteral("Aggiungi file"), before);
@@ -2421,12 +2416,11 @@ void MainWindow::addFiles(const QStringList& paths)
     const core::Project before = project_;
     int first = 0;
     for (const QString& path : paths) {
-        const std::string utf8 = nativeAbsolute(path).toStdString();
+        const std::string utf8 = nativeAbsoluteUtf8(path);
         const int id = project_.add(utf8);
         if (first == 0)
             first = id;
-        probeQueue_.push_back(id);
-        waveforms_->request(utf8);
+        analyzeNewFile(id, utf8);
     }
     refreshClipList();
     if (currentClipId_ == 0 && first != 0)
@@ -3302,13 +3296,13 @@ bool MainWindow::openProject(const QString& path, bool interactive)
                 QStringLiteral("%1 (%1);;Tutti i file (*.*)").arg(qs(missing.fileName)));
             if (found.isEmpty())
                 continue;
-            core::relocateMissing(loaded, missing, nativeAbsolute(found).toStdString());
+            core::relocateMissing(loaded, missing, nativeAbsoluteUtf8(found));
             // Gli altri file mancanti potrebbero essere nella stessa cartella.
             const QDir folder = QFileInfo(found).dir();
             for (const core::MissingFile& other : std::vector<core::MissingFile>(loaded.missing)) {
                 const QString candidate = folder.filePath(qs(other.fileName));
                 if (QFileInfo::exists(candidate))
-                    core::relocateMissing(loaded, other, nativeAbsolute(candidate).toStdString());
+                    core::relocateMissing(loaded, other, nativeAbsoluteUtf8(candidate));
             }
         } else if (box.clickedButton() == skip) {
             const int removed = core::dropMissing(loaded);
@@ -3332,8 +3326,7 @@ bool MainWindow::openProject(const QString& path, bool interactive)
             proxies_->setDivisor(qs(clip->path), divisor);
     }
     for (const core::Clip& clip : project_.clips()) {
-        probeQueue_.push_back(clip.id);
-        waveforms_->request(clip.path);
+        analyzeNewFile(clip.id, clip.path);
     }
     requestAudioWaveforms();
     sequenceChanged();  // aggiorna anche l'elenco dei file

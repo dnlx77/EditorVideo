@@ -1,5 +1,7 @@
 #include "EditorApp/ProxyManager.h"
 
+#include "EditorApp/UiText.h"
+
 #include "EditorCore/Proxy.h"
 
 #include <QtCore/QDir>
@@ -76,7 +78,7 @@ QString ProxyManager::proxyPath(const QString& original, int divisor) const
 {
     if (folder_.isEmpty())
         return {};
-    const std::string name = core::proxyFileName(QDir::toNativeSeparators(original).toStdString(), divisor);
+    const std::string name = core::proxyFileName(nativeUtf8(original), divisor);
     return name.empty() ? QString() : QDir::toNativeSeparators(QDir(folder_).filePath(QString::fromStdString(name)));
 }
 
@@ -166,7 +168,7 @@ void ProxyManager::startNext()
         int lastPercent = -1;
         try {
             const core::ProxyInfo info = core::buildProxy(
-                QDir::toNativeSeparators(original).toStdString(), target.toStdString(), divisor,
+                nativeUtf8(original), target.toStdString(), divisor,
                 [&](double p) {
                     progress->store(p);
                     const int percent = static_cast<int>(p * 100);
