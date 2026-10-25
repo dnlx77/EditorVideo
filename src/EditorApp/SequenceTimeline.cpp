@@ -1599,6 +1599,25 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         selectedAudioClip_ = 0;
         if (onAudioClipSelected)
             onAudioClipSelected(0);
+        // L'audio di un pezzo video (A1) è del pezzo: prenderlo e trascinarlo sposta il pezzo (e il suo gruppo).
+        if (lanes_[static_cast<std::size_t>(lane)].trackId == core::AudioTracks::kOriginalTrack) {
+            const int index = blockAt(pos.x());
+            if (index >= 0 && !blocks_[static_cast<std::size_t>(index)].audioDetached && t >= starts_[static_cast<std::size_t>(index)]
+                && t < starts_[static_cast<std::size_t>(index)] + blocks_[static_cast<std::size_t>(index)].length) {
+                dragIndex_ = index;
+                dragging_ = false;
+                selected_ = blocks_[static_cast<std::size_t>(index)].fragmentId;
+                dragGrab_ = t - starts_[static_cast<std::size_t>(index)];
+                dragStart_ = starts_[static_cast<std::size_t>(index)];
+                if (onSelect)
+                    onSelect(selected_);
+                playhead_ = std::max(0.0, t);
+                invalidate();
+                if (onSeek)
+                    onSeek(playhead_);
+                return;
+            }
+        }
         selectionAnchor_ = std::max(0.0, t);
         // Su A1 (l'audio dei video) il trascinamento non seleziona un tratto: il muto si fa con la linea del livello.
         if (lanes_[static_cast<std::size_t>(lane)].trackId != core::AudioTracks::kOriginalTrack) {
