@@ -841,6 +841,34 @@ void MainWindow::splitAtPlayhead()
 {
     const double at = program_->position();
     const core::Project before = project_;
+    // Un oggetto di un gruppo: si dividono tutti quelli del gruppo che il cursore attraversa, e le seconde parti formano
+    // un gruppo nuovo.
+    core::ObjectRef anchor;
+    if (const int clip = timeline_->selectedAudioClip(); clip != 0)
+        anchor = {core::ObjectRef::Kind::AudioClip, clip};
+    else if (const int index = project_.sequence().indexAt(at); index >= 0)
+        anchor = {core::ObjectRef::Kind::Piece, project_.sequence().fragments()[static_cast<std::size_t>(index)].id};
+    if (anchor.id != 0 && project_.groupMoverCount(anchor) > 1) {
+        const std::vector<core::ObjectRef> parts = project_.splitGroup(anchor, at);
+        if (parts.empty()) {
+            statusBar()->showMessage(QStringLiteral("Qui non si può dividere: il cursore non attraversa nessun oggetto del gruppo."), 8000);
+            return;
+        }
+        for (const core::ObjectRef& part : parts) {
+            if (part.kind != anchor.kind)
+                continue;
+            if (part.kind == core::ObjectRef::Kind::AudioClip)
+                timeline_->setSelectedAudioClip(part.id);
+            else
+                timeline_->setSelected(part.id);
+        }
+        recordEdit(QStringLiteral("Dividi gruppo"), before);
+        statusBar()->showMessage(QStringLiteral("Gruppo diviso a %1: %2 oggetti divisi, le parti dopo sono un gruppo nuovo.")
+                                     .arg(timeText(at))
+                                     .arg(parts.size()),
+                                 8000);
+        return;
+    }
     // Clip audio selezionata: si divide la clip della sua traccia sotto il cursore.
     if (const int clip = timeline_->selectedAudioClip(); clip != 0) {
         core::AudioTracks& audio = project_.audioTracks();
@@ -879,6 +907,14 @@ void MainWindow::deleteSelection()
         return;
     }
     const core::Project before = project_;
+    if (timeline_->selectedObjects().size() >= 2) {
+        // Più oggetti scelti con Ctrl+clic: si tolgono solo quelli (gli altri del gruppo restano).
+        if (project_.removeObjects(selectedRefs()) > 0) {
+            timeline_->setSelected(0);
+            recordEdit(QStringLiteral("Elimina oggetti"), before);
+        }
+        return;
+    }
     if (const int clip = timeline_->selectedAudioClip(); clip != 0) {
         // Clip audio selezionata: si toglie (lì resta silenzio).
         if (project_.audioTracks().remove(clip)) {
@@ -1685,7 +1721,15 @@ std::vector<core::ObjectRef> MainWindow::selectedRefs() const
 
 void MainWindow::groupSelection()
 {
-    const std::vector<core::ObjectRef> refs = selectedRefs();
+    std::vector<core::ObjectRef> refs = selectedRefs();
+    // Un oggetto di un gruppo porta con sé tutto il suo gruppo: scegliendo un gruppo e un altro oggetto (o un altro
+    // gruppo) si ottiene un gruppo solo con tutto.
+    for (const core::ObjectRef& chosen : std::vector<core::ObjectRef>(refs)) {
+        for (const core::ObjectRef& mate : project_.groupMembers(chosen)) {
+            if (std::find(refs.begin(), refs.end(), mate) == refs.end())
+                refs.push_back(mate);
+        }
+    }
     const core::Project before = project_;
     if (refs.size() < 2 || project_.groupObjects(refs) == 0) {
         statusBar()->showMessage(QStringLiteral("Per fare un gruppo scegli almeno due oggetti diversi con Ctrl+clic."), 8000);

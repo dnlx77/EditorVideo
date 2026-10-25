@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 using namespace editor::core;
 
 namespace {
@@ -100,4 +102,48 @@ TEST(GroupMove, CannotGoBeforeZero)
     Montage m;
     EXPECT_NEAR(m.project.clampGroupDelta({Kind::Piece, m.a}, -1.0, false), 0.0, 1e-6);
     EXPECT_FALSE(m.project.moveGroup({Kind::Piece, m.a}, -1.0, true));
+}
+
+TEST(GroupSplitAndRemove, SplitDividesAllCrossedMembersAndMakesANewGroup)
+{
+    Montage m;  // A 0..2, B 3..5, C 6..8; musica su A2 3..5
+    ASSERT_NE(m.project.groupObjects({{Kind::Piece, m.b}, {Kind::AudioClip, m.music}}), 0);
+    const std::vector<ObjectRef> parts = m.project.splitGroup({Kind::Piece, m.b}, 4.0);
+    ASSERT_EQ(parts.size(), 2u);
+    EXPECT_EQ(m.project.sequence().fragments().size(), 4u);
+    // Le seconde parti sono insieme e separate dalle prime.
+    EXPECT_EQ(m.project.groupMoverCount(parts[0]), 2);
+    EXPECT_EQ(m.project.groupMoverCount({Kind::Piece, m.b}), 2);
+    const auto firstGroup = m.project.groupMembers({Kind::Piece, m.b});
+    EXPECT_EQ(std::find(firstGroup.begin(), firstGroup.end(), parts[0]), firstGroup.end());
+    // Fuori da ogni oggetto del gruppo non si divide.
+    EXPECT_TRUE(m.project.splitGroup({Kind::Piece, m.b}, 7.0).empty());
+}
+
+TEST(GroupSplitAndRemove, RemoveObjectsKeepsTheRestOfTheGroup)
+{
+    Montage m;
+    ASSERT_NE(m.project.groupObjects({{Kind::Piece, m.b}, {Kind::Piece, m.c}, {Kind::AudioClip, m.music}}), 0);
+    EXPECT_EQ(m.project.removeObjects({{Kind::AudioClip, m.music}, {Kind::Piece, m.c}}), 2);
+    EXPECT_EQ(m.project.sequence().fragments().size(), 2u);
+    EXPECT_EQ(m.project.audioTracks().find(m.music), nullptr);
+    // Il pezzo B resta, senza più gruppo (dal gruppo è rimasto solo lui).
+    EXPECT_EQ(m.project.groupMoverCount({Kind::Piece, m.b}), 1);
+}
+
+TEST(GroupSplitAndRemove, GroupingAGroupWithAnotherObjectMakesOneTotalGroup)
+{
+    Montage m;
+    ASSERT_NE(m.project.groupObjects({{Kind::Piece, m.a}, {Kind::Piece, m.b}}), 0);
+    // Il gruppo (A, B) più la clip: si sceglie un oggetto del gruppo e la clip, e si porta tutto il gruppo.
+    std::vector<ObjectRef> chosen{{Kind::Piece, m.a}, {Kind::AudioClip, m.music}};
+    for (const ObjectRef& o : std::vector<ObjectRef>(chosen)) {
+        for (const ObjectRef& mate : m.project.groupMembers(o)) {
+            if (std::find(chosen.begin(), chosen.end(), mate) == chosen.end())
+                chosen.push_back(mate);
+        }
+    }
+    ASSERT_NE(m.project.groupObjects(chosen), 0);
+    EXPECT_EQ(m.project.groupMoverCount({Kind::Piece, m.b}), 3);
+    EXPECT_EQ(m.project.groupMoverCount({Kind::AudioClip, m.music}), 3);
 }

@@ -148,6 +148,14 @@ public:
         int audioUnlinked = 0;  // audio scollegati dal loro pezzo
     };
     UngroupResult ungroupObjects(const std::vector<ObjectRef>& objects);
+    // Divide al tempo `seconds` della sequenza i pezzi video e le clip audio del gruppo di `anchor` che lo attraversano
+    // (il pezzo video divide con sé il suo audio). Le seconde parti formano un gruppo nuovo, se sono almeno due oggetti.
+    // Restituisce le seconde parti (pezzi e clip); vuoto, e nessuna modifica, se niente si può dividere lì.
+    std::vector<ObjectRef> splitGroup(ObjectRef anchor, double seconds);
+    // Toglie gli oggetti dal montaggio: i pezzi video (con il loro audio), le clip audio e, per l'audio di un pezzo
+    // senza il pezzo, l'audio del pezzo (silenzio). I gruppi restano con gli oggetti rimasti. Restituisce quanti sono
+    // stati tolti.
+    int removeObjects(const std::vector<ObjectRef>& objects);
     // Spostamento di gruppo. Il gruppo di `anchor` (pezzi video e clip audio: l'audio di un pezzo segue il pezzo) si
     // sposta tutto dello stesso tratto `delta` (secondi, anche negativo). Senza spinta i pezzi e le clip degli altri non
     // si toccano (lo spostamento si ferma contro il primo); con la spinta, verso destra, quelli urtati scorrono davanti

@@ -222,6 +222,57 @@ int Project::groupObjects(const std::vector<ObjectRef>& objects)
     return groups_.create(valid);
 }
 
+std::vector<ObjectRef> Project::splitGroup(ObjectRef anchor, double seconds)
+{
+    std::vector<ObjectRef> created;
+    const std::vector<ObjectRef> members = groupMembers(anchor);
+    const auto isMember = [&](ObjectRef::Kind kind, int id) {
+        return std::find(members.begin(), members.end(), ObjectRef{kind, id}) != members.end();
+    };
+    const int index = sequence_.indexAt(seconds);
+    if (index >= 0 && isMember(ObjectRef::Kind::Piece, sequence_.fragments()[static_cast<std::size_t>(index)].id)) {
+        if (const int id = sequence_.split(seconds); id != 0)
+            created.push_back({ObjectRef::Kind::Piece, id});
+    }
+    for (const ObjectRef& m : members) {
+        if (m.kind != ObjectRef::Kind::AudioClip)
+            continue;
+        const AudioClip* clip = audio_.find(m.id);
+        if (clip == nullptr || seconds <= clip->position + kTimeEpsilon || seconds >= clip->position + clip->length() - kTimeEpsilon)
+            continue;
+        if (const int id = audio_.split(audio_.trackOf(m.id), seconds); id != 0)
+            created.push_back({ObjectRef::Kind::AudioClip, id});
+    }
+    if (created.size() >= 2)
+        groups_.create(created);
+    return created;
+}
+
+int Project::removeObjects(const std::vector<ObjectRef>& objects)
+{
+    int removed = 0;
+    for (const ObjectRef& o : objects) {
+        if (o.kind == ObjectRef::Kind::AudioClip && audio_.remove(o.id))
+            ++removed;
+    }
+    for (const ObjectRef& o : objects) {
+        if (o.kind != ObjectRef::Kind::PieceAudio)
+            continue;
+        const bool pieceGoes = std::find(objects.begin(), objects.end(), ObjectRef{ObjectRef::Kind::Piece, o.id}) != objects.end();
+        const int index = sequence_.indexOf(o.id);
+        if (pieceGoes || index < 0)
+            continue;
+        const double start = sequence_.startOf(index);
+        if (sequence_.muteRange(start, start + sequence_.fragments()[static_cast<std::size_t>(index)].length()))
+            ++removed;
+    }
+    for (const ObjectRef& o : objects) {
+        if (o.kind == ObjectRef::Kind::Piece && sequence_.remove(o.id))
+            ++removed;
+    }
+    return removed;
+}
+
 Project::UngroupResult Project::ungroupObjects(const std::vector<ObjectRef>& objects)
 {
     UngroupResult result;

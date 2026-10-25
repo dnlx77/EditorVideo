@@ -315,6 +315,7 @@ private:
     int selectedAudioClip_ = 0;
     std::vector<Object> mates_;  // compagni di gruppo dei selezionati, ricalcolati a ogni disegno
     bool isMate(Object::Kind kind, int id) const;
+    bool matesGrouped_ = false;  // i selezionati sono in un gruppo vero (non solo un pezzo con il suo audio)
     std::vector<Object> multi_;  // vedi selectedObjects()
     int selectedTrack_ = -1;      // -1 = nessuna scelta
     int audioDragClip_ = 0;       // clip audio presa (spostamento)

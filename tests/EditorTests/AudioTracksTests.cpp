@@ -384,3 +384,46 @@ TEST(AudioTracks, ClipsOnTheOriginalLaneLiveInAHostTrack)
     ASSERT_TRUE(audio.remove(id));
     EXPECT_FALSE(audio.hasHost());
 }
+
+TEST(AudioTracks, ShorteningAClipCarriesItsEndFadeAlong)
+{
+    AudioTracks audio;
+    const int track = audio.addTrack();
+    const int id = audio.add(track, clipOf("m.mp3", 0.0, 10.0, 0.0));
+    ASSERT_TRUE(audio.setClipEnvelope(id, {{8.0, 0.0}, {10.0, -60.0}}));  // sfuma negli ultimi 2 s
+    // Accorcio la fine di 3 s: la sfumatura finisce col bordo nuovo (7), sempre lunga 2 s.
+    ASSERT_TRUE(audio.trim(id, Sequence::Edge::End, 7.0, 0.1, false));
+    const auto& points = audio.find(id)->envelope;
+    ASSERT_EQ(points.size(), 2u);
+    EXPECT_NEAR(points[0].time, 5.0, 1e-6);
+    EXPECT_NEAR(points[1].time, 7.0, 1e-6);
+    EXPECT_NEAR(points[1].db, -60.0, 1e-6);
+    // Riallungo fino a 10: la sfumatura torna in fondo.
+    ASSERT_TRUE(audio.trim(id, Sequence::Edge::End, 10.0, 0.1, false));
+    const auto& back = audio.find(id)->envelope;
+    ASSERT_EQ(back.size(), 2u);
+    EXPECT_NEAR(back[0].time, 8.0, 1e-6);
+    EXPECT_NEAR(back[1].time, 10.0, 1e-6);
+    // Una sfumatura con più punti si sposta tutta; i punti prima (livello piatto) restano.
+    ASSERT_TRUE(audio.setClipEnvelope(id, {{3.0, 0.0}, {7.0, 0.0}, {8.5, -30.0}, {10.0, -60.0}}));
+    ASSERT_TRUE(audio.trim(id, Sequence::Edge::End, 8.0, 0.1, false));
+    const auto& after = audio.find(id)->envelope;
+    ASSERT_EQ(after.size(), 4u);
+    EXPECT_NEAR(after[0].time, 3.0, 1e-6);
+    EXPECT_NEAR(after[1].time, 5.0, 1e-6);
+    EXPECT_NEAR(after[2].time, 6.5, 1e-6);
+    EXPECT_NEAR(after[3].time, 8.0, 1e-6);
+}
+
+TEST(AudioTracks, ShorteningTheStartCarriesItsFadeInAlong)
+{
+    AudioTracks audio;
+    const int track = audio.addTrack();
+    const int id = audio.add(track, clipOf("m.mp3", 0.0, 10.0, 0.0));
+    ASSERT_TRUE(audio.setClipEnvelope(id, {{0.0, -60.0}, {2.0, 0.0}}));  // sfuma in entrata nei primi 2 s
+    ASSERT_TRUE(audio.trim(id, Sequence::Edge::Start, 3.0, 0.1, false));
+    const auto& points = audio.find(id)->envelope;
+    ASSERT_EQ(points.size(), 2u);
+    EXPECT_NEAR(points[0].time, 3.0, 1e-6);
+    EXPECT_NEAR(points[1].time, 5.0, 1e-6);
+}

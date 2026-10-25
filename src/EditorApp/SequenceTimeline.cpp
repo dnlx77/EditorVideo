@@ -337,7 +337,8 @@ bool SequenceTimeline::isSelected(Object::Kind kind, int id) const
 
 bool SequenceTimeline::isMate(Object::Kind kind, int id) const
 {
-    return !isSelected(kind, id) && std::find(mates_.begin(), mates_.end(), Object{kind, id}) != mates_.end();
+    const bool member = std::find(mates_.begin(), mates_.end(), Object{kind, id}) != mates_.end();
+    return member && (matesGrouped_ || !isSelected(kind, id));
 }
 
 bool SequenceTimeline::ctrlPress(const QPointF& pos)
@@ -921,6 +922,13 @@ void SequenceTimeline::paintStatic(QPainter& p)
             }
         }
     }
+    // Un gruppo vero: c'è un compagno che non è un selezionato né il suo audio (o il suo pezzo video).
+    const std::vector<Object> chosen = allSelectedObjects();
+    matesGrouped_ = std::any_of(mates_.begin(), mates_.end(), [&](const Object& m) {
+        return std::none_of(chosen.begin(), chosen.end(), [&](const Object& s) {
+            return s == m || (s.id == m.id && s.kind != Object::Kind::AudioClip && m.kind != Object::Kind::AudioClip);
+        });
+    });
     paintRuler(p);
     p.setPen(Qt::NoPen);
     p.setBrush(pal.color(QPalette::Base));
@@ -968,7 +976,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
             QColor fill = blockColor(c->colorIndex);
             fill.setAlpha(150);
             p.setBrush(fill);
-            p.setPen(QPen(pal.color(QPalette::Highlight), 3));
+            p.setPen(isMate(Object::Kind::AudioClip, c->clipId) ? QPen(QColor(255, 170, 0), 3) : QPen(pal.color(QPalette::Highlight), 3));
             p.drawRoundedRect(visiblePart(target), 3, 3);
             if (target.width() > 30) {
                 p.setPen(Qt::white);
@@ -986,7 +994,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
         QColor fill = blockColor(b.colorIndex);
         fill.setAlpha(150);
         p.setBrush(fill);
-        p.setPen(QPen(pal.color(QPalette::Highlight), 3));
+        p.setPen(isMate(Object::Kind::Piece, b.fragmentId) ? QPen(QColor(255, 170, 0), 3) : QPen(pal.color(QPalette::Highlight), 3));
         p.drawRoundedRect(visiblePart(target), 3, 3);
         p.setPen(Qt::white);
         if (target.width() > 30)
@@ -1069,11 +1077,12 @@ void SequenceTimeline::paintVideo(QPainter& p)
                 p.fillRect(r, QColor(255, 255, 255, 140));
             p.restore();
         }
-        p.setPen(isSelected(Object::Kind::Piece, b.fragmentId) ? QPen(pal.color(QPalette::Highlight), 3)
-                 : isMate(Object::Kind::Piece, b.fragmentId)   ? QPen(pal.color(QPalette::Highlight), 2, Qt::DashLine)
+        p.setPen(isMate(Object::Kind::Piece, b.fragmentId)   ? QPen(QColor(255, 170, 0), 3)
+                 : isSelected(Object::Kind::Piece, b.fragmentId) ? QPen(pal.color(QPalette::Highlight), 3)
                                                                : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
-        p.drawRoundedRect(r, 3, 3);
+        // Il contorno spesso (scelto o di gruppo) sta tutto dentro il blocco, come quello delle clip audio.
+        p.drawRoundedRect(p.pen().widthF() > 1.5 ? r.adjusted(1.5, 1.5, -1.5, -1.5) : r, 3, 3);
         // Segno in alto a destra: P = si copia con i suoi parametri, R = si ricodifica.
         if (b.fit != 0 && r.width() > 22) {
             const QRectF badge(QPointF(r.right() - 17, r.top() + 3), QSizeF(14, 14));
@@ -1413,7 +1422,7 @@ void SequenceTimeline::paintA1(QPainter& p, const QRectF& lane)
         }
         const bool audioMate = isMate(Object::Kind::PieceAudio, b.fragmentId);
         if ((!multi_.empty() && isSelected(Object::Kind::PieceAudio, b.fragmentId)) || audioMate) {
-            p.setPen(audioMate ? QPen(pal.color(QPalette::Highlight), 2, Qt::DashLine) : QPen(pal.color(QPalette::Highlight), 3));
+            p.setPen(audioMate ? QPen(QColor(255, 170, 0), 3) : QPen(pal.color(QPalette::Highlight), 3));
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(r, 3, 3);
         }
@@ -1466,8 +1475,8 @@ void SequenceTimeline::paintTrack(QPainter& p, int index, const QRectF& lane)
             p.setPen(pal.color(QPalette::PlaceholderText));
             p.drawText(r, Qt::AlignCenter, QStringLiteral("forma d'onda..."));
         }
-        p.setPen(isSelected(Object::Kind::AudioClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3)
-                 : isMate(Object::Kind::AudioClip, c.clipId)   ? QPen(pal.color(QPalette::Highlight), 2, Qt::DashLine)
+        p.setPen(isMate(Object::Kind::AudioClip, c.clipId)   ? QPen(QColor(255, 170, 0), 3)
+                 : isSelected(Object::Kind::AudioClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3)
                                                                : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(r, 3, 3);
@@ -1591,9 +1600,31 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         selectedAudioClip_ = 0;
         if (onAudioClipSelected)
             onAudioClipSelected(0);
-        selecting_ = true;
+        // L'audio di un pezzo video (A1) è del pezzo: prenderlo e trascinarlo sposta il pezzo (e il suo gruppo).
+        if (lanes_[static_cast<std::size_t>(lane)].trackId == core::AudioTracks::kOriginalTrack) {
+            const int index = blockAt(pos.x());
+            if (index >= 0 && !blocks_[static_cast<std::size_t>(index)].audioDetached && t >= starts_[static_cast<std::size_t>(index)]
+                && t < starts_[static_cast<std::size_t>(index)] + blocks_[static_cast<std::size_t>(index)].length) {
+                dragIndex_ = index;
+                dragging_ = false;
+                selected_ = blocks_[static_cast<std::size_t>(index)].fragmentId;
+                dragGrab_ = t - starts_[static_cast<std::size_t>(index)];
+                dragStart_ = starts_[static_cast<std::size_t>(index)];
+                if (onSelect)
+                    onSelect(selected_);
+                playhead_ = std::max(0.0, t);
+                invalidate();
+                if (onSeek)
+                    onSeek(playhead_);
+                return;
+            }
+        }
         selectionAnchor_ = std::max(0.0, t);
-        setAudioSelection(selectionAnchor_, selectionAnchor_, lanes_[static_cast<std::size_t>(lane)].trackId);
+        // Su A1 (l'audio dei video) il trascinamento non seleziona un tratto: il muto si fa con la linea del livello.
+        if (lanes_[static_cast<std::size_t>(lane)].trackId != core::AudioTracks::kOriginalTrack) {
+            selecting_ = true;
+            setAudioSelection(selectionAnchor_, selectionAnchor_, lanes_[static_cast<std::size_t>(lane)].trackId);
+        }
         playhead_ = selectionAnchor_;
         if (onSeek)
             onSeek(selectionAnchor_);

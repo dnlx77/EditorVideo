@@ -25,6 +25,40 @@ std::vector<LevelPoint> normalizeEnvelope(std::vector<LevelPoint> points)
     return unique;
 }
 
+std::vector<LevelPoint> envelopeForTrim(std::vector<LevelPoint> points, bool atStart, double oldEdge, double newEdge, double limit)
+{
+    constexpr double kReach = 0.05;  // quanto può stare lontano dal bordo l'ultimo punto per dirlo attaccato
+    constexpr double kStep = 1e-3;
+    constexpr double kSameDb = 1e-6;
+    const double shift = newEdge - oldEdge;
+    if (points.size() < 1 || std::abs(shift) < kStep)
+        return points;
+    const int n = static_cast<int>(points.size());
+    if (!atStart) {
+        // Finisce col bordo? Allora la sfumatura finale (i punti con livelli diversi, dall'ultimo all'indietro) lo segue.
+        if (points.back().time < oldEdge - kReach)
+            return points;
+        int first = n - 1;
+        while (first > 0 && std::abs(points[first - 1].db - points[first].db) > kSameDb)
+            --first;
+        for (int i = first; i < n; ++i) {
+            const double floor = i > 0 ? points[i - 1].time + kStep : limit;
+            points[i].time = std::max(points[i].time + shift, floor);
+        }
+    } else {
+        if (points.front().time > oldEdge + kReach)
+            return points;
+        int last = 0;
+        while (last + 1 < n && std::abs(points[last + 1].db - points[last].db) > kSameDb)
+            ++last;
+        for (int i = last; i >= 0; --i) {
+            const double ceiling = i + 1 < n ? points[i + 1].time - kStep : limit;
+            points[i].time = std::min(points[i].time + shift, ceiling);
+        }
+    }
+    return normalizeEnvelope(std::move(points));
+}
+
 double envelopeDbAt(const std::vector<LevelPoint>& points, double seconds)
 {
     if (points.empty())
