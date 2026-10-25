@@ -337,7 +337,8 @@ bool SequenceTimeline::isSelected(Object::Kind kind, int id) const
 
 bool SequenceTimeline::isMate(Object::Kind kind, int id) const
 {
-    return !isSelected(kind, id) && std::find(mates_.begin(), mates_.end(), Object{kind, id}) != mates_.end();
+    const bool member = std::find(mates_.begin(), mates_.end(), Object{kind, id}) != mates_.end();
+    return member && (matesGrouped_ || !isSelected(kind, id));
 }
 
 bool SequenceTimeline::ctrlPress(const QPointF& pos)
@@ -921,6 +922,13 @@ void SequenceTimeline::paintStatic(QPainter& p)
             }
         }
     }
+    // Un gruppo vero: c'è un compagno che non è un selezionato né il suo audio (o il suo pezzo video).
+    const std::vector<Object> chosen = allSelectedObjects();
+    matesGrouped_ = std::any_of(mates_.begin(), mates_.end(), [&](const Object& m) {
+        return std::none_of(chosen.begin(), chosen.end(), [&](const Object& s) {
+            return s == m || (s.id == m.id && s.kind != Object::Kind::AudioClip && m.kind != Object::Kind::AudioClip);
+        });
+    });
     paintRuler(p);
     p.setPen(Qt::NoPen);
     p.setBrush(pal.color(QPalette::Base));
@@ -1069,8 +1077,8 @@ void SequenceTimeline::paintVideo(QPainter& p)
                 p.fillRect(r, QColor(255, 255, 255, 140));
             p.restore();
         }
-        p.setPen(isSelected(Object::Kind::Piece, b.fragmentId) ? QPen(pal.color(QPalette::Highlight), 3)
-                 : isMate(Object::Kind::Piece, b.fragmentId)   ? QPen(QColor(255, 170, 0), 3)
+        p.setPen(isMate(Object::Kind::Piece, b.fragmentId)   ? QPen(QColor(255, 170, 0), 3)
+                 : isSelected(Object::Kind::Piece, b.fragmentId) ? QPen(pal.color(QPalette::Highlight), 3)
                                                                : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(r, 3, 3);
@@ -1466,8 +1474,8 @@ void SequenceTimeline::paintTrack(QPainter& p, int index, const QRectF& lane)
             p.setPen(pal.color(QPalette::PlaceholderText));
             p.drawText(r, Qt::AlignCenter, QStringLiteral("forma d'onda..."));
         }
-        p.setPen(isSelected(Object::Kind::AudioClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3)
-                 : isMate(Object::Kind::AudioClip, c.clipId)   ? QPen(QColor(255, 170, 0), 3)
+        p.setPen(isMate(Object::Kind::AudioClip, c.clipId)   ? QPen(QColor(255, 170, 0), 3)
+                 : isSelected(Object::Kind::AudioClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3)
                                                                : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(r, 3, 3);
