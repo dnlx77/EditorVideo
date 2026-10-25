@@ -452,6 +452,29 @@ TEST_F(ProjectFileTest, AudioTracksAreSavedWithLevelsMuteAndSolo)
     EXPECT_THROW(projectFromJson(projectPath(), damaged), ProjectFileError);
 }
 
+TEST_F(ProjectFileTest, FreeClipsOnTheA1LaneAreSaved)
+{
+    ProjectView view;
+    Project project = sample(view);
+    project.setAudioReplacement(std::nullopt);
+    AudioTracks& audio = project.audioTracks();
+    const int a2 = audio.addTrack();
+    ASSERT_NE(audio.add(a2, AudioClip{0, file("musica.mp3"), 0.0, 5.0, 1.0, 181.3}), 0);
+    ASSERT_NE(audio.add(AudioTracks::kOriginalTrack, AudioClip{0, file("voce.wav"), 0.5, 2.0, 1.0, 9.5}), 0);
+    ASSERT_TRUE(audio.hasHost());
+    saveProjectFile(projectPath(), project, view);
+    const std::string text = read(projectPath());
+    EXPECT_NE(text.find("\"suA1\": true"), std::string::npos) << text;
+    const LoadedProject loaded = loadProjectFile(projectPath());
+    const AudioTracks& again = loaded.project.audioTracks();
+    ASSERT_TRUE(again.hasHost());
+    ASSERT_EQ(again.tracks().size(), 2u);
+    EXPECT_EQ(again.tracks()[0].id, AudioTracks::kOriginalTrack);
+    EXPECT_EQ(again.tracks()[0].clips.size(), 1u);
+    EXPECT_EQ(again.trackName(again.tracks()[1].id), "A2");
+    expectSame(project, loaded.project);
+}
+
 TEST_F(ProjectFileTest, MissingAudioFilesOfTheTracks)
 {
     ProjectView view;

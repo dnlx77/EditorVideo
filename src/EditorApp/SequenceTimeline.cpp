@@ -138,7 +138,7 @@ void SequenceTimeline::syncTrackButtons()
 void SequenceTimeline::updateDuration()
 {
     double end = total_;
-    for (std::size_t i = 1; i < lanes_.size(); ++i) {
+    for (std::size_t i = 0; i < lanes_.size(); ++i) {
         for (const AudioBlock& c : lanes_[i].clips)
             end = std::max(end, c.position + c.length);
     }
@@ -316,7 +316,7 @@ void SequenceTimeline::setSelectedTrack(int trackId)
 
 const SequenceTimeline::AudioBlock* SequenceTimeline::findAudioClip(int clipId, int* lane) const
 {
-    for (std::size_t i = 1; i < lanes_.size(); ++i) {
+    for (std::size_t i = 0; i < lanes_.size(); ++i) {
         for (const AudioBlock& c : lanes_[i].clips) {
             if (c.clipId == clipId) {
                 if (lane != nullptr)
@@ -635,7 +635,7 @@ std::vector<double> SequenceTimeline::snapMarks(int ignoredClip) const
         marks.push_back(starts_[i]);
         marks.push_back(starts_[i] + blocks_[i].length);
     }
-    for (std::size_t l = 1; l < lanes_.size(); ++l) {
+    for (std::size_t l = 0; l < lanes_.size(); ++l) {
         for (const AudioBlock& c : lanes_[l].clips) {
             if (c.clipId != ignoredClip) {
                 marks.push_back(c.position);
@@ -649,7 +649,7 @@ std::vector<double> SequenceTimeline::snapMarks(int ignoredClip) const
 bool SequenceTimeline::audioClipAt(const QPointF& pos, int& lane, int& clip) const
 {
     lane = laneAt(pos.y());
-    if (lane <= 0 || pos.x() < videoLane().left())
+    if (lane < 0 || pos.x() < videoLane().left())
         return false;
     const double t = timeForX(pos.x());
     const auto& clips = lanes_[static_cast<std::size_t>(lane)].clips;
@@ -665,7 +665,7 @@ bool SequenceTimeline::audioClipAt(const QPointF& pos, int& lane, int& clip) con
 bool SequenceTimeline::audioEdgeAt(const QPointF& pos, int& lane, int& clip, bool& atStart) const
 {
     lane = laneAt(pos.y());
-    if (lane <= 0 || pos.x() < videoLane().left())
+    if (lane < 0 || pos.x() < videoLane().left())
         return false;
     constexpr double kReach = 5.0;  // pixel
     double bestDistance = kReach + 1;
@@ -694,7 +694,7 @@ bool SequenceTimeline::audioEdgeAt(const QPointF& pos, int& lane, int& clip, boo
 double SequenceTimeline::audioDragTarget(double x, int lane) const
 {
     const AudioBlock* c = findAudioClip(audioDragClip_);
-    if (c == nullptr || lane <= 0)
+    if (c == nullptr || lane < 0)
         return 0.0;
     double desired = timeForX(x) - audioDragGrab_;
     // Aggancio magnetico dell'inizio o della fine, a meno di 10 pixel.
@@ -871,7 +871,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
     }
 
     // Dove andrà la clip audio trascinata: il suo contorno sulla corsia di arrivo.
-    if (audioDragging_ && audioDragLane_ > 0) {
+    if (audioDragging_ && audioDragLane_ >= 0) {
         if (const AudioBlock* c = findAudioClip(audioDragClip_)) {
             const QRectF lane = audioLane(audioDragLane_);
             const QRectF target(QPointF(xForTime(audioDragStart_) + 1, lane.top() + 1),
@@ -1109,8 +1109,7 @@ void SequenceTimeline::paintAudio(QPainter& p)
         p.setClipRect(lane);
         if (i == 0)
             paintA1(p, lane);
-        else
-            paintTrack(p, i, lane);
+        paintTrack(p, i, lane);
         // Una corsia che non si sente (muto, o non in solo quando altre lo sono): scurita.
         if (!lanes_[static_cast<std::size_t>(i)].audible) {
             p.setPen(Qt::NoPen);
@@ -1121,10 +1120,9 @@ void SequenceTimeline::paintAudio(QPainter& p)
         if (i == 0) {
             for (std::size_t b = 0; b < blocks_.size(); ++b)
                 paintEnvelope(p, targetOfBlock(b), lane);
-        } else {
-            for (std::size_t c = 0; c < lanes_[static_cast<std::size_t>(i)].clips.size(); ++c)
-                paintEnvelope(p, targetOfClip(i, c), lane);
         }
+        for (std::size_t c = 0; c < lanes_[static_cast<std::size_t>(i)].clips.size(); ++c)
+            paintEnvelope(p, targetOfClip(i, c), lane);
         p.setRenderHint(QPainter::Antialiasing, false);
         // Tratto selezionato
         if (hasAudioSelection() && lanes_[static_cast<std::size_t>(i)].trackId == selectionTrack_) {
@@ -1201,23 +1199,24 @@ bool SequenceTimeline::envelopeHit(const QPointF& pos, EnvTarget& target, int& p
     // Il pezzo o la clip sotto il mouse.
     const double t = timeForX(pos.x());
     EnvTarget found;
-    if (lane == 0) {
-        const int block = blockAt(pos.x());
-        if (block < 0 || t < starts_[static_cast<std::size_t>(block)] || t > starts_[static_cast<std::size_t>(block)] + blocks_[static_cast<std::size_t>(block)].length)
-            return false;
-        found = targetOfBlock(static_cast<std::size_t>(block));
-    } else {
-        const auto& clips = lanes_[static_cast<std::size_t>(lane)].clips;
-        bool any = false;
-        for (std::size_t i = 0; i < clips.size() && !any; ++i) {
-            if (t >= clips[i].position && t <= clips[i].position + clips[i].length) {
-                found = targetOfClip(lane, i);
-                any = true;
-            }
+    bool any = false;
+    const auto& clips = lanes_[static_cast<std::size_t>(lane)].clips;
+    for (std::size_t i = 0; i < clips.size() && !any; ++i) {
+        if (t >= clips[i].position && t <= clips[i].position + clips[i].length) {
+            found = targetOfClip(lane, i);
+            any = true;
         }
-        if (!any)
-            return false;
     }
+    if (!any && lane == 0) {  // su A1, sotto le clip libere, l'audio dei pezzi video
+        const int block = blockAt(pos.x());
+        if (block >= 0 && t >= starts_[static_cast<std::size_t>(block)]
+            && t <= starts_[static_cast<std::size_t>(block)] + blocks_[static_cast<std::size_t>(block)].length) {
+            found = targetOfBlock(static_cast<std::size_t>(block));
+            any = true;
+        }
+    }
+    if (!any)
+        return false;
     const QRectF rect = audioLane(lane);
     const auto& line = lineOf(found);
     const auto atFile = [&](double fileTime) { return xForTime(found.position + (fileTime - found.source)); };
@@ -1347,8 +1346,10 @@ void SequenceTimeline::paintTrack(QPainter& p, int index, const QRectF& lane)
     const QPalette pal = palette();
     const AudioLane& track = lanes_[static_cast<std::size_t>(index)];
     if (track.clips.empty()) {
-        p.setPen(pal.color(QPalette::PlaceholderText));
-        p.drawText(lane, Qt::AlignCenter, QStringLiteral("%1: trascina qui un file audio").arg(track.name));
+        if (index > 0) {
+            p.setPen(pal.color(QPalette::PlaceholderText));
+            p.drawText(lane, Qt::AlignCenter, QStringLiteral("%1: trascina qui un file audio").arg(track.name));
+        }
         return;
     }
     for (const AudioBlock& c : track.clips) {
@@ -1615,8 +1616,8 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
             audioDragging_ = true;
             setCursor(Qt::ClosedHandCursor);
         }
-        // In verticale si cambia traccia (solo fra quelle aggiunte).
-        if (const int lane = laneAt(pos.y()); lane > 0)
+        // In verticale si cambia traccia (anche A1: la clip resta staccata dai pezzi video).
+        if (const int lane = laneAt(pos.y()); lane >= 0)
             audioDragLane_ = lane;
         audioDragStart_ = audioDragTarget(x, audioDragLane_);
         invalidate();
@@ -1726,7 +1727,7 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
         audioDragging_ = false;
         setCursor(Qt::ArrowCursor);
         invalidate();
-        if (moved && c != nullptr && lane > 0 && (lane != fromLane || std::abs(to - from) > 1e-6) && onAudioClipMoveTo)
+        if (moved && c != nullptr && lane >= 0 && (lane != fromLane || std::abs(to - from) > 1e-6) && onAudioClipMoveTo)
             onAudioClipMoveTo(clip, lanes_[static_cast<std::size_t>(lane)].trackId, to);
         return;
     }

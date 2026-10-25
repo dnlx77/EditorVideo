@@ -352,3 +352,35 @@ TEST(AudioTracks, NeedsMixOnlyWhenTheOriginalAudioCannotJustBeCopied)
 }
 
 }  // namespace
+
+TEST(AudioTracks, ClipsOnTheOriginalLaneLiveInAHostTrack)
+{
+    AudioTracks audio;
+    const int a2 = audio.addTrack();
+    EXPECT_EQ(audio.trackName(a2), "A2");
+    AudioClip clip;
+    clip.path = "voce.wav";
+    clip.end = 2.0;
+    clip.position = 1.0;
+    const int id = audio.add(AudioTracks::kOriginalTrack, clip);
+    ASSERT_NE(id, 0);
+    EXPECT_TRUE(audio.hasHost());
+    EXPECT_EQ(audio.trackOf(id), AudioTracks::kOriginalTrack);
+    EXPECT_EQ(audio.trackName(a2), "A2");  // la traccia di A1 non conta per i nomi
+    EXPECT_FALSE(audio.removeTrack(AudioTracks::kOriginalTrack));
+    // Il livello è quello di A1, anche per le clip libere.
+    audio.setLevel(AudioTracks::kOriginalTrack, -6.0);
+    EXPECT_DOUBLE_EQ(audio.gain(AudioTracks::kOriginalTrack), AudioTracks::dbToGain(-6.0));
+    // Su A1 non si sovrappongono.
+    EXPECT_EQ(audio.add(AudioTracks::kOriginalTrack, clip), 0);
+    EXPECT_NEAR(audio.freePosition(AudioTracks::kOriginalTrack, 1.0, 1.5), 3.0, 1e-9);
+    // Da A1 a A2 e ritorno; senza più clip la traccia di A1 sparisce.
+    ASSERT_TRUE(audio.moveTo(id, a2, 0.0));
+    EXPECT_FALSE(audio.hasHost());
+    EXPECT_EQ(audio.trackOf(id), a2);
+    ASSERT_TRUE(audio.moveTo(id, AudioTracks::kOriginalTrack, 4.0));
+    EXPECT_TRUE(audio.hasHost());
+    EXPECT_EQ(audio.trackName(a2), "A2");
+    ASSERT_TRUE(audio.remove(id));
+    EXPECT_FALSE(audio.hasHost());
+}

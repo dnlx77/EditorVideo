@@ -193,6 +193,8 @@ JsonValue audioTracksToJson(const std::filesystem::path& dir, const AudioTracks&
         }
         JsonValue::Object item = mixToJson(track.mix).asObject();
         item["clip"] = std::move(clips);
+        if (track.host)
+            item["suA1"] = true;
         tracks.emplace_back(std::move(item));
     }
     return JsonValue::Object{{"A1", mixToJson(audio.mix(AudioTracks::kOriginalTrack))}, {"tracce", std::move(tracks)}};
@@ -404,6 +406,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
             for (const JsonValue& t : a["tracce"].asArray()) {
                 AudioTrack track;
                 track.mix = mixFromJson(t);
+                track.host = t["suA1"].isBool() && t["suA1"].asBool();
                 for (const JsonValue& c : t["clip"].asArray()) {
                     const std::string absolute = text(c["percorso"]);
                     const std::string relative = text(c["relativo"]);

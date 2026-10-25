@@ -44,6 +44,9 @@ struct AudioMix
 struct AudioTrack
 {
     int id = 0;  // identificativo stabile (il nome A2, A3... dipende invece dalla posizione fra le tracce)
+    // Le clip che stanno sulla corsia A1 (audio scollegato dai pezzi video, vedi Project::unlinkAudio): c'è al più una
+    // traccia così, sempre la prima, con id kOriginalTrack; livello, muto e solo sono quelli di A1.
+    bool host = false;
     AudioMix mix;
     std::vector<AudioClip> clips;
 
@@ -65,10 +68,15 @@ public:
 
     // Tracce. addTrack aggiunge una traccia vuota in fondo e ne restituisce l'id; removeTrack la toglie con le sue clip.
     int addTrack();
-    bool removeTrack(int trackId);
+    bool removeTrack(int trackId);  // non A1, nemmeno con le sue clip libere
+    // Le tracce A2, A3... (senza quella delle clip libere di A1): quante sono, e l'id della prima e dell'ultima (0 se nessuna).
+    int addedTrackCount() const { return static_cast<int>(tracks_.size()) - (hasHost() ? 1 : 0); }
+    int firstAddedTrack() const { return addedTrackCount() > 0 ? tracks_[hasHost() ? 1 : 0].id : 0; }
+    int lastAddedTrack() const { return addedTrackCount() > 0 ? tracks_.back().id : 0; }
+    bool hasHost() const { return !tracks_.empty() && tracks_.front().host; }
     const std::vector<AudioTrack>& tracks() const { return tracks_; }
     const AudioTrack* track(int trackId) const;
-    int trackIndex(int trackId) const;  // -1 se non c'è (A1 compresa: non è fra tracks())
+    int trackIndex(int trackId) const;  // -1 se non c'è (A1 compresa, salvo che abbia clip libere: vedi AudioTrack::host)
     std::string trackName(int trackId) const;  // "A1", "A2"...; vuoto se non c'è
 
     // Livello e muto/solo (kOriginalTrack = A1). Il livello si limita a [kMinLevelDb, kMaxLevelDb].
@@ -141,6 +149,8 @@ public:
 
 private:
     AudioTrack* mutableTrack(int trackId);
+    AudioTrack* hostTrack();  // la traccia delle clip libere di A1, creata se non c'è
+    void pruneHost();         // la toglie se è rimasta senza clip
     AudioMix* mutableMix(int trackId);
     // La clip con id `clipId`: traccia e posizione nell'elenco; false se non c'è.
     bool locate(int clipId, int& trackIndex, int& clipIndex) const;
