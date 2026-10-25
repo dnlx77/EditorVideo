@@ -214,6 +214,35 @@ bool Sequence::trim(int fragmentId, Edge edge, double value, double sourceDurati
     return true;
 }
 
+bool Sequence::shiftPieces(const std::vector<std::pair<int, double>>& deltas)
+{
+    std::vector<double> at;
+    double t = 0.0;
+    for (const Fragment& f : fragments_) {
+        t += f.gap;
+        at.push_back(t);
+        t += f.length();
+    }
+    for (const auto& [id, delta] : deltas) {
+        const int index = indexOf(id);
+        if (index < 0)
+            return false;
+        at[static_cast<std::size_t>(index)] += delta;
+    }
+    double previousEnd = 0.0;
+    for (std::size_t i = 0; i < fragments_.size(); ++i) {
+        if (at[i] < previousEnd - kTimeEpsilon)
+            return false;  // si sovrappone al pezzo prima (o va prima di 0)
+        previousEnd = at[i] + fragments_[i].length();
+    }
+    previousEnd = 0.0;
+    for (std::size_t i = 0; i < fragments_.size(); ++i) {
+        fragments_[i].gap = at[i] - previousEnd <= kTimeEpsilon ? 0.0 : at[i] - previousEnd;
+        previousEnd = at[i] + fragments_[i].length();
+    }
+    return true;
+}
+
 bool Sequence::moveTo(int fragmentId, double start, std::vector<std::pair<int, double>>* shifts, bool push)
 {
     const int self = indexOf(fragmentId);

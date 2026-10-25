@@ -71,6 +71,7 @@
     <ClCompile Include="AudioDecoder.cpp" />
     <ClCompile Include="AudioMixer.cpp" />
     <ClCompile Include="Groups.cpp" />
+    <ClCompile Include="GroupMove.cpp" />
     <ClCompile Include="LevelEnvelope.cpp" />
     <ClCompile Include="MixExport.cpp" />
     <ClCompile Include="AudioTracks.cpp" />

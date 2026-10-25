@@ -66,6 +66,10 @@ public:
     // per ogni pezzo che si è mosso.
     // Con `push` false non si spinge mai: il pezzo non si sovrappone a nessuno e può passare oltre quello che lo segue.
     bool moveTo(int fragmentId, double start, std::vector<std::pair<int, double>>* shifts = nullptr, bool push = true);
+    // Sposta più pezzi insieme: ognuno dei `deltas` (id del pezzo, secondi) dal suo posto. Il nuovo ordine deve restare lo
+    // stesso, senza sovrapposizioni e senza andare prima di 0, altrimenti false e nessuna modifica. Gli spazi vuoti si
+    // ricalcolano.
+    bool shiftPieces(const std::vector<std::pair<int, double>>& deltas);
     // Pezzo che ha subito prima lo spazio vuoto in cui si trova `seconds` (-1 se lì non c'è uno spazio vuoto).
     int gapIndexAt(double seconds) const;
     // Chiude lo spazio vuoto prima del pezzo `index`: quel pezzo e i successivi scorrono indietro.
