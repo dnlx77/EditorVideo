@@ -1101,6 +1101,13 @@ void MainWindow::refreshTimeline()
     std::vector<SequenceTimeline::Block> blocks;
     const auto replacement = project_.audioReplacement();
     const bool withAudio = !replacement.has_value();
+    // Segno e spiegazione dipendono dal file, non dal pezzo: si calcolano una volta per file.
+    struct Fit
+    {
+        int fit = 0;
+        QString note;
+    };
+    std::map<int, Fit> fits;
     for (const core::Fragment& f : sequence.fragments()) {
         const core::Clip* clip = project_.find(f.clipId);
         blocks.push_back({f.id, project_.indexOf(f.clipId), clip ? fileNameOf(clip->path) : QString(), f.length(), f.start,
@@ -1113,21 +1120,27 @@ void MainWindow::refreshTimeline()
         // Come entra nel file esportato, rispetto al formato del progetto: segno sul blocco e spiegazione.
         const core::MediaSignature* signature = clip != nullptr ? signatureFor(clip->path) : nullptr;
         if (signature != nullptr && !project_.format().empty()) {
-            const core::ClipFitResult fit = core::classifyClip(*signature, project_.format(), withAudio);
-            SequenceTimeline::Block& block = blocks.back();
-            block.fit = static_cast<int>(fit.fit);
-            QString reasons;
-            for (const std::string& reason : fit.reasons)
-                reasons += QStringLiteral("\n• ") + qs(reason);
-            if (fit.fit == core::ClipFit::CopyWithParameters)
-                block.fitNote = QStringLiteral("Si copia senza ricodifica, con i suoi parametri di codifica ripetuti nel "
-                                               "file esportato (diversi da quelli del formato del progetto):")
-                              + reasons;
-            else if (fit.fit == core::ClipFit::Reencode)
-                block.fitNote = QStringLiteral("Diverso dal formato del progetto (%1): all'esportazione sarà ricodificato "
-                                               "in quel formato.")
-                                    .arg(qs(project_.format().sourceName))
-                              + reasons;
+            auto known = fits.find(f.clipId);
+            if (known == fits.end()) {
+                const core::ClipFitResult fit = core::classifyClip(*signature, project_.format(), withAudio);
+                Fit entry;
+                entry.fit = static_cast<int>(fit.fit);
+                QString reasons;
+                for (const std::string& reason : fit.reasons)
+                    reasons += QStringLiteral("\n• ") + qs(reason);
+                if (fit.fit == core::ClipFit::CopyWithParameters)
+                    entry.note = QStringLiteral("Si copia senza ricodifica, con i suoi parametri di codifica ripetuti nel "
+                                                "file esportato (diversi da quelli del formato del progetto):")
+                               + reasons;
+                else if (fit.fit == core::ClipFit::Reencode)
+                    entry.note = QStringLiteral("Diverso dal formato del progetto (%1): all'esportazione sarà ricodificato "
+                                                "in quel formato.")
+                                     .arg(qs(project_.format().sourceName))
+                               + reasons;
+                known = fits.emplace(f.clipId, std::move(entry)).first;
+            }
+            blocks.back().fit = known->second.fit;
+            blocks.back().fitNote = known->second.note;
         }
     }
     timeline_->setBlocks(std::move(blocks));
