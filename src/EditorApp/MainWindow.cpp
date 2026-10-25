@@ -486,11 +486,6 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onTrackMuted = [this](int trackId, bool muted) { setTrackMuted(trackId, muted); };
     timeline_->onTrackSolo = [this](int trackId, bool solo) { setTrackSolo(trackId, solo); };
     timeline_->onTrackLevel = [this](int trackId, double db) { setTrackLevel(trackId, db); };
-    timeline_->onTrackMagnet = [this](int trackId, bool magnet) {
-        const core::Project before = project_;
-        if (project_.audioTracks().setMagnet(trackId, magnet))
-            recordEdit(magnet ? QStringLiteral("Calamita accesa") : QStringLiteral("Calamita spenta"), before);
-    };
     timeline_->onEnvelopeChanged = [this](bool fragment, int id, const std::vector<core::LevelPoint>& points) {
         setEnvelope(fragment, id, points);
     };
@@ -1120,7 +1115,7 @@ void MainWindow::refreshTimeline()
     const auto laneOf = [&](int trackId) {
         const core::AudioMix& mix = audio.mix(trackId);
         return SequenceTimeline::AudioLane{trackId, qs(audio.trackName(trackId)), mix.levelDb, mix.muted, mix.solo,
-                                           audio.audible(trackId), {}, mix.magnet};
+                                           audio.audible(trackId), {}};
     };
     lanes.push_back(laneOf(core::AudioTracks::kOriginalTrack));
     int audioClips = 0;
@@ -1514,13 +1509,9 @@ bool MainWindow::trimAudioClip(int clipId, bool atStart, double value, bool ripp
 void MainWindow::moveFragment(int fragmentId, double start)
 {
     const core::Project before = project_;
-    bool audioMoved = false;
-    bool audioStayed = false;
-    if (!project_.moveFragment(fragmentId, start, &audioMoved, &audioStayed, pushPieces_))
+    if (!project_.sequence().moveTo(fragmentId, start, nullptr, pushPieces_))
         return;
-    if (audioStayed)
-        statusBar()->showMessage(QStringLiteral("Le clip audio sotto il pezzo non ci stanno nel nuovo punto: si è spostato solo il pezzo."), 8000);
-    recordEdit(audioMoved ? QStringLiteral("Sposta pezzo e audio") : QStringLiteral("Sposta pezzo"), before);
+    recordEdit(QStringLiteral("Sposta pezzo"), before);
 }
 
 void MainWindow::setTrackMuted(int trackId, bool muted)

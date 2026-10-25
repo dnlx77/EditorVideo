@@ -79,7 +79,6 @@ public:
         bool solo = false;
         bool audible = true;  // si sente nel mix (muto e solo di tutte le tracce compresi)
         std::vector<AudioBlock> clips;
-        bool magnet = false;  // calamita: i pezzi video trascinano le clip di questa traccia
     };
 
     explicit SequenceTimeline(QWidget* parent = nullptr);
@@ -139,7 +138,6 @@ public:
     std::function<void(int trackId, bool muted)> onTrackMuted;
     std::function<void(int trackId, bool solo)> onTrackSolo;
     std::function<void(int trackId, double db)> onTrackLevel;
-    std::function<void(int trackId, bool magnet)> onTrackMagnet;  // calamita della traccia
     // Linea del livello (al centro di ogni pezzo e di ogni clip audio, nei suoi tempi del file, così li segue): il clic
     // sulla linea aggiunge un punto, trascinandolo si cambiano tempo e livello (vicino a 0 dB si aggancia al centro),
     // il doppio clic su un punto lo toglie. Lasciando il mouse si chiama onEnvelopeChanged con la linea nuova, di un
@@ -202,7 +200,6 @@ private:
     // Pulsanti di una corsia audio nel suo riquadro a sinistra: muto, solo, livello.
     QRectF muteBox(int index) const;
     QRectF soloBox(int index) const;
-    QRectF magnetBox(int index) const;
     QRectF levelBar(int index) const;
     double levelForX(int index, double x) const;  // dB del cursore del livello quando il mouse è in x
     // Linea del livello: dove sta un valore (dB) nella corsia e il contrario. Sopra il centro 0..+12 dB, sotto 0..-60
