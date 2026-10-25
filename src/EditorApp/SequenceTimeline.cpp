@@ -976,7 +976,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
             QColor fill = blockColor(c->colorIndex);
             fill.setAlpha(150);
             p.setBrush(fill);
-            p.setPen(QPen(pal.color(QPalette::Highlight), 3));
+            p.setPen(isMate(Object::Kind::AudioClip, c->clipId) ? QPen(QColor(255, 170, 0), 3) : QPen(pal.color(QPalette::Highlight), 3));
             p.drawRoundedRect(visiblePart(target), 3, 3);
             if (target.width() > 30) {
                 p.setPen(Qt::white);
@@ -994,7 +994,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
         QColor fill = blockColor(b.colorIndex);
         fill.setAlpha(150);
         p.setBrush(fill);
-        p.setPen(QPen(pal.color(QPalette::Highlight), 3));
+        p.setPen(isMate(Object::Kind::Piece, b.fragmentId) ? QPen(QColor(255, 170, 0), 3) : QPen(pal.color(QPalette::Highlight), 3));
         p.drawRoundedRect(visiblePart(target), 3, 3);
         p.setPen(Qt::white);
         if (target.width() > 30)
