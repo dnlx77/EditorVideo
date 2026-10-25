@@ -119,6 +119,9 @@ public:
     const std::vector<Object>& selectedObjects() const { return multi_; }
     // Gli oggetti selezionati, anche con un oggetto solo.
     std::vector<Object> allSelectedObjects() const;
+    // I compagni di gruppo di un oggetto, lui compreso (la MainWindow li prende dal progetto): quelli dei selezionati
+    // hanno il contorno tratteggiato.
+    std::function<std::vector<Object>(Object)> groupMembers;
     std::function<void()> onMultiSelection;  // la selezione multipla è cambiata (con Ctrl+clic)
     // Clip audio selezionata (0 = nessuna): selezionarla toglie la selezione del pezzo video e viceversa.
     void setSelectedAudioClip(int clipId);
@@ -310,6 +313,8 @@ private:
     bool scrubbing_ = false;     // si sta trascinando il cursore sul righello
 
     int selectedAudioClip_ = 0;
+    std::vector<Object> mates_;  // compagni di gruppo dei selezionati, ricalcolati a ogni disegno
+    bool isMate(Object::Kind kind, int id) const;
     std::vector<Object> multi_;  // vedi selectedObjects()
     int selectedTrack_ = -1;      // -1 = nessuna scelta
     int audioDragClip_ = 0;       // clip audio presa (spostamento)

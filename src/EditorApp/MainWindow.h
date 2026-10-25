@@ -226,7 +226,11 @@ private:
     void showInfo(const core::MediaInfo& info);
     void replaceAudioDialog();
     void replaceAudioHereDialog();
-    void unlinkAudio(bool relink);  // Audio > Scollega / Ricollega l'audio del pezzo selezionato
+    void unlinkAudio(bool relink);
+    void groupSelection();    // G: gli oggetti scelti con Ctrl+clic diventano un gruppo
+    void ungroupSelection();  // U: scioglie il gruppo (o, se non è in gruppo, scollega l'audio del pezzo)
+    void showGroupStatus();   // nella barra di stato: il gruppo dell'oggetto scelto
+    std::vector<core::ObjectRef> selectedRefs() const;  // Audio > Scollega / Ricollega l'audio del pezzo selezionato
     void addAudioFilesDialog();  // al cursore, sulla traccia scelta (o su una nuova)
     // Durata dell'audio di un file; std::nullopt (con il motivo in `problem`) se non ha audio leggibile.
     std::optional<double> audioDurationOf(const std::string& path, QString* problem = nullptr);

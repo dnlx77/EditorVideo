@@ -148,6 +148,16 @@ public:
         int audioUnlinked = 0;  // audio scollegati dal loro pezzo
     };
     UngroupResult ungroupObjects(const std::vector<ObjectRef>& objects);
+    // Spostamento di gruppo. Il gruppo di `anchor` (pezzi video e clip audio: l'audio di un pezzo segue il pezzo) si
+    // sposta tutto dello stesso tratto `delta` (secondi, anche negativo). Senza spinta i pezzi e le clip degli altri non
+    // si toccano (lo spostamento si ferma contro il primo); con la spinta, verso destra, quelli urtati scorrono davanti
+    // (a catena) e i loro gruppi con loro. Le clip restano sulla loro traccia.
+    // groupMoverCount: quanti pezzi e clip si muovono con `anchor` (1 = da solo).
+    int groupMoverCount(ObjectRef anchor) const;
+    // Il tratto più vicino a `delta` che si può fare senza sovrapporsi a nessuno (con la spinta verso destra non c'è limite).
+    double clampGroupDelta(ObjectRef anchor, double delta, bool push) const;
+    // Sposta il gruppo; false (e nessuna modifica) se `delta` non è possibile (vedi clampGroupDelta).
+    bool moveGroup(ObjectRef anchor, double delta, bool push);
     // I gruppi dell'utente senza gli oggetti che non esistono più, con almeno due oggetti (per salvarli).
     std::vector<std::vector<ObjectRef>> validGroups() const;
 

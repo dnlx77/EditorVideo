@@ -23,6 +23,7 @@ struct MixSegment
     double fileEnd = 0.0;
     double position = 0.0;   // dove inizia nella sequenza
     int trackId = AudioTracks::kOriginalTrack;
+    bool ofPiece = false;  // l'audio di un pezzo video (le clip libere su A1 hanno lo stesso trackId ma ofPiece falso)
     std::vector<TimeRange> muted;  // tratti senza audio, nei tempi del file
     std::vector<LevelPoint> envelope;  // linea del livello, nei tempi del file
 
