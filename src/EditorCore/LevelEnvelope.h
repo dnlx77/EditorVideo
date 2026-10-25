@@ -25,10 +25,11 @@ struct LevelPoint
 // tempi a >= 0 e i dB a [kLevelMinDb, kLevelMaxDb].
 std::vector<LevelPoint> normalizeEnvelope(std::vector<LevelPoint> points);
 
-// Accorciando un bordo di un pezzo o di una clip, i punti rimasti fuori dal bordo nuovo (nascosti) si portano dentro,
-// tenendo le stesse distanze: una sfumatura che finiva col bordo finisce col bordo nuovo. `atStart`: bordo d'inizio;
-// `oldEdge`/`newEdge`: il bordo nel file prima e dopo; `limit`: l'altro bordo (i punti non lo oltrepassano). Se il bordo
-// non si accorcia non cambia niente. I punti dentro restano dove sono: quelli portati dentro si fermano prima di loro.
+// Cambiando un bordo di un pezzo o di una clip, la sfumatura attaccata al bordo lo segue: se l'ultimo punto sta sul
+// bordo finale (o il primo sul bordo iniziale) tutti i punti della sfumatura (quelli con livelli diversi, dal bordo
+// all'indietro) si spostano dello stesso tratto, accorciando o riallungando. I punti prima restano dove sono.
+// `atStart`: bordo d'inizio; `oldEdge`/`newEdge`: il bordo nel file prima e dopo; `limit`: l'altro bordo (i punti non
+// lo oltrepassano).
 std::vector<LevelPoint> envelopeForTrim(std::vector<LevelPoint> points, bool atStart, double oldEdge, double newEdge, double limit);
 
 // Il valore della linea (dB) al tempo `seconds` del file; 0 se la linea è vuota.
