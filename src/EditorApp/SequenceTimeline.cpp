@@ -1599,9 +1599,12 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         selectedAudioClip_ = 0;
         if (onAudioClipSelected)
             onAudioClipSelected(0);
-        selecting_ = true;
         selectionAnchor_ = std::max(0.0, t);
-        setAudioSelection(selectionAnchor_, selectionAnchor_, lanes_[static_cast<std::size_t>(lane)].trackId);
+        // Su A1 (l'audio dei video) il trascinamento non seleziona un tratto: il muto si fa con la linea del livello.
+        if (lanes_[static_cast<std::size_t>(lane)].trackId != core::AudioTracks::kOriginalTrack) {
+            selecting_ = true;
+            setAudioSelection(selectionAnchor_, selectionAnchor_, lanes_[static_cast<std::size_t>(lane)].trackId);
+        }
         playhead_ = selectionAnchor_;
         if (onSeek)
             onSeek(selectionAnchor_);
