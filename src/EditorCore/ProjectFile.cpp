@@ -134,8 +134,6 @@ std::string text(const JsonValue& value)
 JsonValue mixToJson(const AudioMix& mix)
 {
     JsonValue::Object json{{"livello", mix.levelDb}, {"muto", mix.muted}, {"solo", mix.solo}};
-    if (mix.magnet)
-        json["calamita"] = true;
     return json;
 }
 
@@ -169,7 +167,6 @@ AudioMix mixFromJson(const JsonValue& value)
         mix.levelDb = std::clamp(value["livello"].asNumber(), AudioTracks::kMinLevelDb, AudioTracks::kMaxLevelDb);
     mix.muted = value["muto"].isBool() && value["muto"].asBool();
     mix.solo = value["solo"].isBool() && value["solo"].asBool();
-    mix.magnet = value["calamita"].isBool() && value["calamita"].asBool();
     return mix;
 }
 
