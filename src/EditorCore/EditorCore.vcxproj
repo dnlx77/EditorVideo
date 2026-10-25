@@ -59,6 +59,7 @@
     <ClInclude Include="ProjectFile.h" />
     <ClInclude Include="Proxy.h" />
     <ClInclude Include="SegmentExport.h" />
+    <ClInclude Include="SegmentExportInternal.h" />
     <ClInclude Include="Sequence.h" />
     <ClInclude Include="Thumbnails.h" />
     <ClInclude Include="TimeStretch.h" />
@@ -92,6 +93,7 @@
     <ClCompile Include="ProjectFile.cpp" />
     <ClCompile Include="Proxy.cpp" />
     <ClCompile Include="SegmentExport.cpp" />
+    <ClCompile Include="SegmentExportJob.cpp" />
     <ClCompile Include="Sequence.cpp" />
     <ClCompile Include="Thumbnails.cpp" />
     <ClCompile Include="TimeStretch.cpp" />
