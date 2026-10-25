@@ -1721,7 +1721,15 @@ std::vector<core::ObjectRef> MainWindow::selectedRefs() const
 
 void MainWindow::groupSelection()
 {
-    const std::vector<core::ObjectRef> refs = selectedRefs();
+    std::vector<core::ObjectRef> refs = selectedRefs();
+    // Un oggetto di un gruppo porta con sé tutto il suo gruppo: scegliendo un gruppo e un altro oggetto (o un altro
+    // gruppo) si ottiene un gruppo solo con tutto.
+    for (const core::ObjectRef& chosen : std::vector<core::ObjectRef>(refs)) {
+        for (const core::ObjectRef& mate : project_.groupMembers(chosen)) {
+            if (std::find(refs.begin(), refs.end(), mate) == refs.end())
+                refs.push_back(mate);
+        }
+    }
     const core::Project before = project_;
     if (refs.size() < 2 || project_.groupObjects(refs) == 0) {
         statusBar()->showMessage(QStringLiteral("Per fare un gruppo scegli almeno due oggetti diversi con Ctrl+clic."), 8000);

@@ -130,3 +130,20 @@ TEST(GroupSplitAndRemove, RemoveObjectsKeepsTheRestOfTheGroup)
     // Il pezzo B resta, senza più gruppo (dal gruppo è rimasto solo lui).
     EXPECT_EQ(m.project.groupMoverCount({Kind::Piece, m.b}), 1);
 }
+
+TEST(GroupSplitAndRemove, GroupingAGroupWithAnotherObjectMakesOneTotalGroup)
+{
+    Montage m;
+    ASSERT_NE(m.project.groupObjects({{Kind::Piece, m.a}, {Kind::Piece, m.b}}), 0);
+    // Il gruppo (A, B) più la clip: si sceglie un oggetto del gruppo e la clip, e si porta tutto il gruppo.
+    std::vector<ObjectRef> chosen{{Kind::Piece, m.a}, {Kind::AudioClip, m.music}};
+    for (const ObjectRef& o : std::vector<ObjectRef>(chosen)) {
+        for (const ObjectRef& mate : m.project.groupMembers(o)) {
+            if (std::find(chosen.begin(), chosen.end(), mate) == chosen.end())
+                chosen.push_back(mate);
+        }
+    }
+    ASSERT_NE(m.project.groupObjects(chosen), 0);
+    EXPECT_EQ(m.project.groupMoverCount({Kind::Piece, m.b}), 3);
+    EXPECT_EQ(m.project.groupMoverCount({Kind::AudioClip, m.music}), 3);
+}
