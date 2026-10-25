@@ -233,14 +233,14 @@ bool PlayerWidget::hasMedia() const
 void PlayerWidget::openFile(const QString& path)
 {
     closeFile();
-    const std::string utf8Path = QDir::toNativeSeparators(path).toStdString();
+    const std::string utf8Path = nativeUtf8(path);
 
     QString videoError;
     bool noVideoStream = false;  // un file solo audio: niente da segnalare
     videoPath_ = path;
     if (const QString source = videoSourceFor ? videoSourceFor(path) : path; source != path) {
         try {
-            video_ = std::make_unique<core::VideoDecoder>(QDir::toNativeSeparators(source).toStdString());
+            video_ = std::make_unique<core::VideoDecoder>(nativeUtf8(source));
             videoPath_ = source;
         } catch (const std::exception&) {
             // Proxy non leggibile: si usa l'originale.
@@ -306,7 +306,7 @@ void PlayerWidget::reloadVideo()
         return;
     std::unique_ptr<core::VideoDecoder> decoder;
     try {
-        decoder = std::make_unique<core::VideoDecoder>(QDir::toNativeSeparators(source).toStdString());
+        decoder = std::make_unique<core::VideoDecoder>(nativeUtf8(source));
     } catch (const std::exception&) {
         return;  // non leggibile: si resta su quello aperto
     }
@@ -343,7 +343,7 @@ void PlayerWidget::openAudio(std::unique_ptr<core::AudioDecoder> own)
         if (own)
             audio_ = std::move(own);
         else
-            audio_ = std::make_unique<core::AudioDecoder>(QDir::toNativeSeparators(path_).toStdString());
+            audio_ = std::make_unique<core::AudioDecoder>(nativeUtf8(path_));
     } catch (const std::exception&) {
         audioNote_ = QStringLiteral("audio non leggibile");
         return;

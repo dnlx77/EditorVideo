@@ -182,6 +182,7 @@ public:
     double exportLength();  // durata del file che si esporterebbe (per le prove)
     std::vector<core::ClipRanges> previewPlan();  // come exportPlan(), con le caratteristiche dei file già lette
     double frameDurationOf(int clipId) const;  // un fotogramma del video del file (1/30 s se non si sa)
+    std::optional<double> knownFrameDurationOf(int clipId) const;  // std::nullopt se non si sa (ancora) o è solo audio
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -290,6 +291,8 @@ private:
     void projectSettingsDialog();  // Montaggio > Impostazioni del progetto
     void updateSourceBands();
     void startNextProbe();
+    // Un file nuovo nel progetto: in coda per l'analisi e con la forma d'onda da calcolare.
+    void analyzeNewFile(int clipId, const std::string& path);
     int selectedClipId() const;
     void setProgramActive(bool active);
 
