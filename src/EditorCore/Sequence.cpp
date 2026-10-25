@@ -187,6 +187,7 @@ bool Sequence::trim(int fragmentId, Edge edge, double value, double sourceDurati
     if (std::abs(value - old) <= kTimeEpsilon)
         return false;
     const double delta = value - old;
+    f.envelope = envelopeForTrim(f.envelope, edge == Edge::Start, old, value, edge == Edge::Start ? f.end : f.start);
     if (edge == Edge::Start) {
         f.start = value;
         if (!ripple)

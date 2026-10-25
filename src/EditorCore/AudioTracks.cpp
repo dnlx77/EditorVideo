@@ -353,6 +353,7 @@ bool AudioTracks::trim(int clipId, Sequence::Edge edge, double value, double min
     if (std::abs(value - old) <= kTimeEpsilon)
         return false;
     const double delta = value - old;
+    c.envelope = envelopeForTrim(c.envelope, edge == Sequence::Edge::Start, old, value, edge == Sequence::Edge::Start ? c.end : c.start);
     double shift = 0.0;  // di quanto scorrono le clip dopo (con ripple)
     if (edge == Sequence::Edge::Start) {
         c.start = value;

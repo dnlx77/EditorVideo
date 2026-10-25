@@ -25,6 +25,40 @@ std::vector<LevelPoint> normalizeEnvelope(std::vector<LevelPoint> points)
     return unique;
 }
 
+std::vector<LevelPoint> envelopeForTrim(std::vector<LevelPoint> points, bool atStart, double oldEdge, double newEdge, double limit)
+{
+    constexpr double kEps = 1e-6;
+    constexpr double kStep = 1e-3;
+    if (points.empty() || (atStart ? newEdge <= oldEdge + kEps : newEdge >= oldEdge - kEps))
+        return points;
+    const double d = std::abs(newEdge - oldEdge);
+    if (atStart) {
+        double firstInside = limit;
+        for (const LevelPoint& p : points) {
+            if (p.time >= newEdge - kEps)
+                firstInside = std::min(firstInside, p.time);
+        }
+        for (LevelPoint& p : points) {
+            if (p.time < newEdge - kEps)
+                p.time = std::min(p.time + d, std::max(newEdge, firstInside - kStep));
+        }
+    } else {
+        double lastInside = limit;
+        bool any = false;
+        for (const LevelPoint& p : points) {
+            if (p.time <= newEdge + kEps) {
+                lastInside = any ? std::max(lastInside, p.time) : p.time;
+                any = true;
+            }
+        }
+        for (LevelPoint& p : points) {
+            if (p.time > newEdge + kEps)
+                p.time = std::max(p.time - d, std::min(newEdge, lastInside + kStep));
+        }
+    }
+    return normalizeEnvelope(std::move(points));
+}
+
 double envelopeDbAt(const std::vector<LevelPoint>& points, double seconds)
 {
     if (points.empty())

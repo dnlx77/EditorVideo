@@ -384,3 +384,39 @@ TEST(AudioTracks, ClipsOnTheOriginalLaneLiveInAHostTrack)
     ASSERT_TRUE(audio.remove(id));
     EXPECT_FALSE(audio.hasHost());
 }
+
+TEST(AudioTracks, ShorteningAClipCarriesItsEndFadeAlong)
+{
+    AudioTracks audio;
+    const int track = audio.addTrack();
+    const int id = audio.add(track, clipOf("m.mp3", 0.0, 10.0, 0.0));
+    ASSERT_TRUE(audio.setClipEnvelope(id, {{8.0, 0.0}, {10.0, -60.0}}));  // sfuma negli ultimi 2 s
+    // Accorcio la fine di 3 s: la sfumatura finisce col bordo nuovo (7), sempre lunga 2 s.
+    ASSERT_TRUE(audio.trim(id, Sequence::Edge::End, 7.0, 0.1, false));
+    const auto& points = audio.find(id)->envelope;
+    ASSERT_EQ(points.size(), 2u);
+    EXPECT_NEAR(points[0].time, 5.0, 1e-6);
+    EXPECT_NEAR(points[1].time, 7.0, 1e-6);
+    EXPECT_NEAR(points[1].db, -60.0, 1e-6);
+    // Un punto dentro resta dov'è: accorcio ancora, la sfumatura si ferma dopo di lui.
+    ASSERT_TRUE(audio.setClipEnvelope(id, {{4.0, -3.0}, {6.0, 0.0}, {7.0, -60.0}}));
+    ASSERT_TRUE(audio.trim(id, Sequence::Edge::End, 6.5, 0.1, false));
+    const auto& after = audio.find(id)->envelope;
+    ASSERT_EQ(after.size(), 3u);
+    EXPECT_NEAR(after[0].time, 4.0, 1e-6);
+    EXPECT_NEAR(after[1].time, 6.0, 1e-6);
+    EXPECT_NEAR(after[2].time, 6.5, 1e-6);
+}
+
+TEST(AudioTracks, ShorteningTheStartCarriesItsFadeInAlong)
+{
+    AudioTracks audio;
+    const int track = audio.addTrack();
+    const int id = audio.add(track, clipOf("m.mp3", 0.0, 10.0, 0.0));
+    ASSERT_TRUE(audio.setClipEnvelope(id, {{0.0, -60.0}, {2.0, 0.0}}));  // sfuma in entrata nei primi 2 s
+    ASSERT_TRUE(audio.trim(id, Sequence::Edge::Start, 3.0, 0.1, false));
+    const auto& points = audio.find(id)->envelope;
+    ASSERT_EQ(points.size(), 2u);
+    EXPECT_NEAR(points[0].time, 3.0, 1e-6);
+    EXPECT_NEAR(points[1].time, 5.0, 1e-6);
+}
