@@ -1,3 +1,4 @@
+#include "EditorCore/AudioMixer.h"
 #include "EditorCore/Project.h"
 
 #include <gtest/gtest.h>
@@ -126,4 +127,34 @@ TEST(Project, UnlinkedAudioKeepsTheMutedPartsSilent)
     ASSERT_EQ(t->clips.size(), 2u);  // la clip ha un buco dove l'audio era tolto
     EXPECT_DOUBLE_EQ(t->clips[0].endPosition(), 1.0);
     EXPECT_DOUBLE_EQ(t->clips[1].position, 1.5);
+}
+
+TEST(Project, ClosingGapsAlsoShiftsFreeClipsOnA1)
+{
+    Project project;
+    const int file = project.add("video.mp4");
+    project.setAnalysis(file, {0.0}, 60.0);
+    const int piece = project.sequence().insert(-1, file, 0.0, 10.0);
+    project.sequence().moveTo(piece, 11.0);  // spazio vuoto di 11 s all'inizio
+    int track = 0;
+    const int free = project.unlinkAudio(piece, &track);
+    ASSERT_NE(free, 0);
+    ASSERT_TRUE(project.audioTracks().moveTo(free, AudioTracks::kOriginalTrack, 12.0));
+    AudioClip music;
+    music.path = "musica.mp3";
+    music.end = 5.0;
+    music.position = 23.0;
+    music.sourceDuration = 100.0;
+    project.audioTracks().add(project.audioTracks().addTrack(), music);
+
+    const MixSpec closed = mixSpecOf(project, true);
+    ASSERT_EQ(closed.segments.size(), 3u);
+    for (const MixSegment& s : closed.segments) {
+        if (s.ofPiece)
+            EXPECT_NEAR(s.position, 0.0, 1e-6);
+        else if (s.trackId == AudioTracks::kOriginalTrack)
+            EXPECT_NEAR(s.position, 1.0, 1e-6);  // la clip libera su A1: 12 - 11
+        else
+            EXPECT_NEAR(s.position, 12.0, 1e-6);  // la musica: 23 - 11
+    }
 }

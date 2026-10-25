@@ -25,6 +25,7 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project, const Sequence& se
         s.fileEnd = f.end;
         s.position = starts[i];
         s.trackId = AudioTracks::kOriginalTrack;
+        s.ofPiece = true;
         s.muted = f.muted;
         s.envelope = f.envelope;
         segments.push_back(std::move(s));
@@ -63,7 +64,7 @@ std::vector<MixSegment> closeGapsInAddedTracks(const std::vector<MixSegment>& se
 {
     std::vector<MixSegment> result;
     for (const MixSegment& s : segments) {
-        if (s.trackId == AudioTracks::kOriginalTrack) {
+        if (s.ofPiece) {  // già al suo posto: i pezzi video sono nella sequenza senza spazi
             result.push_back(s);
             continue;
         }
