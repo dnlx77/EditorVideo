@@ -112,7 +112,6 @@ public:
     // (A1 silenziata e una sola clip, su A2, fino alla fine del file, senza livelli cambiati).
     void setAudioReplacement(std::optional<AudioReplacement> replacement);
     std::optional<AudioReplacement> audioReplacement() const;
-    void setAudioOffset(double offset);  // sposta la traccia sostitutiva
     // Tratti silenziati e traccia sostitutiva, per l'esportazione: nei tempi del file esportato (con gli spazi vuoti
     // trattati come dice `gaps`).
     AudioEdit audioEdit(GapExport gaps = GapExport::Close) const;

@@ -120,10 +120,8 @@ public:
     void selectClip(int id);
 
     // Audio della sequenza: comandi del menu Audio (usati anche dalle prove automatiche).
-    // Tratto (tempi della sequenza) su cui agiscono M e Maiusc+M (su A1) o Canc (su una traccia aggiunta, trackId).
-    void setAudioSelection(double from, double to, int trackId = 0);
-    void muteSelection();    // M: niente audio nel tratto selezionato
-    void unmuteSelection();  // Maiusc+M: l'audio torna nel tratto selezionato
+    // Solo per le prove automatiche: toglie l'audio dei pezzi nel tratto (tempi della sequenza), come un passo di Annulla.
+    void muteRangeForTest(double from, double to);
     // La traccia audio di tutta la sequenza diventa questo file. false, con un messaggio, se non si può usare.
     bool replaceAudio(const QString& path, bool showProblems = true);
     void restoreOriginalAudio();
@@ -145,9 +143,6 @@ public:
     void setTrackSolo(int trackId, bool solo);
     void setTrackLevel(int trackId, double db);
     void setEnvelope(bool fragment, int id, const std::vector<core::LevelPoint>& points);  // linea del livello di un pezzo o clip
-    // "Sostituisci audio qui": il file va su una traccia aggiunta nel tratto selezionato (lungo al massimo quanto il
-    // tratto) e A1 sotto di lui si silenzia. false, con un messaggio, se manca il tratto o il file non ha audio.
-    bool replaceAudioHere(const QString& path);
     // Forme d'onda ancora da calcolare (0 = tutte pronte).
     int pendingWaveforms() const;
 
@@ -175,7 +170,6 @@ public:
     // avanzamento compare anche con file piccoli).
     bool startExport(const QString& target, bool showResult, std::chrono::milliseconds slowDown = {});
     // Ricodifica all'esportazione (qualità, "Ricodifica tutto"): scelte nella finestra prima di esportare.
-    void setReencodeOptions(const core::ReencodeOptions& options) { reencodeOptions_ = options; }
     // Prima di esportare il montaggio: quanti tratti si copiano e quanti si ricodificano, qualità e "Ricodifica tutto".
     // false se si rinuncia (o non si può esportare: il motivo è già stato mostrato).
     bool exportOptionsDialog();
@@ -225,12 +219,11 @@ private:
     QDockWidget* dockedPanelAt(const QPoint& pos) const;
     void showInfo(const core::MediaInfo& info);
     void replaceAudioDialog();
-    void replaceAudioHereDialog();
-    void unlinkAudio(bool relink);
+    void relinkAudio();
     void groupSelection();    // G: gli oggetti scelti con Ctrl+clic diventano un gruppo
     void ungroupSelection();  // U: scioglie il gruppo (o, se non è in gruppo, scollega l'audio del pezzo)
     void showGroupStatus();   // nella barra di stato: il gruppo dell'oggetto scelto
-    std::vector<core::ObjectRef> selectedRefs() const;  // Audio > Scollega / Ricollega l'audio del pezzo selezionato
+    std::vector<core::ObjectRef> selectedRefs() const;  // gli oggetti scelti, per G e U
     void addAudioFilesDialog();  // al cursore, sulla traccia scelta (o su una nuova)
     // Durata dell'audio di un file; std::nullopt (con il motivo in `problem`) se non ha audio leggibile.
     std::optional<double> audioDurationOf(const std::string& path, QString* problem = nullptr);
@@ -280,8 +273,6 @@ private:
     void stepToMark(int direction);  // Sorgente: fotogramma chiave; Montaggio: inizio dei pezzi
     void seekEnd();
     void setPlaying(bool playing);
-    void markAudioIn();
-    void markAudioOut();
     void updateExportAction();
 
     // Progetto e sequenza

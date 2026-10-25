@@ -90,9 +90,6 @@ struct H264Difference
 // unire. Livello, vincoli e informazioni sui tempi non contano.
 std::vector<H264Difference> findH264Differences(const H264Config& other, const H264Config& reference);
 
-// Come findH264Differences, solo i messaggi ("impostazioni dell'encoder diverse (CABAC/CAVLC)"...).
-std::vector<std::string> compareH264(const H264Config& other, const H264Config& reference);
-
 // Livello più alto fra quelli dei parametri (per il file unito, che deve dichiarare almeno il massimo).
 int maxH264Level(const H264Config& config);
 

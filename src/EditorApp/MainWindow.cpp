@@ -490,7 +490,7 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onAudioSelection = [this](double from, double to) {
         setProgramActive(true);
         if (to > from)
-            statusBar()->showMessage(QStringLiteral("Tratto audio %1 - %2: M toglie l'audio, Maiusc+M lo rimette.")
+            statusBar()->showMessage(QStringLiteral("Tratto audio %1 - %2: Canc lo toglie dalle clip di questa traccia.")
                                          .arg(timeText(from), timeText(to)),
                                      8000);
     };
@@ -936,14 +936,11 @@ void MainWindow::deleteSelection()
         recordEdit(QStringLiteral("Elimina pezzo"), before);
         return;
     }
-    // Tratto selezionato su una corsia audio: su A1 si toglie l'audio (come M), su una traccia aggiunta si toglie quel
-    // tratto dalle clip (lì resta silenzio).
+    // Tratto selezionato su una traccia aggiunta: si toglie quel tratto dalle clip (lì resta silenzio).
     if (timeline_->hasAudioSelection()) {
         const int track = timeline_->audioSelectionTrack();
-        if (track == core::AudioTracks::kOriginalTrack) {
-            muteSelection();
+        if (track == core::AudioTracks::kOriginalTrack)
             return;
-        }
         const double from = timeline_->audioSelectionFrom();
         const double to = timeline_->audioSelectionTo();
         if (project_.audioTracks().removeRange(track, from, to)) {
@@ -1218,86 +1215,11 @@ void MainWindow::refreshTimeline()
 // ---------------------------------------------------------------------------------------------------------------
 // Audio
 
-void MainWindow::setAudioSelection(double from, double to, int trackId)
+void MainWindow::muteRangeForTest(double from, double to)
 {
-    const double total = std::max(project_.sequence().totalLength(), project_.audioTracks().endTime());
-    timeline_->setAudioSelection(std::clamp(from, 0.0, total), std::clamp(to, 0.0, total), trackId);
-}
-
-void MainWindow::markAudioIn()
-{
-    // Con il Montaggio attivo I e O segnano il tratto audio: da qui fino a OUT (o alla fine).
-    const double at = program_->position();
-    const double to = timeline_->hasAudioSelection() && timeline_->audioSelectionTo() > at + 0.001
-                        ? timeline_->audioSelectionTo()
-                        : project_.sequence().totalLength();
-    setAudioSelection(at, to, timeline_->audioSelectionTrack());
-    statusBar()->showMessage(QStringLiteral("Tratto audio %1 - %2: segna la fine con O, poi M toglie l'audio.")
-                                 .arg(timeText(at), timeText(to)),
-                             8000);
-}
-
-void MainWindow::markAudioOut()
-{
-    const double at = program_->position();
-    const double from = timeline_->hasAudioSelection() && timeline_->audioSelectionFrom() < at - 0.001
-                          ? timeline_->audioSelectionFrom()
-                          : 0.0;
-    setAudioSelection(from, at, timeline_->audioSelectionTrack());
-    statusBar()->showMessage(QStringLiteral("Tratto audio %1 - %2: M toglie l'audio, Maiusc+M lo rimette.")
-                                 .arg(timeText(from), timeText(at)),
-                             8000);
-}
-
-void MainWindow::muteSelection()
-{
-    if (!timeline_->hasAudioSelection()) {
-        statusBar()->showMessage(QStringLiteral("Seleziona un tratto trascinando sulla corsia audio (o segna I e O con il "
-                                                "Montaggio attivo), poi premi M."),
-                                 8000);
-        return;
-    }
-    if (timeline_->audioSelectionTrack() != core::AudioTracks::kOriginalTrack) {
-        statusBar()->showMessage(QStringLiteral("M toglie l'audio di A1: seleziona il tratto sulla corsia A1. Sulle tracce "
-                                                "aggiunte Canc toglie il tratto selezionato."),
-                                 8000);
-        return;
-    }
-    const double from = timeline_->audioSelectionFrom();
-    const double to = timeline_->audioSelectionTo();
     const core::Project before = project_;
-    if (!project_.sequence().muteRange(from, to)) {
-        statusBar()->showMessage(QStringLiteral("In questo tratto l'audio è già tolto."), 5000);
-        return;
-    }
-    timeline_->setAudioSelection(0.0, 0.0);
-    statusBar()->showMessage(QStringLiteral("Audio tolto da %1 a %2: lì si sentirà silenzio.").arg(timeText(from), timeText(to)),
-                             8000);
-    recordEdit(QStringLiteral("Togli audio"), before);
-}
-
-void MainWindow::unmuteSelection()
-{
-    if (!timeline_->hasAudioSelection()) {
-        statusBar()->showMessage(QStringLiteral("Seleziona sulla corsia audio il tratto in cui rimettere l'audio, poi "
-                                                "premi Maiusc+M."),
-                                 8000);
-        return;
-    }
-    if (timeline_->audioSelectionTrack() != core::AudioTracks::kOriginalTrack) {
-        statusBar()->showMessage(QStringLiteral("Maiusc+M rimette l'audio di A1: seleziona il tratto sulla corsia A1."), 8000);
-        return;
-    }
-    const double from = timeline_->audioSelectionFrom();
-    const double to = timeline_->audioSelectionTo();
-    const core::Project before = project_;
-    if (!project_.sequence().unmuteRange(from, to)) {
-        statusBar()->showMessage(QStringLiteral("In questo tratto l'audio c'è già."), 5000);
-        return;
-    }
-    timeline_->setAudioSelection(0.0, 0.0);
-    statusBar()->showMessage(QStringLiteral("Audio rimesso da %1 a %2.").arg(timeText(from), timeText(to)), 8000);
-    recordEdit(QStringLiteral("Rimetti audio"), before);
+    if (project_.sequence().muteRange(from, to))
+        recordEdit(QStringLiteral("Togli audio"), before);
 }
 
 void MainWindow::replaceAudioDialog()
@@ -1623,65 +1545,7 @@ void MainWindow::setEnvelope(bool fragment, int id, const std::vector<core::Leve
         refreshTimeline();  // il punto trascinato torna dov'era
 }
 
-bool MainWindow::replaceAudioHere(const QString& path)
-{
-    if (!timeline_->hasAudioSelection()) {
-        statusBar()->showMessage(QStringLiteral("Seleziona prima il tratto in cui sostituire l'audio, trascinando su una "
-                                                "corsia audio (o con I e O nel Montaggio)."),
-                                 8000);
-        return false;
-    }
-    const std::string utf8 = nativeAbsolute(path).toStdString();
-    QString problem;
-    const auto duration = audioDurationOf(utf8, &problem);
-    if (!duration) {
-        QMessageBox::warning(this, QStringLiteral("Audio non utilizzabile"), problem);
-        return false;
-    }
-    const double from = timeline_->audioSelectionFrom();
-    const double length = std::min(timeline_->audioSelectionTo() - from, *duration);
-    const core::Project before = project_;
-    core::AudioTracks& audio = project_.audioTracks();
-    // La prima traccia aggiunta libera in quel tratto, altrimenti una nuova.
-    int track = 0;
-    for (const core::AudioTrack& t : audio.tracks()) {
-        if (!t.host && std::abs(audio.freePosition(t.id, length, from) - from) < 1e-9) {
-            track = t.id;
-            break;
-        }
-    }
-    if (track == 0)
-        track = audio.addTrack();
-    core::AudioClip clip;
-    clip.path = utf8;
-    clip.end = length;
-    clip.position = from;
-    clip.sourceDuration = *duration;
-    const int id = audio.add(track, clip);
-    if (id == 0)
-        return false;
-    project_.sequence().muteRange(from, from + length);
-    std::vector<core::DroppedMedia> media{{utf8, *duration, 0}};
-    for (const core::Clip& c : project_.clips()) {
-        if (c.path == utf8)
-            media.front().existingClipId = c.id;
-    }
-    const std::vector<int> ids = core::applyDrop(project_, media, -1);
-    if (media.front().existingClipId == 0)
-        probeQueue_.push_back(ids.front());
-    waveforms_->request(utf8);
-    timeline_->setAudioSelection(0.0, 0.0);
-    timeline_->setSelectedAudioClip(id);
-    recordEdit(QStringLiteral("Sostituisci audio qui"), before);
-    refreshClipList();
-    startNextProbe();
-    statusBar()->showMessage(QStringLiteral("%1 sulla traccia %2 da %3 a %4, con A1 silenziata sotto.")
-                                 .arg(fileNameOf(utf8), qs(audio.trackName(track)), timeText(from), timeText(from + length)),
-                             12000);
-    return true;
-}
-
-void MainWindow::unlinkAudio(bool relink)
+void MainWindow::relinkAudio()
 {
     const int fragment = timeline_->selected();
     if (project_.sequence().find(fragment) == nullptr) {
@@ -1689,26 +1553,12 @@ void MainWindow::unlinkAudio(bool relink)
         return;
     }
     const core::Project before = project_;
-    if (relink) {
-        if (!project_.relinkAudio(fragment)) {
-            statusBar()->showMessage(QStringLiteral("Nessuna clip audio di questo file è allineata al pezzo."), 8000);
-            return;
-        }
-        recordEdit(QStringLiteral("Ricollega audio"), before);
-        statusBar()->showMessage(QStringLiteral("L'audio è tornato quello del pezzo."), 8000);
-    } else {
-        int track = 0;
-        const int clip = project_.unlinkAudio(fragment, &track);
-        if (clip == 0) {
-            statusBar()->showMessage(QStringLiteral("L'audio di questo pezzo è già silenziato o scollegato, oppure su A1 sotto di lui non c'è posto."), 8000);
-            return;
-        }
-        timeline_->setSelectedAudioClip(clip);
-        recordEdit(QStringLiteral("Scollega audio"), before);
-        statusBar()->showMessage(QStringLiteral("Audio scollegato: ora è una clip libera sulla corsia %1, con l'audio del pezzo silenziato sotto.")
-                                     .arg(qs(project_.audioTracks().trackName(track))),
-                                 10000);
+    if (!project_.relinkAudio(fragment)) {
+        statusBar()->showMessage(QStringLiteral("Nessuna clip audio di questo file è allineata al pezzo."), 8000);
+        return;
     }
+    recordEdit(QStringLiteral("Ricollega audio"), before);
+    statusBar()->showMessage(QStringLiteral("L'audio è tornato quello del pezzo."), 8000);
 }
 
 std::vector<core::ObjectRef> MainWindow::selectedRefs() const
@@ -1766,17 +1616,6 @@ void MainWindow::showGroupStatus()
     const std::size_t count = project_.groupMembers(refs.front()).size();
     if (count > 1)
         statusBar()->showMessage(QStringLiteral("Gruppo di %1 oggetti: si muovono insieme.").arg(count), 6000);
-}
-
-void MainWindow::replaceAudioHereDialog()
-{
-    if (!timeline_->hasAudioSelection()) {
-        replaceAudioHere(QString());  // spiega cosa manca
-        return;
-    }
-    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Audio da mettere nel tratto selezionato"), QString(), kAudioFilter);
-    if (!path.isEmpty())
-        replaceAudioHere(path);
 }
 
 int MainWindow::pendingWaveforms() const
@@ -2234,7 +2073,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         const auto* key = static_cast<QKeyEvent*>(event);
         static const int commandKeys[] = {Qt::Key_Space, Qt::Key_Left, Qt::Key_Right, Qt::Key_Home, Qt::Key_End,
                                           Qt::Key_Comma, Qt::Key_Period, Qt::Key_I, Qt::Key_O, Qt::Key_A, Qt::Key_X,
-                                          Qt::Key_S, Qt::Key_M, Qt::Key_J, Qt::Key_K, Qt::Key_L, Qt::Key_Z,
+                                          Qt::Key_S, Qt::Key_J, Qt::Key_K, Qt::Key_L, Qt::Key_Z,
                                           Qt::Key_G, Qt::Key_U, Qt::Key_Y, Qt::Key_Plus, Qt::Key_Minus, Qt::Key_Equal, Qt::Key_Delete};
         const bool commandKey = std::find(std::begin(commandKeys), std::end(commandKeys), key->key())
                              != std::end(commandKeys);
@@ -2425,23 +2264,12 @@ void MainWindow::createMenus()
     playMenu->addAction(QStringLiteral("Adatta la linea del tempo (mostra tutto)"), this, [this] { zoomTimeline(0.0); });
 
     QMenu* segmentMenu = menuBar()->addMenu(QStringLiteral("&Segmento"));
-    // Con il Montaggio attivo, I e O segnano il tratto della corsia audio.
-    QAction* inAction = segmentMenu->addAction(QStringLiteral("Segna &IN (inizio)"), this, [this] {
-        if (programActive_)
-            markAudioIn();
-        else
-            player_->markIn();
-    });
+    QAction* inAction = segmentMenu->addAction(QStringLiteral("Segna &IN (inizio)"), this, [this] { player_->markIn(); });
     inAction->setShortcut(QKeySequence(Qt::Key_I));
-    inAction->setStatusTip(QStringLiteral("Nella Sorgente: inizio del pezzo. Nel Montaggio: inizio del tratto audio."));
-    QAction* outAction = segmentMenu->addAction(QStringLiteral("Segna &OUT (fine)"), this, [this] {
-        if (programActive_)
-            markAudioOut();
-        else
-            player_->markOut();
-    });
+    inAction->setStatusTip(QStringLiteral("Inizio del pezzo nella Sorgente"));
+    QAction* outAction = segmentMenu->addAction(QStringLiteral("Segna &OUT (fine)"), this, [this] { player_->markOut(); });
     outAction->setShortcut(QKeySequence(Qt::Key_O));
-    outAction->setStatusTip(QStringLiteral("Nella Sorgente: fine del pezzo. Nel Montaggio: fine del tratto audio."));
+    outAction->setStatusTip(QStringLiteral("Fine del pezzo nella Sorgente"));
     segmentMenu->addSeparator();
     QAction* goIn = segmentMenu->addAction(QStringLiteral("Vai a IN"), this, [this] { player_->goToIn(); });
     goIn->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_I));
@@ -2503,13 +2331,6 @@ void MainWindow::createMenus()
         ->setStatusTip(QStringLiteral("Il formato del file esportato: codec, risoluzione, fotogrammi al secondo, audio"));
 
     QMenu* audioMenu = menuBar()->addMenu(QStringLiteral("A&udio"));
-    QAction* mute = audioMenu->addAction(QStringLiteral("&Togli l'audio dal tratto selezionato"), this, [this] { muteSelection(); });
-    mute->setShortcut(QKeySequence(Qt::Key_M));
-    mute->setStatusTip(QStringLiteral("Il tratto si seleziona trascinando sulla corsia audio, o con I e O nel Montaggio"));
-    QAction* unmute = audioMenu->addAction(QStringLiteral("&Rimetti l'audio nel tratto selezionato"), this,
-                                           [this] { unmuteSelection(); });
-    unmute->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_M));
-    audioMenu->addSeparator();
     QAction* replace = audioMenu->addAction(QStringLiteral("&Sostituisci l'audio..."), this, &MainWindow::replaceAudioDialog);
     replace->setStatusTip(QStringLiteral("Un file audio (es. MP3 o M4A) al posto dell'audio originale di tutto il montaggio"));
     originalAudioAction_ = audioMenu->addAction(QStringLiteral("Usa l'audio &originale"), this, [this] { restoreOriginalAudio(); });
@@ -2528,12 +2349,8 @@ void MainWindow::createMenus()
     removeTrackAction_->setEnabled(false);
     audioMenu->addAction(QStringLiteral("Aggiungi &file audio al cursore..."), this, [this] { addAudioFilesDialog(); })
         ->setStatusTip(QStringLiteral("Sulla traccia scelta (o su una nuova), dal punto del cursore del montaggio"));
-    audioMenu->addAction(QStringLiteral("Sostituisci audio &qui..."), this, [this] { replaceAudioHereDialog(); })
-        ->setStatusTip(QStringLiteral("Un file audio nel tratto selezionato, su una traccia aggiunta, con A1 silenziata sotto"));
     audioMenu->addSeparator();
-    audioMenu->addAction(QStringLiteral("Scol&lega l'audio dal pezzo"), this, [this] { unlinkAudio(false); })
-        ->setStatusTip(QStringLiteral("L'audio del pezzo selezionato diventa una clip su una traccia aggiunta, da spostare e tagliare per conto suo"));
-    audioMenu->addAction(QStringLiteral("Ricolle&ga l'audio al pezzo"), this, [this] { unlinkAudio(true); })
+    audioMenu->addAction(QStringLiteral("Ricolle&ga l'audio al pezzo"), this, [this] { relinkAudio(); })
         ->setStatusTip(QStringLiteral("Se la clip è ancora allineata al pezzo selezionato, l'audio torna a essere quello del pezzo"));
 
     QMenu* windowMenu = menuBar()->addMenu(QStringLiteral("Fi&nestra"));
@@ -3748,13 +3565,12 @@ void MainWindow::showShortcuts()
         {"Pulsanti sotto le anteprime", "Anche stop, velocità (0,25x - 4x), ripetizione e volume dell'anteprima"},
         {"+ / -  (Ctrl+rotellina)", "Ingrandisci / riduci la linea del tempo dell'anteprima attiva (pulsante Adatta: tutto)"},
         {"Rotellina", "Scorri la linea del tempo ingrandita"},
-        {"I / O", "Sorgente: segna IN / OUT · Montaggio: inizio / fine del tratto audio"},
+        {"I / O", "Sorgente: segna IN / OUT"},
         {"Maiusc+I / Maiusc+O", "Vai a IN / OUT"},
         {"A", "Aggiungi IN-OUT (o il file intero) al montaggio"},
         {"X", "Togli IN-OUT dal montaggio"},
         {"S", "Dividi il pezzo sotto il cursore del montaggio"},
         {"Canc", "Elimina il pezzo selezionato (o il file, se il fuoco è sull'elenco dei file)"},
-        {"M / Maiusc+M", "Togli / rimetti l'audio nel tratto selezionato"},
         {"Ctrl+Z", "Annulla"},
         {"Ctrl+Y / Ctrl+Maiusc+Z", "Ripeti"},
         {"Ctrl+O / Ctrl+Maiusc+O", "Apri un file video / aggiungi file al progetto"},

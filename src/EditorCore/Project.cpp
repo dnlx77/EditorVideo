@@ -138,14 +138,6 @@ std::optional<AudioReplacement> Project::audioReplacement() const
     return AudioReplacement{clip.path, clip.position - clip.start, clip.sourceDuration};
 }
 
-void Project::setAudioOffset(double offset)
-{
-    if (auto replacement = audioReplacement()) {
-        replacement->offset = offset;
-        setAudioReplacement(std::move(replacement));
-    }
-}
-
 void Project::restoreEdits(const Project& snapshot)
 {
     std::vector<Clip> clips = snapshot.clips_;

@@ -126,8 +126,7 @@ TEST(AudioMute, ProjectAudioEdit)
     project.sequence().insert(-1, clip, 0.0, 3.0);
     project.sequence().muteRange(1.0, 2.0);
     EXPECT_TRUE(project.audioEdit().replacement == std::nullopt);
-    project.setAudioReplacement(AudioReplacement{"musica.mp3", 0.5, 60.0});
-    project.setAudioOffset(-2.0);
+    project.setAudioReplacement(AudioReplacement{"musica.mp3", -2.0, 60.0});
     const AudioEdit edit = project.audioEdit();
     ASSERT_TRUE(edit.replacement.has_value());
     EXPECT_EQ(edit.replacement->path, "musica.mp3");

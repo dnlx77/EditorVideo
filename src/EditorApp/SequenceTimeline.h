@@ -271,7 +271,7 @@ private:
     // Inizio della clip audio trascinata quando il mouse è in x, sulla corsia `lane` (agganciata ai bordi e al cursore).
     double audioDragTarget(double x, int lane) const;
     double audioTrimTarget(double x, bool ripple) const;
-    // Agganci magnetici: inizio della sequenza, cursore, bordi dei pezzi video e delle clip audio (tranne `ignoredClip`).
+    // Agganci ai bordi: inizio della sequenza, cursore, bordi dei pezzi video e delle clip audio (tranne `ignoredClip`).
     std::vector<double> snapMarks(int ignoredClip) const;
     void syncTrackButtons();
     void updateDuration();  // durata mostrata: fino alla fine dei pezzi o delle clip audio, più un po' di posto
