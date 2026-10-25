@@ -18,6 +18,8 @@ int AudioTracks::addTrack()
 
 bool AudioTracks::removeTrack(int trackId)
 {
+    if (trackId == kOriginalTrack)
+        return false;
     return std::erase_if(tracks_, [trackId](const AudioTrack& t) { return t.id == trackId; }) > 0;
 }
 
@@ -41,7 +43,24 @@ std::string AudioTracks::trackName(int trackId) const
     if (trackId == kOriginalTrack)
         return "A1";
     const int index = trackIndex(trackId);
-    return index < 0 ? std::string() : "A" + std::to_string(index + 2);
+    return index < 0 ? std::string() : "A" + std::to_string(index + 2 - (hasHost() ? 1 : 0));
+}
+
+AudioTrack* AudioTracks::hostTrack()
+{
+    if (!hasHost()) {
+        AudioTrack host;
+        host.id = kOriginalTrack;
+        host.host = true;
+        tracks_.insert(tracks_.begin(), std::move(host));
+    }
+    return &tracks_.front();
+}
+
+void AudioTracks::pruneHost()
+{
+    if (hasHost() && tracks_.front().clips.empty())
+        tracks_.erase(tracks_.begin());
 }
 
 AudioTrack* AudioTracks::mutableTrack(int trackId)
@@ -178,12 +197,16 @@ bool AudioTracks::locate(int clipId, int& trackIndex, int& clipIndex) const
 
 int AudioTracks::add(int trackId, AudioClip clip)
 {
-    AudioTrack* t = mutableTrack(trackId);
-    if (t == nullptr || clip.length() <= kTimeEpsilon || clip.start < 0.0 || clip.position < -kTimeEpsilon)
+    if (clip.length() <= kTimeEpsilon || clip.start < 0.0 || clip.position < -kTimeEpsilon)
+        return 0;
+    AudioTrack* t = trackId == kOriginalTrack ? hostTrack() : mutableTrack(trackId);
+    if (t == nullptr)
         return 0;
     clip.position = std::max(0.0, clip.position);
-    if (overlaps(*t, clip.position, clip.length(), 0))
+    if (overlaps(*t, clip.position, clip.length(), 0)) {
+        pruneHost();
         return 0;
+    }
     clip.id = nextClipId_++;
     t->clips.push_back(std::move(clip));
     sortClips(*t);
@@ -198,6 +221,7 @@ bool AudioTracks::remove(int clipId)
         return false;
     auto& clips = tracks_[static_cast<std::size_t>(t)].clips;
     clips.erase(clips.begin() + c);
+    pruneHost();
     return true;
 }
 
@@ -220,7 +244,8 @@ int AudioTracks::trackOf(int clipId) const
 double AudioTracks::nearestFreePosition(int clipId, int trackId, double desired) const
 {
     const AudioClip* clip = find(clipId);
-    const AudioTrack* t = track(trackId);
+    static const AudioTrack kNoClips;
+    const AudioTrack* t = trackId == kOriginalTrack && !hasHost() ? &kNoClips : track(trackId);
     if (clip == nullptr || t == nullptr)
         return -1.0;
     return freeSpot(*t, clip->length(), desired, clipId);
@@ -228,7 +253,8 @@ double AudioTracks::nearestFreePosition(int clipId, int trackId, double desired)
 
 double AudioTracks::freePosition(int trackId, double length, double desired) const
 {
-    const AudioTrack* t = track(trackId);
+    static const AudioTrack kNoClips;
+    const AudioTrack* t = trackId == kOriginalTrack && !hasHost() ? &kNoClips : track(trackId);
     return t == nullptr ? -1.0 : freeSpot(*t, length, desired, 0);
 }
 
@@ -256,18 +282,25 @@ bool AudioTracks::moveTo(int clipId, int trackId, double position)
 {
     int from = 0;
     int index = 0;
-    AudioTrack* to = mutableTrack(trackId);
-    if (!locate(clipId, from, index) || to == nullptr || position < -kTimeEpsilon)
+    if (!locate(clipId, from, index) || position < -kTimeEpsilon)
+        return false;
+    if (trackId != kOriginalTrack && mutableTrack(trackId) == nullptr)
         return false;
     position = std::max(0.0, position);
     AudioClip clip = tracks_[static_cast<std::size_t>(from)].clips[static_cast<std::size_t>(index)];
-    if (overlaps(*to, position, clip.length(), clipId))
+    // Le tracce non cambiano posto nell'elenco finché non si crea/toglie la traccia di A1: si lavora sugli id.
+    const int fromId = tracks_[static_cast<std::size_t>(from)].id;
+    AudioTrack* to = trackId == kOriginalTrack ? hostTrack() : mutableTrack(trackId);
+    if (overlaps(*to, position, clip.length(), clipId)) {
+        pruneHost();
         return false;
-    auto& source = tracks_[static_cast<std::size_t>(from)].clips;
-    source.erase(source.begin() + index);
+    }
+    AudioTrack* source = mutableTrack(fromId);
+    source->clips.erase(std::find_if(source->clips.begin(), source->clips.end(), [clipId](const AudioClip& c) { return c.id == clipId; }));
     clip.position = position;
     to->clips.push_back(std::move(clip));
     sortClips(*to);
+    pruneHost();
     return true;
 }
 
@@ -376,6 +409,7 @@ bool AudioTracks::removeRange(int trackId, double from, double to)
         }
     }
     t->clips = std::move(kept);
+    pruneHost();
     return changed;
 }
 
@@ -398,6 +432,7 @@ int AudioTracks::removePath(const std::string& path)
     int count = 0;
     for (AudioTrack& t : tracks_)
         count += static_cast<int>(std::erase_if(t.clips, [&](const AudioClip& c) { return c.path == path; }));
+    pruneHost();
     return count;
 }
 
@@ -405,12 +440,23 @@ void AudioTracks::restore(AudioMix original, std::vector<AudioTrack> tracks)
 {
     original_ = original;
     tracks_ = std::move(tracks);
+    // Le clip libere di A1 (una sola traccia, in testa).
+    std::stable_partition(tracks_.begin(), tracks_.end(), [](const AudioTrack& t) { return t.host; });
+    for (std::size_t i = 1; i < tracks_.size() && tracks_.front().host; ++i) {
+        if (tracks_[i].host) {
+            tracks_.front().clips.insert(tracks_.front().clips.end(), tracks_[i].clips.begin(), tracks_[i].clips.end());
+            tracks_.erase(tracks_.begin() + static_cast<std::ptrdiff_t>(i));
+            --i;
+        }
+    }
     for (AudioTrack& t : tracks_) {
-        t.id = nextTrackId_++;
+        t.id = t.host ? kOriginalTrack : nextTrackId_++;
+        t.mix = t.host ? AudioMix{} : t.mix;
         for (AudioClip& c : t.clips)
             c.id = nextClipId_++;
         sortClips(t);
     }
+    pruneHost();
 }
 
 void AudioTracks::restoreEdits(const AudioTracks& snapshot)

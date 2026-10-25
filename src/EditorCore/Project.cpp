@@ -128,7 +128,7 @@ std::optional<AudioReplacement> Project::audioReplacement() const
     const AudioMix silenced{0.0, true, false};
     const auto& tracks = audio_.tracks();
     if (!(audio_.mix(AudioTracks::kOriginalTrack) == silenced) || tracks.size() != 1 || !(tracks[0].mix == AudioMix{})
-        || tracks[0].clips.size() != 1)
+        || tracks[0].clips.size() != 1 || tracks[0].host)
         return std::nullopt;
     const AudioClip& clip = tracks[0].clips[0];
     if (clip.end != std::max(clip.start, clip.sourceDuration) || (clip.position > 0.0 && clip.start > 0.0)
@@ -174,16 +174,11 @@ int Project::unlinkAudio(int fragmentId, int* track)
         return 0;
     const double from = sequence_.startOf(sequence_.indexOf(fragmentId));
     const double length = f->length();
-    int target = 0;
-    for (const AudioTrack& t : audio_.tracks()) {
-        if (std::abs(audio_.freePosition(t.id, length, from) - from) < 1e-9) {
-            target = t.id;
-            break;
-        }
-    }
+    // Resta sulla corsia A1, staccato dai pezzi video: lì deve esserci posto.
+    const int target = AudioTracks::kOriginalTrack;
+    if (std::abs(audio_.freePosition(target, length, from) - from) > 1e-9)
+        return 0;
     AudioTracks scratch = audio_;
-    if (target == 0)
-        target = scratch.addTrack();
     AudioClip clip;
     clip.path = source->path;
     clip.start = f->start;

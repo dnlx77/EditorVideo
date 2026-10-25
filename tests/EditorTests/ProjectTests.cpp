@@ -128,7 +128,7 @@ TEST(Project, UnlinkedAudioIsAFreeClipAndRelinkPutsItBack)
     int track = 0;
     const int audioClip = project.unlinkAudio(first, &track);
     ASSERT_NE(audioClip, 0);
-    ASSERT_NE(track, 0);
+    EXPECT_EQ(track, AudioTracks::kOriginalTrack);  // resta sulla corsia A1
     const AudioClip* c = project.audioTracks().find(audioClip);
     ASSERT_NE(c, nullptr);
     EXPECT_EQ(c->path, "video.mp4");
