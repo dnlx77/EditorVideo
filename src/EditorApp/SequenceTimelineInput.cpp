@@ -1,0 +1,530 @@
+#include "EditorApp/SequenceTimeline.h"
+#include "EditorApp/SequenceTimelineShared.h"
+
+#include "EditorCore/AudioTracks.h"
+#include "EditorCore/LevelEnvelope.h"
+#include "EditorCore/MediaProbe.h"
+#include "EditorCore/Waveform.h"
+
+#include <QtCore/QDir>
+#include <QtCore/QMimeData>
+#include <QtCore/QUrl>
+#include <QtGui/QDragEnterEvent>
+#include <QtGui/QHelpEvent>
+#include <QtGui/QDropEvent>
+#include <QtGui/QMouseEvent>
+#include <QtGui/QResizeEvent>
+#include <QtGui/QPainter>
+#include <QtGui/QPainterPath>
+#include <QtWidgets/QToolButton>
+#include <QtWidgets/QToolTip>
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+namespace editor::app {
+using namespace detail;
+
+void SequenceTimeline::mousePressEvent(QMouseEvent* event)
+{
+    if (event->button() != Qt::LeftButton)
+        return;
+    const QPointF pos = event->position();
+    pressX_ = pos.x();
+    pressY_ = pos.y();
+    const double t = timeForX(pressX_);
+    const bool content = !blocks_.empty() || lanes_.size() > 1;
+    // Ctrl+clic su un oggetto: lo aggiunge alla selezione o lo toglie (nient'altro: niente spostamento del cursore).
+    if ((event->modifiers() & Qt::ControlModifier) && pos.x() >= videoLane().left() && pos.y() >= videoLane().top() - 2 && ctrlPress(pos))
+        return;
+    if (!multi_.empty()) {  // un clic senza Ctrl riparte da un oggetto solo
+        multi_.clear();
+        invalidate();
+        if (onMultiSelection)
+            onMultiSelection();
+    }
+
+    // A sinistra delle corsie: nome, muto, solo e livello delle corsie audio.
+    if (pos.x() < videoLane().left() - 2) {
+        const int lane = laneAt(pos.y());
+        if (lane < 0)
+            return;
+        const AudioLane& l = lanes_[static_cast<std::size_t>(lane)];
+        if (muteBox(lane).contains(pos)) {
+            if (onTrackMuted)
+                onTrackMuted(l.trackId, !l.muted);
+        } else if (soloBox(lane).contains(pos)) {
+            if (onTrackSolo)
+                onTrackSolo(l.trackId, !l.solo);
+        } else if (levelBar(lane).contains(pos)) {
+            levelLane_ = lane;
+            levelValue_ = levelForX(lane, pos.x());
+            invalidate();
+        } else {
+            setSelectedTrack(l.trackId);
+        }
+        return;
+    }
+    if (pos.y() < videoLane().top() - 2) {
+        if (!content)
+            return;
+        // Righello: sposta il cursore, anche trascinando.
+        scrubbing_ = true;
+        playhead_ = std::clamp(t, 0.0, total_);
+        update();
+        if (onSeek)
+            onSeek(playhead_);
+        return;
+    }
+    if (const int lane = laneAt(pos.y()); lane >= 0) {
+        // Corsie audio: la linea del livello, le clip delle tracce aggiunte (bordi o spostamento), altrimenti la
+        // selezione di un tratto.
+        selected_ = 0;
+        selectedGap_ = 0;
+        setSelectedTrack(lanes_[static_cast<std::size_t>(lane)].trackId);
+        EnvTarget envTarget;
+        int envPoint = -1;
+        if (envelopeHit(pos, envTarget, envPoint)) {
+            envActive_ = true;
+            envTarget_ = envTarget;
+            envPoints_ = *envTarget.line;
+            envMoved_ = false;
+            if (envPoint < 0) {
+                // Un punto nuovo, sulla linea dove si è cliccato (tempo del file, dentro il pezzo o la clip).
+                const double fileTime = envTarget.source + std::clamp(t - envTarget.position, 0.0, envTarget.length);
+                const core::LevelPoint added{fileTime, core::envelopeDbAt(envPoints_, fileTime)};
+                const auto at = std::upper_bound(envPoints_.begin(), envPoints_.end(), added.time,
+                                                 [](double time, const core::LevelPoint& q) { return time < q.time; });
+                envPoint = static_cast<int>(at - envPoints_.begin());
+                envPoints_.insert(at, added);
+                envMoved_ = true;
+            }
+            envPoint_ = envPoint;
+            invalidate();
+            return;
+        }
+        int clipLane = 0;
+        int clip = 0;
+        bool atStart = false;
+        if (audioEdgeAt(pos, clipLane, clip, atStart)) {
+            const AudioBlock& c = lanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)];
+            audioTrimClip_ = c.clipId;
+            audioTrimAtStart_ = atStart;
+            audioTrimming_ = false;
+            audioTrimValue_ = atStart ? c.sourceStart : c.sourceStart + c.length;
+            audioTrimGrab_ = t - (atStart ? c.position : c.position + c.length);
+            setSelectedAudioClip(c.clipId);
+            if (onAudioClipSelected)
+                onAudioClipSelected(c.clipId);
+            return;
+        }
+        if (audioClipAt(pos, clipLane, clip)) {
+            const AudioBlock& c = lanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)];
+            audioDragClip_ = c.clipId;
+            audioDragging_ = false;
+            audioDragGrab_ = t - c.position;
+            audioDragStart_ = c.position;
+            audioDragLane_ = clipLane;
+            setSelectedAudioClip(c.clipId);
+            playhead_ = std::max(0.0, t);
+            if (onAudioClipSelected)
+                onAudioClipSelected(c.clipId);
+            if (onSeek)
+                onSeek(playhead_);
+            return;
+        }
+        selectedAudioClip_ = 0;
+        if (onAudioClipSelected)
+            onAudioClipSelected(0);
+        // L'audio di un pezzo video (A1) è del pezzo: prenderlo e trascinarlo sposta il pezzo (e il suo gruppo).
+        if (lanes_[static_cast<std::size_t>(lane)].trackId == core::AudioTracks::kOriginalTrack) {
+            const int index = blockAt(pos.x());
+            if (index >= 0 && !blocks_[static_cast<std::size_t>(index)].audioDetached && t >= starts_[static_cast<std::size_t>(index)]
+                && t < starts_[static_cast<std::size_t>(index)] + blocks_[static_cast<std::size_t>(index)].length) {
+                dragIndex_ = index;
+                dragging_ = false;
+                selected_ = blocks_[static_cast<std::size_t>(index)].fragmentId;
+                dragGrab_ = t - starts_[static_cast<std::size_t>(index)];
+                dragStart_ = starts_[static_cast<std::size_t>(index)];
+                if (onSelect)
+                    onSelect(selected_);
+                playhead_ = std::max(0.0, t);
+                invalidate();
+                if (onSeek)
+                    onSeek(playhead_);
+                return;
+            }
+        }
+        selectionAnchor_ = std::max(0.0, t);
+        // Su A1 (l'audio dei video) il trascinamento non seleziona un tratto: il muto si fa con la linea del livello.
+        if (lanes_[static_cast<std::size_t>(lane)].trackId != core::AudioTracks::kOriginalTrack) {
+            selecting_ = true;
+            setAudioSelection(selectionAnchor_, selectionAnchor_, lanes_[static_cast<std::size_t>(lane)].trackId);
+        }
+        playhead_ = selectionAnchor_;
+        if (onSeek)
+            onSeek(selectionAnchor_);
+        return;
+    }
+    if (blocks_.empty() || pos.y() > videoLane().bottom() + kLaneGap / 2)
+        return;
+
+    selectedAudioClip_ = 0;
+    selectedTrack_ = -1;  // si sceglie un pezzo della traccia video
+    syncTrackButtons();
+    // Vicino al bordo di un blocco: si sposta il bordo (inizio o fine del pezzo nel file).
+    bool atStart = false;
+    if (const int edge = edgeAt(pos, atStart); edge >= 0) {
+        trimIndex_ = edge;
+        trimAtStart_ = atStart;
+        trimming_ = false;
+        const Block& b = blocks_[static_cast<std::size_t>(edge)];
+        trimValue_ = atStart ? b.sourceStart : b.sourceStart + b.length;
+        trimGrab_ = t - (atStart ? starts_[static_cast<std::size_t>(edge)] : starts_[static_cast<std::size_t>(edge)] + b.length);
+        selected_ = b.fragmentId;
+        selectedGap_ = 0;
+        if (onSelect)
+            onSelect(selected_);
+        invalidate();
+        return;
+    }
+
+    dragIndex_ = blockAt(pressX_);
+    dragging_ = false;
+    if (dragIndex_ >= 0) {
+        selected_ = blocks_[dragIndex_].fragmentId;
+        selectedGap_ = 0;
+        dragGrab_ = t - startOfBlock(dragIndex_);
+        dragStart_ = startOfBlock(dragIndex_);
+        if (onSelect)
+            onSelect(selected_);
+    } else if (const int gap = gapAt(pressX_); gap >= 0) {
+        selectedGap_ = blocks_[gap].fragmentId;
+        selected_ = 0;
+        if (onSelect)
+            onSelect(0);
+    }
+    playhead_ = t;
+    invalidate();
+    if (onSeek)
+        onSeek(playhead_);
+}
+
+void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
+{
+    const QPointF pos = event->position();
+    const double x = pos.x();
+    if (!(event->buttons() & Qt::LeftButton)) {
+        // Sul bordo di un blocco o di una clip audio, o sul livello di una corsia, il cursore diventa ⟷.
+        bool atStart = false;
+        int lane = 0;
+        int clip = 0;
+        const int header = x < videoLane().left() ? laneAt(pos.y()) : -1;
+        EnvTarget envTarget;
+        int envPoint = -1;
+        if (envelopeHit(pos, envTarget, envPoint))
+            setCursor(envPoint >= 0 ? Qt::SizeAllCursor : Qt::SizeVerCursor);
+        else if (edgeAt(pos, atStart) >= 0 || audioEdgeAt(pos, lane, clip, atStart) || (header >= 0 && levelBar(header).contains(pos)))
+            setCursor(Qt::SizeHorCursor);
+        else
+            setCursor(Qt::ArrowCursor);
+        return;
+    }
+    if (envActive_ && envPoint_ >= 0) {
+        // Il punto segue il mouse, ma resta dentro il pezzo o la clip e fra i due vicini.
+        auto& point = envPoints_[static_cast<std::size_t>(envPoint_)];
+        const double previous = envPoint_ > 0 ? envPoints_[static_cast<std::size_t>(envPoint_) - 1].time + 1e-3 : 0.0;
+        const double next = envPoint_ + 1 < static_cast<int>(envPoints_.size())
+                                ? envPoints_[static_cast<std::size_t>(envPoint_) + 1].time - 1e-3
+                                : std::numeric_limits<double>::max();
+        if (envMoved_ || std::abs(x - pressX_) >= 2 || std::abs(pos.y() - pressY_) >= 2) {
+            const double fileTime = envTarget_.source + std::clamp(timeForX(x) - envTarget_.position, 0.0, envTarget_.length);
+            point.time = std::clamp(fileTime, previous, std::max(previous, next));
+            point.db = envelopeDbForY(audioLane(envTarget_.lane), pos.y());
+            envMoved_ = true;
+        }
+        QToolTip::showText(event->globalPosition().toPoint(),
+                           QStringLiteral("%1: %2 dB a %3").arg(lanes_[static_cast<std::size_t>(envTarget_.lane)].name,
+                                                                  QString::number(point.db, 'f', 1),
+                                                                  QString::fromStdString(core::formatDuration(
+                                                                      envTarget_.position + point.time - envTarget_.source))),
+                           this);
+        invalidate();
+        return;
+    }
+    if (levelLane_ >= 0) {
+        levelValue_ = levelForX(levelLane_, x);
+        QToolTip::showText(event->globalPosition().toPoint(),
+                           QStringLiteral("%1: %2 dB").arg(lanes_[static_cast<std::size_t>(levelLane_)].name, QString::number(levelValue_, 'f', 1)),
+                           this);
+        invalidate();
+        return;
+    }
+    if (audioTrimClip_ != 0) {
+        if (!audioTrimming_ && std::abs(x - pressX_) < 2)
+            return;
+        audioTrimming_ = true;
+        audioTrimRipple_ = (event->modifiers() & Qt::AltModifier) != 0;
+        audioTrimValue_ = audioTrimTarget(x, audioTrimRipple_);
+        if (const AudioBlock* c = findAudioClip(audioTrimClip_)) {
+            const double before = audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length;
+            const double delta = audioTrimValue_ - before;
+            QToolTip::showText(event->globalPosition().toPoint(),
+                               QStringLiteral("%1 %2 (%3%4 s)%5")
+                                   .arg(audioTrimAtStart_ ? QStringLiteral("Inizio") : QStringLiteral("Fine"),
+                                        QString::fromStdString(core::formatDuration(audioTrimValue_)),
+                                        delta >= 0 ? QStringLiteral("+") : QString(), QString::number(delta, 'f', 3),
+                                        audioTrimRipple_ ? QStringLiteral("\nAlt: le clip dopo scorrono")
+                                                         : QStringLiteral("\nCon Alt le clip dopo sulla traccia scorrono")),
+                               this);
+        }
+        update();
+        return;
+    }
+    if (audioDragClip_ != 0) {
+        if (!audioDragging_ && std::abs(x - pressX_) <= 8 && std::abs(pos.y() - pressY_) <= 8)
+            return;
+        if (!audioDragging_) {
+            audioDragging_ = true;
+            setCursor(Qt::ClosedHandCursor);
+        }
+        // In verticale si cambia traccia (anche A1: la clip resta staccata dai pezzi video).
+        if (const int lane = laneAt(pos.y()); lane >= 0)
+            audioDragLane_ = lane;
+        audioDragStart_ = audioDragTarget(x, audioDragLane_);
+        invalidate();
+        return;
+    }
+    if (trimIndex_ >= 0) {
+        if (!trimming_ && std::abs(x - pressX_) < 2)
+            return;
+        trimming_ = true;
+        trimRipple_ = (event->modifiers() & Qt::AltModifier) != 0;
+        const double value = trimTarget(x, trimRipple_);
+        const Block& b = blocks_[static_cast<std::size_t>(trimIndex_)];
+        const double before = trimAtStart_ ? b.sourceStart : b.sourceStart + b.length;
+        const bool changed = std::abs(value - trimValue_) > 1e-9;
+        trimValue_ = value;
+        const double delta = value - before;
+        QToolTip::showText(event->globalPosition().toPoint(),
+                           QStringLiteral("%1 %2 (%3%4 s)%5")
+                               .arg(trimAtStart_ ? QStringLiteral("Inizio") : QStringLiteral("Fine"),
+                                    QString::fromStdString(core::formatDuration(value)),
+                                    delta >= 0 ? QStringLiteral("+") : QString(),
+                                    QString::number(delta, 'f', 3),
+                                    trimRipple_ ? QStringLiteral("\nAlt: i pezzi dopo scorrono")
+                                                : QStringLiteral("\nCon Alt i pezzi dopo scorrono")),
+                           this);
+        update();
+        if (changed && onTrimPreview)
+            onTrimPreview(b.fragmentId, trimAtStart_, value);
+        return;
+    }
+    if (scrubbing_) {
+        playhead_ = std::clamp(timeForX(x), 0.0, total_);
+        update();
+        if (onSeek)
+            onSeek(playhead_);
+        return;
+    }
+    if (selecting_) {
+        const double t = std::max(0.0, timeForX(x));
+        setAudioSelection(std::min(selectionAnchor_, t), std::max(selectionAnchor_, t), selectionTrack_);
+        return;
+    }
+    if (dragIndex_ < 0)
+        return;
+    if (!dragging_ && std::abs(x - pressX_) > 8) {
+        dragging_ = true;
+        setCursor(Qt::ClosedHandCursor);
+    }
+    if (dragging_) {
+        dragStart_ = dragTarget(x);
+        invalidate();
+    }
+}
+
+void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
+{
+    if (event->button() != Qt::LeftButton)
+        return;
+    if (scrubbing_) {
+        scrubbing_ = false;
+        return;
+    }
+    if (envActive_) {
+        const EnvTarget target = envTarget_;
+        const std::vector<core::LevelPoint> points = envPoints_;
+        const bool changed = envMoved_;
+        envActive_ = false;
+        envPoint_ = -1;
+        envMoved_ = false;
+        envPoints_.clear();
+        QToolTip::hideText();
+        invalidate();
+        if (changed && onEnvelopeChanged)
+            onEnvelopeChanged(target.fragment, target.id, points);
+        return;
+    }
+    if (levelLane_ >= 0) {
+        const int track = lanes_[static_cast<std::size_t>(levelLane_)].trackId;
+        const double db = levelValue_;
+        levelLane_ = -1;
+        QToolTip::hideText();
+        invalidate();
+        if (onTrackLevel)
+            onTrackLevel(track, db);
+        return;
+    }
+    if (audioTrimClip_ != 0) {
+        const int clip = audioTrimClip_;
+        const bool trimmed = audioTrimming_;
+        audioTrimClip_ = 0;
+        audioTrimming_ = false;
+        QToolTip::hideText();
+        update();
+        if (trimmed && onAudioTrim)
+            onAudioTrim(clip, audioTrimAtStart_, audioTrimValue_, audioTrimRipple_);
+        return;
+    }
+    if (audioDragClip_ != 0) {
+        const int clip = audioDragClip_;
+        const bool moved = audioDragging_;
+        int fromLane = -1;
+        const AudioBlock* c = findAudioClip(clip, &fromLane);
+        const double from = c != nullptr ? c->position : 0.0;
+        const int lane = audioDragLane_;
+        const double to = moved ? audioDragTarget(event->position().x(), lane) : from;
+        audioDragClip_ = 0;
+        audioDragging_ = false;
+        setCursor(Qt::ArrowCursor);
+        invalidate();
+        if (moved && c != nullptr && lane >= 0 && (lane != fromLane || std::abs(to - from) > 1e-6) && onAudioClipMoveTo)
+            onAudioClipMoveTo(clip, lanes_[static_cast<std::size_t>(lane)].trackId, to);
+        return;
+    }
+    if (selecting_) {
+        selecting_ = false;
+        // Un clic senza trascinare toglie la selezione.
+        if (std::abs(event->position().x() - pressX_) < 4)
+            setAudioSelection(0.0, 0.0, selectionTrack_);
+        if (onAudioSelection)
+            onAudioSelection(selectionFrom_, selectionTo_);
+        return;
+    }
+    if (trimIndex_ >= 0) {
+        const int fragment = blocks_[static_cast<std::size_t>(trimIndex_)].fragmentId;
+        const bool trimmed = trimming_;
+        trimIndex_ = -1;
+        trimming_ = false;
+        QToolTip::hideText();
+        update();
+        if (trimmed && onTrim)
+            onTrim(fragment, trimAtStart_, trimValue_, trimRipple_);
+        return;
+    }
+    if (dragging_ && dragIndex_ >= 0) {
+        const int fragment = blocks_[dragIndex_].fragmentId;
+        const double from = startOfBlock(dragIndex_);
+        const double to = dragTarget(event->position().x());
+        dragging_ = false;
+        dragIndex_ = -1;
+        setCursor(Qt::ArrowCursor);
+        invalidate();
+        if (std::abs(to - from) > 1e-6 && onMoveTo)
+            onMoveTo(fragment, to);
+        return;
+    }
+    dragging_ = false;
+    dragIndex_ = -1;
+}
+
+void SequenceTimeline::dragEnterEvent(QDragEnterEvent* event)
+{
+    if (droppedFiles(event->mimeData()).isEmpty())
+        return;
+    event->acceptProposedAction();
+    fileDropX_ = event->position().x();
+    const int lane = laneAt(event->position().y());
+    fileDropLane_ = lane > 0 ? lane : -1;
+    update();
+}
+
+void SequenceTimeline::dragMoveEvent(QDragMoveEvent* event)
+{
+    if (fileDropX_ < 0)
+        return;
+    event->acceptProposedAction();
+    fileDropX_ = event->position().x();
+    const int lane = laneAt(event->position().y());
+    fileDropLane_ = lane > 0 ? lane : -1;
+    update();
+}
+
+void SequenceTimeline::dragLeaveEvent(QDragLeaveEvent*)
+{
+    fileDropX_ = -1.0;
+    fileDropLane_ = -1;
+    update();
+}
+
+void SequenceTimeline::dropEvent(QDropEvent* event)
+{
+    const QStringList files = droppedFiles(event->mimeData());
+    const int lane = laneAt(event->position().y());
+    const int index = blocks_.empty() ? 0 : dropIndexAt(event->position().x());
+    const double at = std::max(0.0, timeForX(event->position().x()));
+    fileDropX_ = -1.0;
+    fileDropLane_ = -1;
+    update();
+    if (files.isEmpty())
+        return;
+    event->acceptProposedAction();
+    if (lane > 0) {
+        if (onAudioFilesDropped)
+            onAudioFilesDropped(files, lanes_[static_cast<std::size_t>(lane)].trackId, at);
+        return;
+    }
+    if (onFilesDropped)
+        onFilesDropped(files, index);
+}
+
+void SequenceTimeline::mouseDoubleClickEvent(QMouseEvent* event)
+{
+    const QPointF pos = event->position();
+    if (pos.x() < videoLane().left() - 2) {
+        // Doppio clic sul livello: torna a 0 dB.
+        const int lane = laneAt(pos.y());
+        if (lane >= 0 && levelBar(lane).contains(pos) && onTrackLevel)
+            onTrackLevel(lanes_[static_cast<std::size_t>(lane)].trackId, 0.0);
+        return;
+    }
+    EnvTarget envTarget;
+    int envPoint = -1;
+    if (envelopeHit(pos, envTarget, envPoint)) {
+        // Doppio clic su un punto della linea del livello: lo toglie.
+        if (envPoint >= 0 && onEnvelopeChanged) {
+            std::vector<core::LevelPoint> points = *envTarget.line;
+            points.erase(points.begin() + envPoint);
+            onEnvelopeChanged(envTarget.fragment, envTarget.id, points);
+        }
+        return;
+    }
+    if (pos.y() >= audioLane(0).top() - kLaneGap / 2)
+        return;
+    const int index = blockAt(pos.x());
+    if (index >= 0 && onActivate)
+        onActivate(blocks_[index].fragmentId);
+}
+
+void SequenceTimeline::resizeEvent(QResizeEvent* event)
+{
+    cacheValid_ = false;
+    ZoomableTimeline::resizeEvent(event);
+    const int size = kRulerHeight - 2;
+    addTrack_->setGeometry(6, 1, size + 4, size);
+    removeTrack_->setGeometry(6 + size + 6, 1, size + 4, size);
+}
+
+}  // namespace editor::app
