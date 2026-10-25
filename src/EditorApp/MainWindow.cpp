@@ -1107,7 +1107,7 @@ void MainWindow::refreshTimeline()
         }
     }
     timeline_->setFrameDuration(frame);
-    const std::vector<core::TimeRange> muted = sequence.mutedRanges();
+    const std::vector<core::TimeRange> muted = sequence.mutedRanges(false);  // senza i pezzi con l'audio scollegato
     timeline_->setMuted(muted);
     // Corsie audio: A1 e le tracce aggiunte con le loro clip.
     const core::AudioTracks& audio = project_.audioTracks();

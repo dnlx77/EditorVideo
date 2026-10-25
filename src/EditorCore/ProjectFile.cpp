@@ -243,6 +243,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
             piece["spazioPrima"] = ticks(f.gap);
         if (!f.envelope.empty())
             piece["linea"] = envelopeToJson(f.envelope);
+        if (f.detached)
+            piece["audioScollegato"] = true;
         sequence.emplace_back(std::move(piece));
     }
 
@@ -379,6 +381,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                 }
             }
             f.envelope = envelopeFromJson(piece["linea"]);
+            f.detached = piece["audioScollegato"].isBool() && piece["audioScollegato"].asBool();
             if (piece["spazioPrima"].isInteger()) {
                 f.gap = seconds(piece["spazioPrima"], "spazioPrima");
                 if (f.gap < 0.0)

@@ -194,6 +194,7 @@ int Project::unlinkAudio(int fragmentId, int* track)
         scratch.removeRange(target, from + (r.start - f->start), from + (r.end - f->start));
     audio_ = std::move(scratch);
     sequence_.muteRange(from, from + length);
+    sequence_.setDetached(fragmentId, true);
     sequence_.setEnvelope(fragmentId, {});
     if (track != nullptr)
         *track = target;
@@ -228,6 +229,7 @@ bool Project::relinkAudio(int fragmentId)
     for (int trackId : tracks)
         audio_.removeRange(trackId, from, to);
     sequence_.unmuteRange(from, to);
+    sequence_.setDetached(fragmentId, false);
     if (found == 1)
         sequence_.setEnvelope(fragmentId, std::move(line));
     return true;
