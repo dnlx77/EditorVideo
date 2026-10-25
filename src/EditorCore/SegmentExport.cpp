@@ -906,9 +906,10 @@ namespace {
 class ExportJob
 {
 public:
+    // `analysis`: l'analisi del piano, se è già stata fatta con gli stessi argomenti (si evita di aprire di nuovo i file).
     ExportJob(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,
               const ExportProgress& progress, MuteMethod muteMethod, const ProjectFormat* format,
-              const ReencodeOptions& reencode);
+              const ReencodeOptions& reencode, const PlanAnalysis* analysis = nullptr);
     ExportResult run();
 
 private:
@@ -966,7 +967,7 @@ private:
 
 ExportJob::ExportJob(const std::vector<ClipRanges>& clips, const std::string& outputPath, const AudioEdit& audio,
                      const ExportProgress& progress, MuteMethod muteMethod, const ProjectFormat* format,
-                     const ReencodeOptions& reencode)
+                     const ReencodeOptions& reencode, const PlanAnalysis* analysis)
     : clips_(clips)
     , outputPath_(outputPath)
     , audio_(audio)
@@ -1005,7 +1006,7 @@ ExportJob::ExportJob(const std::vector<ClipRanges>& clips, const std::string& ou
     }
 
     // Che cosa succede a ogni file: si copia (con i suoi parametri nel flusso, se diversi) o si ricodifica.
-    plan_ = analyzePlan(clips_, format, replaced_, reencode_.all, reencode_.closeGaps);
+    plan_ = analysis != nullptr ? *analysis : analyzePlan(clips_, format, replaced_, reencode_.all, reencode_.closeGaps);
     if (!plan_.problem.empty())
         throw ClipsNotJoinable(plan_.problem);
 
@@ -1811,7 +1812,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
     AudioEdit replaced;
     replaced.replacement = AudioReplacement{utf8FromPath(temp.path), 0.0, duration};
     const ExportProgress videoProgress = scaled(kMixShare, 1.0);  // ExportJob tiene un riferimento
-    ExportJob job(clips, outputPath, replaced, videoProgress, muteMethod, format, reencode);
+    ExportJob job(clips, outputPath, replaced, videoProgress, muteMethod, format, reencode, &plan);
     ExportResult result = job.run();
     result.mixedAudioFiles = mixFileCount(spec);
     return result;

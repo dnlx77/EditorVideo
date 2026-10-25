@@ -65,6 +65,7 @@ private:
     std::unique_ptr<Shared> shared_;  // livelli (condivisi con altri thread)
     std::map<int, float> applied_;    // livello arrivato alla fine dell'ultimo blocco, per la rampa
     double end_ = 0.0;
+    std::vector<float> acc_;  // somma del blocco in lavorazione (render)
 };
 
 }  // namespace editor::core

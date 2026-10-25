@@ -310,7 +310,8 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
         targets = shared_->gains;
         envelopes = shared_->envelopes;
     }
-    std::vector<float> acc(frames * 2, 0.0f);
+    std::vector<float>& acc = acc_;  // riusato a ogni blocco: niente allocazioni sul thread audio
+    acc.assign(frames * 2, 0.0f);
     const long long blockEnd = firstFrame + static_cast<long long>(frames);
     for (std::size_t i = 0; i < segments_.size(); ++i) {
         const long long segFirst = first_[i];
