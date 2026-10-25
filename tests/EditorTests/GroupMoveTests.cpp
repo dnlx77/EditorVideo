@@ -3,6 +3,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
+#include <vector>
 
 using namespace editor::core;
 
@@ -146,4 +148,53 @@ TEST(GroupSplitAndRemove, GroupingAGroupWithAnotherObjectMakesOneTotalGroup)
     ASSERT_NE(m.project.groupObjects(chosen), 0);
     EXPECT_EQ(m.project.groupMoverCount({Kind::Piece, m.b}), 3);
     EXPECT_EQ(m.project.groupMoverCount({Kind::AudioClip, m.music}), 3);
+}
+
+TEST(GroupMove, MoveObjectSingleAndGroup)
+{
+    Montage m;
+    // Da solo: come Sequence::moveTo.
+    Project::MoveResult single = m.project.moveObject({Kind::Piece, m.a}, 0, 0.5, false);
+    EXPECT_TRUE(single.moved);
+    EXPECT_FALSE(single.group);
+    EXPECT_NEAR(m.start(m.a), 0.5, 1e-6);
+    EXPECT_NEAR(m.project.freeSpotFor({Kind::Piece, m.a}, 0, 0.25, false), m.project.sequence().nearestFreeStart(m.a, 0.25, false), 1e-9);
+    EXPECT_NEAR(m.project.freeSpotFor({Kind::AudioClip, m.music}, m.track, 3.5, false),
+                m.project.audioTracks().nearestFreePosition(m.music, m.track, 3.5), 1e-9);
+
+    // In gruppo: si muove tutto il gruppo, entro lo spazio libero.
+    ASSERT_NE(m.project.groupObjects({{Kind::Piece, m.b}, {Kind::AudioClip, m.music}}), 0);
+    EXPECT_NEAR(m.project.freeSpotFor({Kind::Piece, m.b}, 0, 9.0, false), 4.0, 1e-6);  // B finisce a 5, C parte a 6
+    const Project::MoveResult group = m.project.moveObject({Kind::AudioClip, m.music}, m.track, 3.5, false);
+    EXPECT_TRUE(group.moved);
+    EXPECT_TRUE(group.group);
+    EXPECT_NEAR(m.start(m.b), 3.5, 1e-6);
+    EXPECT_NEAR(m.clipAt(), 3.5, 1e-6);
+    // Uno spostamento minuscolo non è una modifica.
+    EXPECT_FALSE(m.project.moveObject({Kind::Piece, m.b}, 0, 3.5001, false).moved);
+    // Oggetto che non esiste.
+    EXPECT_FALSE(m.project.moveObject({Kind::Piece, 9999}, 0, 1.0, false).moved);
+    EXPECT_LT(m.project.freeSpotFor({Kind::AudioClip, 9999}, m.track, 1.0, false), 0.0);
+}
+
+// Un montaggio grande con un gruppo: i calcoli fatti a ogni movimento del mouse devono restare rapidi.
+TEST(GroupMove, ManyObjectsStayFast)
+{
+    Project project;
+    const int file = project.add("video.mp4");
+    project.setAnalysis(file, {0.0}, 5000.0);
+    constexpr int kPieces = 500;
+    std::vector<int> pieces;
+    for (int i = 0; i < kPieces; ++i)
+        pieces.push_back(project.sequence().insert(-1, file, i * 2.0, i * 2.0 + 1.0));
+    ASSERT_EQ(static_cast<int>(pieces.size()), kPieces);
+    ASSERT_NE(project.groupObjects({{Kind::Piece, pieces[10]}, {Kind::Piece, pieces[11]}}), 0);
+
+    const auto begin = std::chrono::steady_clock::now();
+    double sum = 0.0;
+    for (int i = 0; i < 20; ++i)
+        sum += project.freeSpotFor({Kind::Piece, pieces[10]}, 0, 20.0 + i * 0.01, true);
+    const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
+    EXPECT_GT(sum, 0.0);
+    EXPECT_LT(seconds / 20.0, 0.05) << "più di 50 ms per un movimento";
 }

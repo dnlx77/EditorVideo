@@ -556,23 +556,7 @@ double SequenceTimeline::trimTarget(double x, bool ripple) const
     const double start = starts_[static_cast<std::size_t>(trimIndex_)];
     const double edge = trimAtStart_ ? start : start + b.length;
     double t = timeForX(x) - trimGrab_;
-    // Aggancio ai bordi a meno di 10 pixel: cursore, inizio della sequenza e bordi degli altri blocchi.
-    std::vector<double> marks{0.0, playhead_};
-    for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
-        if (i != trimIndex_) {
-            marks.push_back(starts_[static_cast<std::size_t>(i)]);
-            marks.push_back(starts_[static_cast<std::size_t>(i)] + blocks_[static_cast<std::size_t>(i)].length);
-        }
-    }
-    double best = 10.0 / zoom().pixelsPerSecond();
-    double snapped = t;
-    for (const double mark : marks) {
-        if (std::abs(t - mark) < best) {
-            best = std::abs(t - mark);
-            snapped = mark;
-        }
-    }
-    t = snapped;
+    t = snapped(t, snapMarks(trimIndex_, 0, true, false), {0.0});
     const double desired = (trimAtStart_ ? b.sourceStart : b.sourceStart + b.length) + (t - edge);
     return trimLimit ? trimLimit(b.fragmentId, trimAtStart_, desired, ripple) : desired;
 }
@@ -632,28 +616,9 @@ double SequenceTimeline::dragTarget(double x) const
         return 0.0;
     const Block& dragged = blocks_[dragIndex_];
     double desired = timeForX(x) - dragGrab_;
-    // Aggancio ai bordi: l'inizio o la fine del blocco, se a meno di 10 pixel da un bordo di un altro blocco o
-    // dall'inizio della sequenza. (Il cursore no: il clic per prendere il blocco lo porta proprio lì.)
-    std::vector<double> edges{0.0};
-    for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
-        if (i != dragIndex_) {
-            edges.push_back(starts_[static_cast<std::size_t>(i)]);
-            edges.push_back(starts_[static_cast<std::size_t>(i)] + blocks_[static_cast<std::size_t>(i)].length);
-        }
-    }
-    const double reach = 10.0 / zoom().pixelsPerSecond();
-    double best = reach;
-    double snapped = desired;
-    for (const double edge : edges) {
-        for (const double offset : {0.0, dragged.length}) {
-            const double distance = std::abs(desired + offset - edge);
-            if (distance < best) {
-                best = distance;
-                snapped = edge - offset;
-            }
-        }
-    }
-    desired = std::max(0.0, snapped);
+    // Aggancio ai bordi: l'inizio o la fine del blocco, a meno di 10 pixel da un bordo di un altro blocco o dall'inizio
+    // della sequenza. (Il cursore no: il clic per prendere il blocco lo porta proprio lì.)
+    desired = std::max(0.0, snapped(desired, snapMarks(dragIndex_, 0, false, false), {0.0, dragged.length}));
     return freeStart ? freeStart(dragged.fragmentId, desired) : desired;
 }
 
@@ -708,22 +673,44 @@ bool SequenceTimeline::event(QEvent* event)
     return ZoomableTimeline::event(event);
 }
 
-std::vector<double> SequenceTimeline::snapMarks(int ignoredClip) const
+std::vector<double> SequenceTimeline::snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio) const
 {
-    std::vector<double> marks{0.0, playhead_};
+    std::vector<double> marks{0.0};
+    if (withCursor)
+        marks.push_back(playhead_);
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
+        if (static_cast<int>(i) == ignoredBlock)
+            continue;
         marks.push_back(starts_[i]);
         marks.push_back(starts_[i] + blocks_[i].length);
     }
-    for (std::size_t l = 0; l < lanes_.size(); ++l) {
-        for (const AudioBlock& c : lanes_[l].clips) {
-            if (c.clipId != ignoredClip) {
-                marks.push_back(c.position);
-                marks.push_back(c.position + c.length);
+    if (withAudio) {
+        for (const AudioLane& lane : lanes_) {
+            for (const AudioBlock& c : lane.clips) {
+                if (c.clipId != ignoredClip) {
+                    marks.push_back(c.position);
+                    marks.push_back(c.position + c.length);
+                }
             }
         }
     }
     return marks;
+}
+
+double SequenceTimeline::snapped(double desired, const std::vector<double>& marks, std::initializer_list<double> offsets) const
+{
+    double best = 10.0 / zoom().pixelsPerSecond();
+    double result = desired;
+    for (const double mark : marks) {
+        for (const double offset : offsets) {
+            const double distance = std::abs(desired + offset - mark);
+            if (distance < best) {
+                best = distance;
+                result = mark - offset;
+            }
+        }
+    }
+    return result;
 }
 
 bool SequenceTimeline::audioClipAt(const QPointF& pos, int& lane, int& clip) const
@@ -778,18 +765,7 @@ double SequenceTimeline::audioDragTarget(double x, int lane) const
         return 0.0;
     double desired = timeForX(x) - audioDragGrab_;
     // Aggancio ai bordi dell'inizio o della fine, a meno di 10 pixel.
-    double best = 10.0 / zoom().pixelsPerSecond();
-    double snapped = desired;
-    for (const double mark : snapMarks(c->clipId)) {
-        for (const double offset : {0.0, c->length}) {
-            const double distance = std::abs(desired + offset - mark);
-            if (distance < best) {
-                best = distance;
-                snapped = mark - offset;
-            }
-        }
-    }
-    desired = std::max(0.0, snapped);
+    desired = std::max(0.0, snapped(desired, snapMarks(-1, c->clipId, true, true), {0.0, c->length}));
     const int track = lanes_[static_cast<std::size_t>(lane)].trackId;
     return audioFreePosition ? audioFreePosition(c->clipId, track, desired) : desired;
 }
@@ -801,15 +777,7 @@ double SequenceTimeline::audioTrimTarget(double x, bool ripple) const
         return 0.0;
     const double edge = audioTrimAtStart_ ? c->position : c->position + c->length;
     double t = timeForX(x) - audioTrimGrab_;
-    double best = 10.0 / zoom().pixelsPerSecond();
-    double snapped = t;
-    for (const double mark : snapMarks(c->clipId)) {
-        if (std::abs(t - mark) < best) {
-            best = std::abs(t - mark);
-            snapped = mark;
-        }
-    }
-    t = snapped;
+    t = snapped(t, snapMarks(-1, c->clipId, true, true), {0.0});
     const double desired = (audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length) + (t - edge);
     return audioTrimLimit ? audioTrimLimit(c->clipId, audioTrimAtStart_, desired, ripple) : desired;
 }

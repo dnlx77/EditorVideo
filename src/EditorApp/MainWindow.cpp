@@ -406,18 +406,10 @@ MainWindow::MainWindow(QWidget* parent)
         showGroupStatus();
     };
     timeline_->groupMembers = [this](SequenceTimeline::Object o) {
-        std::vector<SequenceTimeline::Object> out;
-        for (const core::ObjectRef& r : project_.groupMembers({static_cast<core::ObjectRef::Kind>(o.kind), o.id}))
-            out.push_back({static_cast<SequenceTimeline::Object::Kind>(r.kind), r.id});
-        return out;
+        return project_.groupMembers(o);
     };
     timeline_->freeStart = [this](int fragmentId, double desired) {
-        const core::ObjectRef piece{core::ObjectRef::Kind::Piece, fragmentId};
-        if (project_.groupMoverCount(piece) > 1) {
-            const double now = project_.sequence().startOf(project_.sequence().indexOf(fragmentId));
-            return now + project_.clampGroupDelta(piece, desired - now, pushPieces_);
-        }
-        return project_.sequence().nearestFreeStart(fragmentId, desired, pushPieces_);
+        return project_.freeSpotFor({core::ObjectRef::Kind::Piece, fragmentId}, 0, desired, pushPieces_);
     };
     timeline_->onMoveTo = [this](int fragmentId, double start) { moveFragment(fragmentId, start); };
     // Bordi dei pezzi (step 16): a passi di un fotogramma dal bordo di partenza, dentro il file, lunghi almeno un
@@ -508,12 +500,7 @@ MainWindow::MainWindow(QWidget* parent)
         showGroupStatus();
     };
     timeline_->audioFreePosition = [this](int clipId, int trackId, double desired) {
-        const core::ObjectRef clip{core::ObjectRef::Kind::AudioClip, clipId};
-        if (project_.groupMoverCount(clip) > 1) {
-            const core::AudioClip* c = project_.audioTracks().find(clipId);
-            return c->position + project_.clampGroupDelta(clip, desired - c->position, pushPieces_);
-        }
-        return project_.audioTracks().nearestFreePosition(clipId, trackId, desired);
+        return project_.freeSpotFor({core::ObjectRef::Kind::AudioClip, clipId}, trackId, desired, pushPieces_);
     };
     timeline_->onAudioClipMoveTo = [this](int clipId, int trackId, double position) { moveAudioClip(clipId, trackId, position); };
     timeline_->audioTrimLimit = [this](int clipId, bool atStart, double desired, bool ripple) {
@@ -1471,18 +1458,11 @@ bool MainWindow::moveAudioClip(int clipId, int trackId, double position)
     if (audio.find(clipId) == nullptr)
         return false;
     const core::Project before = project_;
-    const core::ObjectRef clip{core::ObjectRef::Kind::AudioClip, clipId};
-    if (project_.groupMoverCount(clip) > 1) {
-        // Nel gruppo si muove tutto insieme, ognuno sulla sua traccia.
-        const double delta = project_.clampGroupDelta(clip, position - audio.find(clipId)->position, pushPieces_);
-        if (std::abs(delta) < 0.0005 || !project_.moveGroup(clip, delta, pushPieces_))
-            return false;
-        recordEdit(QStringLiteral("Sposta gruppo"), before);
-        return true;
-    }
-    if (!audio.moveTo(clipId, trackId, position))
+    const core::Project::MoveResult moved =
+        project_.moveObject({core::ObjectRef::Kind::AudioClip, clipId}, trackId, position, pushPieces_);
+    if (!moved.moved)
         return false;
-    recordEdit(QStringLiteral("Sposta clip audio"), before);
+    recordEdit(moved.group ? QStringLiteral("Sposta gruppo") : QStringLiteral("Sposta clip audio"), before);
     return true;
 }
 
@@ -1499,18 +1479,10 @@ bool MainWindow::trimAudioClip(int clipId, bool atStart, double value, bool ripp
 void MainWindow::moveFragment(int fragmentId, double start)
 {
     const core::Project before = project_;
-    const core::ObjectRef piece{core::ObjectRef::Kind::Piece, fragmentId};
-    if (project_.groupMoverCount(piece) > 1) {
-        const double now = project_.sequence().startOf(project_.sequence().indexOf(fragmentId));
-        const double delta = project_.clampGroupDelta(piece, start - now, pushPieces_);
-        if (std::abs(delta) < 0.0005 || !project_.moveGroup(piece, delta, pushPieces_))
-            return;
-        recordEdit(QStringLiteral("Sposta gruppo"), before);
-        return;
-    }
-    if (!project_.sequence().moveTo(fragmentId, start, nullptr, pushPieces_))
-        return;
-    recordEdit(QStringLiteral("Sposta pezzo"), before);
+    const core::Project::MoveResult moved =
+        project_.moveObject({core::ObjectRef::Kind::Piece, fragmentId}, 0, start, pushPieces_);
+    if (moved.moved)
+        recordEdit(moved.group ? QStringLiteral("Sposta gruppo") : QStringLiteral("Sposta pezzo"), before);
 }
 
 void MainWindow::setTrackMuted(int trackId, bool muted)
@@ -1563,10 +1535,7 @@ void MainWindow::relinkAudio()
 
 std::vector<core::ObjectRef> MainWindow::selectedRefs() const
 {
-    std::vector<core::ObjectRef> refs;
-    for (const SequenceTimeline::Object& o : timeline_->allSelectedObjects())
-        refs.push_back({static_cast<core::ObjectRef::Kind>(o.kind), o.id});
-    return refs;
+    return timeline_->allSelectedObjects();
 }
 
 void MainWindow::groupSelection()
