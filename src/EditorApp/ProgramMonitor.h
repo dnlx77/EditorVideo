@@ -1,12 +1,14 @@
 #pragma once
 
 #include "EditorApp/SequenceAudio.h"
+#include "EditorApp/TextOverlay.h"
 
 #include <QtCore/QElapsedTimer>
 #include <QtWidgets/QWidget>
 
 #include <functional>
 #include <optional>
+#include <vector>
 
 class QLabel;
 class QTimer;
@@ -58,6 +60,9 @@ public:
     int currentIndex() const { return index_; }  // pezzo mostrato (-1 = sequenza vuota o spazio vuoto)
     bool inGap() const { return gapIndex_ >= 0; }  // in uno spazio vuoto
     int currentClipId() const;  // file del pezzo mostrato (0 = nessuno)
+    // Le scritte che si vedono ora sopra l'immagine (nessuna mentre si mostra un fotogramma di un file con showSourceFrame).
+    std::vector<core::TextClip> visibleText() const;
+    const TextOverlay& textOverlay() const { return overlay_; }
 
     // Proxy (vedi PlayerWidget::videoSourceFor e reloadVideo) e menu della qualità dell'anteprima.
     void setVideoSource(std::function<QString(const QString& path)> source);
@@ -92,8 +97,13 @@ private:
     void fragmentEnded();
     void updatePosition();
     void updateLabels();
+    void updateOverlayFrame();  // dice al lettore come disegnare le scritte
+    void updateTextOverlay();  // ridisegna le scritte se quelle visibili sono cambiate
 
     const core::Project& project_;
+    TextOverlay overlay_;
+    std::vector<core::TextClip> shownText_;  // le scritte disegnate l'ultima volta
+    bool showingSource_ = false;             // si mostra un fotogramma di un file, non il montaggio
     PlayerWidget* player_ = nullptr;
     SequenceAudio sequenceAudio_;
     TransportBar* transport_ = nullptr;

@@ -54,6 +54,7 @@
     <ClInclude Include="ProxyManager.h" />
     <ClInclude Include="QtTextRenderer.h" />
     <ClInclude Include="TextEditorDialog.h" />
+    <ClInclude Include="TextOverlay.h" />
     <ClInclude Include="SelfTests.h" />
     <ClInclude Include="SequenceAudio.h" />
     <ClInclude Include="SequenceTimeline.h" />
@@ -79,6 +80,7 @@
     <ClCompile Include="ProxyManager.cpp" />
     <ClCompile Include="QtTextRenderer.cpp" />
     <ClCompile Include="TextEditorDialog.cpp" />
+    <ClCompile Include="TextOverlay.cpp" />
     <ClCompile Include="TextSelfTest.cpp" />
     <ClCompile Include="SelfTests.cpp" />
     <ClCompile Include="SequenceAudio.cpp" />

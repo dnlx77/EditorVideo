@@ -74,6 +74,15 @@ public:
     // Dimensione dell'area in pixel fisici (con lo zoom di Windows applicato).
     QSize pixelSize() const { return (QSizeF(size()) * devicePixelRatioF()).toSize(); }
 
+    // Disegna qualcosa sopra l'immagine (le scritte): riceve il rettangolo dove sta il fotogramma. Nello spazio vuoto
+    // (nero) il rettangolo ha le proporzioni di `blankSize`.
+    void setOverlay(std::function<void(QPainter&, const QRectF&)> overlay, QSize blankSize)
+    {
+        overlay_ = std::move(overlay);
+        blankSize_ = blankSize;
+        update();
+    }
+
     std::function<void()> onResized;
     std::function<void()> onDoubleClicked;
 
@@ -95,8 +104,13 @@ protected:
     {
         QPainter painter(this);
         painter.fillRect(rect(), Qt::black);
-        if (blank_)
+        if (blank_) {
+            if (overlay_ && blankSize_.width() > 0 && blankSize_.height() > 0) {
+                const QSizeF fitted = QSizeF(blankSize_).scaled(QSizeF(size()), Qt::KeepAspectRatio);
+                overlay_(painter, QRectF(QPointF((width() - fitted.width()) / 2, (height() - fitted.height()) / 2), fitted));
+            }
             return;
+        }
         if (frame_) {
             // Di solito il decoder produce già fotogrammi della misura giusta e il disegno è 1:1, senza scalare.
             // Subito dopo un ridimensionamento della finestra può arrivare ancora qualche fotogramma della misura
@@ -111,6 +125,8 @@ protected:
             const QSizeF drawn = exact ? logical : fitted;
             const QRectF target(QPointF((width() - drawn.width()) / 2, (height() - drawn.height()) / 2), drawn);
             painter.drawImage(target, image);
+            if (overlay_)
+                overlay_(painter, target);
         } else if (!message_.isEmpty()) {
             painter.setPen(QColor(200, 200, 200));
             painter.drawText(rect().adjusted(20, 20, -20, -20), Qt::AlignCenter | Qt::TextWordWrap, message_);
@@ -121,6 +137,8 @@ private:
     std::shared_ptr<core::VideoFrame> frame_;
     QString message_;
     bool blank_ = false;
+    std::function<void(QPainter&, const QRectF&)> overlay_;
+    QSize blankSize_;
 };
 
 PlayerWidget::PlayerWidget(QWidget* parent)
@@ -380,6 +398,16 @@ void PlayerWidget::setAudioNote(const QString& note)
 void PlayerWidget::setBlank(bool blank)
 {
     view_->setBlank(blank);
+}
+
+void PlayerWidget::setOverlay(std::function<void(QPainter&, const QRectF&)> overlay, QSize blankSize)
+{
+    view_->setOverlay(std::move(overlay), blankSize);
+}
+
+void PlayerWidget::updateOverlay()
+{
+    view_->update();
 }
 
 void PlayerWidget::closeFile()

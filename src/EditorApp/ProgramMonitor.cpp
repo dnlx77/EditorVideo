@@ -9,6 +9,7 @@
 
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
+#include <QtGui/QPainter>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QVBoxLayout>
@@ -22,6 +23,7 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     , project_(project)
 {
     player_ = new PlayerWidget;
+    updateOverlayFrame();
     player_->setChromeVisible(false);
     player_->setAudioEnabled(false);  // l'audio del montaggio lo suona il mixer della sequenza (SequenceAudio)
     player_->onVideoDoubleClicked = [this] {
@@ -138,6 +140,37 @@ void ProgramMonitor::load(int index, double offset)
     player_->seekTo(f.start + std::clamp(offset, 0.0, f.length()));
 }
 
+std::vector<core::TextClip> ProgramMonitor::visibleText() const
+{
+    std::vector<core::TextClip> clips;
+    if (showingSource_)
+        return clips;
+    for (const core::TextClip* clip : project_.textTracks().visibleAt(position_))
+        clips.push_back(*clip);
+    return clips;
+}
+
+void ProgramMonitor::updateTextOverlay()
+{
+    std::vector<core::TextClip> now = visibleText();
+    if (now == shownText_)
+        return;
+    shownText_ = std::move(now);
+    player_->updateOverlay();
+}
+
+void ProgramMonitor::updateOverlayFrame()
+{
+    // Le proporzioni del fotogramma del progetto (per lo spazio vuoto nero); senza formato, 16:9.
+    const core::StreamSignature* video = project_.format().video();
+    const QSize frame = video != nullptr && video->width > 0 && video->height > 0 ? QSize(video->width, video->height) : QSize(16, 9);
+    player_->setOverlay(
+        [this](QPainter& painter, const QRectF& target) {
+            overlay_.paint(painter, target, painter.device()->devicePixelRatioF(), shownText_);
+        },
+        frame);
+}
+
 int ProgramMonitor::currentClipId() const
 {
     const auto& fragments = project_.sequence().fragments();
@@ -158,6 +191,8 @@ void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QStrin
     }
     gapIndex_ = -1;
     index_ = -1;  // nessun pezzo: il prossimo seekTo riapre quello giusto
+    showingSource_ = true;
+    updateTextOverlay();
     player_->setBlank(false);
     if (clipId != loadedClipId_) {
         player_->openFile(QString::fromStdString(clip->path));
@@ -169,6 +204,7 @@ void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QStrin
 
 void ProgramMonitor::seekTo(double seconds)
 {
+    showingSource_ = false;
     const core::Sequence& sequence = project_.sequence();
     if (sequence.empty())
         return;
@@ -465,6 +501,8 @@ void ProgramMonitor::reachedEdge()
 
 void ProgramMonitor::sequenceChanged()
 {
+    showingSource_ = false;
+    updateOverlayFrame();
     const core::Sequence& sequence = project_.sequence();
     if (playing_) {
         player_->pause();
@@ -517,6 +555,7 @@ void ProgramMonitor::updatePosition()
         position_ = sequence.startOf(index_) + std::clamp(player_->currentPosition() - f.start, 0.0, f.length());
     }
     updateLabels();
+    updateTextOverlay();
     if (onPositionChanged)
         onPositionChanged(position_);
     if (onCacheRangeChanged) {
