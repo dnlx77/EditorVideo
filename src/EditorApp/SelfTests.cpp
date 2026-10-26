@@ -1749,6 +1749,99 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 std::fflush(stdout);
                 ok = ok && added && placed && dragged && trimmed && split && deleted && mix && removed && undone;
             }
+            // Scritte (step T3): T mette una scritta al cursore, S la divide, Canc toglie la seconda parte; la prima si
+            // trascina col mouse su un altro livello e si accorcia dal bordo; Ctrl+clic la mette in un gruppo con un'altra;
+            // il livello si toglie; Annulla riporta tutto com'era.
+            {
+                auto* line = window->sequenceTimeline();
+                const core::TextTracks& text = window->project().textTracks();
+                window->programMonitor()->seekTo(0.0);
+                const int first = window->addTextClip();
+                const bool added = first != 0 && text.layers().size() == 1 && line->textLanes().size() == 1
+                                && line->selectedTextClip() == first && std::abs(text.find(first)->length - 5.0) < 1e-6;
+                // Divisa dentro la scritta e (come per le clip audio) con il cursore dove arriva il montaggio.
+                const double middle = std::clamp(std::min(window->project().sequence().totalLength(), 4.0) / 2, 0.3, 2.0);
+                window->programMonitor()->seekTo(middle);
+                QElapsedTimer seeking;
+                seeking.start();
+                while (std::abs(window->programMonitor()->position() - middle) > 0.1 && seeking.elapsed() < 3000)
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                const double splitAt = window->programMonitor()->position();
+                line->setSelectedTextClip(first);
+                window->splitAtPlayhead();
+                const bool split = added && text.layers()[0].clips.size() == 2
+                                && std::abs(text.find(first)->length - splitAt) < 1e-6;
+                if (split)
+                    line->setSelectedTextClip(text.layers()[0].clips[1].id);
+                window->deleteSelection();
+                const bool deleted = split && text.layers()[0].clips.size() == 1;
+                // Un secondo livello e la scritta trascinata lì, 0,5 s più avanti.
+                const int second = window->addTextLayer();
+                line->fitAll();
+                QCoreApplication::processEvents();
+                const double pixelsPerSecond = line->xForSequenceTime(1.0) - line->xForSequenceTime(0.0);
+                const double length = deleted ? text.find(first)->length : 0.0;
+                const double x0 = line->xForSequenceTime(length / 2);
+                const double x1 = x0 + 0.5 * pixelsPerSecond;
+                const auto mouse = [&](QEvent::Type type, double x, double y, Qt::MouseButtons buttons,
+                                       Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+                    QMouseEvent e(type, QPointF(x, y), line->mapToGlobal(QPointF(x, y)),
+                                  type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, modifiers);
+                    QCoreApplication::sendEvent(line, &e);
+                };
+                const bool lanes = line->textLanes().size() == 2 && line->textLaneCenter(1) < line->textLaneCenter(0)
+                                && line->textLaneCenter(0) < line->videoLaneCenter();
+                mouse(QEvent::MouseButtonPress, x0, line->textLaneCenter(0), Qt::LeftButton);
+                mouse(QEvent::MouseMove, (x0 + x1) / 2, line->textLaneCenter(1), Qt::LeftButton);
+                mouse(QEvent::MouseMove, x1, line->textLaneCenter(1), Qt::LeftButton);
+                mouse(QEvent::MouseButtonRelease, x1, line->textLaneCenter(1), Qt::NoButton);
+                QCoreApplication::processEvents();
+                const core::TextClip* moved = deleted ? text.find(first) : nullptr;
+                const bool dragged = moved != nullptr && text.layerOf(first) == second && std::abs(moved->position - 0.5) < 0.2;
+                // La fine accorciata con il mouse dal bordo destro.
+                const double end = moved != nullptr ? moved->endPosition() : 0.0;
+                const double shorten = std::min(0.2, length / 3);
+                const double xEnd = line->xForSequenceTime(end);
+                const double y1 = line->textLaneCenter(1);
+                mouse(QEvent::MouseButtonPress, xEnd - 1, y1, Qt::LeftButton);
+                mouse(QEvent::MouseMove, xEnd - 1 - shorten * pixelsPerSecond, y1, Qt::LeftButton);
+                mouse(QEvent::MouseButtonRelease, xEnd - 1 - shorten * pixelsPerSecond, y1, Qt::NoButton);
+                QCoreApplication::processEvents();
+                const bool trimmed = moved != nullptr && text.find(first) != nullptr && text.find(first)->endPosition() < end - 0.05;
+                // Una seconda scritta sul primo livello, e le due in gruppo con Ctrl+clic e G: si muovono insieme.
+                window->programMonitor()->seekTo(0.0);
+                line->setSelectedTextLayer(text.layers()[0].id);
+                const int third = deleted ? window->addTextClip() : 0;
+                const bool placed = third != 0 && text.layerOf(third) == text.layers()[0].id;
+                mouse(QEvent::MouseButtonPress, line->xForSequenceTime(text.find(third) != nullptr ? text.find(third)->position + 0.5 : 0.0),
+                      line->textLaneCenter(0), Qt::LeftButton);
+                mouse(QEvent::MouseButtonRelease, line->xForSequenceTime(text.find(third) != nullptr ? text.find(third)->position + 0.5 : 0.0),
+                      line->textLaneCenter(0), Qt::NoButton);
+                mouse(QEvent::MouseButtonPress, line->xForSequenceTime(moved != nullptr && text.find(first) != nullptr ? text.find(first)->position + 0.1 : 0.0),
+                      line->textLaneCenter(1), Qt::LeftButton, Qt::ControlModifier);
+                mouse(QEvent::MouseButtonRelease, line->xForSequenceTime(moved != nullptr && text.find(first) != nullptr ? text.find(first)->position + 0.1 : 0.0),
+                      line->textLaneCenter(1), Qt::NoButton, Qt::ControlModifier);
+                const bool multi = line->selectedObjects().size() == 2;
+                window->groupSelection();
+                const bool grouped = placed && window->project().groupMembers({core::ObjectRef::Kind::TextClip, third}).size() == 2;
+                // Il livello scelto si toglie con le sue scritte.
+                const int layersBefore = static_cast<int>(text.layers().size());
+                line->setSelectedTextLayer(second);
+                window->removeSelectedTextLayer();
+                const bool removed = layersBefore == 2 && text.layers().size() == 1 && text.find(first) == nullptr;
+                // Annulla tutto: i livelli e le scritte spariscono.
+                bool undone = true;
+                for (int i = 0; i < 16 && !text.layers().empty(); ++i)
+                    undone = window->undo() && undone;
+                undone = undone && text.layers().empty() && line->textLanes().empty();
+                std::printf("Scritte: aggiunta %s, divisa %s, tolta con Canc %s, due livelli %s, trascinata sull'altro livello %s, "
+                            "accorciata %s, Ctrl+clic e gruppo %s, livello tolto %s, annulla %s\n",
+                            added ? "sì" : "NO", split ? "sì" : "NO", deleted ? "sì" : "NO", lanes ? "sì" : "NO",
+                            dragged ? "sì" : "NO", trimmed ? "sì" : "NO", multi && grouped ? "sì" : "NO", removed ? "sì" : "NO",
+                            undone ? "sì" : "NO");
+                std::fflush(stdout);
+                ok = ok && added && split && deleted && lanes && dragged && trimmed && multi && grouped && removed && undone;
+            }
             // Mix e file solo audio (step 19): un file solo audio non va mai nella traccia video (né rilasciato né con A),
             // e livello, muto e solo si cambiano suonando senza fermare l'anteprima.
             {

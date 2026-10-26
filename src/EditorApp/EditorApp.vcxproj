@@ -72,6 +72,7 @@
     <ClCompile Include="MainWindowDock.cpp" />
     <ClCompile Include="MainWindowExport.cpp" />
     <ClCompile Include="MainWindowProject.cpp" />
+    <ClCompile Include="MainWindowText.cpp" />
     <ClCompile Include="PlayerWidget.cpp" />
     <ClCompile Include="ProgramMonitor.cpp" />
     <ClCompile Include="ProxyManager.cpp" />

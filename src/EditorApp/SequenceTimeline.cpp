@@ -57,6 +57,8 @@ SequenceTimeline::SequenceTimeline(QWidget* parent)
                               "Canc: togli il pezzo o chiudi lo spazio vuoto selezionato · S: dividi al cursore\n"
                               "Audio: sulle tracce aggiunte trascina lo sfondo per selezionare un tratto · trascina le clip (anche su un'altra traccia), "
                               "i bordi le accorciano, S divide, Canc toglie la clip o il tratto selezionato\n"
+                              "Scritte: sopra il video, i livelli T1, T2... (T mette una scritta al cursore) · trascina le scritte (anche su un altro livello), "
+                              "i bordi le accorciano, S divide, Canc toglie\n"
                               "Ctrl+rotellina (o + e -): ingrandisci e riduci · rotellina: scorri"));
 
     // In alto a sinistra: aggiungi e togli una traccia audio.
@@ -84,13 +86,14 @@ SequenceTimeline::SequenceTimeline(QWidget* parent)
 
 QSize SequenceTimeline::sizeHint() const
 {
-    const int extra = static_cast<int>(lanes_.size() - 1) * static_cast<int>(kAudioLaneHeight);
+    const int extra = static_cast<int>(lanes_.size() - 1) * static_cast<int>(kAudioLaneHeight) + static_cast<int>(textBand());
     return {800, 132 + kRulerHeight + kControlsHeight + extra};
 }
 
 QSize SequenceTimeline::minimumSizeHint() const
 {
-    return {100 + static_cast<int>(kHeaderWidth), 48 + kRulerHeight + kControlsHeight + static_cast<int>(lanes_.size() - 1) * 18};
+    return {100 + static_cast<int>(kHeaderWidth),
+            48 + kRulerHeight + kControlsHeight + static_cast<int>(lanes_.size() - 1) * 18 + static_cast<int>(textBand())};
 }
 
 void SequenceTimeline::syncTrackButtons()
@@ -113,6 +116,10 @@ void SequenceTimeline::updateDuration()
         for (const AudioBlock& c : lanes_[i].clips)
             end = std::max(end, c.position + c.length);
     }
+    for (const TextLane& lane : textLanes_) {
+        for (const TextBlock& c : lane.clips)
+            end = std::max(end, c.position + c.length);
+    }
     // Dopo la fine resta sempre un po' di posto (anche con "Adatta"), per poter trascinare più avanti.
     setTimelineDuration(end <= 0 ? 0.0 : end + std::max(2.0, end * 0.15));
 }
@@ -132,7 +139,7 @@ void SequenceTimeline::setBlocks(std::vector<Block> blocks)
     if (std::none_of(blocks_.begin(), blocks_.end(), [this](const Block& b) { return b.fragmentId == selectedGap_ && b.gap > 0; }))
         selectedGap_ = 0;
     std::erase_if(multi_, [this](const Object& o) {
-        return o.kind != Object::Kind::AudioClip
+        return (o.kind == Object::Kind::Piece || o.kind == Object::Kind::PieceAudio)
                && std::none_of(blocks_.begin(), blocks_.end(), [&](const Block& b) { return b.fragmentId == o.id; });
     });
     if (multi_.size() < 2)
@@ -185,6 +192,7 @@ void SequenceTimeline::setSelected(int fragmentId)
     if (fragmentId != 0) {
         selectedGap_ = 0;
         selectedAudioClip_ = 0;
+        clearTextSelection();
         selectedTrack_ = -1;  // la traccia scelta è quella video
         syncTrackButtons();
     }
@@ -199,6 +207,7 @@ void SequenceTimeline::setSelectedGap(int fragmentId)
     if (fragmentId != 0) {
         selected_ = 0;
         selectedAudioClip_ = 0;
+        clearTextSelection();
         selectedTrack_ = -1;
         syncTrackButtons();
     }
@@ -266,6 +275,7 @@ void SequenceTimeline::setAudioSelection(double from, double to, int trackId)
     if (to > from && trackId >= 0 && std::any_of(lanes_.begin(), lanes_.end(), [trackId](const AudioLane& l) { return l.trackId == trackId; })) {
         selected_ = 0;
         selectedGap_ = 0;
+        clearTextSelection();
         selectedTrack_ = trackId;  // la traccia del tratto scelto è quella evidenziata
         syncTrackButtons();
     }
@@ -279,6 +289,7 @@ void SequenceTimeline::setSelectedAudioClip(int clipId)
     if (clipId != 0) {
         selected_ = 0;
         selectedGap_ = 0;
+        clearTextSelection();
         int lane = -1;
         if (findAudioClip(clipId, &lane) != nullptr)
             selectedTrack_ = lanes_[static_cast<std::size_t>(lane)].trackId;
@@ -296,6 +307,8 @@ std::vector<SequenceTimeline::Object> SequenceTimeline::allSelectedObjects() con
         one.push_back({Object::Kind::Piece, selected_});
     if (selectedAudioClip_ != 0)
         one.push_back({Object::Kind::AudioClip, selectedAudioClip_});
+    if (selectedTextClip_ != 0)
+        one.push_back({Object::Kind::TextClip, selectedTextClip_});
     return one;
 }
 
@@ -303,7 +316,8 @@ bool SequenceTimeline::isSelected(Object::Kind kind, int id) const
 {
     if (!multi_.empty())
         return std::find(multi_.begin(), multi_.end(), Object{kind, id}) != multi_.end();
-    return (kind == Object::Kind::Piece && id == selected_) || (kind == Object::Kind::AudioClip && id == selectedAudioClip_);
+    return (kind == Object::Kind::Piece && id == selected_) || (kind == Object::Kind::AudioClip && id == selectedAudioClip_)
+           || (kind == Object::Kind::TextClip && id == selectedTextClip_);
 }
 
 bool SequenceTimeline::isMate(Object::Kind kind, int id) const
@@ -323,7 +337,13 @@ bool SequenceTimeline::ctrlPress(const QPointF& pos)
         return blocks_[static_cast<std::size_t>(index)].fragmentId;
     };
     Object target;
-    if (const int lane = laneAt(pos.y()); lane >= 0) {
+    if (const int textLane = textLaneAt(pos.y()); textLane >= 0) {
+        int clipLane = 0;
+        int clip = 0;
+        if (!textClipAt(pos, clipLane, clip))
+            return false;
+        target = {Object::Kind::TextClip, textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)].clipId};
+    } else if (const int lane = laneAt(pos.y()); lane >= 0) {
         int clipLane = 0;
         int clip = 0;
         if (audioClipAt(pos, clipLane, clip)) {
@@ -351,6 +371,8 @@ bool SequenceTimeline::ctrlPress(const QPointF& pos)
     multi_ = set.size() >= 2 ? set : std::vector<Object>{};
     selected_ = primary.kind == Object::Kind::Piece ? primary.id : 0;
     selectedAudioClip_ = primary.kind == Object::Kind::AudioClip ? primary.id : 0;
+    selectedTextClip_ = primary.kind == Object::Kind::TextClip ? primary.id : 0;
+    selectedTextLayer_ = 0;
     selectedGap_ = 0;
     selectedTrack_ = -1;
     syncTrackButtons();
@@ -358,6 +380,8 @@ bool SequenceTimeline::ctrlPress(const QPointF& pos)
         onSelect(selected_);
     if (onAudioClipSelected)
         onAudioClipSelected(selectedAudioClip_);
+    if (onTextClipSelected)
+        onTextClipSelected(selectedTextClip_);
     if (onMultiSelection)
         onMultiSelection();
     invalidate();
@@ -370,6 +394,7 @@ void SequenceTimeline::setSelectedTrack(int trackId)
     if (trackId >= 0) {
         selected_ = 0;  // una sola traccia è quella scelta: o video o audio
         selectedGap_ = 0;
+        clearTextSelection();
     }
     syncTrackButtons();
     invalidate();
@@ -393,7 +418,7 @@ double SequenceTimeline::videoHeight() const
 {
     // La corsia video fino a kVideoHeight; le corsie audio si dividono il resto.
     const double n = static_cast<double>(lanes_.size());
-    const double lanes = height() - kRulerHeight - kTop - 6 - kControlsHeight - n * kLaneGap;
+    const double lanes = height() - kRulerHeight - kTop - 6 - kControlsHeight - n * kLaneGap - textBand();
     return std::clamp(lanes / (n + 1) * 1.2, 18.0, kVideoHeight);
 }
 
@@ -409,7 +434,7 @@ bool SequenceTimeline::audioLaneSelected(int index) const
 
 QRectF SequenceTimeline::videoLane() const
 {
-    return QRectF(6 + kHeaderWidth, kRulerHeight + kTop, std::max(1.0, width() - 12 - kHeaderWidth), videoHeight());
+    return QRectF(6 + kHeaderWidth, lanesTop() + textBand(), std::max(1.0, width() - 12 - kHeaderWidth), videoHeight());
 }
 
 QRectF SequenceTimeline::audioLane(int index) const
@@ -617,6 +642,13 @@ bool SequenceTimeline::event(QEvent* event)
             if (!note.isEmpty() && rects[static_cast<std::size_t>(index)].contains(pos))
                 return show(QStringLiteral("%1\n%2").arg(b.label, note));
         }
+        if (int textLaneIndex = 0, textClip = 0; textClipAt(pos, textLaneIndex, textClip)) {
+            const TextBlock& c = textLanes_[static_cast<std::size_t>(textLaneIndex)].clips[static_cast<std::size_t>(textClip)];
+            return show(QStringLiteral("%1\nNel montaggio da %2 a %3 (%4)")
+                            .arg(c.label, QString::fromStdString(core::formatDuration(c.position)),
+                                 QString::fromStdString(core::formatDuration(c.position + c.length)),
+                                 QString::fromStdString(core::formatDuration(c.length))));
+        }
         if (const int l = laneAt(pos.y()); l >= 0) {
             const AudioLane& a = lanes_[static_cast<std::size_t>(l)];
             if (muteBox(l).contains(pos))
@@ -645,7 +677,173 @@ bool SequenceTimeline::event(QEvent* event)
     return ZoomableTimeline::event(event);
 }
 
-std::vector<double> SequenceTimeline::snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio) const
+double SequenceTimeline::textBand() const
+{
+    return textLanes_.empty() ? 0.0 : static_cast<double>(textLanes_.size()) * (kTextLaneHeight + kLaneGap);
+}
+
+QRectF SequenceTimeline::textLane(int layerIndex) const
+{
+    // Il livello più alto sta più in alto: il primo (T1) è subito sopra la corsia video.
+    const int row = static_cast<int>(textLanes_.size()) - 1 - layerIndex;
+    return QRectF(6 + kHeaderWidth, lanesTop() + row * (kTextLaneHeight + kLaneGap), std::max(1.0, width() - 12 - kHeaderWidth),
+                  kTextLaneHeight);
+}
+
+int SequenceTimeline::textLaneAt(double y) const
+{
+    for (int i = 0; i < static_cast<int>(textLanes_.size()); ++i) {
+        const QRectF lane = textLane(i);
+        if (y >= lane.top() - kLaneGap / 2 && y < lane.bottom() + kLaneGap / 2)
+            return i;
+    }
+    return -1;
+}
+
+bool SequenceTimeline::textClipAt(const QPointF& pos, int& lane, int& clip) const
+{
+    lane = textLaneAt(pos.y());
+    if (lane < 0 || pos.x() < videoLane().left())
+        return false;
+    const double t = timeForX(pos.x());
+    const auto& clips = textLanes_[static_cast<std::size_t>(lane)].clips;
+    for (std::size_t i = 0; i < clips.size(); ++i) {
+        if (t >= clips[i].position && t < clips[i].position + clips[i].length) {
+            clip = static_cast<int>(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SequenceTimeline::textEdgeAt(const QPointF& pos, int& lane, int& clip, bool& atStart) const
+{
+    lane = textLaneAt(pos.y());
+    if (lane < 0 || pos.x() < videoLane().left())
+        return false;
+    constexpr double kReach = 5.0;  // pixel
+    double bestDistance = kReach + 1;
+    bool found = false;
+    const auto& clips = textLanes_[static_cast<std::size_t>(lane)].clips;
+    for (std::size_t i = 0; i < clips.size(); ++i) {
+        const double left = xForTime(clips[i].position);
+        const double right = xForTime(clips[i].position + clips[i].length);
+        if (right - left < 12)
+            continue;  // scritta troppo stretta: si prende per spostarla
+        for (const bool start : {true, false}) {
+            const double edge = start ? left : right;
+            const double distance = std::abs(pos.x() - edge);
+            const bool inside = start ? pos.x() >= edge : pos.x() <= edge;
+            if (distance <= kReach && (distance < bestDistance || (distance == bestDistance && inside))) {
+                clip = static_cast<int>(i);
+                atStart = start;
+                bestDistance = distance;
+                found = true;
+            }
+        }
+    }
+    return found;
+}
+
+const SequenceTimeline::TextBlock* SequenceTimeline::findTextClip(int clipId, int* lane) const
+{
+    for (std::size_t i = 0; i < textLanes_.size(); ++i) {
+        for (const TextBlock& c : textLanes_[i].clips) {
+            if (c.clipId == clipId) {
+                if (lane != nullptr)
+                    *lane = static_cast<int>(i);
+                return &c;
+            }
+        }
+    }
+    return nullptr;
+}
+
+double SequenceTimeline::textDragTarget(double x, int lane) const
+{
+    const TextBlock* c = findTextClip(textDragClip_);
+    if (c == nullptr || lane < 0)
+        return 0.0;
+    double desired = timeForX(x) - textDragGrab_;
+    desired = std::max(0.0, snapped(desired, snapMarks(-1, 0, true, true, c->clipId), {0.0, c->length}));
+    const int layer = textLanes_[static_cast<std::size_t>(lane)].layerId;
+    return textFreePosition ? textFreePosition(c->clipId, layer, desired) : desired;
+}
+
+double SequenceTimeline::textTrimTarget(double x) const
+{
+    const TextBlock* c = findTextClip(textTrimClip_);
+    if (c == nullptr)
+        return 0.0;
+    double t = timeForX(x) - textTrimGrab_;
+    t = snapped(t, snapMarks(-1, 0, true, true, c->clipId), {0.0});
+    return textTrimLimit ? textTrimLimit(c->clipId, textTrimAtStart_, t) : t;
+}
+
+void SequenceTimeline::clearTextSelection()
+{
+    selectedTextClip_ = 0;
+    selectedTextLayer_ = 0;
+}
+
+void SequenceTimeline::setSelectedTextClip(int clipId)
+{
+    multi_.clear();
+    selectedTextClip_ = clipId;
+    if (clipId != 0) {
+        selected_ = 0;
+        selectedGap_ = 0;
+        selectedAudioClip_ = 0;
+        selectedTrack_ = -1;
+        int lane = -1;
+        selectedTextLayer_ = findTextClip(clipId, &lane) != nullptr ? textLanes_[static_cast<std::size_t>(lane)].layerId : 0;
+        syncTrackButtons();
+    }
+    invalidate();
+}
+
+void SequenceTimeline::setSelectedTextLayer(int layerId)
+{
+    selectedTextLayer_ = layerId;
+    if (layerId != 0) {
+        multi_.clear();
+        selected_ = 0;
+        selectedGap_ = 0;
+        selectedAudioClip_ = 0;
+        selectedTextClip_ = 0;
+        selectedTrack_ = -1;
+        syncTrackButtons();
+    }
+    invalidate();
+}
+
+void SequenceTimeline::setTextLanes(std::vector<TextLane> lanes)
+{
+    const bool resized = lanes.size() != textLanes_.size();
+    textLanes_ = std::move(lanes);
+    if (selectedTextClip_ != 0 && findTextClip(selectedTextClip_) == nullptr)
+        selectedTextClip_ = 0;
+    if (selectedTextLayer_ != 0
+        && std::none_of(textLanes_.begin(), textLanes_.end(), [this](const TextLane& l) { return l.layerId == selectedTextLayer_; }))
+        selectedTextLayer_ = 0;
+    std::erase_if(multi_, [this](const Object& o) { return o.kind == Object::Kind::TextClip && findTextClip(o.id) == nullptr; });
+    if (multi_.size() < 2)
+        multi_.clear();
+    if (textDragClip_ != 0 && findTextClip(textDragClip_) == nullptr) {
+        textDragClip_ = 0;
+        textDragging_ = false;
+    }
+    if (textTrimClip_ != 0 && findTextClip(textTrimClip_) == nullptr) {
+        textTrimClip_ = 0;
+        textTrimming_ = false;
+    }
+    updateDuration();
+    if (resized)
+        updateGeometry();  // ogni livello chiede un po' di altezza in più
+    invalidate();
+}
+
+std::vector<double> SequenceTimeline::snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio, int ignoredText) const
 {
     std::vector<double> marks{0.0};
     if (withCursor)
@@ -655,6 +853,14 @@ std::vector<double> SequenceTimeline::snapMarks(int ignoredBlock, int ignoredCli
             continue;
         marks.push_back(starts_[i]);
         marks.push_back(starts_[i] + blocks_[i].length);
+    }
+    for (const TextLane& lane : textLanes_) {
+        for (const TextBlock& c : lane.clips) {
+            if (c.clipId != ignoredText) {
+                marks.push_back(c.position);
+                marks.push_back(c.position + c.length);
+            }
+        }
     }
     if (withAudio) {
         for (const AudioLane& lane : lanes_) {

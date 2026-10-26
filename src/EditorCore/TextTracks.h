@@ -112,6 +112,12 @@ public:
     // permette). false, e nessuna modifica, se `start` non è un posto libero.
     bool moveTo(int clipId, int layerId, double start);
 
+    // Il posto [start, start + length) sul livello è libero (per mettere una scritta nuova).
+    bool canPlace(int layerId, double start, double length) const;
+    // Dove può stare il bordo se lo si vuole a `desired` (tempo della sequenza): fra la scritta prima e quella dopo, non
+    // prima di 0 e lasciando alla scritta almeno kMinLength. -1 se la scritta non c'è.
+    double edgeLimit(int clipId, bool atStart, double desired) const;
+
     // Bordi: sposta l'inizio (la fine resta dov'è) o la fine (l'inizio resta). Non si va sotto kMinLength, prima di 0 o
     // contro un'altra scritta del livello. false, e nessuna modifica, se non si può.
     bool setStart(int clipId, double start);

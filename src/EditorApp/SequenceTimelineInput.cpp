@@ -34,9 +34,9 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
     pressX_ = pos.x();
     pressY_ = pos.y();
     const double t = timeForX(pressX_);
-    const bool content = !blocks_.empty() || lanes_.size() > 1;
+    const bool content = !blocks_.empty() || lanes_.size() > 1 || !textLanes_.empty();
     // Ctrl+clic su un oggetto: lo aggiunge alla selezione o lo toglie (nient'altro: niente spostamento del cursore).
-    if ((event->modifiers() & Qt::ControlModifier) && pos.x() >= videoLane().left() && pos.y() >= videoLane().top() - 2 && ctrlPress(pos))
+    if ((event->modifiers() & Qt::ControlModifier) && pos.x() >= videoLane().left() && pos.y() >= lanesTop() - 2 && ctrlPress(pos))
         return;
     if (!multi_.empty()) {  // un clic senza Ctrl riparte da un oggetto solo
         multi_.clear();
@@ -44,6 +44,57 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         if (onMultiSelection)
             onMultiSelection();
     }
+
+    // Livelli di scritte, sopra la corsia video: il nome, una scritta (bordi o spostamento) o lo sfondo.
+    if (const int textIndex = textLaneAt(pos.y()); textIndex >= 0) {
+        const TextLane& textLane = textLanes_[static_cast<std::size_t>(textIndex)];
+        if (pos.x() < videoLane().left() - 2) {
+            setSelectedTextLayer(textLane.layerId);
+            if (onTextClipSelected)
+                onTextClipSelected(0);
+            return;
+        }
+        int clipLane = 0;
+        int clip = 0;
+        bool atStart = false;
+        if (textEdgeAt(pos, clipLane, clip, atStart)) {
+            const TextBlock& c = textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)];
+            textTrimClip_ = c.clipId;
+            textTrimAtStart_ = atStart;
+            textTrimming_ = false;
+            textTrimValue_ = atStart ? c.position : c.position + c.length;
+            textTrimGrab_ = t - textTrimValue_;
+            setSelectedTextClip(c.clipId);
+            if (onTextClipSelected)
+                onTextClipSelected(c.clipId);
+            return;
+        }
+        if (textClipAt(pos, clipLane, clip)) {
+            const TextBlock& c = textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)];
+            textDragClip_ = c.clipId;
+            textDragging_ = false;
+            textDragGrab_ = t - c.position;
+            textDragStart_ = c.position;
+            textDragLane_ = clipLane;
+            setSelectedTextClip(c.clipId);
+            playhead_ = std::max(0.0, t);
+            if (onTextClipSelected)
+                onTextClipSelected(c.clipId);
+            if (onSeek)
+                onSeek(playhead_);
+            return;
+        }
+        // Lo sfondo del livello: sceglie il livello e porta il cursore lì.
+        setSelectedTextLayer(textLane.layerId);
+        if (onTextClipSelected)
+            onTextClipSelected(0);
+        playhead_ = std::max(0.0, t);
+        if (onSeek)
+            onSeek(playhead_);
+        return;
+    }
+    if (pos.y() >= lanesTop() - 2)
+        clearTextSelection();  // il righello non cambia la selezione
 
     // A sinistra delle corsie: nome, muto, solo e livello delle corsie audio.
     if (pos.x() < videoLane().left() - 2) {
@@ -225,7 +276,7 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         int envPoint = -1;
         if (envelopeHit(pos, envTarget, envPoint))
             setCursor(envPoint >= 0 ? Qt::SizeAllCursor : Qt::SizeVerCursor);
-        else if (edgeAt(pos, atStart) >= 0 || audioEdgeAt(pos, lane, clip, atStart) || (header >= 0 && levelBar(header).contains(pos)))
+        else if (edgeAt(pos, atStart) >= 0 || audioEdgeAt(pos, lane, clip, atStart) || textEdgeAt(pos, lane, clip, atStart) || (header >= 0 && levelBar(header).contains(pos)))
             setCursor(Qt::SizeHorCursor);
         else
             setCursor(Qt::ArrowCursor);
@@ -293,6 +344,38 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         if (const int lane = laneAt(pos.y()); lane >= 0)
             audioDragLane_ = lane;
         audioDragStart_ = audioDragTarget(x, audioDragLane_);
+        invalidate();
+        return;
+    }
+    if (textTrimClip_ != 0) {
+        if (!textTrimming_ && std::abs(x - pressX_) < 2)
+            return;
+        textTrimming_ = true;
+        textTrimValue_ = textTrimTarget(x);
+        if (const TextBlock* c = findTextClip(textTrimClip_)) {
+            const double before = textTrimAtStart_ ? c->position : c->position + c->length;
+            const double delta = textTrimValue_ - before;
+            QToolTip::showText(event->globalPosition().toPoint(),
+                               QStringLiteral("%1 %2 (%3%4 s)")
+                                   .arg(textTrimAtStart_ ? QStringLiteral("Inizio") : QStringLiteral("Fine"),
+                                        QString::fromStdString(core::formatDuration(textTrimValue_)),
+                                        delta >= 0 ? QStringLiteral("+") : QString(), QString::number(delta, 'f', 3)),
+                               this);
+        }
+        update();
+        return;
+    }
+    if (textDragClip_ != 0) {
+        if (!textDragging_ && std::abs(x - pressX_) <= 8 && std::abs(pos.y() - pressY_) <= 8)
+            return;
+        if (!textDragging_) {
+            textDragging_ = true;
+            setCursor(Qt::ClosedHandCursor);
+        }
+        // In verticale si cambia livello di scritte.
+        if (const int lane = textLaneAt(pos.y()); lane >= 0)
+            textDragLane_ = lane;
+        textDragStart_ = textDragTarget(x, textDragLane_);
         invalidate();
         return;
     }
@@ -404,6 +487,33 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
             onAudioClipMoveTo(clip, lanes_[static_cast<std::size_t>(lane)].trackId, to);
         return;
     }
+    if (textTrimClip_ != 0) {
+        const int clip = textTrimClip_;
+        const bool trimmed = textTrimming_;
+        textTrimClip_ = 0;
+        textTrimming_ = false;
+        QToolTip::hideText();
+        update();
+        if (trimmed && onTextTrim)
+            onTextTrim(clip, textTrimAtStart_, textTrimValue_);
+        return;
+    }
+    if (textDragClip_ != 0) {
+        const int clip = textDragClip_;
+        const bool moved = textDragging_;
+        int fromLane = -1;
+        const TextBlock* c = findTextClip(clip, &fromLane);
+        const double from = c != nullptr ? c->position : 0.0;
+        const int lane = textDragLane_;
+        const double to = moved ? textDragTarget(event->position().x(), lane) : from;
+        textDragClip_ = 0;
+        textDragging_ = false;
+        setCursor(Qt::ArrowCursor);
+        invalidate();
+        if (moved && c != nullptr && lane >= 0 && (lane != fromLane || std::abs(to - from) > 1e-6) && onTextClipMoveTo)
+            onTextClipMoveTo(clip, textLanes_[static_cast<std::size_t>(lane)].layerId, to);
+        return;
+    }
     if (selecting_) {
         selecting_ = false;
         // Un clic senza trascinare toglie la selezione.
@@ -493,6 +603,13 @@ void SequenceTimeline::dropEvent(QDropEvent* event)
 void SequenceTimeline::mouseDoubleClickEvent(QMouseEvent* event)
 {
     const QPointF pos = event->position();
+    if (textLaneAt(pos.y()) >= 0) {
+        int lane = 0;
+        int clip = 0;
+        if (textClipAt(pos, lane, clip) && onTextActivate)
+            onTextActivate(textLanes_[static_cast<std::size_t>(lane)].clips[static_cast<std::size_t>(clip)].clipId);
+        return;
+    }
     if (pos.x() < videoLane().left() - 2) {
         // Doppio clic sul livello: torna a 0 dB.
         const int lane = laneAt(pos.y());

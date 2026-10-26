@@ -5,7 +5,7 @@
 namespace editor::core {
 
 // Un oggetto del montaggio che si può mettere in un gruppo: un pezzo video, l'audio di un pezzo (su A1, finché non è
-// scollegato) o una clip audio.
+// scollegato), una clip audio o una scritta.
 struct ObjectRef
 {
     enum class Kind
@@ -13,6 +13,7 @@ struct ObjectRef
         Piece,       // id di un pezzo (Fragment)
         PieceAudio,  // id del pezzo a cui appartiene l'audio
         AudioClip,   // id di una clip audio (AudioClip)
+        TextClip,    // id di una scritta (TextClip)
     };
     Kind kind = Kind::Piece;
     int id = 0;

@@ -389,7 +389,20 @@ std::string projectToJson(const std::string& projectPath, const Project& project
     for (const std::vector<ObjectRef>& members : project.validGroups()) {
         JsonValue::Array items;
         for (const ObjectRef& o : members) {
-            if (o.kind == ObjectRef::Kind::AudioClip) {
+            if (o.kind == ObjectRef::Kind::TextClip) {
+                int layerIndex = -1;
+                int clipIndex = -1;
+                for (std::size_t l = 0; l < project.textTracks().layers().size(); ++l) {
+                    const auto& clips = project.textTracks().layers()[l].clips;
+                    for (std::size_t c = 0; c < clips.size(); ++c) {
+                        if (clips[c].id == o.id) {
+                            layerIndex = static_cast<int>(l);
+                            clipIndex = static_cast<int>(c);
+                        }
+                    }
+                }
+                items.emplace_back(JsonValue::Object{{"tipo", "scritta"}, {"traccia", layerIndex}, {"posizione", clipIndex}});
+            } else if (o.kind == ObjectRef::Kind::AudioClip) {
                 int trackIndex = -1;
                 int clipIndex = -1;
                 for (std::size_t t = 0; t < project.audioTracks().tracks().size(); ++t) {
@@ -582,32 +595,6 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
             loaded.project.audioTracks().restore(mixFromJson(a["A1"]), std::move(tracks));
         }
 
-        // Gruppi: ogni oggetto è dato per posizione (vedi projectToJson); quelli che non ci sono più si scartano.
-        if (root["gruppi"].isArray()) {
-            const Project& built = loaded.project;
-            std::vector<std::vector<ObjectRef>> groups;
-            for (const JsonValue& group : root["gruppi"].asArray()) {
-                std::vector<ObjectRef> members;
-                for (const JsonValue& item : group.asArray()) {
-                    const std::string kind = text(item["tipo"]);
-                    const std::int64_t at = item["posizione"].isInteger() ? item["posizione"].asInteger() : -1;
-                    if (kind == "clip") {
-                        const std::int64_t t = item["traccia"].isInteger() ? item["traccia"].asInteger() : -1;
-                        const auto& tracks = built.audioTracks().tracks();
-                        if (t >= 0 && t < static_cast<std::int64_t>(tracks.size()) && at >= 0
-                            && at < static_cast<std::int64_t>(tracks[static_cast<std::size_t>(t)].clips.size()))
-                            members.push_back({ObjectRef::Kind::AudioClip, tracks[static_cast<std::size_t>(t)].clips[static_cast<std::size_t>(at)].id});
-                    } else if ((kind == "pezzo" || kind == "audioPezzo") && at >= 0
-                               && at < static_cast<std::int64_t>(built.sequence().fragments().size())) {
-                        members.push_back({kind == "pezzo" ? ObjectRef::Kind::Piece : ObjectRef::Kind::PieceAudio,
-                                           built.sequence().fragments()[static_cast<std::size_t>(at)].id});
-                    }
-                }
-                groups.push_back(std::move(members));
-            }
-            loaded.project.groups().restore(groups);
-        }
-
         // Scritte: una scritta con durata troppo corta o prima di 0 rende rovinato il file; una sovrapposta a un'altra si scarta.
         if (const JsonValue& t = root["scritte"]; t.isArray()) {
             std::vector<TextLayer> layers;
@@ -626,6 +613,38 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                 layers.push_back(std::move(layer));
             }
             loaded.project.textTracks().restore(std::move(layers));
+        }
+
+        // Gruppi: ogni oggetto è dato per posizione (vedi projectToJson); quelli che non ci sono più si scartano.
+        if (root["gruppi"].isArray()) {
+            const Project& built = loaded.project;
+            std::vector<std::vector<ObjectRef>> groups;
+            for (const JsonValue& group : root["gruppi"].asArray()) {
+                std::vector<ObjectRef> members;
+                for (const JsonValue& item : group.asArray()) {
+                    const std::string kind = text(item["tipo"]);
+                    const std::int64_t at = item["posizione"].isInteger() ? item["posizione"].asInteger() : -1;
+                    if (kind == "scritta") {
+                        const std::int64_t l = item["traccia"].isInteger() ? item["traccia"].asInteger() : -1;
+                        const auto& layers = built.textTracks().layers();
+                        if (l >= 0 && l < static_cast<std::int64_t>(layers.size()) && at >= 0
+                            && at < static_cast<std::int64_t>(layers[static_cast<std::size_t>(l)].clips.size()))
+                            members.push_back({ObjectRef::Kind::TextClip, layers[static_cast<std::size_t>(l)].clips[static_cast<std::size_t>(at)].id});
+                    } else if (kind == "clip") {
+                        const std::int64_t t = item["traccia"].isInteger() ? item["traccia"].asInteger() : -1;
+                        const auto& tracks = built.audioTracks().tracks();
+                        if (t >= 0 && t < static_cast<std::int64_t>(tracks.size()) && at >= 0
+                            && at < static_cast<std::int64_t>(tracks[static_cast<std::size_t>(t)].clips.size()))
+                            members.push_back({ObjectRef::Kind::AudioClip, tracks[static_cast<std::size_t>(t)].clips[static_cast<std::size_t>(at)].id});
+                    } else if ((kind == "pezzo" || kind == "audioPezzo") && at >= 0
+                               && at < static_cast<std::int64_t>(built.sequence().fragments().size())) {
+                        members.push_back({kind == "pezzo" ? ObjectRef::Kind::Piece : ObjectRef::Kind::PieceAudio,
+                                           built.sequence().fragments()[static_cast<std::size_t>(at)].id});
+                    }
+                }
+                groups.push_back(std::move(members));
+            }
+            loaded.project.groups().restore(groups);
         }
 
         // Formato del progetto. I progetti di prima non ce l'hanno: lo si ricava poi dal primo pezzo.

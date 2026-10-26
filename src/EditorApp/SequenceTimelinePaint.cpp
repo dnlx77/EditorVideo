@@ -96,7 +96,22 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
             p.drawLine(QPointF(newX, lane.top() - 3), QPointF(newX, lane.bottom() + 3));
         }
     }
-    if (blocks_.empty() && lanes_.size() == 1)
+    if (textTrimming_) {
+        int trimLaneIndex = -1;
+        if (const TextBlock* c = findTextClip(textTrimClip_, &trimLaneIndex)) {
+            // Lo stesso per il bordo di una scritta.
+            const QRectF lane = textLane(trimLaneIndex);
+            const double oldEdge = textTrimAtStart_ ? c->position : c->position + c->length;
+            const double oldX = xForTime(oldEdge);
+            const double newX = xForTime(textTrimValue_);
+            const bool longer = textTrimAtStart_ ? newX < oldX : newX > oldX;
+            const QRectF changed(QPointF(std::min(oldX, newX), lane.top()), QPointF(std::max(oldX, newX), lane.bottom()));
+            p.fillRect(changed, longer ? QColor(255, 255, 255, 110) : QColor(0, 0, 0, 120));
+            p.setPen(QPen(palette().color(QPalette::Highlight), 3));
+            p.drawLine(QPointF(newX, lane.top() - 3), QPointF(newX, lane.bottom() + 3));
+        }
+    }
+    if (blocks_.empty() && lanes_.size() == 1 && textLanes_.empty())
         return;
 
     // Cursore, su tutte le corsie
@@ -137,7 +152,8 @@ void SequenceTimeline::paintStatic(QPainter& p)
     const std::vector<Object> chosen = allSelectedObjects();
     matesGrouped_ = std::any_of(mates_.begin(), mates_.end(), [&](const Object& m) {
         return std::none_of(chosen.begin(), chosen.end(), [&](const Object& s) {
-            return s == m || (s.id == m.id && s.kind != Object::Kind::AudioClip && m.kind != Object::Kind::AudioClip);
+            const auto isPiece = [](Object::Kind k) { return k == Object::Kind::Piece || k == Object::Kind::PieceAudio; };
+            return s == m || (s.id == m.id && isPiece(s.kind) && isPiece(m.kind));
         });
     });
     paintRuler(p);
@@ -146,6 +162,8 @@ void SequenceTimeline::paintStatic(QPainter& p)
     p.drawRoundedRect(a, 4, 4);
     for (int i = 0; i < static_cast<int>(lanes_.size()); ++i)
         p.drawRoundedRect(audioLane(i), 4, 4);
+    for (int i = 0; i < static_cast<int>(textLanes_.size()); ++i)
+        p.drawRoundedRect(textLane(i), 4, 4);
 
     QFont small = p.font();
     small.setPointSizeF(small.pointSizeF() * 0.85);
@@ -160,6 +178,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
         paintVideo(p);
     }
     paintAudio(p);
+    paintText(p);
 
     // La traccia scelta: contorno evidenziato attorno alla sua corsia.
     {
@@ -172,6 +191,10 @@ void SequenceTimeline::paintStatic(QPainter& p)
         };
         if (videoLaneSelected())
             frame(videoLane());
+        for (int i = 0; i < static_cast<int>(textLanes_.size()); ++i) {
+            if (textLanes_[static_cast<std::size_t>(i)].layerId == selectedTextLayer_)
+                frame(textLane(i));
+        }
         for (int i = 0; i < static_cast<int>(lanes_.size()); ++i) {
             if (audioLaneSelected(i))
                 frame(audioLane(i));
@@ -375,6 +398,10 @@ void SequenceTimeline::paintHeaders(QPainter& p)
         p.restore();
     };
     label(headerRect(videoLane()), QStringLiteral("V1"), videoLaneSelected(), false);
+    for (int i = 0; i < static_cast<int>(textLanes_.size()); ++i) {
+        const TextLane& lane = textLanes_[static_cast<std::size_t>(i)];
+        label(headerRect(textLane(i)), lane.name, lane.layerId == selectedTextLayer_, false);
+    }
     for (int i = 0; i < static_cast<int>(lanes_.size()); ++i) {
         const AudioLane& lane = lanes_[static_cast<std::size_t>(i)];
         label(headerRect(audioLane(i)), lane.name, audioLaneSelected(i), !lane.audible);
@@ -408,6 +435,59 @@ void SequenceTimeline::paintHeaders(QPainter& p)
         p.drawText(bar, Qt::AlignCenter, text);
     }
     p.restore();
+}
+
+void SequenceTimeline::paintText(QPainter& p)
+{
+    const QPalette pal = palette();
+    const QColor base(150, 104, 205);
+    p.save();
+    for (int laneIndex = 0; laneIndex < static_cast<int>(textLanes_.size()); ++laneIndex) {
+        const QRectF lane = textLane(laneIndex);
+        p.setClipRect(lane.adjusted(-1, -3, 1, 3));
+        for (const TextBlock& c : textLanes_[static_cast<std::size_t>(laneIndex)].clips) {
+            const QRectF full(QPointF(xForTime(c.position) + 1, lane.top() + 1), QPointF(xForTime(c.position + c.length) - 1, lane.bottom() - 1));
+            if (full.right() < visibleLeft() - 4 || full.left() > visibleRight() + 4)
+                continue;
+            const QRectF r = visiblePart(full);
+            const bool dragged = textDragging_ && c.clipId == textDragClip_;
+            QColor fill = base;
+            if (dragged)
+                fill.setAlpha(110);
+            p.setPen(Qt::NoPen);
+            p.setBrush(fill);
+            p.drawRoundedRect(r, 3, 3);
+            p.setPen(isMate(Object::Kind::TextClip, c.clipId)   ? QPen(QColor(255, 170, 0), 3)
+                     : isSelected(Object::Kind::TextClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3)
+                                                                    : QPen(base.darker(140), 1));
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(p.pen().widthF() > 1.5 ? r.adjusted(1.5, 1.5, -1.5, -1.5) : r, 3, 3);
+            if (r.width() > 20) {
+                p.setPen(Qt::white);
+                p.drawText(r.adjusted(5, 0, -4, 0), Qt::AlignLeft | Qt::AlignVCenter,
+                           p.fontMetrics().elidedText(c.label, Qt::ElideRight, static_cast<int>(r.width() - 9)));
+            }
+        }
+    }
+    p.restore();
+
+    // Dove andrà la scritta trascinata: il suo contorno sul livello di arrivo.
+    if (textDragging_ && textDragLane_ >= 0) {
+        if (const TextBlock* c = findTextClip(textDragClip_)) {
+            const QRectF lane = textLane(textDragLane_);
+            const QRectF target(QPointF(xForTime(textDragStart_) + 1, lane.top() + 1), QPointF(xForTime(textDragStart_ + c->length) - 1, lane.bottom() - 1));
+            QColor fill = base;
+            fill.setAlpha(150);
+            p.setBrush(fill);
+            p.setPen(isMate(Object::Kind::TextClip, c->clipId) ? QPen(QColor(255, 170, 0), 3) : QPen(pal.color(QPalette::Highlight), 3));
+            p.drawRoundedRect(visiblePart(target), 3, 3);
+            if (target.width() > 30) {
+                p.setPen(Qt::white);
+                p.drawText(visiblePart(target).adjusted(5, 0, -4, 0), Qt::AlignLeft | Qt::AlignVCenter,
+                           p.fontMetrics().elidedText(c->label, Qt::ElideRight, static_cast<int>(target.width() - 9)));
+            }
+        }
+    }
 }
 
 void SequenceTimeline::paintAudio(QPainter& p)
