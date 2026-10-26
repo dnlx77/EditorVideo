@@ -720,7 +720,7 @@ struct CommandLineTest
 constexpr CommandLineTest kTests[] = {
     {"--export-test", runExportTest},   {"--thumbnail-test", runThumbnailTest}, {"--project-test", runProjectTest},
     {"--audio-test", runAudioTest},     {"--codec-info", runCodecInfo},         {"--sequence-test", runSequenceTest},
-    {"--join-test", runJoinTest},
+    {"--join-test", runJoinTest},         {"--text-test", runTextTest},
 };
 
 }  // namespace

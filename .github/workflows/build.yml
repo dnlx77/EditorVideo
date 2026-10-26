@@ -229,6 +229,12 @@ jobs:
           # di Windows, lasciata nella metà bassa, menu), ogni volta in basso, a tutta larghezza e alta abbastanza.
           & ci\run-editorvideo.ps1 -Name pannelli -Arguments '--dock-test'
 
+      - name: Prova delle scritte
+        shell: pwsh
+        run: |
+          # Le scritte disegnate con Qt (font, colore, contorno, ombra, sfondo, opacità, posizione) controllate a pixel.
+          & ci\run-editorvideo.ps1 -Name scritte -Arguments '--text-test'
+
       - name: Prova dell'esportazione dalla finestra
         shell: pwsh
         run: |

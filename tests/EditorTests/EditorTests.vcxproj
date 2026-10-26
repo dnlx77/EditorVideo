@@ -39,6 +39,7 @@
     <ClCompile Include="MixExportTests.cpp" />
     <ClCompile Include="AudioTracksTests.cpp" />
     <ClCompile Include="TextTracksTests.cpp" />
+    <ClCompile Include="TextImageTests.cpp" />
     <ClCompile Include="GroupsTests.cpp" />
     <ClCompile Include="GroupMoveTests.cpp" />
     <ClCompile Include="BlackGapTests.cpp" />
