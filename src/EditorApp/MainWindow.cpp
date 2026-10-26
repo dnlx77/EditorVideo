@@ -337,6 +337,22 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onAudioFilesDropped = [this](const QStringList& paths, int trackId, double seconds) {
         addAudioFiles(paths, trackId, seconds);
     };
+    // Scritte (step T3).
+    timeline_->onTextClipSelected = [this](int) {
+        setProgramActive(true);
+        showGroupStatus();
+    };
+    timeline_->textFreePosition = [this](int clipId, int layerId, double desired) {
+        return project_.freeSpotFor({core::ObjectRef::Kind::TextClip, clipId}, layerId, desired, pushPieces_);
+    };
+    timeline_->onTextClipMoveTo = [this](int clipId, int layerId, double position) { moveTextClip(clipId, layerId, position); };
+    timeline_->textTrimLimit = [this](int clipId, bool atStart, double desired) {
+        return project_.textTracks().edgeLimit(clipId, atStart, desired);
+    };
+    timeline_->onTextTrim = [this](int clipId, bool atStart, double value) { trimTextClip(clipId, atStart, value); };
+    timeline_->onTextActivate = [this](int) {
+        statusBar()->showMessage(QStringLiteral("L'editor delle scritte (testo, font, colore...) arriva con il prossimo passo."), 8000);
+    };
     sequenceLabel_ = new QLabel;
     sequenceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* sequencePanel = new QWidget;
@@ -655,7 +671,9 @@ void MainWindow::splitAtPlayhead()
     // Un oggetto di un gruppo: si dividono tutti quelli del gruppo che il cursore attraversa, e le seconde parti formano
     // un gruppo nuovo.
     core::ObjectRef anchor;
-    if (const int clip = timeline_->selectedAudioClip(); clip != 0)
+    if (const int text = timeline_->selectedTextClip(); text != 0)
+        anchor = {core::ObjectRef::Kind::TextClip, text};
+    else if (const int clip = timeline_->selectedAudioClip(); clip != 0)
         anchor = {core::ObjectRef::Kind::AudioClip, clip};
     else if (const int index = project_.sequence().indexAt(at); index >= 0)
         anchor = {core::ObjectRef::Kind::Piece, project_.sequence().fragments()[static_cast<std::size_t>(index)].id};
@@ -670,6 +688,8 @@ void MainWindow::splitAtPlayhead()
                 continue;
             if (part.kind == core::ObjectRef::Kind::AudioClip)
                 timeline_->setSelectedAudioClip(part.id);
+            else if (part.kind == core::ObjectRef::Kind::TextClip)
+                timeline_->setSelectedTextClip(part.id);
             else
                 timeline_->setSelected(part.id);
         }
@@ -678,6 +698,17 @@ void MainWindow::splitAtPlayhead()
                                      .arg(timeText(at))
                                      .arg(parts.size()),
                                  8000);
+        return;
+    }
+    // Scritta selezionata: si divide al cursore.
+    if (const int text = timeline_->selectedTextClip(); text != 0) {
+        if (const int id = project_.textTracks().split(text, at); id != 0) {
+            timeline_->setSelectedTextClip(id);
+            recordEdit(QStringLiteral("Dividi scritta"), before);
+            statusBar()->showMessage(QStringLiteral("Scritta divisa a %1.").arg(timeText(at)), 8000);
+        } else {
+            statusBar()->showMessage(QStringLiteral("Qui non si può dividere: porta il cursore dentro la scritta, non su un suo bordo."), 8000);
+        }
         return;
     }
     // Clip audio selezionata: si divide la clip della sua traccia sotto il cursore.
@@ -723,6 +754,14 @@ void MainWindow::deleteSelection()
         if (project_.removeObjects(selectedRefs()) > 0) {
             timeline_->setSelected(0);
             recordEdit(QStringLiteral("Elimina oggetti"), before);
+        }
+        return;
+    }
+    if (const int text = timeline_->selectedTextClip(); text != 0) {
+        // Scritta selezionata: si toglie.
+        if (project_.textTracks().remove(text)) {
+            timeline_->setSelectedTextClip(0);
+            recordEdit(QStringLiteral("Togli scritta"), before);
         }
         return;
     }
@@ -1011,6 +1050,24 @@ void MainWindow::refreshTimeline()
         }
     }
     timeline_->setAudioLanes(std::move(lanes));
+    // Livelli di scritte, dal più basso al più alto.
+    std::vector<SequenceTimeline::TextLane> textLanes;
+    for (const core::TextLayer& layer : project_.textTracks().layers()) {
+        SequenceTimeline::TextLane lane;
+        lane.layerId = layer.id;
+        lane.name = qs(project_.textTracks().layerName(layer.id));
+        for (const core::TextClip& c : layer.clips) {
+            QString label = QString::fromUtf8(c.text.c_str());
+            const qsizetype newline = label.indexOf(QLatin1Char('\n'));
+            if (newline >= 0)
+                label = label.left(newline) + QStringLiteral("…");
+            lane.clips.push_back({c.id, label, c.position, c.length});
+        }
+        textLanes.push_back(std::move(lane));
+    }
+    timeline_->setTextLanes(std::move(textLanes));
+    if (removeTextLayerAction_ != nullptr)
+        removeTextLayerAction_->setEnabled(!project_.textTracks().layers().empty());
     if (timeline_->hasAudioSelection() && timeline_->audioSelectionFrom() >= std::max(sequence.totalLength(), audio.endTime()))
         timeline_->setAudioSelection(0.0, 0.0);
     if (originalAudioAction_ != nullptr)
@@ -1473,6 +1530,17 @@ void MainWindow::createMenus()
     audioMenu->addSeparator();
     audioMenu->addAction(QStringLiteral("Ricolle&ga l'audio al pezzo"), this, [this] { relinkAudio(); })
         ->setStatusTip(QStringLiteral("Se la clip è ancora allineata al pezzo selezionato, l'audio torna a essere quello del pezzo"));
+
+    QMenu* textMenu = menuBar()->addMenu(QStringLiteral("Sc&ritte"));
+    QAction* newText = textMenu->addAction(QStringLiteral("&Nuova scritta al cursore"), this, [this] { addTextClip(); });
+    newText->setShortcut(QKeySequence(Qt::Key_T));
+    newText->setStatusTip(QStringLiteral("Una scritta di 5 secondi sul livello scelto (o dove c'è posto), dal cursore del montaggio"));
+    textMenu->addSeparator();
+    textMenu->addAction(QStringLiteral("&Aggiungi livello di scritte"), this, [this] { addTextLayer(); })
+        ->setStatusTip(QStringLiteral("Un livello T1, T2... sopra il video: un livello più alto copre quelli sotto"));
+    removeTextLayerAction_ = textMenu->addAction(QStringLiteral("&Togli livello di scritte"), this, [this] { removeSelectedTextLayer(); });
+    removeTextLayerAction_->setStatusTip(QStringLiteral("Il livello scelto sulla linea del tempo, altrimenti l'ultimo, con le sue scritte"));
+    removeTextLayerAction_->setEnabled(false);
 
     QMenu* windowMenu = menuBar()->addMenu(QStringLiteral("Fi&nestra"));
     for (QDockWidget* dock : docks()) {
@@ -1946,8 +2014,9 @@ void MainWindow::showShortcuts()
         {"Maiusc+I / Maiusc+O", "Vai a IN / OUT"},
         {"A", "Aggiungi IN-OUT (o il file intero) al montaggio"},
         {"X", "Togli IN-OUT dal montaggio"},
-        {"S", "Dividi il pezzo sotto il cursore del montaggio"},
-        {"Canc", "Elimina il pezzo selezionato (o il file, se il fuoco è sull'elenco dei file)"},
+        {"S", "Dividi il pezzo (o la scritta, o la clip audio) sotto il cursore del montaggio"},
+        {"T", "Nuova scritta di 5 secondi al cursore del montaggio"},
+        {"Canc", "Elimina l'oggetto selezionato (o il file, se il fuoco è sull'elenco dei file)"},
         {"Ctrl+Z", "Annulla"},
         {"Ctrl+Y / Ctrl+Maiusc+Z", "Ripeti"},
         {"Ctrl+O / Ctrl+Maiusc+O", "Apri un file video / aggiungi file al progetto"},

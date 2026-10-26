@@ -182,6 +182,33 @@ bool TextTracks::moveTo(int clipId, int layerId, double start)
     return true;
 }
 
+bool TextTracks::canPlace(int layerId, double start, double length) const
+{
+    const TextLayer* target = layer(layerId);
+    return target != nullptr && start >= 0.0 && length >= kMinLength && isFree(*target, start, start + length, 0);
+}
+
+double TextTracks::edgeLimit(int clipId, bool atStart, double desired) const
+{
+    const TextClip* clip = find(clipId);
+    if (clip == nullptr)
+        return -1.0;
+    const TextLayer& l = layers_[static_cast<std::size_t>(layerIndex(layerOf(clipId)))];
+    double before = 0.0;                                      // fine della scritta che precede
+    double after = std::numeric_limits<double>::infinity();  // inizio di quella che segue
+    for (const TextClip& c : l.clips) {
+        if (c.id == clipId)
+            continue;
+        if (c.endPosition() <= clip->position + kEps)
+            before = std::max(before, c.endPosition());
+        else if (c.position >= clip->endPosition() - kEps)
+            after = std::min(after, c.position);
+    }
+    if (atStart)
+        return std::clamp(desired, before, clip->endPosition() - kMinLength);
+    return std::clamp(desired, clip->position + kMinLength, after);
+}
+
 bool TextTracks::setStart(int clipId, double start)
 {
     TextClip* clip = findMutable(clipId);

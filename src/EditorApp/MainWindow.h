@@ -138,6 +138,14 @@ public:
     int addAudioFiles(const QStringList& paths, int trackId, double seconds);
     bool moveAudioClip(int clipId, int trackId, double position);
     bool trimAudioClip(int clipId, bool atStart, double value, bool ripple);
+    // Scritte (step T3): livelli e scritte sopra la corsia video.
+    int addTextLayer();
+    bool removeTextLayer(int layerId);
+    void removeSelectedTextLayer();  // quello scelto sulla linea del tempo, altrimenti l'ultimo
+    void groupSelection();           // G: gli oggetti scelti con Ctrl+clic diventano un gruppo
+    int addTextClip();               // al cursore del montaggio, 5 secondi, sul livello scelto (o dove c'è posto)
+    bool moveTextClip(int clipId, int layerId, double position);
+    bool trimTextClip(int clipId, bool atStart, double value);
     void moveFragment(int fragmentId, double start);  // sposta un pezzo (spingendo i successivi se la spinta è accesa)
     void setTrackMuted(int trackId, bool muted);
     void setTrackSolo(int trackId, bool solo);
@@ -221,7 +229,6 @@ private:
     void showInfo(const core::MediaInfo& info);
     void replaceAudioDialog();
     void relinkAudio();
-    void groupSelection();    // G: gli oggetti scelti con Ctrl+clic diventano un gruppo
     void ungroupSelection();  // U: scioglie il gruppo (o, se non è in gruppo, scollega l'audio del pezzo)
     void showGroupStatus();   // nella barra di stato: il gruppo dell'oggetto scelto
     std::vector<core::ObjectRef> selectedRefs() const;  // gli oggetti scelti, per G e U
@@ -361,6 +368,7 @@ private:
     QAction* removeClipAction_ = nullptr;
     QAction* originalAudioAction_ = nullptr;
     QAction* removeTrackAction_ = nullptr;
+    QAction* removeTextLayerAction_ = nullptr;
     QMenu* recentMenu_ = nullptr;
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EditorApp/SequenceTimelineShared.h"
 #include "EditorApp/ZoomableTimeline.h"
 #include "EditorCore/AudioTracks.h"
 #include "EditorCore/Groups.h"
@@ -84,6 +85,23 @@ public:
         std::vector<AudioBlock> clips;
     };
 
+    // Una scritta su un livello di scritte.
+    struct TextBlock
+    {
+        int clipId = 0;
+        QString label;  // il testo (prima riga)
+        double position = 0.0;
+        double length = 0.0;
+    };
+
+    // Un livello di scritte (T1, T2...), disegnato sopra la corsia video: il livello più alto sta più in alto.
+    struct TextLane
+    {
+        int layerId = 0;
+        QString name;  // "T1", "T2"...
+        std::vector<TextBlock> clips;
+    };
+
     explicit SequenceTimeline(QWidget* parent = nullptr);
 
     void setBlocks(std::vector<Block> blocks);
@@ -94,6 +112,16 @@ public:
     // selezione del pezzo e viceversa.
     void setSelectedGap(int fragmentId);
     int selectedGap() const { return selectedGap_; }
+
+    // Livelli di scritte, dal più basso al più alto (l'ordine dei livelli nel progetto).
+    void setTextLanes(std::vector<TextLane> lanes);
+    const std::vector<TextLane>& textLanes() const { return textLanes_; }
+    // Scritta selezionata (0 = nessuna): selezionarla toglie la selezione di ogni altro oggetto e viceversa.
+    void setSelectedTextClip(int clipId);
+    int selectedTextClip() const { return selectedTextClip_; }
+    // Livello di scritte scelto (clic sul suo nome o su una sua scritta): quello che toglie "Togli il livello di scritte".
+    int selectedTextLayer() const { return selectedTextLayer_; }
+    void setSelectedTextLayer(int layerId);
 
     void setMuted(std::vector<core::TimeRange> ranges);  // tratti senza audio di A1, nei tempi della sequenza
     // Corsie audio: la prima è sempre A1. Se c'erano più corsie (o meno) il widget cambia altezza.
@@ -145,6 +173,15 @@ public:
     // File trascinati da Esplora file e lasciati qui: vanno nella sequenza a partire dalla posizione `index`.
     std::function<void(const QStringList& paths, int index)> onFilesDropped;
 
+    // Scritte: selezione, spostamento (dove può andare sul livello `layerId` se la si vuole a `desired`, e dove è stata
+    // lasciata), bordi (tempi della sequenza: dove può andare il bordo e dove è stato lasciato), doppio clic.
+    std::function<void(int clipId)> onTextClipSelected;
+    std::function<double(int clipId, int layerId, double desired)> textFreePosition;
+    std::function<void(int clipId, int layerId, double position)> onTextClipMoveTo;
+    std::function<double(int clipId, bool atStart, double desired)> textTrimLimit;
+    std::function<void(int clipId, bool atStart, double value)> onTextTrim;
+    std::function<void(int clipId)> onTextActivate;
+
     // Tracce audio: pulsanti "+" e "−" in alto a sinistra, muto, solo e livello di una corsia (onLevel si chiama
     // lasciando il cursore del livello, o con un doppio clic che lo riporta a 0 dB).
     std::function<void()> onAddTrack;
@@ -182,6 +219,7 @@ public:
     QToolButton* addTrackButton() const { return addTrack_; }
     QToolButton* removeTrackButton() const { return removeTrack_; }
     double xForBlockEdge(int index, bool atStart) const;  // dove sta il bordo del blocco `index`
+    double textLaneCenter(int layerIndex) const { return textLane(layerIndex).center().y(); }  // 0 = il livello più basso
 
 protected:
     bool event(QEvent* event) override;
@@ -209,6 +247,17 @@ private:
     double videoHeight() const;
     QRectF videoLane() const;
     QRectF audioLane(int index = 0) const;  // corsia audio `index` (0 = A1)
+    double lanesTop() const { return kRulerHeight + detail::kTop; }  // dove iniziano le corsie, sotto il righello
+    double textBand() const;                 // altezza occupata dai livelli di scritte (sopra la corsia video)
+    QRectF textLane(int layerIndex) const;   // livello di scritte `layerIndex` (0 = il più basso, subito sopra il video)
+    int textLaneAt(double y) const;          // livello di scritte sotto y (-1 = nessuno)
+    bool textClipAt(const QPointF& pos, int& lane, int& clip) const;
+    bool textEdgeAt(const QPointF& pos, int& lane, int& clip, bool& atStart) const;
+    const TextBlock* findTextClip(int clipId, int* lane = nullptr) const;
+    double textDragTarget(double x, int lane) const;
+    double textTrimTarget(double x) const;
+    void paintText(QPainter& p);
+    void clearTextSelection();
     int laneAt(double y) const;             // corsia audio sotto y (-1 = nessuna)
     QRectF headerRect(const QRectF& lane) const;  // il riquadro a sinistra della corsia, con nome e pulsanti
     // Pulsanti di una corsia audio nel suo riquadro a sinistra: muto, solo, livello.
@@ -270,7 +319,7 @@ private:
     double audioTrimTarget(double x, bool ripple) const;
     // Segni a cui ci si aggancia: l'inizio della sequenza, i bordi dei pezzi video (tranne il blocco `ignoredBlock`),
     // se richiesti il cursore e i bordi delle clip audio (tranne `ignoredClip`).
-    std::vector<double> snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio) const;
+    std::vector<double> snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio, int ignoredText = 0) const;
     // `desired` spostato sul segno più vicino a meno di 10 pixel. Si prova ogni `offset` (0 = il bordo stesso, la
     // lunghezza del blocco = la sua fine): il blocco si aggancia quando il bordo corrispondente è vicino al segno.
     double snapped(double desired, const std::vector<double>& marks, std::initializer_list<double> offsets) const;
@@ -314,6 +363,19 @@ private:
     bool scrubbing_ = false;     // si sta trascinando il cursore sul righello
 
     int selectedAudioClip_ = 0;
+    std::vector<TextLane> textLanes_;
+    int selectedTextClip_ = 0;
+    int selectedTextLayer_ = 0;
+    int textDragClip_ = 0;      // scritta presa (spostamento)
+    bool textDragging_ = false;
+    double textDragGrab_ = 0.0;
+    double textDragStart_ = 0.0;  // dove andrà
+    int textDragLane_ = -1;       // su quale livello (indice)
+    int textTrimClip_ = 0;        // scritta di cui si trascina un bordo
+    bool textTrimAtStart_ = false;
+    bool textTrimming_ = false;
+    double textTrimValue_ = 0.0;  // dove andrà il bordo, tempo della sequenza
+    double textTrimGrab_ = 0.0;
     std::vector<Object> mates_;  // compagni di gruppo dei selezionati, ricalcolati a ogni disegno
     bool isMate(Object::Kind kind, int id) const;
     bool matesGrouped_ = false;  // i selezionati sono in un gruppo vero (non solo un pezzo con il suo audio)
