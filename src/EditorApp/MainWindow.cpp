@@ -355,12 +355,13 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onTextFades = [this](int clipId, double fadeIn, double fadeOut) { fadeTextClip(clipId, fadeIn, fadeOut); };
     timeline_->onTextActivate = [this](int clipId) { editTextClip(clipId); };
     sequenceLabel_ = new QLabel;
-    sequenceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    // L'etichetta resta alta quanto il suo testo: lo spazio in più va tutto alla linea del tempo (stretch sotto).
+    sequenceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Maximum);
     auto* sequencePanel = new QWidget;
     auto* sequenceLayout = new QVBoxLayout(sequencePanel);
     sequenceLayout->setContentsMargins(0, 0, 0, 0);
-    sequenceLayout->addWidget(sequenceLabel_);
-    sequenceLayout->addWidget(timeline_);
+    sequenceLayout->addWidget(sequenceLabel_, 0);
+    sequenceLayout->addWidget(timeline_, 1);
     // Anche questo può diventare basso: sotto una certa altezza la riga sopra le corsie si nasconde (vedi eventFilter).
     sequencePanel->setMinimumSize(100, 76);
     sequencePanel->installEventFilter(this);
