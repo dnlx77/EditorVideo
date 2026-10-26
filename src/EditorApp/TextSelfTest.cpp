@@ -1,7 +1,12 @@
 #include "EditorApp/QtTextRenderer.h"
 #include "EditorApp/SelfTests.h"
+#include "EditorApp/TextEditorDialog.h"
 
 #include <QtCore/QStringList>
+#include <QtWidgets/QCheckBox>
+#include <QtWidgets/QDoubleSpinBox>
+#include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QToolButton>
 
 #include <algorithm>
 #include <cmath>
@@ -233,6 +238,50 @@ int runTextTest(const QStringList&, qsizetype)
         small[i] = 255;
     core::blendTextOver(small.data(), 8, 2, 2, outside);
     check(small[0] == 255 && small[12] == 255 && small[15] == 255, "la parte fuori dal fotogramma si scarta");
+
+
+    // L'editor (step T4): dà indietro la scritta com'era, e i controlli la cambiano.
+    {
+        core::TextClip start = clipWith("Ciao\nmondo");
+        start.id = 7;
+        start.position = 3.0;
+        start.length = 4.0;
+        start.style.fontFamily = "Arial";
+        start.style.size = 0.08;
+        start.style.color = {10, 20, 30, 200};
+        start.style.outline = true;
+        start.style.centerX = 0.2;
+        start.style.centerY = 0.12;
+        TextEditorDialog dialog(start, 1280, 720);
+        const core::TextClip back = dialog.clip();
+        check(back == start, "l'editor restituisce la scritta di partenza senza cambiarla");
+        check(!dialog.previewImage().isNull() && dialog.previewImage().width() == 640 && dialog.previewImage().height() == 360,
+              "l'anteprima ha la forma del fotogramma del progetto");
+        auto* box = dialog.findChild<QPlainTextEdit*>("testo");
+        auto* size = dialog.findChild<QDoubleSpinBox*>("grandezza");
+        auto* bold = dialog.findChild<QToolButton*>("grassetto");
+        auto* shadow = dialog.findChild<QCheckBox*>("ombra");
+        auto* place = dialog.findChild<QToolButton*>("posto22");
+        auto* length = dialog.findChild<QDoubleSpinBox*>("durata");
+        check(box && size && bold && shadow && place && length, "i controlli dell'editor ci sono");
+        if (box && size && bold && shadow && place && length) {
+            box->setPlainText("Nuovo");
+            size->setValue(10.0);
+            bold->setChecked(true);
+            shadow->setChecked(true);
+            place->click();
+            length->setValue(2.5);
+            const core::TextClip changed = dialog.clip();
+            check(changed.id == 7 && changed.position == 3.0, "id e posizione nella sequenza restano");
+            check(changed.text == "Nuovo" && std::abs(changed.style.size - 0.10) < 1e-9 && changed.style.bold && changed.style.shadow,
+                  "testo, grandezza, grassetto e ombra seguono i controlli");
+            check(std::abs(changed.style.centerX - 0.8) < 1e-9 && std::abs(changed.style.centerY - 0.88) < 1e-9,
+                  "il posto in basso a destra mette il centro al 80% e 88%");
+            check(std::abs(changed.length - 2.5) < 1e-9, "la durata segue il controllo");
+            check(changed.style.fontFamily == "Arial", "il font scelto non viene cambiato anche se non è installato");
+            check(dialog.previewImage() != QImage(), "l'anteprima si ridisegna");
+        }
+    }
 
     std::printf(failures == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", failures);
     return failures == 0 ? 0 : 3;

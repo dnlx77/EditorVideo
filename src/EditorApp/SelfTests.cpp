@@ -1756,7 +1756,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 auto* line = window->sequenceTimeline();
                 const core::TextTracks& text = window->project().textTracks();
                 window->programMonitor()->seekTo(0.0);
-                const int first = window->addTextClip();
+                const int first = window->addTextClip(false);
                 const bool added = first != 0 && text.layers().size() == 1 && line->textLanes().size() == 1
                                 && line->selectedTextClip() == first && std::abs(text.find(first)->length - 5.0) < 1e-6;
                 // Divisa dentro la scritta e (come per le clip audio) con il cursore dove arriva il montaggio.
@@ -1811,7 +1811,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 // Una seconda scritta sul primo livello, e le due in gruppo con Ctrl+clic e G: si muovono insieme.
                 window->programMonitor()->seekTo(0.0);
                 line->setSelectedTextLayer(text.layers()[0].id);
-                const int third = deleted ? window->addTextClip() : 0;
+                const int third = deleted ? window->addTextClip(false) : 0;
                 const bool placed = third != 0 && text.layerOf(third) == text.layers()[0].id;
                 mouse(QEvent::MouseButtonPress, line->xForSequenceTime(text.find(third) != nullptr ? text.find(third)->position + 0.5 : 0.0),
                       line->textLaneCenter(0), Qt::LeftButton);
@@ -1829,18 +1829,34 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 line->setSelectedTextLayer(second);
                 window->removeSelectedTextLayer();
                 const bool removed = layersBefore == 2 && text.layers().size() == 1 && text.find(first) == nullptr;
+                // L'editor (step T4): testo, stile e durata si cambiano in un colpo solo e Annulla li riporta com'erano.
+                bool edited = false;
+                if (const core::TextClip* now = text.find(third)) {
+                    const core::TextClip original = *now;
+                    core::TextClip changed = original;
+                    changed.text = "Titolo\nsecondo rigo";
+                    changed.style.bold = true;
+                    changed.style.color = {255, 0, 0, 255};
+                    changed.length = original.length - 1.0;
+                    const bool applied = window->applyTextEdit(changed);
+                    const bool shown = applied && text.find(third)->text == changed.text && text.find(third)->style == changed.style
+                                    && std::abs(text.find(third)->length - changed.length) < 1e-6
+                                    && line->textLanes()[0].clips[0].label.contains(QStringLiteral("…"));
+                    const bool back = window->undo() && *text.find(third) == original;
+                    edited = shown && back;
+                }
                 // Annulla tutto: i livelli e le scritte spariscono.
                 bool undone = true;
                 for (int i = 0; i < 16 && !text.layers().empty(); ++i)
                     undone = window->undo() && undone;
                 undone = undone && text.layers().empty() && line->textLanes().empty();
                 std::printf("Scritte: aggiunta %s, divisa %s, tolta con Canc %s, due livelli %s, trascinata sull'altro livello %s, "
-                            "accorciata %s, Ctrl+clic e gruppo %s, livello tolto %s, annulla %s\n",
+                            "accorciata %s, Ctrl+clic e gruppo %s, livello tolto %s, editor %s, annulla %s\n",
                             added ? "sì" : "NO", split ? "sì" : "NO", deleted ? "sì" : "NO", lanes ? "sì" : "NO",
                             dragged ? "sì" : "NO", trimmed ? "sì" : "NO", multi && grouped ? "sì" : "NO", removed ? "sì" : "NO",
-                            undone ? "sì" : "NO");
+                            edited ? "sì" : "NO", undone ? "sì" : "NO");
                 std::fflush(stdout);
-                ok = ok && added && split && deleted && lanes && dragged && trimmed && multi && grouped && removed && undone;
+                ok = ok && added && split && deleted && lanes && dragged && trimmed && multi && grouped && removed && edited && undone;
             }
             // Mix e file solo audio (step 19): un file solo audio non va mai nella traccia video (né rilasciato né con A),
             // e livello, muto e solo si cambiano suonando senza fermare l'anteprima.
