@@ -5,6 +5,7 @@
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/MixSpec.h"
 #include "EditorCore/Sequence.h"
+#include "EditorCore/TextTracks.h"
 
 #include <memory>
 #include <optional>
@@ -106,6 +107,10 @@ public:
     AudioTracks& audioTracks() { return audio_; }
     const AudioTracks& audioTracks() const { return audio_; }
 
+    // Livelli di scritte (titoli e testi) sopra il video.
+    TextTracks& textTracks() { return text_; }
+    const TextTracks& textTracks() const { return text_; }
+
     // Traccia audio sostitutiva (vedi AudioReplacement), il caso più semplice delle tracce audio: impostarla toglie
     // tutte le tracce aggiunte e mette il file su A2 con A1 silenziata; std::nullopt rimette le tracce come
     // all'inizio (solo A1). audioReplacement() la ricava dalle tracce: c'è solo se sono proprio in quella forma
@@ -192,6 +197,7 @@ public:
 private:
     std::vector<Clip> clips_;
     AudioTracks audio_;
+    TextTracks text_;
     ProjectFormat format_;
     Sequence sequence_;
     Groups groups_;
