@@ -80,7 +80,7 @@ std::vector<core::NamedTextStyle> MainWindow::availableTextStyles() const
 {
     // Quelli del progetto, poi quelli dell'elenco globale che il progetto non ha (stesso nome = vale quello del progetto).
     std::vector<core::NamedTextStyle> styles = project_.textStyles();
-    QSettings s = settings();
+    QSettings s = detail::settings();
     for (core::NamedTextStyle& global : core::textStylesFromText(s.value(QString::fromLatin1(kGlobalStylesKey)).toString().toStdString())) {
         const bool known = std::any_of(styles.begin(), styles.end(), [&](const core::NamedTextStyle& n) { return n.name == global.name; });
         if (!known)
@@ -93,7 +93,7 @@ void MainWindow::keepTextStyles(const std::vector<core::NamedTextStyle>& styles)
 {
     // Nel progetto (e quindi con Annulla) e nell'elenco globale, per gli altri progetti.
     project_.textStyles() = styles;
-    QSettings s = settings();
+    QSettings s = detail::settings();
     s.setValue(QString::fromLatin1(kGlobalStylesKey), QString::fromStdString(core::textStylesToText(styles)));
 }
 
