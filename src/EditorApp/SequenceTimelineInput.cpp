@@ -57,6 +57,18 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         int clipLane = 0;
         int clip = 0;
         bool atStart = false;
+        if (textFadeHandleAt(pos, clipLane, clip, atStart)) {
+            // Una maniglia della dissolvenza (atStart qui vuol dire "in entrata").
+            const TextBlock& c = textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)];
+            textFadeClip_ = c.clipId;
+            textFadeIsIn_ = atStart;
+            textFading_ = false;
+            textFadeValue_ = atStart ? c.fadeIn : c.fadeOut;
+            setSelectedTextClip(c.clipId);
+            if (onTextClipSelected)
+                onTextClipSelected(c.clipId);
+            return;
+        }
         if (textEdgeAt(pos, clipLane, clip, atStart)) {
             const TextBlock& c = textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)];
             textTrimClip_ = c.clipId;
@@ -274,8 +286,11 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         const int header = x < videoLane().left() ? laneAt(pos.y()) : -1;
         EnvTarget envTarget;
         int envPoint = -1;
+        bool fadeIn = false;
         if (envelopeHit(pos, envTarget, envPoint))
             setCursor(envPoint >= 0 ? Qt::SizeAllCursor : Qt::SizeVerCursor);
+        else if (textFadeHandleAt(pos, lane, clip, fadeIn))
+            setCursor(Qt::SizeHorCursor);
         else if (edgeAt(pos, atStart) >= 0 || audioEdgeAt(pos, lane, clip, atStart) || textEdgeAt(pos, lane, clip, atStart) || (header >= 0 && levelBar(header).contains(pos)))
             setCursor(Qt::SizeHorCursor);
         else
@@ -345,6 +360,24 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
             audioDragLane_ = lane;
         audioDragStart_ = audioDragTarget(x, audioDragLane_);
         invalidate();
+        return;
+    }
+    if (textFadeClip_ != 0) {
+        if (!textFading_ && std::abs(x - pressX_) < 2)
+            return;
+        if (const TextBlock* c = findTextClip(textFadeClip_)) {
+            textFading_ = true;
+            // La maniglia segue il mouse: l'entrata dal principio della scritta, l'uscita dalla fine.
+            const double t = timeForX(x);
+            const double wanted = textFadeIsIn_ ? t - c->position : c->position + c->length - t;
+            const double other = textFadeIsIn_ ? c->fadeOut : c->fadeIn;
+            textFadeValue_ = std::clamp(wanted, 0.0, std::max(0.0, c->length - std::clamp(other, 0.0, c->length)));
+            QToolTip::showText(event->globalPosition().toPoint(),
+                               QStringLiteral("Dissolvenza in %1: %2 s").arg(textFadeIsIn_ ? QStringLiteral("entrata") : QStringLiteral("uscita"),
+                                                                              QString::number(textFadeValue_, 'f', 2)),
+                               this);
+        }
+        update();
         return;
     }
     if (textTrimClip_ != 0) {
@@ -485,6 +518,21 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
         invalidate();
         if (moved && c != nullptr && lane >= 0 && (lane != fromLane || std::abs(to - from) > 1e-6) && onAudioClipMoveTo)
             onAudioClipMoveTo(clip, lanes_[static_cast<std::size_t>(lane)].trackId, to);
+        return;
+    }
+    if (textFadeClip_ != 0) {
+        const int clip = textFadeClip_;
+        const bool changed = textFading_;
+        double fadeIn = 0.0;
+        double fadeOut = 0.0;
+        if (const TextBlock* c = findTextClip(clip))
+            textFadesOf(*c, fadeIn, fadeOut);
+        textFadeClip_ = 0;
+        textFading_ = false;
+        QToolTip::hideText();
+        update();
+        if (changed && onTextFades)
+            onTextFades(clip, fadeIn, fadeOut);
         return;
     }
     if (textTrimClip_ != 0) {

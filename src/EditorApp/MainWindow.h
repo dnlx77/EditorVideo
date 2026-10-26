@@ -155,6 +155,7 @@ public:
     bool moveTextOnScreen(int clipId, double centerX, double centerY);
     bool moveTextClip(int clipId, int layerId, double position);
     bool trimTextClip(int clipId, bool atStart, double value);
+    bool fadeTextClip(int clipId, double fadeIn, double fadeOut);  // le maniglie sulla linea del tempo
     void moveFragment(int fragmentId, double start);  // sposta un pezzo (spingendo i successivi se la spinta è accesa)
     void setTrackMuted(int trackId, bool muted);
     void setTrackSolo(int trackId, bool solo);

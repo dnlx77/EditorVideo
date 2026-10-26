@@ -92,6 +92,8 @@ public:
         QString label;  // il testo (prima riga)
         double position = 0.0;
         double length = 0.0;
+        double fadeIn = 0.0;   // dissolvenza in entrata (secondi)
+        double fadeOut = 0.0;  // dissolvenza in uscita (secondi)
     };
 
     // Un livello di scritte (T1, T2...), disegnato sopra la corsia video: il livello più alto sta più in alto.
@@ -181,6 +183,10 @@ public:
     std::function<double(int clipId, bool atStart, double desired)> textTrimLimit;
     std::function<void(int clipId, bool atStart, double value)> onTextTrim;
     std::function<void(int clipId)> onTextActivate;
+    // Dissolvenze di una scritta: sulla scritta c'è una linea dell'opacità (come quella del livello audio) con due
+    // maniglie in alto; trascinandole si allungano o accorciano la dissolvenza in entrata e in uscita (secondi). Si
+    // chiama lasciando il mouse con i due valori nuovi.
+    std::function<void(int clipId, double fadeIn, double fadeOut)> onTextFades;
 
     // Tracce audio: pulsanti "+" e "−" in alto a sinistra, muto, solo e livello di una corsia (onLevel si chiama
     // lasciando il cursore del livello, o con un doppio clic che lo riporta a 0 dB).
@@ -254,6 +260,10 @@ private:
     bool textClipAt(const QPointF& pos, int& lane, int& clip) const;
     bool textEdgeAt(const QPointF& pos, int& lane, int& clip, bool& atStart) const;
     const TextBlock* findTextClip(int clipId, int* lane = nullptr) const;
+    // Dissolvenze di una scritta come si vedono ora (quella trascinata è quella provvisoria).
+    void textFadesOf(const TextBlock& c, double& fadeIn, double& fadeOut) const;
+    QPointF textFadeHandle(const QRectF& lane, const TextBlock& c, bool isIn) const;
+    bool textFadeHandleAt(const QPointF& pos, int& lane, int& clip, bool& isIn) const;
     double textDragTarget(double x, int lane) const;
     double textTrimTarget(double x) const;
     void paintText(QPainter& p);
@@ -376,6 +386,10 @@ private:
     bool textTrimming_ = false;
     double textTrimValue_ = 0.0;  // dove andrà il bordo, tempo della sequenza
     double textTrimGrab_ = 0.0;
+    int textFadeClip_ = 0;        // scritta di cui si trascina una maniglia di dissolvenza
+    bool textFadeIsIn_ = false;   // quella dell'entrata (altrimenti dell'uscita)
+    bool textFading_ = false;
+    double textFadeValue_ = 0.0;  // la dissolvenza trascinata (secondi)
     std::vector<Object> mates_;  // compagni di gruppo dei selezionati, ricalcolati a ogni disegno
     bool isMate(Object::Kind kind, int id) const;
     bool matesGrouped_ = false;  // i selezionati sono in un gruppo vero (non solo un pezzo con il suo audio)
