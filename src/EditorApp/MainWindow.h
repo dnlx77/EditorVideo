@@ -281,8 +281,11 @@ private:
         core::AudioEdit audio;
         core::ProjectFormat format;
         core::ReencodeOptions reencode;
+        std::shared_ptr<const core::TextRenderer> textRenderer;  // tiene vive le scritte di reencode.textRenderer
     };
-    ExportSettings exportSettings() const;
+    // `drawText`: disegna davvero le scritte (per esportare); senza, basta sapere dove sono (per le anteprime).
+    ExportSettings exportSettings(bool drawText = false) const;
+    QSize frameSize() const;  // misure dei fotogrammi del progetto (1920 x 1080 se non c'è un formato)
     // Zoom della linea del tempo dell'anteprima attiva (factor > 1 ingrandisce, 0 = Adatta).
     void zoomTimeline(double factor);
     void stepToMark(int direction);  // Sorgente: fotogramma chiave; Montaggio: inizio dei pezzi

@@ -53,7 +53,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
     }
     // Audio mixato: prima si scrive il mix, poi il video con quell'audio al posto di quello dei file. Se gli spazi vuoti
     // si chiudono (per scelta o perché il nero non si sa fare) vale il mix con gli spazi chiusi.
-    const PlanAnalysis plan = analyzePlan(clips, format, true, reencode.all, reencode.closeGaps);
+    const PlanAnalysis plan = analyzePlan(clips, format, true, reencode.all, reencode.closeGaps, reencode.activeTexts());
     if (!plan.problem.empty())
         throw ClipsNotJoinable(plan.problem);
     const MixSpec& spec = !plan.blackGaps && audio.mixClosed ? *audio.mixClosed : *audio.mix;
@@ -87,7 +87,7 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
     try {
         const PlanAnalysis plan =
             analyzePlan(clips, format, audio.replacement.has_value() || audio.mix != nullptr, reencode.all,
-                        reencode.closeGaps);
+                        reencode.closeGaps, reencode.activeTexts());
         preview.problem = plan.problem;
         preview.impreciseCuts = plan.impreciseCuts;
         preview.closedGaps = plan.closedGaps;
@@ -109,7 +109,10 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
                 ++preview.copiedSegments;
                 for (const Piece& piece : plan.pieces[c][r]) {
                     preview.outputSeconds += piece.range.length();
-                    if (piece.reencode) {
+                    if (piece.text) {
+                        ++preview.textSegments;
+                        preview.textSeconds += piece.range.length();
+                    } else if (piece.reencode) {
                         ++preview.preciseCuts;
                         preview.preciseSeconds += piece.range.length();
                     } else {

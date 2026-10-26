@@ -160,4 +160,21 @@ core::TextImage QtTextRenderer::render(const core::TextClip& clip, int frameWidt
     return result;
 }
 
+PrerenderedTextRenderer::PrerenderedTextRenderer(const core::TextTracks& tracks, int frameWidth, int frameHeight, bool draw)
+{
+    if (!draw)
+        return;
+    const QtTextRenderer renderer;
+    for (const core::TextLayer& layer : tracks.layers()) {
+        for (const core::TextClip& clip : layer.clips)
+            images_[clip.id] = renderer.render(clip, frameWidth, frameHeight);
+    }
+}
+
+core::TextImage PrerenderedTextRenderer::render(const core::TextClip& clip, int, int) const
+{
+    const auto found = images_.find(clip.id);
+    return found != images_.end() ? found->second : core::TextImage{};
+}
+
 }  // namespace editor::app
