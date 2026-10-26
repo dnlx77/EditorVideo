@@ -18,6 +18,9 @@ class MainWindow;
 // std::nullopt. Codici: 0 tutto giusto, 1 argomenti sbagliati, 2 errore, 3 controllo non riuscito, 4 file rifiutati.
 std::optional<int> runCommandLineTest(const QStringList& arguments);
 
+// --text-test: disegna scritte con Qt e le controlla a pixel (vedi TextSelfTest.cpp).
+int runTextTest(const QStringList& arguments, qsizetype at);
+
 // Come runCommandLineTest, per le prove con la finestra vera: --dock-test, --project-export-test, --export-dialog-test
 // (descritte sotto).
 std::optional<int> runWindowTest(QApplication& app, const QStringList& arguments);

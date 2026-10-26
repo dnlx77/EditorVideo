@@ -52,6 +52,7 @@
     <ClInclude Include="PlayerWidget.h" />
     <ClInclude Include="ProgramMonitor.h" />
     <ClInclude Include="ProxyManager.h" />
+    <ClInclude Include="QtTextRenderer.h" />
     <ClInclude Include="SelfTests.h" />
     <ClInclude Include="SequenceAudio.h" />
     <ClInclude Include="SequenceTimeline.h" />
@@ -74,6 +75,8 @@
     <ClCompile Include="PlayerWidget.cpp" />
     <ClCompile Include="ProgramMonitor.cpp" />
     <ClCompile Include="ProxyManager.cpp" />
+    <ClCompile Include="QtTextRenderer.cpp" />
+    <ClCompile Include="TextSelfTest.cpp" />
     <ClCompile Include="SelfTests.cpp" />
     <ClCompile Include="SequenceAudio.cpp" />
     <ClCompile Include="SequenceTimeline.cpp" />
