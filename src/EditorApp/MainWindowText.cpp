@@ -225,4 +225,13 @@ bool MainWindow::trimTextClip(int clipId, bool atStart, double value)
     return true;
 }
 
+bool MainWindow::fadeTextClip(int clipId, double fadeIn, double fadeOut)
+{
+    const core::Project before = project_;
+    if (!project_.textTracks().setFades(clipId, fadeIn, fadeOut))
+        return false;
+    recordEdit(QStringLiteral("Cambia dissolvenza della scritta"), before);
+    return true;
+}
+
 }  // namespace editor::app

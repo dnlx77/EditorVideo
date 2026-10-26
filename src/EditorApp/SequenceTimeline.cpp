@@ -759,6 +759,60 @@ const SequenceTimeline::TextBlock* SequenceTimeline::findTextClip(int clipId, in
     return nullptr;
 }
 
+void SequenceTimeline::textFadesOf(const TextBlock& c, double& fadeIn, double& fadeOut) const
+{
+    fadeIn = std::clamp(c.fadeIn, 0.0, c.length);
+    fadeOut = std::clamp(c.fadeOut, 0.0, c.length);
+    if (textFadeClip_ == c.clipId && textFading_) {
+        // Le due dissolvenze non si sovrappongono: quella trascinata lascia posto all'altra.
+        if (textFadeIsIn_)
+            fadeIn = std::clamp(textFadeValue_, 0.0, std::max(0.0, c.length - fadeOut));
+        else
+            fadeOut = std::clamp(textFadeValue_, 0.0, std::max(0.0, c.length - fadeIn));
+    }
+    if (fadeIn + fadeOut > c.length) {
+        const double scale = c.length / (fadeIn + fadeOut);
+        fadeIn *= scale;
+        fadeOut *= scale;
+    }
+}
+
+QPointF SequenceTimeline::textFadeHandle(const QRectF& lane, const TextBlock& c, bool isIn) const
+{
+    double fadeIn = 0.0;
+    double fadeOut = 0.0;
+    textFadesOf(c, fadeIn, fadeOut);
+    const double t = isIn ? c.position + fadeIn : c.position + c.length - fadeOut;
+    return {xForTime(t), lane.top() + kTextFadeTop};
+}
+
+bool SequenceTimeline::textFadeHandleAt(const QPointF& pos, int& lane, int& clip, bool& isIn) const
+{
+    lane = textLaneAt(pos.y());
+    if (lane < 0 || pos.x() < videoLane().left())
+        return false;
+    const QRectF rect = textLane(lane);
+    const auto& clips = textLanes_[static_cast<std::size_t>(lane)].clips;
+    double best = kTextFadeNear + 1;
+    bool found = false;
+    for (std::size_t i = 0; i < clips.size(); ++i) {
+        if (xForTime(clips[i].position + clips[i].length) - xForTime(clips[i].position) < kTextFadeMinWidth)
+            continue;  // scritta troppo stretta per le maniglie
+        for (const bool in : {true, false}) {
+            const QPointF at = textFadeHandle(rect, clips[i], in);
+            // Zona stretta in verticale: sotto la maniglia il bordo della scritta resta libero per accorciarla.
+            const double distance = std::abs(pos.x() - at.x());
+            if (distance <= kTextFadeNear && std::abs(pos.y() - at.y()) <= kTextFadeNearY && distance < best) {
+                best = distance;
+                clip = static_cast<int>(i);
+                isIn = in;
+                found = true;
+            }
+        }
+    }
+    return found;
+}
+
 double SequenceTimeline::textDragTarget(double x, int lane) const
 {
     const TextBlock* c = findTextClip(textDragClip_);

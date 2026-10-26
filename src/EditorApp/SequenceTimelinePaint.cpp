@@ -467,6 +467,27 @@ void SequenceTimeline::paintText(QPainter& p)
                 p.drawText(r.adjusted(5, 0, -4, 0), Qt::AlignLeft | Qt::AlignVCenter,
                            p.fontMetrics().elidedText(c.label, Qt::ElideRight, static_cast<int>(r.width() - 9)));
             }
+            if (full.width() >= kTextFadeMinWidth) {
+                // La linea dell'opacità: in basso (trasparente) ai bordi, in alto (piena) dopo le dissolvenze, con una
+                // maniglia a ogni angolo in alto da trascinare.
+                const double bottom = lane.bottom() - kTextFadeBottom;
+                const QPointF inHandle = textFadeHandle(lane, c, true);
+                const QPointF outHandle = textFadeHandle(lane, c, false);
+                QPainterPath path;
+                path.moveTo(full.left(), bottom);
+                path.lineTo(inHandle);
+                path.lineTo(outHandle);
+                path.lineTo(full.right(), bottom);
+                p.setRenderHint(QPainter::Antialiasing, true);
+                p.setBrush(Qt::NoBrush);
+                p.setPen(QPen(QColor(255, 255, 255, 220), 1.5));
+                p.drawPath(path);
+                p.setBrush(Qt::white);
+                p.setPen(QPen(base.darker(160), 1));
+                for (const QPointF& handle : {inHandle, outHandle})
+                    p.drawEllipse(handle, 3.0, 3.0);
+                p.setRenderHint(QPainter::Antialiasing, false);
+            }
         }
     }
     p.restore();

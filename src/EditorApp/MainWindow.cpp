@@ -352,14 +352,16 @@ MainWindow::MainWindow(QWidget* parent)
         return project_.textTracks().edgeLimit(clipId, atStart, desired);
     };
     timeline_->onTextTrim = [this](int clipId, bool atStart, double value) { trimTextClip(clipId, atStart, value); };
+    timeline_->onTextFades = [this](int clipId, double fadeIn, double fadeOut) { fadeTextClip(clipId, fadeIn, fadeOut); };
     timeline_->onTextActivate = [this](int clipId) { editTextClip(clipId); };
     sequenceLabel_ = new QLabel;
-    sequenceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    // L'etichetta resta alta quanto il suo testo: lo spazio in più va tutto alla linea del tempo (stretch sotto).
+    sequenceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Maximum);
     auto* sequencePanel = new QWidget;
     auto* sequenceLayout = new QVBoxLayout(sequencePanel);
     sequenceLayout->setContentsMargins(0, 0, 0, 0);
-    sequenceLayout->addWidget(sequenceLabel_);
-    sequenceLayout->addWidget(timeline_);
+    sequenceLayout->addWidget(sequenceLabel_, 0);
+    sequenceLayout->addWidget(timeline_, 1);
     // Anche questo può diventare basso: sotto una certa altezza la riga sopra le corsie si nasconde (vedi eventFilter).
     sequencePanel->setMinimumSize(100, 76);
     sequencePanel->installEventFilter(this);
@@ -1061,7 +1063,7 @@ void MainWindow::refreshTimeline()
             const qsizetype newline = label.indexOf(QLatin1Char('\n'));
             if (newline >= 0)
                 label = label.left(newline) + QStringLiteral("…");
-            lane.clips.push_back({c.id, label, c.position, c.length});
+            lane.clips.push_back({c.id, label, c.position, c.length, c.fadeIn, c.fadeOut});
         }
         textLanes.push_back(std::move(lane));
     }

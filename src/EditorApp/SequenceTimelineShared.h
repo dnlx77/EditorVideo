@@ -17,7 +17,12 @@ inline constexpr double kVideoHeight = 54;    // corsia video quando c'è spazio
 inline constexpr double kLaneGap = 4;
 inline constexpr double kHeaderWidth = 118;  // a sinistra delle corsie: nome, muto, solo, livello
 inline constexpr double kTextLaneHeight = 22;   // una corsia di scritte (sopra la corsia video)
-inline constexpr double kAudioLaneHeight = 40;  // altezza in più che chiede ogni traccia aggiunta
+inline constexpr double kTextFadeTop = 6;       // la linea dell'opacità di una scritta: in alto = piena (sotto il bordo della corsia)
+inline constexpr double kTextFadeBottom = 5;    // in basso = trasparente (sopra il bordo in basso)
+inline constexpr double kTextFadeNear = 6;      // distanza orizzontale (pixel) entro cui si prende una maniglia
+inline constexpr double kTextFadeNearY = 3.5;   // e verticale: stretta, così il bordo sotto la maniglia accorcia la scritta
+inline constexpr double kTextFadeMinWidth = 24; // sotto questa larghezza la scritta non ha maniglie
+inline constexpr double kAudioLaneHeight = 40; // altezza in più che chiede ogni traccia aggiunta
 
 // Forma d'onda di [sourceFrom, sourceTo) di un file, disegnata in `r` (una linea verticale per pixel), solo fra
 // visibleLeft e visibleRight: con lo zoom `r` può essere molto più largo della parte che si vede.
