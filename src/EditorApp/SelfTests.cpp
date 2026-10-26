@@ -1745,7 +1745,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                             "Canc %s, livello e solo %s, traccia tolta %s, annulla %s\n",
                             added ? "sì" : "NO", placed ? "sì" : "NO", dragged ? "sì" : "NO", trimmed ? "sì" : "NO",
                             split ? "sì" : "NO", deleted ? "sì" : "NO", mix ? "sì" : "NO", removed ? "sì" : "NO",
-                            edited ? "sì" : "NO", undone ? "sì" : "NO");
+                            undone ? "sì" : "NO");
                 std::fflush(stdout);
                 ok = ok && added && placed && dragged && trimmed && split && deleted && mix && removed && undone;
             }
@@ -1854,7 +1854,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                             "accorciata %s, Ctrl+clic e gruppo %s, livello tolto %s, editor %s, annulla %s\n",
                             added ? "sì" : "NO", split ? "sì" : "NO", deleted ? "sì" : "NO", lanes ? "sì" : "NO",
                             dragged ? "sì" : "NO", trimmed ? "sì" : "NO", multi && grouped ? "sì" : "NO", removed ? "sì" : "NO",
-                            undone ? "sì" : "NO");
+                            edited ? "sì" : "NO", undone ? "sì" : "NO");
                 std::fflush(stdout);
                 ok = ok && added && split && deleted && lanes && dragged && trimmed && multi && grouped && removed && edited && undone;
             }
