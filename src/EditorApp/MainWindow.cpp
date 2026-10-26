@@ -350,9 +350,7 @@ MainWindow::MainWindow(QWidget* parent)
         return project_.textTracks().edgeLimit(clipId, atStart, desired);
     };
     timeline_->onTextTrim = [this](int clipId, bool atStart, double value) { trimTextClip(clipId, atStart, value); };
-    timeline_->onTextActivate = [this](int) {
-        statusBar()->showMessage(QStringLiteral("L'editor delle scritte (testo, font, colore...) arriva con il prossimo passo."), 8000);
-    };
+    timeline_->onTextActivate = [this](int clipId) { editTextClip(clipId); };
     sequenceLabel_ = new QLabel;
     sequenceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* sequencePanel = new QWidget;
@@ -1068,6 +1066,8 @@ void MainWindow::refreshTimeline()
     timeline_->setTextLanes(std::move(textLanes));
     if (removeTextLayerAction_ != nullptr)
         removeTextLayerAction_->setEnabled(!project_.textTracks().layers().empty());
+    if (editTextAction_ != nullptr)
+        editTextAction_->setEnabled(!project_.textTracks().layers().empty());
     if (timeline_->hasAudioSelection() && timeline_->audioSelectionFrom() >= std::max(sequence.totalLength(), audio.endTime()))
         timeline_->setAudioSelection(0.0, 0.0);
     if (originalAudioAction_ != nullptr)
@@ -1535,6 +1535,10 @@ void MainWindow::createMenus()
     QAction* newText = textMenu->addAction(QStringLiteral("&Nuova scritta al cursore"), this, [this] { addTextClip(); });
     newText->setShortcut(QKeySequence(Qt::Key_T));
     newText->setStatusTip(QStringLiteral("Una scritta di 5 secondi sul livello scelto (o dove c'è posto), dal cursore del montaggio"));
+    editTextAction_ = textMenu->addAction(QStringLiteral("&Modifica scritta..."), this, [this] { editTextClip(timeline_->selectedTextClip()); });
+    editTextAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
+    editTextAction_->setStatusTip(QStringLiteral("Testo, font, colore, contorno, ombra, sfondo e posizione della scritta scelta (anche con doppio clic)"));
+    editTextAction_->setEnabled(false);
     textMenu->addSeparator();
     textMenu->addAction(QStringLiteral("&Aggiungi livello di scritte"), this, [this] { addTextLayer(); })
         ->setStatusTip(QStringLiteral("Un livello T1, T2... sopra il video: un livello più alto copre quelli sotto"));
@@ -2015,7 +2019,8 @@ void MainWindow::showShortcuts()
         {"A", "Aggiungi IN-OUT (o il file intero) al montaggio"},
         {"X", "Togli IN-OUT dal montaggio"},
         {"S", "Dividi il pezzo (o la scritta, o la clip audio) sotto il cursore del montaggio"},
-        {"T", "Nuova scritta di 5 secondi al cursore del montaggio"},
+        {"T", "Nuova scritta al cursore del montaggio (si apre l'editor)"},
+        {"Ctrl+T / doppio clic", "Modifica la scritta scelta"},
         {"Canc", "Elimina l'oggetto selezionato (o il file, se il fuoco è sull'elenco dei file)"},
         {"Ctrl+Z", "Annulla"},
         {"Ctrl+Y / Ctrl+Maiusc+Z", "Ripeti"},

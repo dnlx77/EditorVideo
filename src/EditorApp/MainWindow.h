@@ -143,7 +143,12 @@ public:
     bool removeTextLayer(int layerId);
     void removeSelectedTextLayer();  // quello scelto sulla linea del tempo, altrimenti l'ultimo
     void groupSelection();           // G: gli oggetti scelti con Ctrl+clic diventano un gruppo
-    int addTextClip();               // al cursore del montaggio, 5 secondi, sul livello scelto (o dove c'è posto)
+    // Al cursore del montaggio, 5 secondi, sul livello scelto (o dove c'è posto). Con `withEditor` si apre prima l'editor
+    // e la scritta si aggiunge solo se lo si conferma; 0 se non è stata aggiunta.
+    int addTextClip(bool withEditor = true);
+    bool editTextClip(int clipId);   // l'editor sulla scritta; con OK applica testo, stile e durata (Annulla/Ripeti)
+    // Cambia testo, stile e durata della scritta (senza finestra); false e nessuna modifica se la durata non ci sta.
+    bool applyTextEdit(const core::TextClip& edited);
     bool moveTextClip(int clipId, int layerId, double position);
     bool trimTextClip(int clipId, bool atStart, double value);
     void moveFragment(int fragmentId, double start);  // sposta un pezzo (spingendo i successivi se la spinta è accesa)
@@ -369,6 +374,7 @@ private:
     QAction* originalAudioAction_ = nullptr;
     QAction* removeTrackAction_ = nullptr;
     QAction* removeTextLayerAction_ = nullptr;
+    QAction* editTextAction_ = nullptr;
     QMenu* recentMenu_ = nullptr;
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;
