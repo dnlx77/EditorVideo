@@ -149,6 +149,8 @@ public:
     bool editTextClip(int clipId);   // l'editor sulla scritta; con OK applica testo, stile e durata (Annulla/Ripeti)
     // Cambia testo, stile e durata della scritta (senza finestra); false e nessuna modifica se la durata non ci sta.
     bool applyTextEdit(const core::TextClip& edited);
+    // La scritta trascinata sull'immagine del monitor: nuovo centro (0..1 del fotogramma).
+    bool moveTextOnScreen(int clipId, double centerX, double centerY);
     bool moveTextClip(int clipId, int layerId, double position);
     bool trimTextClip(int clipId, bool atStart, double value);
     void moveFragment(int fragmentId, double start);  // sposta un pezzo (spingendo i successivi se la spinta è accesa)

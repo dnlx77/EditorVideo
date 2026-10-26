@@ -152,6 +152,22 @@ bool MainWindow::applyTextEdit(const core::TextClip& edited)
     return true;
 }
 
+bool MainWindow::moveTextOnScreen(int clipId, double centerX, double centerY)
+{
+    const core::TextClip* current = project_.textTracks().find(clipId);
+    if (current == nullptr)
+        return false;
+    if (std::abs(current->style.centerX - centerX) < 0.001 && std::abs(current->style.centerY - centerY) < 0.001)
+        return true;
+    const core::Project before = project_;
+    core::TextStyle style = current->style;
+    style.centerX = centerX;
+    style.centerY = centerY;
+    project_.textTracks().setStyle(clipId, style);
+    recordEdit(QStringLiteral("Sposta scritta sullo schermo"), before);
+    return true;
+}
+
 bool MainWindow::moveTextClip(int clipId, int layerId, double position)
 {
     if (project_.textTracks().find(clipId) == nullptr)

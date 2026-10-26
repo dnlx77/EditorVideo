@@ -5,6 +5,9 @@
 #include "EditorCore/TimeUtil.h"
 
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QPointF>
+#include <QtCore/QRect>
+#include <QtCore/QSize>
 #include <QtWidgets/QWidget>
 
 #include <atomic>
@@ -21,6 +24,7 @@
 #include <vector>
 
 class QLabel;
+class QPainter;
 class QTimer;
 
 namespace editor::core {
@@ -90,6 +94,13 @@ public:
 
     // Solo nero al posto dell'immagine (uno spazio vuoto del montaggio), senza chiudere il file.
     void setBlank(bool blank);
+    // Qualcosa da disegnare sopra l'immagine (le scritte del montaggio): riceve il rettangolo del fotogramma, o, nello
+    // spazio vuoto, un rettangolo con le proporzioni di `blankSize`. updateOverlay() lo fa ridisegnare.
+    void setOverlay(std::function<void(QPainter&, const QRectF&)> overlay, QSize blankSize);
+    void updateOverlay();
+    // Il mouse sull'immagine, in frazioni del fotogramma (0..1): `press` dice se si afferra qualcosa (allora arrivano
+    // `move` e `release`).
+    void setImageMouse(std::function<bool(QPointF)> press, std::function<void(QPointF)> move, std::function<void(QPointF)> release);
 
     // Nasconde la linea del tempo e i comandi (l'anteprima della sequenza ha i suoi).
     void setChromeVisible(bool visible);

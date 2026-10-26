@@ -74,10 +74,62 @@ public:
     // Dimensione dell'area in pixel fisici (con lo zoom di Windows applicato).
     QSize pixelSize() const { return (QSizeF(size()) * devicePixelRatioF()).toSize(); }
 
+    // Disegna qualcosa sopra l'immagine (le scritte): riceve il rettangolo dove sta il fotogramma. Nello spazio vuoto
+    // (nero) il rettangolo ha le proporzioni di `blankSize`.
+    void setOverlay(std::function<void(QPainter&, const QRectF&)> overlay, QSize blankSize)
+    {
+        overlay_ = std::move(overlay);
+        blankSize_ = blankSize;
+        update();
+    }
+
+    // Mouse sull'immagine, in frazioni del rettangolo del fotogramma (0..1): premere restituisce true se si afferra
+    // qualcosa (le scritte); allora spostamenti e rilascio arrivano a chi l'ha afferrato.
+    std::function<bool(QPointF)> onImagePress;
+    std::function<void(QPointF)> onImageMove;
+    std::function<void(QPointF)> onImageRelease;
+
     std::function<void()> onResized;
     std::function<void()> onDoubleClicked;
 
 protected:
+    QPointF fractionOf(const QPoint& pos) const
+    {
+        if (imageRect_.isEmpty())
+            return {-1.0, -1.0};
+        return {(pos.x() - imageRect_.left()) / imageRect_.width(), (pos.y() - imageRect_.top()) / imageRect_.height()};
+    }
+
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::LeftButton && onImagePress && imageRect_.contains(event->position())
+            && onImagePress(fractionOf(event->position().toPoint()))) {
+            grabbing_ = true;
+            event->accept();
+            return;
+        }
+        QWidget::mousePressEvent(event);
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override
+    {
+        if (grabbing_ && onImageMove)
+            onImageMove(fractionOf(event->position().toPoint()));
+        else
+            QWidget::mouseMoveEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        if (grabbing_) {
+            grabbing_ = false;
+            if (onImageRelease)
+                onImageRelease(fractionOf(event->position().toPoint()));
+            return;
+        }
+        QWidget::mouseReleaseEvent(event);
+    }
+
     void mouseDoubleClickEvent(QMouseEvent* event) override
     {
         if (event->button() == Qt::LeftButton && onDoubleClicked)
@@ -95,8 +147,15 @@ protected:
     {
         QPainter painter(this);
         painter.fillRect(rect(), Qt::black);
-        if (blank_)
+        imageRect_ = QRectF();
+        if (blank_) {
+            if (overlay_ && blankSize_.width() > 0 && blankSize_.height() > 0) {
+                const QSizeF fitted = QSizeF(blankSize_).scaled(QSizeF(size()), Qt::KeepAspectRatio);
+                imageRect_ = QRectF(QPointF((width() - fitted.width()) / 2, (height() - fitted.height()) / 2), fitted);
+                overlay_(painter, imageRect_);
+            }
             return;
+        }
         if (frame_) {
             // Di solito il decoder produce già fotogrammi della misura giusta e il disegno è 1:1, senza scalare.
             // Subito dopo un ridimensionamento della finestra può arrivare ancora qualche fotogramma della misura
@@ -111,6 +170,9 @@ protected:
             const QSizeF drawn = exact ? logical : fitted;
             const QRectF target(QPointF((width() - drawn.width()) / 2, (height() - drawn.height()) / 2), drawn);
             painter.drawImage(target, image);
+            imageRect_ = target;
+            if (overlay_)
+                overlay_(painter, target);
         } else if (!message_.isEmpty()) {
             painter.setPen(QColor(200, 200, 200));
             painter.drawText(rect().adjusted(20, 20, -20, -20), Qt::AlignCenter | Qt::TextWordWrap, message_);
@@ -121,6 +183,10 @@ private:
     std::shared_ptr<core::VideoFrame> frame_;
     QString message_;
     bool blank_ = false;
+    std::function<void(QPainter&, const QRectF&)> overlay_;
+    QSize blankSize_;
+    QRectF imageRect_;  // dove sta l'immagine, all'ultimo disegno
+    bool grabbing_ = false;
 };
 
 PlayerWidget::PlayerWidget(QWidget* parent)
@@ -380,6 +446,24 @@ void PlayerWidget::setAudioNote(const QString& note)
 void PlayerWidget::setBlank(bool blank)
 {
     view_->setBlank(blank);
+}
+
+void PlayerWidget::setOverlay(std::function<void(QPainter&, const QRectF&)> overlay, QSize blankSize)
+{
+    view_->setOverlay(std::move(overlay), blankSize);
+}
+
+void PlayerWidget::setImageMouse(std::function<bool(QPointF)> press, std::function<void(QPointF)> move,
+                                 std::function<void(QPointF)> release)
+{
+    view_->onImagePress = std::move(press);
+    view_->onImageMove = std::move(move);
+    view_->onImageRelease = std::move(release);
+}
+
+void PlayerWidget::updateOverlay()
+{
+    view_->update();
 }
 
 void PlayerWidget::closeFile()

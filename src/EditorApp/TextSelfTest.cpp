@@ -1,6 +1,7 @@
 #include "EditorApp/QtTextRenderer.h"
 #include "EditorApp/SelfTests.h"
 #include "EditorApp/TextEditorDialog.h"
+#include "EditorApp/TextOverlay.h"
 
 #include <QtCore/QStringList>
 #include <QtWidgets/QCheckBox>
@@ -281,6 +282,60 @@ int runTextTest(const QStringList&, qsizetype)
             check(changed.style.fontFamily == "Arial", "il font scelto non viene cambiato anche se non è installato");
             check(dialog.previewImage() != QImage(), "l'anteprima si ridisegna");
         }
+    }
+
+
+    // Le scritte sopra l'immagine del monitor (step T5): stesse posizioni, ordine dei livelli, e un solo disegno finché non cambia nulla.
+    {
+        QImage canvas(400, 300, QImage::Format_ARGB32_Premultiplied);
+        canvas.fill(QColor(20, 20, 20));
+        core::TextClip low = clipWith("XXXX");
+        low.style.size = 0.2;
+        low.style.color = {255, 0, 0, 255};
+        low.style.centerX = 0.5;
+        low.style.centerY = 0.5;
+        core::TextClip high = low;
+        high.style.color = {0, 255, 0, 255};
+        high.style.centerX = 0.5 + 0.02;  // quasi nello stesso punto: la più alta copre l'altra
+        TextOverlay overlay;
+        const QRectF target(20, 30, 360, 240);  // il fotogramma sta dentro il widget, con i bordi neri
+        QPainter p(&canvas);
+        overlay.paint(p, target, 1.0, {low, high});
+        overlay.paint(p, target, 1.0, {low, high});
+        p.end();
+        check(overlay.renderCount() == 1, "se le scritte e la misura non cambiano non si ridisegnano da capo");
+        // Dove la scritta bassa da sola è rossa e le due insieme sono verdi: la più alta copre.
+        QImage lowOnly(400, 300, QImage::Format_ARGB32_Premultiplied);
+        lowOnly.fill(QColor(20, 20, 20));
+        {
+            QPainter q(&lowOnly);
+            TextOverlay single;
+            single.paint(q, target, 1.0, {low});
+        }
+        int covered = 0;
+        for (int y = 30; y < 270; ++y) {
+            for (int x = 20; x < 380; ++x) {
+                if (lowOnly.pixelColor(x, y).red() > 200 && canvas.pixelColor(x, y).green() > 200 && canvas.pixelColor(x, y).red() < 60)
+                    ++covered;
+            }
+        }
+        check(covered > 50, "la scritta del livello più alto copre quella sotto");
+        check(canvas.pixelColor(QPoint(5, 5)) == QColor(20, 20, 20) && canvas.pixelColor(QPoint(395, 295)) == QColor(20, 20, 20),
+              "fuori dal fotogramma non si disegna nulla");
+        bool inside = false;
+        for (int y = 30; y < 270 && !inside; ++y) {
+            for (int x = 20; x < 380 && !inside; ++x)
+                inside = canvas.pixelColor(x, y).green() > 150;
+        }
+        check(inside, "la scritta sta dentro il rettangolo del fotogramma");
+        QPainter again(&canvas);
+        overlay.paint(again, target, 1.0, {low});
+        again.end();
+        check(overlay.renderCount() == 2, "se le scritte cambiano si ridisegnano");
+        // Il riquadro (per afferrare la scritta col mouse): contiene il centro e sta dentro il fotogramma.
+        const QRectF box = overlay.bounds(low, 400, 300);
+        check(!box.isEmpty() && box.contains(QPointF(0.5, 0.5)) && box.left() >= 0.0 && box.right() <= 1.0 && box.width() < 1.0,
+              "il riquadro della scritta contiene il suo centro e sta dentro il fotogramma");
     }
 
     std::printf(failures == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", failures);

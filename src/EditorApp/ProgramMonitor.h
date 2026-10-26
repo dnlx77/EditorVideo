@@ -1,12 +1,14 @@
 #pragma once
 
 #include "EditorApp/SequenceAudio.h"
+#include "EditorApp/TextOverlay.h"
 
 #include <QtCore/QElapsedTimer>
 #include <QtWidgets/QWidget>
 
 #include <functional>
 #include <optional>
+#include <vector>
 
 class QLabel;
 class QTimer;
@@ -58,6 +60,9 @@ public:
     int currentIndex() const { return index_; }  // pezzo mostrato (-1 = sequenza vuota o spazio vuoto)
     bool inGap() const { return gapIndex_ >= 0; }  // in uno spazio vuoto
     int currentClipId() const;  // file del pezzo mostrato (0 = nessuno)
+    // Le scritte che si vedono ora sopra l'immagine (nessuna mentre si mostra un fotogramma di un file con showSourceFrame).
+    std::vector<core::TextClip> visibleText() const;
+    const TextOverlay& textOverlay() const { return overlay_; }
 
     // Proxy (vedi PlayerWidget::videoSourceFor e reloadVideo) e menu della qualità dell'anteprima.
     void setVideoSource(std::function<QString(const QString& path)> source);
@@ -71,6 +76,9 @@ public:
     std::function<void()> onActivated;  // l'utente ha usato questa anteprima (per i tasti Spazio e frecce)
     std::function<void()> onPlaybackStarted;
     std::function<void()> onVideoDoubleClicked;  // doppio clic sull'immagine (schermo intero)
+    // Scritte trascinate sull'immagine (da fermo): afferrata (per sceglierla) e lasciata con il nuovo centro (0..1).
+    std::function<void(int clipId)> onTextGrabbed;
+    std::function<void(int clipId, double centerX, double centerY)> onTextDragged;
 
     QSize minimumSizeHint() const override { return {120, 60}; }
 
@@ -92,8 +100,23 @@ private:
     void fragmentEnded();
     void updatePosition();
     void updateLabels();
+    QSize frameSize() const;
+    bool grabText(QPointF at);
+    void dragText(QPointF at);
+    void dropText(QPointF at);
+    void updateOverlayFrame();  // dice al lettore come disegnare le scritte
+    void updateTextOverlay();  // ridisegna le scritte se quelle visibili sono cambiate
 
     const core::Project& project_;
+    TextOverlay overlay_;
+    std::vector<core::TextClip> shownText_;  // le scritte disegnate l'ultima volta
+    struct TextDrag
+    {
+        int index = -1;       // posto della scritta in shownText_
+        QPointF grabOffset;   // dal centro della scritta al punto afferrato (frazioni del fotogramma)
+    };
+    std::optional<TextDrag> textDrag_;
+    bool showingSource_ = false;             // si mostra un fotogramma di un file, non il montaggio
     PlayerWidget* player_ = nullptr;
     SequenceAudio sequenceAudio_;
     TransportBar* transport_ = nullptr;

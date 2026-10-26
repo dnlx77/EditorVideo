@@ -9,6 +9,7 @@
 
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
+#include <QtGui/QPainter>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QVBoxLayout>
@@ -22,6 +23,9 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     , project_(project)
 {
     player_ = new PlayerWidget;
+    updateOverlayFrame();
+    player_->setImageMouse([this](QPointF at) { return grabText(at); }, [this](QPointF at) { dragText(at); },
+                           [this](QPointF at) { dropText(at); });
     player_->setChromeVisible(false);
     player_->setAudioEnabled(false);  // l'audio del montaggio lo suona il mixer della sequenza (SequenceAudio)
     player_->onVideoDoubleClicked = [this] {
@@ -138,6 +142,86 @@ void ProgramMonitor::load(int index, double offset)
     player_->seekTo(f.start + std::clamp(offset, 0.0, f.length()));
 }
 
+std::vector<core::TextClip> ProgramMonitor::visibleText() const
+{
+    std::vector<core::TextClip> clips;
+    if (showingSource_)
+        return clips;
+    for (const core::TextClip* clip : project_.textTracks().visibleAt(position_))
+        clips.push_back(*clip);
+    return clips;
+}
+
+bool ProgramMonitor::grabText(QPointF at)
+{
+    if (onActivated)
+        onActivated();
+    if (playing_ || showingSource_ || shownText_.empty())
+        return false;
+    // La più alta (l'ultima disegnata) che contiene il punto.
+    const QSize frame = frameSize();
+    for (int i = static_cast<int>(shownText_.size()) - 1; i >= 0; --i) {
+        const core::TextClip& clip = shownText_[static_cast<std::size_t>(i)];
+        if (overlay_.bounds(clip, frame.width(), frame.height()).adjusted(-0.01, -0.01, 0.01, 0.01).contains(at)) {
+            textDrag_ = TextDrag{i, QPointF(clip.style.centerX, clip.style.centerY) - at};
+            if (onTextGrabbed)
+                onTextGrabbed(clip.id);
+            return true;
+        }
+    }
+    return false;
+}
+
+void ProgramMonitor::dragText(QPointF at)
+{
+    if (!textDrag_)
+        return;
+    core::TextClip& clip = shownText_[static_cast<std::size_t>(textDrag_->index)];
+    clip.style.centerX = std::clamp(at.x() + textDrag_->grabOffset.x(), 0.0, 1.0);
+    clip.style.centerY = std::clamp(at.y() + textDrag_->grabOffset.y(), 0.0, 1.0);
+    player_->updateOverlay();
+}
+
+void ProgramMonitor::dropText(QPointF at)
+{
+    if (!textDrag_)
+        return;
+    dragText(at);
+    const core::TextClip clip = shownText_[static_cast<std::size_t>(textDrag_->index)];
+    textDrag_.reset();
+    if (onTextDragged)
+        onTextDragged(clip.id, clip.style.centerX, clip.style.centerY);
+    updateTextOverlay();  // se la modifica non è stata fatta, le scritte tornano come nel progetto
+}
+
+void ProgramMonitor::updateTextOverlay()
+{
+    if (textDrag_)
+        return;
+    std::vector<core::TextClip> now = visibleText();
+    if (now == shownText_)
+        return;
+    shownText_ = std::move(now);
+    player_->updateOverlay();
+}
+
+QSize ProgramMonitor::frameSize() const
+{
+    // Le misure del fotogramma del progetto; senza formato, 16:9.
+    const core::StreamSignature* video = project_.format().video();
+    return video != nullptr && video->width > 0 && video->height > 0 ? QSize(video->width, video->height) : QSize(1920, 1080);
+}
+
+void ProgramMonitor::updateOverlayFrame()
+{
+    const QSize frame = frameSize();
+    player_->setOverlay(
+        [this](QPainter& painter, const QRectF& target) {
+            overlay_.paint(painter, target, painter.device()->devicePixelRatioF(), shownText_);
+        },
+        frame);
+}
+
 int ProgramMonitor::currentClipId() const
 {
     const auto& fragments = project_.sequence().fragments();
@@ -158,6 +242,8 @@ void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QStrin
     }
     gapIndex_ = -1;
     index_ = -1;  // nessun pezzo: il prossimo seekTo riapre quello giusto
+    showingSource_ = true;
+    updateTextOverlay();
     player_->setBlank(false);
     if (clipId != loadedClipId_) {
         player_->openFile(QString::fromStdString(clip->path));
@@ -169,6 +255,7 @@ void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QStrin
 
 void ProgramMonitor::seekTo(double seconds)
 {
+    showingSource_ = false;
     const core::Sequence& sequence = project_.sequence();
     if (sequence.empty())
         return;
@@ -465,6 +552,8 @@ void ProgramMonitor::reachedEdge()
 
 void ProgramMonitor::sequenceChanged()
 {
+    showingSource_ = false;
+    updateOverlayFrame();
     const core::Sequence& sequence = project_.sequence();
     if (playing_) {
         player_->pause();
@@ -517,6 +606,7 @@ void ProgramMonitor::updatePosition()
         position_ = sequence.startOf(index_) + std::clamp(player_->currentPosition() - f.start, 0.0, f.length());
     }
     updateLabels();
+    updateTextOverlay();
     if (onPositionChanged)
         onPositionChanged(position_);
     if (onCacheRangeChanged) {

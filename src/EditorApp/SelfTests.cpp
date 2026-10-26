@@ -1845,18 +1845,42 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                     const bool back = window->undo() && *text.find(third) == original;
                     edited = shown && back;
                 }
+                // Anteprima (step T5): al tempo della scritta il monitor la mostra, fuori no, e la modifica si vede subito.
+                bool onMonitor = false;
+                if (const core::TextClip* now = text.find(third)) {
+                    auto* monitor = window->programMonitor();
+                    window->trimTextClip(third, false, now->position + 0.3);  // corta, così il montaggio di prova la supera
+                    now = text.find(third);
+                    monitor->seekTo(now->position + 0.1);
+                    const std::vector<core::TextClip> during = monitor->visibleText();
+                    const bool shown = std::any_of(during.begin(), during.end(), [&](const core::TextClip& c) { return c.id == third; });
+                    monitor->seekTo(now->endPosition() + 0.1);
+                    const std::vector<core::TextClip> after = monitor->visibleText();
+                    const bool hidden = std::none_of(after.begin(), after.end(), [&](const core::TextClip& c) { return c.id == third; });
+                    monitor->seekTo(now->position + 0.1);
+                    QCoreApplication::processEvents();
+                    const QImage grabbed = monitor->grab().toImage();
+                    // Trascinata sull'immagine: il nuovo centro si vede subito nel monitor, e Annulla lo riporta com'era.
+                    const double oldX = text.find(third)->style.centerX;
+                    const bool movedOnScreen = window->moveTextOnScreen(third, 0.25, 0.4) && std::abs(text.find(third)->style.centerX - 0.25) < 1e-9;
+                    const std::vector<core::TextClip> moved = monitor->visibleText();
+                    const bool seenMoved = !moved.empty() && std::abs(moved.back().style.centerY - 0.4) < 1e-9;
+                    const bool movedBack = window->undo() && std::abs(text.find(third)->style.centerX - oldX) < 1e-9;
+                    onMonitor = shown && hidden && !grabbed.isNull() && monitor->textOverlay().renderCount() > 0 && movedOnScreen
+                             && seenMoved && movedBack;
+                }
                 // Annulla tutto: i livelli e le scritte spariscono.
                 bool undone = true;
                 for (int i = 0; i < 16 && !text.layers().empty(); ++i)
                     undone = window->undo() && undone;
                 undone = undone && text.layers().empty() && line->textLanes().empty();
                 std::printf("Scritte: aggiunta %s, divisa %s, tolta con Canc %s, due livelli %s, trascinata sull'altro livello %s, "
-                            "accorciata %s, Ctrl+clic e gruppo %s, livello tolto %s, editor %s, annulla %s\n",
+                            "accorciata %s, Ctrl+clic e gruppo %s, livello tolto %s, editor %s, anteprima %s, annulla %s\n",
                             added ? "sì" : "NO", split ? "sì" : "NO", deleted ? "sì" : "NO", lanes ? "sì" : "NO",
                             dragged ? "sì" : "NO", trimmed ? "sì" : "NO", multi && grouped ? "sì" : "NO", removed ? "sì" : "NO",
-                            edited ? "sì" : "NO", undone ? "sì" : "NO");
+                            edited ? "sì" : "NO", onMonitor ? "sì" : "NO", undone ? "sì" : "NO");
                 std::fflush(stdout);
-                ok = ok && added && split && deleted && lanes && dragged && trimmed && multi && grouped && removed && edited && undone;
+                ok = ok && added && split && deleted && lanes && dragged && trimmed && multi && grouped && removed && edited && onMonitor && undone;
             }
             // Mix e file solo audio (step 19): un file solo audio non va mai nella traccia video (né rilasciato né con A),
             // e livello, muto e solo si cambiano suonando senza fermare l'anteprima.
