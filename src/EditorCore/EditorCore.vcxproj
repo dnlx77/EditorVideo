@@ -41,6 +41,7 @@
     <ClInclude Include="MixExport.h" />
     <ClInclude Include="MixSpec.h" />
     <ClInclude Include="AudioTracks.h" />
+    <ClInclude Include="TextTracks.h" />
     <ClInclude Include="Compatibility.h" />
     <ClInclude Include="CutSegment.h" />
     <ClInclude Include="EditHistory.h" />
@@ -76,6 +77,7 @@
     <ClCompile Include="LevelEnvelope.cpp" />
     <ClCompile Include="MixExport.cpp" />
     <ClCompile Include="AudioTracks.cpp" />
+    <ClCompile Include="TextTracks.cpp" />
     <ClCompile Include="Compatibility.cpp" />
     <ClCompile Include="CutSegment.cpp" />
     <ClCompile Include="EditHistory.cpp" />

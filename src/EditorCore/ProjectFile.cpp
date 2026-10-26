@@ -197,6 +197,126 @@ JsonValue audioTracksToJson(const std::filesystem::path& dir, const AudioTracks&
     return JsonValue::Object{{"A1", mixToJson(audio.mix(AudioTracks::kOriginalTrack))}, {"tracce", std::move(tracks)}};
 }
 
+// Le scritte: colori come "#RRGGBBAA", grandezze e posizioni in frazioni del fotogramma, tempi in tick.
+std::string colorToText(const TextColor& c)
+{
+    static const char digits[] = "0123456789abcdef";
+    std::string out = "#";
+    for (const std::uint8_t v : {c.r, c.g, c.b, c.a}) {
+        out += digits[v >> 4];
+        out += digits[v & 15];
+    }
+    return out;
+}
+
+TextColor colorFromText(const JsonValue& value, TextColor fallback)
+{
+    if (!value.isString())
+        return fallback;
+    const std::string& t = value.asString();
+    if (t.size() != 9 || t[0] != '#')
+        return fallback;
+    const auto nibble = [](char ch) { return ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1; };
+    std::uint8_t v[4];
+    for (int i = 0; i < 4; ++i) {
+        const int hi = nibble(t[static_cast<std::size_t>(1 + 2 * i)]);
+        const int lo = nibble(t[static_cast<std::size_t>(2 + 2 * i)]);
+        if (hi < 0 || lo < 0)
+            return fallback;
+        v[i] = static_cast<std::uint8_t>(hi * 16 + lo);
+    }
+    return {v[0], v[1], v[2], v[3]};
+}
+
+const char* alignName(TextAlign a)
+{
+    return a == TextAlign::Left ? "sinistra" : a == TextAlign::Right ? "destra" : "centro";
+}
+
+TextAlign alignFromName(const JsonValue& value)
+{
+    if (value.isString() && value.asString() == "sinistra")
+        return TextAlign::Left;
+    if (value.isString() && value.asString() == "destra")
+        return TextAlign::Right;
+    return TextAlign::Center;
+}
+
+JsonValue textStyleToJson(const TextStyle& s)
+{
+    return JsonValue::Object{{"font", s.fontFamily},
+                             {"grandezza", s.size},
+                             {"grassetto", s.bold},
+                             {"corsivo", s.italic},
+                             {"sottolineato", s.underline},
+                             {"allineamento", alignName(s.align)},
+                             {"interlinea", s.lineSpacing},
+                             {"colore", colorToText(s.color)},
+                             {"opacita", s.opacity},
+                             {"contorno", s.outline},
+                             {"coloreContorno", colorToText(s.outlineColor)},
+                             {"spessoreContorno", s.outlineWidth},
+                             {"ombra", s.shadow},
+                             {"coloreOmbra", colorToText(s.shadowColor)},
+                             {"ombraX", s.shadowOffsetX},
+                             {"ombraY", s.shadowOffsetY},
+                             {"sfondo", s.background},
+                             {"coloreSfondo", colorToText(s.backgroundColor)},
+                             {"margineSfondo", s.backgroundPadding},
+                             {"centroX", s.centerX},
+                             {"centroY", s.centerY}};
+}
+
+TextStyle textStyleFromJson(const JsonValue& v)
+{
+    TextStyle s;  // i campi mancanti restano al valore di partenza
+    if (!v.isObject())
+        return s;
+    const auto number = [&](const char* key, double fallback, double lo, double hi) {
+        return v[key].isNumber() && std::isfinite(v[key].asNumber()) ? std::clamp(v[key].asNumber(), lo, hi) : fallback;
+    };
+    const auto flag = [&](const char* key, bool fallback) { return v[key].isBool() ? v[key].asBool() : fallback; };
+    if (v["font"].isString() && !v["font"].asString().empty())
+        s.fontFamily = v["font"].asString();
+    s.size = number("grandezza", s.size, 0.005, 1.0);
+    s.bold = flag("grassetto", s.bold);
+    s.italic = flag("corsivo", s.italic);
+    s.underline = flag("sottolineato", s.underline);
+    s.align = alignFromName(v["allineamento"]);
+    s.lineSpacing = number("interlinea", s.lineSpacing, 0.5, 3.0);
+    s.color = colorFromText(v["colore"], s.color);
+    s.opacity = number("opacita", s.opacity, 0.0, 1.0);
+    s.outline = flag("contorno", s.outline);
+    s.outlineColor = colorFromText(v["coloreContorno"], s.outlineColor);
+    s.outlineWidth = number("spessoreContorno", s.outlineWidth, 0.0, 0.1);
+    s.shadow = flag("ombra", s.shadow);
+    s.shadowColor = colorFromText(v["coloreOmbra"], s.shadowColor);
+    s.shadowOffsetX = number("ombraX", s.shadowOffsetX, -0.1, 0.1);
+    s.shadowOffsetY = number("ombraY", s.shadowOffsetY, -0.1, 0.1);
+    s.background = flag("sfondo", s.background);
+    s.backgroundColor = colorFromText(v["coloreSfondo"], s.backgroundColor);
+    s.backgroundPadding = number("margineSfondo", s.backgroundPadding, 0.0, 0.2);
+    s.centerX = number("centroX", s.centerX, 0.0, 1.0);
+    s.centerY = number("centroY", s.centerY, 0.0, 1.0);
+    return s;
+}
+
+JsonValue textTracksToJson(const TextTracks& text)
+{
+    JsonValue::Array layers;
+    for (const TextLayer& layer : text.layers()) {
+        JsonValue::Array clips;
+        for (const TextClip& c : layer.clips) {
+            clips.emplace_back(JsonValue::Object{{"posizione", ticks(c.position)},
+                                                 {"durata", ticks(c.length)},
+                                                 {"testo", c.text},
+                                                 {"stile", textStyleToJson(c.style)}});
+        }
+        layers.emplace_back(JsonValue::Object{{"clip", std::move(clips)}});
+    }
+    return layers;
+}
+
 // Un file audio delle tracce che non si trova (una volta sola, anche se lo usano più clip).
 void addMissingAudio(LoadedProject& loaded, const std::string& absolute, const std::string& relative)
 {
@@ -289,7 +409,7 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         }
         groups.emplace_back(std::move(items));
     }
-    const int version = !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
+    const int version = !project.textTracks().layers().empty() ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
     JsonValue::Object root{
         {"formato", kFormatName},
         {"versione", version},
@@ -309,6 +429,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         root["tracceAudio"] = std::move(audioTracks);
     if (!groups.empty())
         root["gruppi"] = std::move(groups);
+    if (!project.textTracks().layers().empty())
+        root["scritte"] = textTracksToJson(project.textTracks());
     return JsonValue(root).dump();
 }
 
@@ -484,6 +606,26 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                 groups.push_back(std::move(members));
             }
             loaded.project.groups().restore(groups);
+        }
+
+        // Scritte: una scritta con durata troppo corta o prima di 0 rende rovinato il file; una sovrapposta a un'altra si scarta.
+        if (const JsonValue& t = root["scritte"]; t.isArray()) {
+            std::vector<TextLayer> layers;
+            for (const JsonValue& l : t.asArray()) {
+                TextLayer layer;
+                for (const JsonValue& c : l["clip"].asArray()) {
+                    TextClip clip;
+                    clip.position = seconds(c["posizione"], "posizione");
+                    clip.length = seconds(c["durata"], "durata");
+                    clip.text = text(c["testo"]);
+                    clip.style = textStyleFromJson(c["stile"]);
+                    if (!(clip.length >= TextTracks::kMinLength) || clip.position < 0.0)
+                        throw ProjectFileError(name + " è rovinato: una scritta non è valida.");
+                    layer.clips.push_back(std::move(clip));
+                }
+                layers.push_back(std::move(layer));
+            }
+            loaded.project.textTracks().restore(std::move(layers));
         }
 
         // Formato del progetto. I progetti di prima non ce l'hanno: lo si ricava poi dal primo pezzo.
