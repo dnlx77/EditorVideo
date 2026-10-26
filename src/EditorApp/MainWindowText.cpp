@@ -4,11 +4,14 @@
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/TextEditorDialog.h"
+#include "EditorCore/ProjectFile.h"
 #include "EditorApp/UiText.h"
 
+#include <QtCore/QSettings>
 #include <QtWidgets/QStatusBar>
 
 #include <algorithm>
+#include <optional>
 
 namespace editor::app {
 
@@ -67,8 +70,36 @@ QSize MainWindow::frameSize() const
     return {1920, 1080};
 }
 
+namespace {
+
+const char* const kGlobalStylesKey = "scritte/stili";
+
+}  // namespace
+
+std::vector<core::NamedTextStyle> MainWindow::availableTextStyles() const
+{
+    // Quelli del progetto, poi quelli dell'elenco globale che il progetto non ha (stesso nome = vale quello del progetto).
+    std::vector<core::NamedTextStyle> styles = project_.textStyles();
+    QSettings s = settings();
+    for (core::NamedTextStyle& global : core::textStylesFromText(s.value(QString::fromLatin1(kGlobalStylesKey)).toString().toStdString())) {
+        const bool known = std::any_of(styles.begin(), styles.end(), [&](const core::NamedTextStyle& n) { return n.name == global.name; });
+        if (!known)
+            styles.push_back(std::move(global));
+    }
+    return styles;
+}
+
+void MainWindow::keepTextStyles(const std::vector<core::NamedTextStyle>& styles)
+{
+    // Nel progetto (e quindi con Annulla) e nell'elenco globale, per gli altri progetti.
+    project_.textStyles() = styles;
+    QSettings s = settings();
+    s.setValue(QString::fromLatin1(kGlobalStylesKey), QString::fromStdString(core::textStylesToText(styles)));
+}
+
 int MainWindow::addTextClip(bool withEditor)
 {
+    std::optional<std::vector<core::NamedTextStyle>> styles;
     core::TextTracks& text = project_.textTracks();
     const double at = std::max(0.0, program_->position());
     core::TextClip clip;
@@ -77,13 +108,16 @@ int MainWindow::addTextClip(bool withEditor)
     clip.text = kNewTextDefault;
     if (withEditor) {
         const QSize size = frameSize();
-        TextEditorDialog dialog(clip, size.width(), size.height(), this);
+        TextEditorDialog dialog(clip, size.width(), size.height(), availableTextStyles(), this);
         dialog.setWindowTitle(QStringLiteral("Nuova scritta"));
         if (dialog.exec() != QDialog::Accepted)
             return 0;
         clip = dialog.clip();
+        styles = dialog.styles();
     }
     const core::Project before = project_;
+    if (styles)
+        keepTextStyles(*styles);
     // Il livello scelto se lì c'è posto, altrimenti il primo dove ci sta; se non ci sta da nessuna parte, un livello nuovo.
     std::vector<int> candidates;
     if (text.layer(timeline_->selectedTextLayer()) != nullptr)
@@ -121,20 +155,24 @@ bool MainWindow::editTextClip(int clipId)
         return false;
     }
     const QSize size = frameSize();
-    TextEditorDialog dialog(*current, size.width(), size.height(), this);
+    TextEditorDialog dialog(*current, size.width(), size.height(), availableTextStyles(), this);
     if (dialog.exec() != QDialog::Accepted)
         return false;
-    return applyTextEdit(dialog.clip());
+    const std::vector<core::NamedTextStyle> styles = dialog.styles();
+    return applyTextEdit(dialog.clip(), &styles);
 }
 
-bool MainWindow::applyTextEdit(const core::TextClip& edited)
+bool MainWindow::applyTextEdit(const core::TextClip& edited, const std::vector<core::NamedTextStyle>* styles)
 {
     const core::TextClip* current = project_.textTracks().find(edited.id);
     if (current == nullptr)
         return false;
-    if (*current == edited)
+    const bool stylesChanged = styles != nullptr && *styles != availableTextStyles();
+    if (*current == edited && !stylesChanged)
         return true;  // niente è cambiato
     const core::Project before = project_;
+    if (stylesChanged)
+        keepTextStyles(*styles);
     core::TextTracks& text = project_.textTracks();
     if (std::abs(edited.length - current->length) > 0.0005 && !text.setLength(edited.id, edited.length)) {
         statusBar()->showMessage(QStringLiteral("La durata scelta non ci sta: la scritta urterebbe la successiva sullo stesso livello."), 8000);
@@ -142,8 +180,9 @@ bool MainWindow::applyTextEdit(const core::TextClip& edited)
     }
     text.setText(edited.id, edited.text);
     text.setStyle(edited.id, edited.style);
+    text.setFades(edited.id, edited.fadeIn, edited.fadeOut);
     timeline_->setSelectedTextClip(edited.id);
-    recordEdit(QStringLiteral("Modifica scritta"), before);
+    recordEdit(*current == edited && stylesChanged ? QStringLiteral("Cambia stili delle scritte") : QStringLiteral("Modifica scritta"), before);
     return true;
 }
 

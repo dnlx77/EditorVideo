@@ -8,6 +8,8 @@
 #include <QtWidgets/QPushButton>
 
 #include <functional>
+#include <string>
+#include <vector>
 
 class QCheckBox;
 class QComboBox;
@@ -43,16 +45,27 @@ class TextEditorDialog : public QDialog
 public:
     // `clip` è la scritta di partenza; `frameWidth` e `frameHeight` le misure dei fotogrammi del progetto (solo per la
     // forma dell'anteprima e per le proporzioni del testo).
-    TextEditorDialog(const core::TextClip& clip, int frameWidth, int frameHeight, QWidget* parent = nullptr);
+    // `styles`: gli stili con nome disponibili (progetto e impostazioni), che l'utente può applicare, salvare e togliere.
+    TextEditorDialog(const core::TextClip& clip, int frameWidth, int frameHeight,
+                     std::vector<core::NamedTextStyle> styles = {}, QWidget* parent = nullptr);
 
     // La scritta come è ora nella finestra (id e posizione nella sequenza restano quelli di partenza).
     core::TextClip clip() const;
     // L'anteprima com'è ora (per le prove).
     QImage previewImage() const { return preview_; }
+    // Gli stili con nome come sono ora nella finestra (con quelli salvati o tolti qui).
+    const std::vector<core::NamedTextStyle>& styles() const { return styles_; }
+    // Lo stile attuale della finestra salvato con questo nome (se c'è già, lo sostituisce); poi è quello scelto.
+    void saveStyleAs(const std::string& name);
 
 private:
     void build();
     void load(const core::TextClip& clip);
+    void loadStyle(const core::TextStyle& style);  // i controlli dello stile (non testo, durata e dissolvenze)
+    core::TextStyle currentStyle() const;
+    void fillStyleList(const std::string& select);
+    void applySelectedStyle();
+    void deleteSelectedStyle();
     void changed();  // un controllo è cambiato: ridisegna l'anteprima
     void renderPreview();
     void setPosition(double x, double y);
@@ -86,6 +99,10 @@ private:
     QDoubleSpinBox* centerX_ = nullptr;
     QDoubleSpinBox* centerY_ = nullptr;
     QDoubleSpinBox* length_ = nullptr;
+    QDoubleSpinBox* fadeIn_ = nullptr;
+    QDoubleSpinBox* fadeOut_ = nullptr;
+    std::vector<core::NamedTextStyle> styles_;
+    QComboBox* styleList_ = nullptr;
     QLabel* previewLabel_ = nullptr;
     QImage preview_;
 };

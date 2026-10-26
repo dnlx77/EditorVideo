@@ -1843,7 +1843,14 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                                     && std::abs(text.find(third)->length - changed.length) < 1e-6
                                     && line->textLanes()[0].clips[0].label.contains(QStringLiteral("…"));
                     const bool back = window->undo() && *text.find(third) == original;
-                    edited = shown && back;
+                    // Dissolvenze (step T7): si impostano con la stessa modifica e Annulla le toglie.
+                    core::TextClip faded = original;
+                    faded.fadeIn = std::min(0.3, original.length / 3);
+                    faded.fadeOut = faded.fadeIn;
+                    const bool fadesSet = window->applyTextEdit(faded) && std::abs(text.find(third)->fadeIn - faded.fadeIn) < 1e-6
+                                       && std::abs(text.find(third)->fadeOut - faded.fadeOut) < 1e-6;
+                    const bool fadesBack = window->undo() && *text.find(third) == original;
+                    edited = shown && back && fadesSet && fadesBack;
                 }
                 // Anteprima (step T5): al tempo della scritta il monitor la mostra, fuori no, e la modifica si vede subito.
                 bool onMonitor = false;

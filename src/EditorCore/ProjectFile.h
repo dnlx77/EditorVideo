@@ -19,7 +19,7 @@ namespace editor::core {
 // basi dei tempi usate da video e audio (1/90000, 1/1000, 1/48000, 1/44100, 1001/30000...), quindi un tempo
 // letto da un file torna identico dopo salvataggio e riapertura.
 constexpr std::int64_t kProjectTicksPerSecond = 705'600'000;
-constexpr int kProjectFormatVersion = 4;  // 2: spazi vuoti ("spazioPrima"); 3: tracce audio ("tracceAudio"); 4: scritte ("scritte")
+constexpr int kProjectFormatVersion = 4;  // 2: spazi vuoti ("spazioPrima"); 3: tracce audio ("tracceAudio"); 4: scritte ("scritte", "stiliScritte")
 inline constexpr const char* kProjectExtension = ".evproj";
 
 std::int64_t secondsToTicks(double seconds);
@@ -75,6 +75,11 @@ struct LoadedProject
 // ProjectFileError se il file non si apre, non è un progetto, è rovinato o è di una versione più recente.
 LoadedProject loadProjectFile(const std::string& projectPath);
 LoadedProject projectFromJson(const std::string& projectPath, const std::string& json);
+
+// Gli stili con nome delle scritte come testo JSON (per l'elenco globale nelle impostazioni dell'app). Un testo che non si
+// legge dà un elenco vuoto.
+std::string textStylesToText(const std::vector<NamedTextStyle>& styles);
+std::vector<NamedTextStyle> textStylesFromText(const std::string& text);
 
 // Il file mancante è stato ritrovato in `newPath`: lo usa al posto di quello salvato.
 void relocateMissing(LoadedProject& loaded, const MissingFile& file, const std::string& newPath);

@@ -25,7 +25,7 @@ TextFrameBlender::TextFrameBlender(int width, int height)
         throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
 }
 
-const AVFrame* TextFrameBlender::blend(const AVFrame* frame, const std::vector<const TextImage*>& texts)
+const AVFrame* TextFrameBlender::blend(const AVFrame* frame, const std::vector<BlendedText>& texts)
 {
     const AVFrame* source = frame;
     if (frame->hw_frames_ctx != nullptr) {
@@ -77,9 +77,9 @@ const AVFrame* TextFrameBlender::blend(const AVFrame* frame, const std::vector<c
     const int destinationStride[4] = {width_ * 4, 0, 0, 0};
     sws_scale(toRgba_.get(), source->data, source->linesize, 0, source->height, destination, destinationStride);
 
-    for (const TextImage* text : texts) {
-        if (text != nullptr)
-            blendTextOver(rgba_.data(), width_ * 4, width_, height_, *text);
+    for (const BlendedText& text : texts) {
+        if (text.image != nullptr)
+            blendTextOver(rgba_.data(), width_ * 4, width_, height_, *text.image, text.opacity);
     }
 
     if (av_frame_make_writable(output_.get()) < 0)

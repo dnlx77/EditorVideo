@@ -2,6 +2,7 @@
 
 #include "EditorApp/QtTextRenderer.h"
 
+#include <QtCore/QSignalBlocker>
 #include <QtGui/QPainter>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QColorDialog>
@@ -12,6 +13,8 @@
 #include <QtWidgets/QFormLayout>
 #include <QtWidgets/QGridLayout>
 #include <QtWidgets/QGroupBox>
+#include <QtWidgets/QInputDialog>
+#include <QtWidgets/QLineEdit>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QPlainTextEdit>
@@ -105,15 +108,18 @@ void ColorButton::updateLook()
     setToolTip(QStringLiteral("Colore: %1 (alfa %2)").arg(color_.name(), QString::number(color_.alpha())));
 }
 
-TextEditorDialog::TextEditorDialog(const core::TextClip& clip, int frameWidth, int frameHeight, QWidget* parent)
+TextEditorDialog::TextEditorDialog(const core::TextClip& clip, int frameWidth, int frameHeight,
+                                   std::vector<core::NamedTextStyle> styles, QWidget* parent)
     : QDialog(parent)
     , initial_(clip)
+    , styles_(std::move(styles))
     , frameWidth_(frameWidth > 0 ? frameWidth : 1920)
     , frameHeight_(frameHeight > 0 ? frameHeight : 1080)
 {
     setWindowTitle(QStringLiteral("Scritta"));
     build();
     load(clip);
+    fillStyleList(std::string());
     renderPreview();
 }
 
@@ -152,13 +158,41 @@ void TextEditorDialog::build()
 
     auto* look = new QGroupBox(QStringLiteral("Testo"));
     auto* lookForm = new QFormLayout(look);
-    lookForm->addRow(QStringLiteral("Font"), font_);
+    // Stili con nome: si applicano al testo e agli effetti qui sotto, e si possono salvare con un nome.
+    styleList_ = new QComboBox;
+    styleList_->setObjectName(QStringLiteral("stili"));
+    auto* applyStyle = new QPushButton(QStringLiteral("Applica"));
+    applyStyle->setObjectName(QStringLiteral("applicaStile"));
+    applyStyle->setToolTip(QStringLiteral("Usa lo stile scelto (font, colori, effetti, posizione) su questa scritta"));
+    auto* saveStyle = new QPushButton(QStringLiteral("Salva..."));
+    saveStyle->setObjectName(QStringLiteral("salvaStile"));
+    saveStyle->setToolTip(QStringLiteral("Salva l'aspetto di questa scritta come stile con un nome, da riusare"));
+    auto* deleteStyle = new QPushButton(QStringLiteral("Elimina"));
+    deleteStyle->setObjectName(QStringLiteral("eliminaStile"));
     auto* styleRow = new QHBoxLayout;
-    styleRow->addWidget(size_);
-    styleRow->addWidget(bold_);
-    styleRow->addWidget(italic_);
-    styleRow->addWidget(underline_);
-    lookForm->addRow(QStringLiteral("Grandezza"), styleRow);
+    styleRow->addWidget(styleList_, 1);
+    styleRow->addWidget(applyStyle);
+    styleRow->addWidget(saveStyle);
+    styleRow->addWidget(deleteStyle);
+    lookForm->addRow(QStringLiteral("Stile"), styleRow);
+    connect(applyStyle, &QPushButton::clicked, this, [this] { applySelectedStyle(); });
+    connect(deleteStyle, &QPushButton::clicked, this, [this] { deleteSelectedStyle(); });
+    connect(saveStyle, &QPushButton::clicked, this, [this] {
+        bool accepted = false;
+        const QString current = styleList_->currentIndex() > 0 ? styleList_->currentText() : QString();
+        const QString name = QInputDialog::getText(this, QStringLiteral("Salva stile"), QStringLiteral("Nome dello stile:"),
+                                                   QLineEdit::Normal, current, &accepted)
+                                 .trimmed();
+        if (accepted && !name.isEmpty())
+            saveStyleAs(name.toStdString());
+    });
+    lookForm->addRow(QStringLiteral("Font"), font_);
+    auto* sizeRow = new QHBoxLayout;
+    sizeRow->addWidget(size_);
+    sizeRow->addWidget(bold_);
+    sizeRow->addWidget(italic_);
+    sizeRow->addWidget(underline_);
+    lookForm->addRow(QStringLiteral("Grandezza"), sizeRow);
     lookForm->addRow(QStringLiteral("Allineamento"), align_);
     lookForm->addRow(QStringLiteral("Interlinea"), lineSpacing_);
     auto* colorRow = new QHBoxLayout;
@@ -206,6 +240,10 @@ void TextEditorDialog::build()
     centerX_ = spin(0.0, 100.0, 1.0, 1, QStringLiteral(" %"), "posizioneX");
     centerY_ = spin(0.0, 100.0, 1.0, 1, QStringLiteral(" %"), "posizioneY");
     length_ = spin(0.1, 36000.0, 0.5, 2, QStringLiteral(" s"), "durata");
+    fadeIn_ = spin(0.0, 36000.0, 0.1, 2, QStringLiteral(" s"), "dissolvenzaIn");
+    fadeIn_->setToolTip(QStringLiteral("La scritta compare piano piano in questo tempo"));
+    fadeOut_ = spin(0.0, 36000.0, 0.1, 2, QStringLiteral(" s"), "dissolvenzaOut");
+    fadeOut_->setToolTip(QStringLiteral("La scritta sparisce piano piano in questo tempo"));
     auto* where = new QGroupBox(QStringLiteral("Posizione e durata"));
     auto* whereGrid = new QGridLayout(where);
     auto* presets = new QGridLayout;
@@ -231,6 +269,10 @@ void TextEditorDialog::build()
     whereGrid->addWidget(centerY_, 1, 2);
     whereGrid->addWidget(new QLabel(QStringLiteral("Durata")), 2, 1);
     whereGrid->addWidget(length_, 2, 2);
+    whereGrid->addWidget(new QLabel(QStringLiteral("Compare in")), 3, 1);
+    whereGrid->addWidget(fadeIn_, 3, 2);
+    whereGrid->addWidget(new QLabel(QStringLiteral("Sparisce in")), 4, 1);
+    whereGrid->addWidget(fadeOut_, 4, 2);
 
     auto* controls = new QWidget;
     auto* controlsLayout = new QVBoxLayout(controls);
@@ -278,7 +320,7 @@ void TextEditorDialog::build()
             fontFamily_ = f.family().toStdString();
         changed();
     });
-    for (QDoubleSpinBox* box : {size_, lineSpacing_, opacity_, outlineWidth_, shadowX_, shadowY_, padding_, centerX_, centerY_, length_})
+    for (QDoubleSpinBox* box : {size_, lineSpacing_, opacity_, outlineWidth_, shadowX_, shadowY_, padding_, centerX_, centerY_, length_, fadeIn_, fadeOut_})
         connect(box, &QDoubleSpinBox::valueChanged, this, [this] { changed(); });
     for (QToolButton* button : {bold_, italic_, underline_})
         connect(button, &QToolButton::toggled, this, [this] { changed(); });
@@ -292,9 +334,18 @@ void TextEditorDialog::build()
 void TextEditorDialog::load(const core::TextClip& clip)
 {
     loading_ = true;
-    const core::TextStyle& s = clip.style;
-    fontFamily_ = s.fontFamily;
     text_->setPlainText(QString::fromUtf8(clip.text.c_str()));
+    length_->setValue(clip.length);
+    fadeIn_->setValue(clip.fadeIn);
+    fadeOut_->setValue(clip.fadeOut);
+    loading_ = false;
+    loadStyle(clip.style);
+}
+
+void TextEditorDialog::loadStyle(const core::TextStyle& s)
+{
+    loading_ = true;
+    fontFamily_ = s.fontFamily;
     font_->setCurrentFont(QFont(QString::fromUtf8(s.fontFamily.c_str())));
     size_->setValue(s.size * 100.0);
     bold_->setChecked(s.bold);
@@ -316,7 +367,6 @@ void TextEditorDialog::load(const core::TextClip& clip)
     padding_->setValue(s.backgroundPadding * 100.0);
     centerX_->setValue(s.centerX * 100.0);
     centerY_->setValue(s.centerY * 100.0);
-    length_->setValue(clip.length);
     loading_ = false;
 }
 
@@ -325,7 +375,16 @@ core::TextClip TextEditorDialog::clip() const
     core::TextClip clip = initial_;
     clip.text = text_->toPlainText().toStdString();
     clip.length = length_->value();
-    core::TextStyle& s = clip.style;
+    clip.fadeIn = fadeIn_->value();
+    clip.fadeOut = fadeOut_->value();
+    clip.style = currentStyle();
+    return clip;
+}
+
+core::TextStyle TextEditorDialog::currentStyle() const
+{
+    core::TextStyle style;
+    core::TextStyle& s = style;
     s.fontFamily = fontFamily_;
     s.size = size_->value() / 100.0;
     s.bold = bold_->isChecked();
@@ -347,7 +406,52 @@ core::TextClip TextEditorDialog::clip() const
     s.backgroundPadding = padding_->value() / 100.0;
     s.centerX = centerX_->value() / 100.0;
     s.centerY = centerY_->value() / 100.0;
-    return clip;
+    return style;
+}
+
+void TextEditorDialog::fillStyleList(const std::string& select)
+{
+    const QSignalBlocker blocker(styleList_);
+    styleList_->clear();
+    styleList_->addItem(QStringLiteral("(nessuno)"));
+    int selected = 0;
+    for (std::size_t i = 0; i < styles_.size(); ++i) {
+        styleList_->addItem(QString::fromUtf8(styles_[i].name.c_str()));
+        if (styles_[i].name == select)
+            selected = static_cast<int>(i) + 1;
+    }
+    styleList_->setCurrentIndex(selected);
+}
+
+void TextEditorDialog::saveStyleAs(const std::string& name)
+{
+    if (name.empty())
+        return;
+    const core::TextStyle style = currentStyle();
+    const auto found = std::find_if(styles_.begin(), styles_.end(), [&](const core::NamedTextStyle& s) { return s.name == name; });
+    if (found != styles_.end())
+        found->style = style;
+    else
+        styles_.push_back({name, style});
+    fillStyleList(name);
+}
+
+void TextEditorDialog::applySelectedStyle()
+{
+    const int index = styleList_->currentIndex() - 1;
+    if (index < 0 || index >= static_cast<int>(styles_.size()))
+        return;
+    loadStyle(styles_[static_cast<std::size_t>(index)].style);
+    renderPreview();
+}
+
+void TextEditorDialog::deleteSelectedStyle()
+{
+    const int index = styleList_->currentIndex() - 1;
+    if (index < 0 || index >= static_cast<int>(styles_.size()))
+        return;
+    styles_.erase(styles_.begin() + index);
+    fillStyleList(std::string());
 }
 
 void TextEditorDialog::setPosition(double x, double y)

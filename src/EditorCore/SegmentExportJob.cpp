@@ -472,7 +472,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         if (av_frame_ref(emitted.get(), frame) < 0)
             throw MediaError(kOutOfMemory);
         // Sotto una scritta: il fotogramma passa dal disegno del testo (al tempo di metà fotogramma, per non sbagliare ai bordi).
-        if (const std::vector<const TextImage*> texts = textsAt(doneLength_ + (k + 0.5) * frameSeconds); !texts.empty()) {
+        if (const std::vector<BlendedText> texts = textsAt(doneLength_ + (k + 0.5) * frameSeconds); !texts.empty()) {
             const AVFrame* blended = withText(frame, texts);
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
@@ -607,9 +607,9 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     return {outputPosition_ + frames * frameSeconds, audioEnd};
 }
 
-std::vector<const TextImage*> ExportJob::textsAt(double sequenceTime)
+std::vector<BlendedText> ExportJob::textsAt(double sequenceTime)
 {
-    std::vector<const TextImage*> images;
+    std::vector<BlendedText> images;
     if (reencode_.textRenderer == nullptr || plan_.reference.video() == nullptr)
         return images;
     const StreamSignature& format = *plan_.reference.video();
@@ -617,13 +617,15 @@ std::vector<const TextImage*> ExportJob::textsAt(double sequenceTime)
         auto found = textImages_.find(clip->id);
         if (found == textImages_.end())
             found = textImages_.emplace(clip->id, reencode_.textRenderer->render(*clip, format.width, format.height)).first;
-        if (!found->second.empty())
-            images.push_back(&found->second);
+        // Le dissolvenze: la scritta si vede meno all'inizio e alla fine.
+        const double opacity = clip->fadeFactor(sequenceTime);
+        if (!found->second.empty() && opacity > 0.0)
+            images.push_back({&found->second, opacity});
     }
     return images;
 }
 
-const AVFrame* ExportJob::withText(const AVFrame* frame, const std::vector<const TextImage*>& texts)
+const AVFrame* ExportJob::withText(const AVFrame* frame, const std::vector<BlendedText>& texts)
 {
     if (!blender_) {
         const StreamSignature& format = *plan_.reference.video();
@@ -653,7 +655,7 @@ std::pair<double, double> ExportJob::writeBlack(double seconds)
     for (int k = 0; k < frames; ++k) {
         black->pts = std::llround((outputPosition_ + k * frameSeconds) * kTicks);
         const AVFrame* shown = black.get();
-        if (const std::vector<const TextImage*> texts = textsAt(doneLength_ + (k + 0.5) * frameSeconds); !texts.empty())
+        if (const std::vector<BlendedText> texts = textsAt(doneLength_ + (k + 0.5) * frameSeconds); !texts.empty())
             shown = withText(black.get(), texts);
         video.encoder.encode(shown, k == 0, videoSink);
         if (progress_ && !progress_(std::clamp((doneLength_ + (k + 1) * frameSeconds) / totalLength_, 0.0, 1.0)))

@@ -63,6 +63,7 @@ void Project::clear()
     sequence_.clear();
     audio_.clear();
     text_.clear();
+    textStyles_.clear();
     groups_.clear();
     format_ = {};
 }
@@ -154,6 +155,7 @@ void Project::restoreEdits(const Project& snapshot)
     sequence_ = snapshot.sequence_;
     audio_.restoreEdits(snapshot.audio_);
     text_.restoreEdits(snapshot.text_);
+    textStyles_ = snapshot.textStyles_;
     groups_.restoreEdits(snapshot.groups_);
     format_ = snapshot.format_;
     nextId_ = std::max(nextId_, snapshot.nextId_);  // un file aggiunto dopo non riprende l'id di uno tolto

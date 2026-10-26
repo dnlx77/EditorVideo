@@ -32,7 +32,8 @@ public:
 
 // Sovrappone la scritta a un fotogramma RGBA a 8 bit (non premoltiplicato, righe di `stride` byte, `frameWidth` x
 // `frameHeight`): la parte della scritta fuori dal fotogramma si scarta. Il risultato resta con il canale alfa del
-// fotogramma com'era (di solito 255).
-void blendTextOver(std::uint8_t* frameRgba, int stride, int frameWidth, int frameHeight, const TextImage& text);
+// fotogramma com'era (di solito 255). `opacity` (0..1) rende la scritta più trasparente (le dissolvenze).
+void blendTextOver(std::uint8_t* frameRgba, int stride, int frameWidth, int frameHeight, const TextImage& text,
+                   double opacity = 1.0);
 
 }  // namespace editor::core

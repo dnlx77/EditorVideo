@@ -12,6 +12,13 @@ namespace editor::core {
 // YUV 4:2:0 della misura del progetto, con le stesse bande nere che metterebbe l'encoder se le proporzioni sono diverse,
 // e le scritte fuse sopra (passando per RGBA). Serve solo per i fotogrammi con una scritta: gli altri vanno all'encoder
 // come sono.
+// Una scritta già disegnata e quanto si vede (0..1: le dissolvenze).
+struct BlendedText
+{
+    const TextImage* image = nullptr;
+    double opacity = 1.0;
+};
+
 class TextFrameBlender
 {
 public:
@@ -19,7 +26,7 @@ public:
 
     // `source` con `texts` sopra (nell'ordine dato: l'ultima è la più alta). Il risultato resta valido fino alla
     // prossima chiamata; ha i tempi (pts) e le proprietà di `source`.
-    const AVFrame* blend(const AVFrame* source, const std::vector<const TextImage*>& texts);
+    const AVFrame* blend(const AVFrame* source, const std::vector<BlendedText>& texts);
 
 private:
     int width_;

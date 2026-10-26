@@ -270,3 +270,27 @@ TEST_F(TextExport, TextOverAnEmptyGapIsDrawnOnTheBlack)
             EXPECT_NEAR(d.inside[static_cast<std::size_t>(i)], 100, 6);
     }
 }
+
+TEST_F(TextExport, FadesDimTheTextInAndOut)
+{
+    const WhiteBox renderer;
+    ReencodeOptions options;
+    options.texts = oneText(1.2, 1.4);  // fotogrammi 36 .. 77, dissolvenze di 0,7 s: piena a 1,9 s (fotogramma 57)
+    options.texts.setFades(options.texts.layers()[0].clips[0].id, 0.7, 0.7);
+    options.textRenderer = &renderer;
+    const std::vector<ClipRanges> plan{{file("grigio.mp4"), {{0.0, 4.0}}}};
+    const fs::path out = dir_ / "dissolvenze.mp4";
+    exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
+    const Sampled d = sample(out);
+    EXPECT_EQ(d.errors, 0);
+    ASSERT_EQ(d.inside.size(), static_cast<std::size_t>(kFrames));
+    const auto at = [&](int i) { return d.inside[static_cast<std::size_t>(i)]; };
+    EXPECT_NEAR(at(33), 100, 6);
+    EXPECT_GT(at(57), 200);                 // piena
+    EXPECT_GT(at(46), 130);                 // a metà dissolvenza in entrata: né grigio né bianco
+    EXPECT_LT(at(46), 200);
+    EXPECT_GT(at(68), 130);                 // e in uscita
+    EXPECT_LT(at(68), 200);
+    EXPECT_LT(at(40), at(46));              // sale
+    EXPECT_GT(at(62), at(72));              // poi scende
+}

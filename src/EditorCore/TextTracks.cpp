@@ -252,11 +252,27 @@ int TextTracks::split(int clipId, double seconds)
     second.position = seconds;
     second.length = clip->endPosition() - seconds;
     second.id = nextClipId_++;
+    second.fadeIn = 0.0;  // la dissolvenza in entrata resta alla prima parte, quella in uscita alla seconda
+    clip->fadeOut = 0.0;
     clip->length = seconds - clip->position;
     TextLayer& l = layers_[static_cast<std::size_t>(layerIndex(layerOf(clipId)))];
     l.clips.push_back(std::move(second));
     sortLayer(l);
     return nextClipId_ - 1;
+}
+
+bool TextTracks::setFades(int clipId, double fadeIn, double fadeOut)
+{
+    TextClip* clip = findMutable(clipId);
+    if (clip == nullptr || !std::isfinite(fadeIn) || !std::isfinite(fadeOut))
+        return false;
+    fadeIn = std::clamp(fadeIn, 0.0, clip->length);
+    fadeOut = std::clamp(fadeOut, 0.0, clip->length);
+    if (clip->fadeIn == fadeIn && clip->fadeOut == fadeOut)
+        return false;
+    clip->fadeIn = fadeIn;
+    clip->fadeOut = fadeOut;
+    return true;
 }
 
 bool TextTracks::setText(int clipId, std::string text)
