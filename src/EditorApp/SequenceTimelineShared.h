@@ -13,7 +13,6 @@
 namespace editor::app::detail {
 
 inline constexpr double kTop = 6;           // spazio fra il righello e la corsia video
-inline constexpr double kVideoHeight = 54;    // corsia video quando c'è spazio; con poco spazio si stringe
 inline constexpr double kLaneGap = 4;
 inline constexpr double kHeaderWidth = 118;  // a sinistra delle corsie: nome, muto, solo, livello
 inline constexpr double kTextLaneHeight = 22;   // una corsia di scritte (sopra la corsia video)

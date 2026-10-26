@@ -221,6 +221,8 @@ public:
     // Solo per le prove: dove sta un tempo della sequenza e il centro della corsia video, in coordinate del widget.
     double xForSequenceTime(double seconds) const { return xForTime(seconds); }
     double videoLaneCenter() const { return videoLane().center().y(); }
+    double videoLaneHeight() const { return videoLane().height(); }
+    double audioLaneHeight(int index = 0) const { return audioLane(index).height(); }
     double audioLaneCenter(int laneIndex) const { return audioLane(laneIndex).center().y(); }  // 0 = A1
     QToolButton* addTrackButton() const { return addTrack_; }
     QToolButton* removeTrackButton() const { return removeTrack_; }

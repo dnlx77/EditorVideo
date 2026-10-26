@@ -416,10 +416,11 @@ const SequenceTimeline::AudioBlock* SequenceTimeline::findAudioClip(int clipId, 
 
 double SequenceTimeline::videoHeight() const
 {
-    // La corsia video fino a kVideoHeight; le corsie audio si dividono il resto.
+    // La corsia video e le corsie audio si dividono lo spazio in parti uguali (le corsie delle scritte, più basse, hanno
+    // una misura fissa): quando la finestra cresce, crescono tutte insieme.
     const double n = static_cast<double>(lanes_.size());
     const double lanes = height() - kRulerHeight - kTop - 6 - kControlsHeight - n * kLaneGap - textBand();
-    return std::clamp(lanes / (n + 1) * 1.2, 18.0, kVideoHeight);
+    return std::max(lanes / (n + 1), 18.0);
 }
 
 bool SequenceTimeline::videoLaneSelected() const

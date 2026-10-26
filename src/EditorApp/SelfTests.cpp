@@ -1876,6 +1876,16 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                     onMonitor = shown && hidden && !grabbed.isNull() && monitor->textOverlay().renderCount() > 0 && movedOnScreen
                              && seenMoved && movedBack;
                 }
+                // Altezze (con scritte in più o no): video e audio hanno la stessa altezza, le scritte sono più basse.
+                bool uniform = std::abs(line->videoLaneHeight() - line->audioLaneHeight()) < 1.0;
+                for (int tall : {320, 600}) {
+                    line->resize(line->width(), tall);
+                    QCoreApplication::processEvents();
+                    uniform = uniform && std::abs(line->videoLaneHeight() - line->audioLaneHeight()) < 1.0;
+                }
+                std::printf("Scritte: video e audio alti uguali %s\n", uniform ? "sì" : "NO");
+                std::fflush(stdout);
+                ok = ok && uniform;
                 // Annulla tutto: i livelli e le scritte spariscono.
                 bool undone = true;
                 for (int i = 0; i < 16 && !text.layers().empty(); ++i)
