@@ -800,8 +800,9 @@ bool SequenceTimeline::textFadeHandleAt(const QPointF& pos, int& lane, int& clip
             continue;  // scritta troppo stretta per le maniglie
         for (const bool in : {true, false}) {
             const QPointF at = textFadeHandle(rect, clips[i], in);
-            const double distance = std::hypot(pos.x() - at.x(), pos.y() - at.y());
-            if (distance <= kTextFadeNear && distance < best) {
+            // Zona stretta in verticale: sotto la maniglia il bordo della scritta resta libero per accorciarla.
+            const double distance = std::abs(pos.x() - at.x());
+            if (distance <= kTextFadeNear && std::abs(pos.y() - at.y()) <= kTextFadeNearY && distance < best) {
                 best = distance;
                 clip = static_cast<int>(i);
                 isIn = in;
