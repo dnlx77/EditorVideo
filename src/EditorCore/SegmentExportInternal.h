@@ -10,6 +10,7 @@
 #include "EditorCore/MixExport.h"
 #include "EditorCore/NalUnits.h"
 #include "EditorCore/PathUtil.h"
+#include "EditorCore/TextFrame.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <algorithm>
@@ -197,6 +198,8 @@ struct Piece
     // Il tratto continua nella parte dopo (dallo stesso file): l'audio è continuo, quindi il blocco a cavallo della
     // giunzione va in questa parte (non si perde) e la parte dopo parte esattamente alla fine di questa.
     bool continues = false;
+    // Ricodificata perché sotto una scritta (vedi ReencodeOptions::texts).
+    bool text = false;
 };
 
 // Taglio preciso di un tratto copiato (vedi exportClips): ricodificati i bordi fra IN e il primo fotogramma chiave e, con
@@ -231,6 +234,56 @@ inline std::vector<Piece> splitForPreciseCut(const TimeRange& range, const std::
     return pieces;
 }
 
+// I momenti del montaggio (tempi della sequenza) in cui si vede almeno una scritta, in ordine e senza sovrapposizioni.
+inline std::vector<TimeRange> textCoverage(const TextTracks* texts)
+{
+    std::vector<TimeRange> spans;
+    if (texts == nullptr)
+        return spans;
+    for (const TextLayer& layer : texts->layers()) {
+        for (const TextClip& clip : layer.clips) {
+            if (!clip.text.empty() && clip.length > kTimeEpsilon)
+                spans.push_back({clip.position, clip.position + clip.length});
+        }
+    }
+    std::sort(spans.begin(), spans.end(), [](const TimeRange& a, const TimeRange& b) { return a.start < b.start; });
+    std::vector<TimeRange> merged;
+    for (const TimeRange& span : spans) {
+        if (!merged.empty() && span.start <= merged.back().end + kTimeEpsilon)
+            merged.back().end = std::max(merged.back().end, span.end);
+        else
+            merged.push_back(span);
+    }
+    return merged;
+}
+
+// Un tratto del file (`range`, che nella sequenza parte da `sequenceStart`) diviso nelle parti sotto una scritta (true) e
+// nelle altre (false), in ordine. Una sola parte false se non ci sono scritte.
+inline std::vector<std::pair<TimeRange, bool>> splitByText(const TimeRange& range, double sequenceStart,
+                                                           const std::vector<TimeRange>& coverage)
+{
+    std::vector<std::pair<TimeRange, bool>> parts;
+    double at = range.start;
+    const double offset = range.start - sequenceStart;  // tempo del file meno tempo della sequenza
+    for (const TimeRange& span : coverage) {
+        const double from = std::max(span.start + offset, at);
+        const double to = std::min(span.end + offset, range.end);
+        if (to - from <= kTimeEpsilon)
+            continue;
+        if (from > at + kTimeEpsilon)
+            parts.push_back({{at, from}, false});
+        parts.push_back({{from, to}, true});
+        at = to;
+    }
+    if (parts.empty())
+        return {{range, false}};
+    if (range.end > at + kTimeEpsilon)
+        parts.push_back({{at, range.end}, false});
+    else
+        parts.back().first.end = range.end;
+    return parts;
+}
+
 // Che cosa succede a ogni file della lista all'esportazione.
 struct PlanAnalysis
 {
@@ -254,7 +307,7 @@ inline double gapBefore(const ClipRanges& clip, std::size_t r)
 }
 
 inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectFormat* format, bool replaced, bool reencodeAll,
-                         bool closeGaps)
+                         bool closeGaps, const TextTracks* texts = nullptr)
 {
     PlanAnalysis plan;
     plan.reencode.assign(clips.size(), reencodeAll);
@@ -310,6 +363,9 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
     // fotogramma chiave prima, come senza ricodifica.
     std::map<std::string, std::vector<double>> keyframesOf;  // letti dal file se il piano non li ha
     bool preciseNeeded = false;
+    const std::vector<TimeRange> coverage = textCoverage(texts);
+    bool textNeeded = false;
+    double sequence = 0.0;  // dove cade il tratto nel montaggio (spazi vuoti compresi)
     plan.pieces.resize(clips.size());
     for (std::size_t c = 0; c < clips.size(); ++c) {
         std::vector<double> keyframes = clips[c].keyframes;
@@ -321,21 +377,43 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
         }
         std::sort(keyframes.begin(), keyframes.end());
         const StreamSignature* own = findStream(plan.signatures[c].streams, StreamKind::Video);
-        for (const TimeRange& range : clips[c].ranges) {
+        for (std::size_t r = 0; r < clips[c].ranges.size(); ++r) {
+            const TimeRange& range = clips[c].ranges[r];
+            sequence += gapBefore(clips[c], r);
+            const double sequenceStart = sequence;
+            sequence += range.length();
             if (plan.reencode[c] || own == nullptr || keyframes.empty()) {
                 plan.pieces[c].push_back({{range, plan.reencode[c]}});
                 continue;
             }
-            std::vector<Piece> pieces = splitForPreciseCut(range, keyframes, own->bFrames);
-            const bool precise = std::any_of(pieces.begin(), pieces.end(), [](const Piece& p) { return p.reencode; });
-            if (precise && !cannotReencode.empty()) {
-                // Senza ricodifica: dal fotogramma chiave nello stesso punto o prima di IN.
+            // Le parti sotto una scritta si ricodificano (la scritta si disegna sul fotogramma); le altre come sempre.
+            std::vector<Piece> pieces;
+            bool anyText = false;
+            for (const auto& [part, covered] : splitByText(range, sequenceStart, coverage)) {
+                if (covered) {
+                    anyText = true;
+                    Piece piece{part, true};
+                    piece.text = true;
+                    pieces.push_back(piece);
+                    continue;
+                }
+                std::vector<Piece> own_pieces = splitForPreciseCut(part, keyframes, own->bFrames);
+                pieces.insert(pieces.end(), own_pieces.begin(), own_pieces.end());
+            }
+            for (std::size_t i = 0; i + 1 < pieces.size(); ++i)
+                pieces[i].continues = true;
+            if (anyText)
+                textNeeded = true;
+            const bool precise = std::any_of(pieces.begin(), pieces.end(), [](const Piece& p) { return p.reencode && !p.text; });
+            if ((precise || anyText) && !cannotReencode.empty()) {
+                // Senza ricodifica: dal fotogramma chiave nello stesso punto o prima di IN (se le scritte lo richiedono, il
+                // piano ha un problema, vedi sotto).
                 pieces = {{{snapToKeyframe(keyframes, range.start), range.end}, false}};
-                if (plan.impreciseCuts.empty())
+                if (precise && !anyText && plan.impreciseCuts.empty())
                     plan.impreciseCuts = "Il taglio preciso non è possibile, quindi IN va al fotogramma chiave più vicino prima: "
                                        + cannotReencode;
             }
-            preciseNeeded = preciseNeeded || (precise && cannotReencode.empty());
+            preciseNeeded = preciseNeeded || ((precise || anyText) && cannotReencode.empty());
             plan.pieces[c].push_back(std::move(pieces));
         }
     }
@@ -378,6 +456,9 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
         for (std::size_t c = 1; c < clips.size() && !plan.parametersInStream; ++c)
             plan.parametersInStream = classifyClip(plan.signatures[c], first, !replaced).fit == ClipFit::CopyWithParameters;
     }
+    if (textNeeded && !cannotReencode.empty() && plan.problem.empty())
+        plan.problem = "Le scritte si disegnano sul video, quindi i tratti sotto le scritte vanno ricodificati, ma non si può: "
+                     + cannotReencode;
     // Spazi vuoti: nero e silenzio nel formato del progetto (con l'encoder, come la ricodifica), se si può.
     bool anyGap = false;
     for (const ClipRanges& clip : clips) {
@@ -916,6 +997,11 @@ private:
     PacketSink audioSinkFor(int rate, StreamCopy* muting, double& audioEnd);
     std::pair<double, double> reencodeRange(InputFile& current, const TimeRange& range, std::size_t c, bool continues);
     std::pair<double, double> writeBlack(double seconds);
+    // Le scritte che si vedono al tempo `sequenceTime` del montaggio, già disegnate alla misura del fotogramma del progetto
+    // (dal livello più basso al più alto); vuoto se non ce ne sono.
+    std::vector<const TextImage*> textsAt(double sequenceTime);
+    // Il fotogramma con le scritte sopra (alla misura del progetto), da dare all'encoder al posto di `frame`.
+    const AVFrame* withText(const AVFrame* frame, const std::vector<const TextImage*>& texts);
 
     const std::vector<ClipRanges>& clips_;
     const std::string& outputPath_;
@@ -938,6 +1024,8 @@ private:
     int outLength_ = 4;  // byte della lunghezza davanti ai NAL nei pacchetti video del file creato (per i parametri nel flusso)
 
     // Stato della scrittura.
+    std::map<int, TextImage> textImages_;  // per id di scritta: disegnata una volta sola
+    std::unique_ptr<TextFrameBlender> blender_;
     PacketPtr packet_;
     ExportResult result_;
     std::vector<std::int64_t> lastDts_;  // per ogni flusso del file creato: ultimo tempo di decodifica scritto

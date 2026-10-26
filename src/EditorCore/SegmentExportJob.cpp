@@ -48,7 +48,7 @@ ExportJob::ExportJob(const std::vector<ClipRanges>& clips, const std::string& ou
     }
 
     // Che cosa succede a ogni file: si copia (con i suoi parametri nel flusso, se diversi) o si ricodifica.
-    plan_ = analysis != nullptr ? *analysis : analyzePlan(clips_, format, replaced_, reencode_.all, reencode_.closeGaps);
+    plan_ = analysis != nullptr ? *analysis : analyzePlan(clips_, format, replaced_, reencode_.all, reencode_.closeGaps, reencode_.activeTexts());
     if (!plan_.problem.empty())
         throw ClipsNotJoinable(plan_.problem);
 
@@ -471,6 +471,13 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         av_frame_unref(emitted.get());
         if (av_frame_ref(emitted.get(), frame) < 0)
             throw MediaError(kOutOfMemory);
+        // Sotto una scritta: il fotogramma passa dal disegno del testo (al tempo di metà fotogramma, per non sbagliare ai bordi).
+        if (const std::vector<const TextImage*> texts = textsAt(doneLength_ + (k + 0.5) * frameSeconds); !texts.empty()) {
+            const AVFrame* blended = withText(frame, texts);
+            av_frame_unref(emitted.get());
+            if (av_frame_ref(emitted.get(), blended) < 0)
+                throw MediaError(kOutOfMemory);
+        }
         emitted->pts = base + k;
         video.encoder.encode(emitted.get(), k == 0, videoSink);
         ++k;
@@ -600,6 +607,31 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     return {outputPosition_ + frames * frameSeconds, audioEnd};
 }
 
+std::vector<const TextImage*> ExportJob::textsAt(double sequenceTime)
+{
+    std::vector<const TextImage*> images;
+    if (reencode_.textRenderer == nullptr || plan_.reference.video() == nullptr)
+        return images;
+    const StreamSignature& format = *plan_.reference.video();
+    for (const TextClip* clip : reencode_.texts.visibleAt(sequenceTime)) {
+        auto found = textImages_.find(clip->id);
+        if (found == textImages_.end())
+            found = textImages_.emplace(clip->id, reencode_.textRenderer->render(*clip, format.width, format.height)).first;
+        if (!found->second.empty())
+            images.push_back(&found->second);
+    }
+    return images;
+}
+
+const AVFrame* ExportJob::withText(const AVFrame* frame, const std::vector<const TextImage*>& texts)
+{
+    if (!blender_) {
+        const StreamSignature& format = *plan_.reference.video();
+        blender_ = std::make_unique<TextFrameBlender>(format.width, format.height);
+    }
+    return blender_->blend(frame, texts);
+}
+
 // Uno spazio vuoto: nero (nel formato del progetto, come i tratti ricodificati: fotogrammi al secondo costanti,
 // primo fotogramma chiave, parametri nel flusso) e silenzio (AAC nel formato dell'audio del progetto), dalla
 // posizione attuale del file creato. Restituisce dove finiscono video e audio. Uno spazio più corto di mezzo
@@ -620,7 +652,10 @@ std::pair<double, double> ExportJob::writeBlack(double seconds)
     const FramePtr black = makeBlackFrame(format.width, format.height);
     for (int k = 0; k < frames; ++k) {
         black->pts = std::llround((outputPosition_ + k * frameSeconds) * kTicks);
-        video.encoder.encode(black.get(), k == 0, videoSink);
+        const AVFrame* shown = black.get();
+        if (const std::vector<const TextImage*> texts = textsAt(doneLength_ + (k + 0.5) * frameSeconds); !texts.empty())
+            shown = withText(black.get(), texts);
+        video.encoder.encode(shown, k == 0, videoSink);
         if (progress_ && !progress_(std::clamp((doneLength_ + (k + 1) * frameSeconds) / totalLength_, 0.0, 1.0)))
             throw ExportCancelled();
     }
@@ -775,6 +810,8 @@ ExportResult ExportJob::run()
                         const auto [videoEnd, audioEnd] = reencodeRange(current, range, c, piece.continues);
                         if (plan_.reencode[c])
                             ++result_.reencodedSegments;
+                        else if (piece.text)
+                            ++result_.textSegments;
                         else
                             ++result_.preciseCuts;
                         // Dentro lo stesso tratto l'audio continua: la parte dopo riparte esattamente da qui.

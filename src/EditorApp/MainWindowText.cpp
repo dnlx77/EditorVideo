@@ -59,18 +59,13 @@ void MainWindow::removeSelectedTextLayer()
     removeTextLayer(text.layer(selected) != nullptr ? selected : text.layers().back().id);
 }
 
-namespace {
-
-// Le misure dei fotogrammi del progetto (per l'anteprima e le proporzioni nell'editor).
-QSize frameSizeOf(const core::Project& project)
+QSize MainWindow::frameSize() const
 {
-    const core::StreamSignature* video = project.format().video();
+    const core::StreamSignature* video = project_.format().video();
     if (video != nullptr && video->width > 0 && video->height > 0)
         return {video->width, video->height};
     return {1920, 1080};
 }
-
-}  // namespace
 
 int MainWindow::addTextClip(bool withEditor)
 {
@@ -81,7 +76,7 @@ int MainWindow::addTextClip(bool withEditor)
     clip.length = kNewTextLength;
     clip.text = kNewTextDefault;
     if (withEditor) {
-        const QSize size = frameSizeOf(project_);
+        const QSize size = frameSize();
         TextEditorDialog dialog(clip, size.width(), size.height(), this);
         dialog.setWindowTitle(QStringLiteral("Nuova scritta"));
         if (dialog.exec() != QDialog::Accepted)
@@ -125,7 +120,7 @@ bool MainWindow::editTextClip(int clipId)
         statusBar()->showMessage(QStringLiteral("Scegli prima una scritta sulla linea del tempo."), 6000);
         return false;
     }
-    const QSize size = frameSizeOf(project_);
+    const QSize size = frameSize();
     TextEditorDialog dialog(*current, size.width(), size.height(), this);
     if (dialog.exec() != QDialog::Accepted)
         return false;

@@ -1,6 +1,7 @@
 #include "EditorApp/MainWindow.h"
 
 #include "EditorApp/MainWindowShared.h"
+#include "EditorApp/QtTextRenderer.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/ProxyManager.h"
@@ -120,12 +121,21 @@ double MainWindow::exportLength()
         .outputSeconds;
 }
 
-MainWindow::ExportSettings MainWindow::exportSettings() const
+MainWindow::ExportSettings MainWindow::exportSettings(bool drawText) const
 {
     // Audio, formato e ricodifica valgono per il montaggio; il taglio veloce (sequenza vuota) copia il file com'è.
     if (project_.sequence().empty())
         return {};
-    return {project_.audioEdit(core::GapExport::Black), project_.format(), reencodeOptions_};
+    ExportSettings settings{project_.audioEdit(core::GapExport::Black), project_.format(), reencodeOptions_, {}};
+    // Le scritte: i tratti sotto una scritta si ricodificano col testo sopra.
+    if (project_.textTracks().endTime() > 0.0) {
+        const QSize frame = frameSize();
+        settings.textRenderer =
+            std::make_shared<PrerenderedTextRenderer>(project_.textTracks(), frame.width(), frame.height(), drawText);
+        settings.reencode.texts = project_.textTracks();
+        settings.reencode.textRenderer = settings.textRenderer.get();
+    }
+    return settings;
 }
 
 std::vector<core::ClipRanges> MainWindow::previewPlan()
@@ -182,17 +192,18 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     const std::vector<core::ClipRanges> plan = exportPlan();
     if (plan.empty() || exportThread_ != nullptr)
         return false;
-    const ExportSettings settings = exportSettings();
+    const ExportSettings settings = exportSettings(true);
     const core::AudioEdit& audio = settings.audio;
     const core::ProjectFormat& format = settings.format;
     const core::ReencodeOptions& reencode = settings.reencode;
+    const std::shared_ptr<const core::TextRenderer> textRenderer = settings.textRenderer;  // vive quanto l'esportazione
 
     auto outcome = std::make_shared<ExportOutcome>();
     auto progress = std::make_shared<std::atomic<double>>(0.0);
     const std::string outputPath = target.toStdString();
 
     cancelExport_ = false;
-    exportThread_ = QThread::create([=, cancel = &cancelExport_] {
+    exportThread_ = QThread::create([=, cancel = &cancelExport_, keepText = textRenderer] {
         const auto started = std::chrono::steady_clock::now();
         try {
             outcome->result = core::exportClips(
@@ -272,11 +283,14 @@ bool MainWindow::exportOptionsDialog()
     const core::AudioEdit audio = project_.audioEdit(core::GapExport::Black);
     const core::ProjectFormat& format = project_.format();
     const int mixedAudioFiles = audio.mix ? core::mixFileCount(*audio.mix) : 0;
+    const ExportSettings textSettings = exportSettings();  // per le scritte
     // Quanti tratti si copiano e quanti si ricodificano (la prima volta prova anche gli encoder: qualche secondo).
     const auto preview = [&](bool all, bool closeGaps) {
         QApplication::setOverrideCursor(Qt::WaitCursor);
-        const core::ExportPreview result = core::previewExport(plan, audio, format.empty() ? nullptr : &format,
-                                                               core::ReencodeOptions{reencodeOptions_.quality, all, closeGaps});
+        core::ReencodeOptions options{reencodeOptions_.quality, all, closeGaps};
+        options.texts = textSettings.reencode.texts;
+        options.textRenderer = textSettings.reencode.textRenderer;
+        const core::ExportPreview result = core::previewExport(plan, audio, format.empty() ? nullptr : &format, options);
         QApplication::restoreOverrideCursor();
         return result;
     };
@@ -323,6 +337,10 @@ bool MainWindow::exportOptionsDialog()
             text += QStringLiteral(", <b>%1 tagli precisi</b> (%2 ricodificati ai bordi, fra il taglio e il fotogramma chiave più vicino)")
                         .arg(p.preciseCuts)
                         .arg(timeText(p.preciseSeconds));
+        if (p.textSegments > 0)
+            text += QStringLiteral(", <b>%1 con scritte</b> (%2 ricodificati col testo sopra)")
+                        .arg(p.textSegments)
+                        .arg(timeText(p.textSeconds));
         if (p.blackGaps > 0)
             text += p.blackGaps == 1 ? QStringLiteral(", <b>1 spazio nero</b> (%1)").arg(timeText(p.blackSeconds))
                                      : QStringLiteral(", <b>%1 spazi neri</b> (%2)").arg(p.blackGaps).arg(timeText(p.blackSeconds));
@@ -339,7 +357,7 @@ bool MainWindow::exportOptionsDialog()
             text += QStringLiteral("<br>I pezzi copiati non perdono niente; quelli ricodificati sono quasi uguali "
                                    "all'originale con la qualità alta.");
         summary->setText(text);
-        quality->setEnabled(p.reencodedSegments > 0 || p.preciseCuts > 0 || p.blackGaps > 0);
+        quality->setEnabled(p.reencodedSegments > 0 || p.preciseCuts > 0 || p.blackGaps > 0 || p.textSegments > 0);
     };
     describe(first);
     const auto update = [&] { describe(preview(all->isChecked(), closeGaps->isChecked())); };

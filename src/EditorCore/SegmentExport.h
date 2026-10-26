@@ -3,6 +3,7 @@
 #include "EditorCore/Encoder.h"
 #include "EditorCore/MediaError.h"
 #include "EditorCore/Project.h"
+#include "EditorCore/TextImage.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <functional>
@@ -39,6 +40,7 @@ struct ExportResult
     int reencodedSegments = 0;  // tratti ricodificati (gli altri sono copiati)
     int preciseCuts = 0;        // bordi ricodificati per il taglio preciso (da IN al fotogramma chiave, ...)
     int blackGaps = 0;          // spazi vuoti diventati nero e silenzio
+    int textSegments = 0;       // parti ricodificate perché sotto una scritta
     int mixedAudioFiles = 0;    // file audio mixati e ricodificati in AAC (AudioEdit::mix); 0 = audio copiato
 };
 
@@ -48,6 +50,13 @@ struct ReencodeOptions
     QualityPreset quality = QualityPreset::High;
     bool all = false;  // "Ricodifica tutto": anche i pezzi che si potrebbero copiare
     bool closeGaps = false;  // "Chiudi gli spazi": i pezzi uno dopo l'altro invece del nero negli spazi vuoti
+    // Scritte: sono nei tempi del montaggio (spazi vuoti compresi). I tratti sotto una scritta si ricodificano con il
+    // testo disegnato (da `textRenderer`, alla misura del fotogramma del progetto) sopra a ogni fotogramma, anche nel nero
+    // degli spazi vuoti; gli altri si copiano come sempre. Senza `textRenderer` le scritte non si esportano.
+    TextTracks texts;
+    const TextRenderer* textRenderer = nullptr;
+
+    const TextTracks* activeTexts() const { return textRenderer != nullptr && texts.endTime() > 0.0 ? &texts : nullptr; }
 };
 
 // Che cosa farà l'esportazione, senza farla: quanti tratti si copiano e quanti si ricodificano (e quanto durano), o
@@ -64,6 +73,9 @@ struct ExportPreview
     // Il taglio preciso servirebbe ma non si può (nessun encoder per il formato del progetto): IN va al fotogramma chiave
     // prima, come senza ricodifica. Il motivo, in italiano; vuoto = nessun problema.
     std::string impreciseCuts;
+    // Tratti sotto una scritta (ricodificati con il testo sopra) e quanto durano; non contano nei bordi del taglio preciso.
+    int textSegments = 0;
+    double textSeconds = 0.0;
     // Spazi vuoti del montaggio (ClipRanges::gapsBefore) che diventano nero e silenzio, e quanto durano.
     int blackGaps = 0;
     double blackSeconds = 0.0;
