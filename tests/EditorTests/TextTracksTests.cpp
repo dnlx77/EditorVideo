@@ -381,3 +381,74 @@ TEST(TextGroups, SurviveSaveAndReopen)
     EXPECT_EQ(members.size(), 4u);  // pezzo, audio del pezzo, B, C
     EXPECT_EQ(loaded.project.groupMembers({Kind::TextClip, text.layers()[0].clips[0].id}).size(), 1u);  // A non c'è nel gruppo
 }
+
+TEST(TextFades, FactorRisesAndFallsAndShrinksWhenTooLong)
+{
+    TextClip clip;
+    clip.position = 10.0;
+    clip.length = 4.0;
+    clip.fadeIn = 2.0;
+    clip.fadeOut = 1.0;
+    EXPECT_NEAR(clip.fadeFactor(10.0), 0.0, 1e-9);
+    EXPECT_NEAR(clip.fadeFactor(11.0), 0.5, 1e-9);
+    EXPECT_NEAR(clip.fadeFactor(12.5), 1.0, 1e-9);
+    EXPECT_NEAR(clip.fadeFactor(13.5), 0.5, 1e-9);
+    clip.fadeIn = 3.0;
+    clip.fadeOut = 3.0;  // insieme più lunghe della scritta: si accorciano in proporzione
+    EXPECT_NEAR(clip.fadeFactor(12.0), 1.0, 1e-9);
+    EXPECT_NEAR(clip.fadeFactor(11.0), 0.5, 1e-9);
+}
+
+TEST(TextFades, SetFadesClampsAndSplitDropsTheInnerOnes)
+{
+    TextTracks text;
+    const int layer = text.addLayer();
+    TextClip clip;
+    clip.length = 4.0;
+    clip.text = "A";
+    const int id = text.add(layer, clip);
+    ASSERT_NE(id, 0);
+    EXPECT_TRUE(text.setFades(id, 1.0, 9.0));
+    EXPECT_NEAR(text.find(id)->fadeIn, 1.0, 1e-9);
+    EXPECT_NEAR(text.find(id)->fadeOut, 4.0, 1e-9);  // al massimo la durata
+    EXPECT_FALSE(text.setFades(id, 1.0, 4.0));       // nessun cambiamento
+    const int second = text.split(id, 2.0);
+    ASSERT_NE(second, 0);
+    EXPECT_NEAR(text.find(id)->fadeIn, 1.0, 1e-9);
+    EXPECT_NEAR(text.find(id)->fadeOut, 0.0, 1e-9);
+    EXPECT_NEAR(text.find(second)->fadeIn, 0.0, 1e-9);
+    EXPECT_NEAR(text.find(second)->fadeOut, 4.0, 1e-9);
+}
+
+TEST(TextFades, FadesAndNamedStylesSurviveSaveAndReopen)
+{
+    Project project;
+    const int layer = project.textTracks().addLayer();
+    TextClip clip;
+    clip.length = 3.0;
+    clip.text = "Ciao";
+    const int id = project.textTracks().add(layer, clip);
+    ASSERT_NE(id, 0);
+    project.textTracks().setFades(id, 0.5, 1.25);
+    NamedTextStyle named;
+    named.name = "Titolo";
+    named.style.size = 0.12;
+    named.style.bold = true;
+    project.textStyles().push_back(named);
+    NamedTextStyle twin = named;  // stesso nome: viene scartato
+    project.textStyles().push_back(twin);
+    const std::string json = projectToJson("C:/prova/p.evproj", project, ProjectView{});
+    const LoadedProject loaded = projectFromJson("C:/prova/p.evproj", json);
+    const TextClip* back = loaded.project.textTracks().find(loaded.project.textTracks().layers()[0].clips[0].id);
+    ASSERT_NE(back, nullptr);
+    EXPECT_NEAR(back->fadeIn, 0.5, 1e-6);
+    EXPECT_NEAR(back->fadeOut, 1.25, 1e-6);
+    ASSERT_EQ(loaded.project.textStyles().size(), 1u);
+    EXPECT_EQ(loaded.project.textStyles()[0].name, "Titolo");
+    EXPECT_TRUE(loaded.project.textStyles()[0].style.bold);
+    EXPECT_NEAR(loaded.project.textStyles()[0].style.size, 0.12, 1e-9);
+    const auto viaText = textStylesFromText(textStylesToText(loaded.project.textStyles()));
+    ASSERT_EQ(viaText.size(), 1u);
+    EXPECT_EQ(viaText[0], named);
+    EXPECT_TRUE(textStylesFromText("non è json").empty());
+}

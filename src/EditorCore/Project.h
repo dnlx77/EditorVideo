@@ -110,6 +110,9 @@ public:
     // Livelli di scritte (titoli e testi) sopra il video.
     TextTracks& textTracks() { return text_; }
     const TextTracks& textTracks() const { return text_; }
+    // Gli stili con nome delle scritte, salvati con il progetto.
+    std::vector<NamedTextStyle>& textStyles() { return textStyles_; }
+    const std::vector<NamedTextStyle>& textStyles() const { return textStyles_; }
 
     // Traccia audio sostitutiva (vedi AudioReplacement), il caso più semplice delle tracce audio: impostarla toglie
     // tutte le tracce aggiunte e mette il file su A2 con A1 silenziata; std::nullopt rimette le tracce come
@@ -198,6 +201,7 @@ private:
     std::vector<Clip> clips_;
     AudioTracks audio_;
     TextTracks text_;
+    std::vector<NamedTextStyle> textStyles_;
     ProjectFormat format_;
     Sequence sequence_;
     Groups groups_;

@@ -307,14 +307,45 @@ JsonValue textTracksToJson(const TextTracks& text)
     for (const TextLayer& layer : text.layers()) {
         JsonValue::Array clips;
         for (const TextClip& c : layer.clips) {
-            clips.emplace_back(JsonValue::Object{{"posizione", ticks(c.position)},
-                                                 {"durata", ticks(c.length)},
-                                                 {"testo", c.text},
-                                                 {"stile", textStyleToJson(c.style)}});
+            JsonValue::Object clip{{"posizione", ticks(c.position)},
+                                   {"durata", ticks(c.length)},
+                                   {"testo", c.text},
+                                   {"stile", textStyleToJson(c.style)}};
+            if (c.fadeIn > 0.0)
+                clip["dissolvenzaIn"] = ticks(c.fadeIn);
+            if (c.fadeOut > 0.0)
+                clip["dissolvenzaOut"] = ticks(c.fadeOut);
+            clips.emplace_back(std::move(clip));
         }
         layers.emplace_back(JsonValue::Object{{"clip", std::move(clips)}});
     }
     return layers;
+}
+
+JsonValue textStylesToJson(const std::vector<NamedTextStyle>& styles)
+{
+    JsonValue::Array list;
+    for (const NamedTextStyle& named : styles)
+        list.emplace_back(JsonValue::Object{{"nome", named.name}, {"stile", textStyleToJson(named.style)}});
+    return list;
+}
+
+std::vector<NamedTextStyle> textStylesFromJsonValue(const JsonValue& value)
+{
+    std::vector<NamedTextStyle> styles;
+    if (!value.isArray())
+        return styles;
+    for (const JsonValue& item : value.asArray()) {
+        NamedTextStyle named;
+        named.name = text(item["nome"]);
+        if (named.name.empty())
+            continue;
+        named.style = textStyleFromJson(item["stile"]);
+        const bool duplicate = std::any_of(styles.begin(), styles.end(), [&](const NamedTextStyle& s) { return s.name == named.name; });
+        if (!duplicate)
+            styles.push_back(std::move(named));
+    }
+    return styles;
 }
 
 // Un file audio delle tracce che non si trova (una volta sola, anche se lo usano più clip).
@@ -422,7 +453,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         }
         groups.emplace_back(std::move(items));
     }
-    const int version = !project.textTracks().layers().empty() ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
+    const bool hasText = !project.textTracks().layers().empty() || !project.textStyles().empty();
+    const int version = hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
     JsonValue::Object root{
         {"formato", kFormatName},
         {"versione", version},
@@ -444,6 +476,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         root["gruppi"] = std::move(groups);
     if (!project.textTracks().layers().empty())
         root["scritte"] = textTracksToJson(project.textTracks());
+    if (!project.textStyles().empty())
+        root["stiliScritte"] = textStylesToJson(project.textStyles());
     return JsonValue(root).dump();
 }
 
@@ -606,6 +640,10 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                     clip.length = seconds(c["durata"], "durata");
                     clip.text = text(c["testo"]);
                     clip.style = textStyleFromJson(c["stile"]);
+                    if (c["dissolvenzaIn"].isInteger())
+                        clip.fadeIn = std::clamp(ticksToSeconds(c["dissolvenzaIn"].asInteger()), 0.0, clip.length);
+                    if (c["dissolvenzaOut"].isInteger())
+                        clip.fadeOut = std::clamp(ticksToSeconds(c["dissolvenzaOut"].asInteger()), 0.0, clip.length);
                     if (!(clip.length >= TextTracks::kMinLength) || clip.position < 0.0)
                         throw ProjectFileError(name + " è rovinato: una scritta non è valida.");
                     layer.clips.push_back(std::move(clip));
@@ -614,6 +652,8 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
             }
             loaded.project.textTracks().restore(std::move(layers));
         }
+
+        loaded.project.textStyles() = textStylesFromJsonValue(root["stiliScritte"]);
 
         // Gruppi: ogni oggetto è dato per posizione (vedi projectToJson); quelli che non ci sono più si scartano.
         if (root["gruppi"].isArray()) {
@@ -726,6 +766,20 @@ int dropMissing(LoadedProject& loaded)
     }
     loaded.missing.clear();
     return removed;
+}
+
+std::string textStylesToText(const std::vector<NamedTextStyle>& styles)
+{
+    return JsonValue(textStylesToJson(styles)).dump();
+}
+
+std::vector<NamedTextStyle> textStylesFromText(const std::string& text)
+{
+    try {
+        return textStylesFromJsonValue(parseJson(text));
+    } catch (const std::exception&) {
+        return {};
+    }
 }
 
 }  // namespace editor::core

@@ -999,9 +999,9 @@ private:
     std::pair<double, double> writeBlack(double seconds);
     // Le scritte che si vedono al tempo `sequenceTime` del montaggio, già disegnate alla misura del fotogramma del progetto
     // (dal livello più basso al più alto); vuoto se non ce ne sono.
-    std::vector<const TextImage*> textsAt(double sequenceTime);
+    std::vector<BlendedText> textsAt(double sequenceTime);
     // Il fotogramma con le scritte sopra (alla misura del progetto), da dare all'encoder al posto di `frame`.
-    const AVFrame* withText(const AVFrame* frame, const std::vector<const TextImage*>& texts);
+    const AVFrame* withText(const AVFrame* frame, const std::vector<BlendedText>& texts);
 
     const std::vector<ClipRanges>& clips_;
     const std::string& outputPath_;

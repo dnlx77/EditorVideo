@@ -110,6 +110,8 @@ private:
     const core::Project& project_;
     TextOverlay overlay_;
     std::vector<core::TextClip> shownText_;  // le scritte disegnate l'ultima volta
+    double shownTime_ = 0.0;                 // e il tempo del montaggio di allora (per le dissolvenze)
+    bool shownFading_ = false;               // una di loro era in dissolvenza
     struct TextDrag
     {
         int index = -1;       // posto della scritta in shownText_

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -68,8 +69,39 @@ struct TextClip
     std::string text;  // UTF-8, con '\n' fra le righe
     TextStyle style;
 
+    // Dissolvenza in entrata e in uscita (secondi): l'opacità sale da 0 a 1 nei primi `fadeIn` secondi e scende da 1 a 0
+    // negli ultimi `fadeOut`. Se insieme sono più lunghe della scritta si accorciano in proporzione.
+    double fadeIn = 0.0;
+    double fadeOut = 0.0;
+
     double endPosition() const { return position + length; }
+    // Quanto si vede la scritta al tempo `t` della sequenza per le dissolvenze: 0..1 (1 = piena).
+    double fadeFactor(double t) const
+    {
+        double in = std::max(fadeIn, 0.0);
+        double out = std::max(fadeOut, 0.0);
+        if (in + out > length && in + out > 0.0) {
+            const double scale = length / (in + out);
+            in *= scale;
+            out *= scale;
+        }
+        double factor = 1.0;
+        if (in > 0.0 && t < position + in)
+            factor = std::min(factor, (t - position) / in);
+        if (out > 0.0 && t > endPosition() - out)
+            factor = std::min(factor, (endPosition() - t) / out);
+        return std::clamp(factor, 0.0, 1.0);
+    }
     bool operator==(const TextClip&) const = default;
+};
+
+// Uno stile con un nome ("Titolo", "Sottotitolo"), da riusare su altre scritte.
+struct NamedTextStyle
+{
+    std::string name;
+    TextStyle style;
+
+    bool operator==(const NamedTextStyle&) const = default;
 };
 
 // Un livello di scritte (T1, T2, ...): le sue scritte in ordine di posizione, senza sovrapposizioni.
@@ -129,6 +161,8 @@ public:
     bool setText(int clipId, std::string text);
     bool setStyle(int clipId, const TextStyle& style);
     bool setLength(int clipId, double length);  // allunga/accorcia la fine; come setEnd
+    // Le dissolvenze (secondi, da 0 alla durata della scritta); false se sono già quelle.
+    bool setFades(int clipId, double fadeIn, double fadeOut);
 
     // Le scritte visibili al tempo `seconds`, dal livello più basso al più alto (per disegnarle in questo ordine).
     std::vector<const TextClip*> visibleAt(double seconds) const;

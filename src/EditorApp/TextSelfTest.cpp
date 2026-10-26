@@ -5,6 +5,8 @@
 
 #include <QtCore/QStringList>
 #include <QtWidgets/QCheckBox>
+#include <QtWidgets/QComboBox>
+#include <QtWidgets/QPushButton>
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QToolButton>
@@ -253,7 +255,14 @@ int runTextTest(const QStringList&, qsizetype)
         start.style.outline = true;
         start.style.centerX = 0.2;
         start.style.centerY = 0.12;
-        TextEditorDialog dialog(start, 1280, 720);
+        start.fadeIn = 0.5;
+        start.fadeOut = 1.0;
+        core::NamedTextStyle titolo;
+        titolo.name = "Titolo";
+        titolo.style.size = 0.12;
+        titolo.style.bold = true;
+        titolo.style.centerY = 0.2;
+        TextEditorDialog dialog(start, 1280, 720, {titolo});
         const core::TextClip back = dialog.clip();
         check(back == start, "l'editor restituisce la scritta di partenza senza cambiarla");
         check(!dialog.previewImage().isNull() && dialog.previewImage().width() == 640 && dialog.previewImage().height() == 360,
@@ -279,6 +288,35 @@ int runTextTest(const QStringList&, qsizetype)
             check(std::abs(changed.style.centerX - 0.8) < 1e-9 && std::abs(changed.style.centerY - 0.88) < 1e-9,
                   "il posto in basso a destra mette il centro al 80% e 88%");
             check(std::abs(changed.length - 2.5) < 1e-9, "la durata segue il controllo");
+            check(std::abs(changed.fadeIn - 0.5) < 1e-9 && std::abs(changed.fadeOut - 1.0) < 1e-9, "le dissolvenze si leggono e restano");
+            auto* fadeIn = dialog.findChild<QDoubleSpinBox*>("dissolvenzaIn");
+            if (fadeIn) {
+                fadeIn->setValue(0.25);
+                check(std::abs(dialog.clip().fadeIn - 0.25) < 1e-9, "la dissolvenza in entrata segue il controllo");
+            }
+            // Stili con nome: si applica quello che c'è, si salva l'aspetto attuale, si toglie.
+            auto* styleList = dialog.findChild<QComboBox*>("stili");
+            auto* apply = dialog.findChild<QPushButton*>("applicaStile");
+            auto* remove = dialog.findChild<QPushButton*>("eliminaStile");
+            check(styleList && apply && remove && styleList->count() == 2, "l'elenco degli stili ha (nessuno) e quello dato");
+            if (styleList && apply && remove && styleList->count() == 2) {
+                styleList->setCurrentIndex(1);
+                apply->click();
+                const core::TextClip applied = dialog.clip();
+                check(std::abs(applied.style.size - 0.12) < 1e-9 && applied.style.bold && std::abs(applied.style.centerY - 0.2) < 1e-9,
+                      "applicare uno stile cambia font, effetti e posizione");
+                check(applied.text == "Nuovo" && std::abs(applied.length - 2.5) < 1e-9 && std::abs(applied.fadeIn - 0.25) < 1e-9,
+                      "applicare uno stile non tocca testo, durata e dissolvenze");
+                size->setValue(7.0);
+                dialog.saveStyleAs("Piccolo");
+                check(dialog.styles().size() == 2 && dialog.styles()[1].name == "Piccolo" && std::abs(dialog.styles()[1].style.size - 0.07) < 1e-9,
+                      "si salva l'aspetto attuale con un nome");
+                dialog.saveStyleAs("Titolo");  // stesso nome: lo sostituisce
+                check(dialog.styles().size() == 2 && std::abs(dialog.styles()[0].style.size - 0.07) < 1e-9,
+                      "salvare con un nome che c'è già lo sostituisce");
+                remove->click();
+                check(dialog.styles().size() == 1 && dialog.styles()[0].name == "Piccolo", "si toglie lo stile scelto");
+            }
             check(changed.style.fontFamily == "Arial", "il font scelto non viene cambiato anche se non è installato");
             check(dialog.previewImage() != QImage(), "l'anteprima si ridisegna");
         }
@@ -290,27 +328,29 @@ int runTextTest(const QStringList&, qsizetype)
         QImage canvas(400, 300, QImage::Format_ARGB32_Premultiplied);
         canvas.fill(QColor(20, 20, 20));
         core::TextClip low = clipWith("XXXX");
+        low.id = 1;
         low.style.size = 0.2;
         low.style.color = {255, 0, 0, 255};
         low.style.centerX = 0.5;
         low.style.centerY = 0.5;
         core::TextClip high = low;
+        high.id = 2;
         high.style.color = {0, 255, 0, 255};
         high.style.centerX = 0.5 + 0.02;  // quasi nello stesso punto: la più alta copre l'altra
         TextOverlay overlay;
         const QRectF target(20, 30, 360, 240);  // il fotogramma sta dentro il widget, con i bordi neri
         QPainter p(&canvas);
-        overlay.paint(p, target, 1.0, {low, high});
-        overlay.paint(p, target, 1.0, {low, high});
+        overlay.paint(p, target, 1.0, {low, high}, 0.0);
+        overlay.paint(p, target, 1.0, {low, high}, 0.0);
         p.end();
-        check(overlay.renderCount() == 1, "se le scritte e la misura non cambiano non si ridisegnano da capo");
+        check(overlay.renderCount() == 2, "se le scritte e la misura non cambiano non si ridisegnano da capo (una volta per scritta)");
         // Dove la scritta bassa da sola è rossa e le due insieme sono verdi: la più alta copre.
         QImage lowOnly(400, 300, QImage::Format_ARGB32_Premultiplied);
         lowOnly.fill(QColor(20, 20, 20));
         {
             QPainter q(&lowOnly);
             TextOverlay single;
-            single.paint(q, target, 1.0, {low});
+            single.paint(q, target, 1.0, {low}, 0.0);
         }
         int covered = 0;
         for (int y = 30; y < 270; ++y) {
@@ -329,9 +369,48 @@ int runTextTest(const QStringList&, qsizetype)
         }
         check(inside, "la scritta sta dentro il rettangolo del fotogramma");
         QPainter again(&canvas);
-        overlay.paint(again, target, 1.0, {low});
+        core::TextClip changed = low;
+        changed.text = "YYYY";
+        overlay.paint(again, target, 1.0, {changed}, 0.0);
         again.end();
-        check(overlay.renderCount() == 2, "se le scritte cambiano si ridisegnano");
+        check(overlay.renderCount() == 3, "se il testo cambia si ridisegna, e solo quella scritta");
+        // Dissolvenze: a metà dissolvenza la scritta è a metà opacità, senza ridisegnarla.
+        core::TextClip fading = high;
+        fading.position = 0.0;
+        fading.length = 4.0;
+        fading.fadeIn = 2.0;
+        fading.id = 3;
+        check(std::abs(fading.fadeFactor(0.0)) < 1e-9 && std::abs(fading.fadeFactor(1.0) - 0.5) < 1e-9 && fading.fadeFactor(2.5) == 1.0,
+              "la dissolvenza in entrata sale da 0 a 1");
+        fading.fadeOut = 1.0;
+        check(std::abs(fading.fadeFactor(3.5) - 0.5) < 1e-9 && std::abs(fading.fadeFactor(4.0)) < 1e-9, "la dissolvenza in uscita scende da 1 a 0");
+        fading.fadeIn = 3.0;
+        fading.fadeOut = 3.0;  // insieme più lunghe della scritta: si accorciano in proporzione
+        check(std::abs(fading.fadeFactor(2.0) - 1.0) < 1e-9 && std::abs(fading.fadeFactor(1.0) - 0.5) < 1e-9,
+              "dissolvenze troppo lunghe si accorciano in proporzione");
+        fading.fadeIn = 2.0;
+        fading.fadeOut = 0.0;
+        QImage fadeLow(400, 300, QImage::Format_ARGB32_Premultiplied);
+        QImage fadeHigh(400, 300, QImage::Format_ARGB32_Premultiplied);
+        fadeLow.fill(QColor(0, 0, 0));
+        fadeHigh.fill(QColor(0, 0, 0));
+        TextOverlay fadeOverlay;
+        {
+            QPainter a(&fadeLow);
+            fadeOverlay.paint(a, target, 1.0, {fading}, 1.0);  // metà
+            QPainter b(&fadeHigh);
+            fadeOverlay.paint(b, target, 1.0, {fading}, 2.0);  // piena
+        }
+        int brightestHalf = 0;
+        int brightestFull = 0;
+        for (int y = 30; y < 270; ++y) {
+            for (int x = 20; x < 380; ++x) {
+                brightestHalf = std::max(brightestHalf, fadeLow.pixelColor(x, y).green());
+                brightestFull = std::max(brightestFull, fadeHigh.pixelColor(x, y).green());
+            }
+        }
+        check(brightestFull > 240 && brightestHalf > 100 && brightestHalf < 160, "a metà dissolvenza la scritta è a metà luminosità");
+        check(fadeOverlay.renderCount() == 1, "la dissolvenza non fa ridisegnare la scritta");
         // Il riquadro (per afferrare la scritta col mouse): contiene il centro e sta dentro il fotogramma.
         const QRectF box = overlay.bounds(low, 400, 300);
         check(!box.isEmpty() && box.contains(QPointF(0.5, 0.5)) && box.left() >= 0.0 && box.right() <= 1.0 && box.width() < 1.0,

@@ -199,9 +199,13 @@ void ProgramMonitor::updateTextOverlay()
     if (textDrag_)
         return;
     std::vector<core::TextClip> now = visibleText();
-    if (now == shownText_)
+    // Una scritta in dissolvenza cambia a ogni movimento del cursore, le altre solo quando cambiano (o compaiono).
+    const bool fading = std::any_of(now.begin(), now.end(), [&](const core::TextClip& c) { return c.fadeFactor(position_) < 1.0; });
+    if (now == shownText_ && !fading && !shownFading_)
         return;
     shownText_ = std::move(now);
+    shownTime_ = position_;
+    shownFading_ = fading;
     player_->updateOverlay();
 }
 
@@ -217,7 +221,7 @@ void ProgramMonitor::updateOverlayFrame()
     const QSize frame = frameSize();
     player_->setOverlay(
         [this](QPainter& painter, const QRectF& target) {
-            overlay_.paint(painter, target, painter.device()->devicePixelRatioF(), shownText_);
+            overlay_.paint(painter, target, painter.device()->devicePixelRatioF(), shownText_, shownTime_);
         },
         frame);
 }

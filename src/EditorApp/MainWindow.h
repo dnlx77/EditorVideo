@@ -148,7 +148,9 @@ public:
     int addTextClip(bool withEditor = true);
     bool editTextClip(int clipId);   // l'editor sulla scritta; con OK applica testo, stile e durata (Annulla/Ripeti)
     // Cambia testo, stile e durata della scritta (senza finestra); false e nessuna modifica se la durata non ci sta.
-    bool applyTextEdit(const core::TextClip& edited);
+    bool applyTextEdit(const core::TextClip& edited, const std::vector<core::NamedTextStyle>* styles = nullptr);
+    std::vector<core::NamedTextStyle> availableTextStyles() const;  // del progetto e dell'elenco globale
+    void keepTextStyles(const std::vector<core::NamedTextStyle>& styles);
     // La scritta trascinata sull'immagine del monitor: nuovo centro (0..1 del fotogramma).
     bool moveTextOnScreen(int clipId, double centerX, double centerY);
     bool moveTextClip(int clipId, int layerId, double position);
