@@ -24,6 +24,8 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
 {
     player_ = new PlayerWidget;
     updateOverlayFrame();
+    player_->setImageMouse([this](QPointF at) { return grabText(at); }, [this](QPointF at) { dragText(at); },
+                           [this](QPointF at) { dropText(at); });
     player_->setChromeVisible(false);
     player_->setAudioEnabled(false);  // l'audio del montaggio lo suona il mixer della sequenza (SequenceAudio)
     player_->onVideoDoubleClicked = [this] {
@@ -150,8 +152,52 @@ std::vector<core::TextClip> ProgramMonitor::visibleText() const
     return clips;
 }
 
+bool ProgramMonitor::grabText(QPointF at)
+{
+    if (onActivated)
+        onActivated();
+    if (playing_ || showingSource_ || shownText_.empty())
+        return false;
+    // La più alta (l'ultima disegnata) che contiene il punto.
+    const QSize frame = frameSize();
+    for (int i = static_cast<int>(shownText_.size()) - 1; i >= 0; --i) {
+        const core::TextClip& clip = shownText_[static_cast<std::size_t>(i)];
+        if (overlay_.bounds(clip, frame.width(), frame.height()).adjusted(-0.01, -0.01, 0.01, 0.01).contains(at)) {
+            textDrag_ = TextDrag{i, QPointF(clip.style.centerX, clip.style.centerY) - at};
+            if (onTextGrabbed)
+                onTextGrabbed(clip.id);
+            return true;
+        }
+    }
+    return false;
+}
+
+void ProgramMonitor::dragText(QPointF at)
+{
+    if (!textDrag_)
+        return;
+    core::TextClip& clip = shownText_[static_cast<std::size_t>(textDrag_->index)];
+    clip.style.centerX = std::clamp(at.x() + textDrag_->grabOffset.x(), 0.0, 1.0);
+    clip.style.centerY = std::clamp(at.y() + textDrag_->grabOffset.y(), 0.0, 1.0);
+    player_->updateOverlay();
+}
+
+void ProgramMonitor::dropText(QPointF at)
+{
+    if (!textDrag_)
+        return;
+    dragText(at);
+    const core::TextClip clip = shownText_[static_cast<std::size_t>(textDrag_->index)];
+    textDrag_.reset();
+    if (onTextDragged)
+        onTextDragged(clip.id, clip.style.centerX, clip.style.centerY);
+    updateTextOverlay();  // se la modifica non è stata fatta, le scritte tornano come nel progetto
+}
+
 void ProgramMonitor::updateTextOverlay()
 {
+    if (textDrag_)
+        return;
     std::vector<core::TextClip> now = visibleText();
     if (now == shownText_)
         return;
@@ -159,11 +205,16 @@ void ProgramMonitor::updateTextOverlay()
     player_->updateOverlay();
 }
 
+QSize ProgramMonitor::frameSize() const
+{
+    // Le misure del fotogramma del progetto; senza formato, 16:9.
+    const core::StreamSignature* video = project_.format().video();
+    return video != nullptr && video->width > 0 && video->height > 0 ? QSize(video->width, video->height) : QSize(1920, 1080);
+}
+
 void ProgramMonitor::updateOverlayFrame()
 {
-    // Le proporzioni del fotogramma del progetto (per lo spazio vuoto nero); senza formato, 16:9.
-    const core::StreamSignature* video = project_.format().video();
-    const QSize frame = video != nullptr && video->width > 0 && video->height > 0 ? QSize(video->width, video->height) : QSize(16, 9);
+    const QSize frame = frameSize();
     player_->setOverlay(
         [this](QPainter& painter, const QRectF& target) {
             overlay_.paint(painter, target, painter.device()->devicePixelRatioF(), shownText_);

@@ -5,6 +5,7 @@
 #include "EditorCore/TimeUtil.h"
 
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QPointF>
 #include <QtCore/QRect>
 #include <QtCore/QSize>
 #include <QtWidgets/QWidget>
@@ -97,6 +98,9 @@ public:
     // spazio vuoto, un rettangolo con le proporzioni di `blankSize`. updateOverlay() lo fa ridisegnare.
     void setOverlay(std::function<void(QPainter&, const QRectF&)> overlay, QSize blankSize);
     void updateOverlay();
+    // Il mouse sull'immagine, in frazioni del fotogramma (0..1): `press` dice se si afferra qualcosa (allora arrivano
+    // `move` e `release`).
+    void setImageMouse(std::function<bool(QPointF)> press, std::function<void(QPointF)> move, std::function<void(QPointF)> release);
 
     // Nasconde la linea del tempo e i comandi (l'anteprima della sequenza ha i suoi).
     void setChromeVisible(bool visible);

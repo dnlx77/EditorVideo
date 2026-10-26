@@ -332,6 +332,10 @@ int runTextTest(const QStringList&, qsizetype)
         overlay.paint(again, target, 1.0, {low});
         again.end();
         check(overlay.renderCount() == 2, "se le scritte cambiano si ridisegnano");
+        // Il riquadro (per afferrare la scritta col mouse): contiene il centro e sta dentro il fotogramma.
+        const QRectF box = overlay.bounds(low, 400, 300);
+        check(!box.isEmpty() && box.contains(QPointF(0.5, 0.5)) && box.left() >= 0.0 && box.right() <= 1.0 && box.width() < 1.0,
+              "il riquadro della scritta contiene il suo centro e sta dentro il fotogramma");
     }
 
     std::printf(failures == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", failures);

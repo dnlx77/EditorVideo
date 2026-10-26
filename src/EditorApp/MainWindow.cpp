@@ -190,6 +190,8 @@ MainWindow::MainWindow(QWidget* parent)
     program_->onCacheRangeChanged = [this](double from, double to) { timeline_->setCacheRange(from, to); };
     program_->onPlaybackStarted = [this] { timeline_->resumeFollowing(); };
     program_->onVideoDoubleClicked = [this] { toggleFullScreen(programDock_); };
+    program_->onTextGrabbed = [this](int clipId) { timeline_->setSelectedTextClip(clipId); };
+    program_->onTextDragged = [this](int clipId, double x, double y) { moveTextOnScreen(clipId, x, y); };
 
     // Proxy: le due anteprime leggono il video dal proxy quando è pronto. Ogni file ha la sua qualità: il menu della
     // Sorgente cambia quella del file nella Sorgente, quello del Montaggio quella del file del pezzo mostrato.

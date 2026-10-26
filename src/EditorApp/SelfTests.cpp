@@ -1860,7 +1860,14 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                     monitor->seekTo(now->position + 0.1);
                     QCoreApplication::processEvents();
                     const QImage grabbed = monitor->grab().toImage();
-                    onMonitor = shown && hidden && !grabbed.isNull() && monitor->textOverlay().renderCount() > 0;
+                    // Trascinata sull'immagine: il nuovo centro si vede subito nel monitor, e Annulla lo riporta com'era.
+                    const double oldX = text.find(third)->style.centerX;
+                    const bool movedOnScreen = window->moveTextOnScreen(third, 0.25, 0.4) && std::abs(text.find(third)->style.centerX - 0.25) < 1e-9;
+                    const std::vector<core::TextClip> moved = monitor->visibleText();
+                    const bool seenMoved = !moved.empty() && std::abs(moved.back().style.centerY - 0.4) < 1e-9;
+                    const bool movedBack = window->undo() && std::abs(text.find(third)->style.centerX - oldX) < 1e-9;
+                    onMonitor = shown && hidden && !grabbed.isNull() && monitor->textOverlay().renderCount() > 0 && movedOnScreen
+                             && seenMoved && movedBack;
                 }
                 // Annulla tutto: i livelli e le scritte spariscono.
                 bool undone = true;

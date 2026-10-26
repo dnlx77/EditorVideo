@@ -20,6 +20,9 @@ public:
     // dello schermo.
     void paint(QPainter& painter, const QRectF& target, qreal devicePixelRatio, const std::vector<core::TextClip>& clips);
 
+    // Il riquadro della scritta in frazioni del fotogramma (0..1), per sapere se un clic la prende. Vuoto se non ha niente da vedere.
+    QRectF bounds(const core::TextClip& clip, int frameWidth, int frameHeight) const;
+
     // Quante volte le scritte sono state ridisegnate da capo (per le prove).
     int renderCount() const { return renderCount_; }
 

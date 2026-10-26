@@ -4,6 +4,15 @@
 
 namespace editor::app {
 
+QRectF TextOverlay::bounds(const core::TextClip& clip, int frameWidth, int frameHeight) const
+{
+    const core::TextImage text = renderer_.render(clip, frameWidth, frameHeight);
+    if (text.width <= 0 || text.height <= 0)
+        return {};
+    return {static_cast<double>(text.x) / frameWidth, static_cast<double>(text.y) / frameHeight,
+            static_cast<double>(text.width) / frameWidth, static_cast<double>(text.height) / frameHeight};
+}
+
 void TextOverlay::paint(QPainter& painter, const QRectF& target, qreal devicePixelRatio, const std::vector<core::TextClip>& clips)
 {
     if (clips.empty() || target.isEmpty())
