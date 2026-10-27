@@ -32,6 +32,11 @@ TransitionListPanel::TransitionListPanel(QWidget* parent) : QWidget(parent)
         if (onSelected)
             onSelected(selected());
     });
+    // Anche un clic sulla voce già scelta (dopo aver guardato un file) rimette l'anteprima della transizione.
+    connect(list_, &QListWidget::itemClicked, this, [this](QListWidgetItem*) {
+        if (onSelected)
+            onSelected(selected());
+    });
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(list_);

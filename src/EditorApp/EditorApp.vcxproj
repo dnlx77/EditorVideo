@@ -57,6 +57,7 @@
     <ClInclude Include="TextOverlay.h" />
     <ClInclude Include="TransitionListPanel.h" />
     <ClInclude Include="TransitionPreview.h" />
+    <ClInclude Include="TransitionPreviewWidget.h" />
     <ClInclude Include="SelfTests.h" />
     <ClInclude Include="SequenceAudio.h" />
     <ClInclude Include="SequenceTimeline.h" />
@@ -86,6 +87,7 @@
     <ClCompile Include="TextSelfTest.cpp" />
     <ClCompile Include="TransitionListPanel.cpp" />
     <ClCompile Include="TransitionPreview.cpp" />
+    <ClCompile Include="TransitionPreviewWidget.cpp" />
     <ClCompile Include="TransitionSelfTest.cpp" />
     <ClCompile Include="SelfTests.cpp" />
     <ClCompile Include="SequenceAudio.cpp" />

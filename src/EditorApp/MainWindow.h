@@ -27,6 +27,7 @@ class QAction;
 class QDockWidget;
 class QLabel;
 class QMenu;
+class QStackedWidget;
 class QTabWidget;
 class QListWidget;
 class QThread;
@@ -45,6 +46,7 @@ class WaveformStore;
 class ProgramMonitor;
 class TextEditorPanel;
 class TransitionListPanel;
+class TransitionPreviewWidget;
 class SequenceTimeline;
 
 // Finestra principale: a sinistra i file del progetto; al centro l'anteprima del file scelto (Sorgente, dove si
@@ -159,6 +161,10 @@ public:
     TextEditorPanel* textPanel() const { return textPanel_; }
     QTabWidget* leftTabs() const { return leftTabs_; }
     TransitionListPanel* transitionPanel() const { return transitionPanel_; }
+    // La Sorgente mostra il file (il lettore) o l'anteprima della transizione scelta.
+    QStackedWidget* sourceStack() const { return sourceStack_; }
+    TransitionPreviewWidget* transitionPreview() const { return transitionPreview_; }
+    void showSourcePlayer();
     QTabWidget* sourceTabs() const { return sourceTabs_; }
     std::vector<core::NamedTextStyle> availableTextStyles() const;  // del progetto e dell'elenco globale
     void keepTextStyles(const std::vector<core::NamedTextStyle>& styles);
@@ -353,6 +359,8 @@ private:
     TextEditorPanel* textPanel_ = nullptr;
     QTabWidget* leftTabs_ = nullptr;        // il blocco in alto a sinistra ha due schede: File del progetto e Transizioni
     TransitionListPanel* transitionPanel_ = nullptr;
+    TransitionPreviewWidget* transitionPreview_ = nullptr;
+    QStackedWidget* sourceStack_ = nullptr;  // il lettore della Sorgente o l'anteprima della transizione
     int textMergeClip_ = 0;                 // scritta dell'ultima modifica del pannello, per unire quelle di fila
     std::size_t textMergeCount_ = 0;        // quante voci aveva Annulla dopo quella modifica
     QDockWidget* fullScreenDock_ = nullptr;
