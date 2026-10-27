@@ -55,6 +55,8 @@
     <ClInclude Include="QtTextRenderer.h" />
     <ClInclude Include="TextEditorPanel.h" />
     <ClInclude Include="TextOverlay.h" />
+    <ClInclude Include="TransitionListPanel.h" />
+    <ClInclude Include="TransitionPreview.h" />
     <ClInclude Include="SelfTests.h" />
     <ClInclude Include="SequenceAudio.h" />
     <ClInclude Include="SequenceTimeline.h" />
@@ -82,6 +84,9 @@
     <ClCompile Include="TextEditorPanel.cpp" />
     <ClCompile Include="TextOverlay.cpp" />
     <ClCompile Include="TextSelfTest.cpp" />
+    <ClCompile Include="TransitionListPanel.cpp" />
+    <ClCompile Include="TransitionPreview.cpp" />
+    <ClCompile Include="TransitionSelfTest.cpp" />
     <ClCompile Include="SelfTests.cpp" />
     <ClCompile Include="SequenceAudio.cpp" />
     <ClCompile Include="SequenceTimeline.cpp" />

@@ -17,6 +17,7 @@
 #include "EditorCore/Proxy.h"
 #include "EditorCore/SegmentExport.h"
 #include "EditorApp/TextEditorPanel.h"
+#include "EditorApp/TransitionListPanel.h"
 #include "EditorApp/ThumbnailCache.h"
 #include "EditorApp/WaveformStore.h"
 #include "EditorCore/TimeUtil.h"
@@ -379,7 +380,13 @@ MainWindow::MainWindow(QWidget* parent)
                           | QDockWidget::DockWidgetClosable);
         return dock;
     };
-    filesDock_ = makeDock(QStringLiteral("File del progetto"), QStringLiteral("pannelloFile"), leftPanel);
+    // Il blocco in alto a sinistra ha due schede: i file del progetto e l'elenco delle transizioni.
+    transitionPanel_ = new TransitionListPanel;
+    leftTabs_ = new QTabWidget;
+    leftTabs_->setDocumentMode(true);
+    leftTabs_->addTab(leftPanel, QStringLiteral("File del progetto"));
+    leftTabs_->addTab(transitionPanel_, QStringLiteral("Transizioni"));
+    filesDock_ = makeDock(QStringLiteral("File del progetto"), QStringLiteral("pannelloFile"), leftTabs_);
     // Il pannello Sorgente ha una scheda in più, "Scritta": l'editor della scritta scelta (le modifiche valgono subito e si
     // vedono nel Montaggio, che resta a fianco).
     textPanel_ = new TextEditorPanel;
@@ -399,7 +406,8 @@ MainWindow::MainWindow(QWidget* parent)
                              sequencePanel);
     // Spiegazioni, nel suggerimento sul titolo del pannello (vedi eventFilter).
     filesDock_->setProperty("spiegazione", QStringLiteral("I file del progetto: clic per mostrarne uno nella Sorgente, "
-                                                          "Canc per toglierlo; si aggiungono anche trascinandoli qui"));
+                                                          "Canc per toglierlo; si aggiungono anche trascinandoli qui. "
+                                                          "Nella scheda Transizioni, le transizioni disponibili"));
     sourceDock_->setProperty("spiegazione", QStringLiteral("Il file scelto: segna I e O, poi A per metterlo nel montaggio"));
     programDock_->setProperty("spiegazione", QStringLiteral("Il risultato: i pezzi del montaggio uno dopo l'altro"));
     auto* center = new QWidget(this);
