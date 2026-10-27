@@ -4,6 +4,7 @@
 #include "EditorCore/TimeUtil.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace editor::core {
 
@@ -55,6 +56,7 @@ void Project::remove(int id)
 {
     std::erase_if(clips_, [id](const Clip& c) { return c.id == id; });
     sequence_.removeClip(id);
+    pruneTransitions();
 }
 
 void Project::clear()
@@ -63,6 +65,7 @@ void Project::clear()
     sequence_.clear();
     audio_.clear();
     text_.clear();
+    transitions_.clear();
     textStyles_.clear();
     groups_.clear();
     format_ = {};
@@ -155,6 +158,7 @@ void Project::restoreEdits(const Project& snapshot)
     sequence_ = snapshot.sequence_;
     audio_.restoreEdits(snapshot.audio_);
     text_.restoreEdits(snapshot.text_);
+    transitions_.restoreEdits(snapshot.transitions_);
     textStyles_ = snapshot.textStyles_;
     groups_.restoreEdits(snapshot.groups_);
     format_ = snapshot.format_;
@@ -229,8 +233,11 @@ std::vector<ObjectRef> Project::splitGroup(ObjectRef anchor, double seconds)
     };
     const int index = sequence_.indexAt(seconds);
     if (index >= 0 && isMember(ObjectRef::Kind::Piece, sequence_.fragments()[static_cast<std::size_t>(index)].id)) {
-        if (const int id = sequence_.split(seconds); id != 0)
+        const int first = sequence_.fragments()[static_cast<std::size_t>(index)].id;
+        if (const int id = sequence_.split(seconds); id != 0) {
             created.push_back({ObjectRef::Kind::Piece, id});
+            transitions_.moveJunction(first, id);  // la transizione sulla giunzione dopo il pezzo passa alla sua seconda parte
+        }
     }
     for (const ObjectRef& m : members) {
         if (m.kind != ObjectRef::Kind::AudioClip)
@@ -411,6 +418,170 @@ AudioEdit Project::audioEdit(GapExport gaps) const
         edit.mixClosed = std::make_shared<const MixSpec>(mixSpecOf(*this, true));
     }
     return edit;
+}
+
+// --- Transizioni
+
+namespace {
+
+// Come si divide una durata `duration` fra prima e dopo la giunzione: a metà, se i margini lo permettono; se da un lato
+// manca spazio, tutto il resto dall'altro. Presuppone duration <= limits.max().
+std::pair<double, double> splitDuration(double duration, const TransitionLimits& limits)
+{
+    double before = std::min(duration / 2.0, limits.before);
+    double after = duration - before;
+    if (after > limits.after) {
+        after = limits.after;
+        before = duration - after;
+    }
+    return {before, after};
+}
+
+}  // namespace
+
+bool Project::isJunction(int beforeFragment) const
+{
+    const int index = sequence_.indexOf(beforeFragment);
+    const auto& fragments = sequence_.fragments();
+    if (index < 0 || static_cast<std::size_t>(index) + 1 >= fragments.size())
+        return false;
+    const Clip* clip = find(fragments[static_cast<std::size_t>(index)].clipId);
+    return fragments[static_cast<std::size_t>(index) + 1].gap <= kTimeEpsilon && clip != nullptr && clip->duration > 0.0;
+}
+
+TransitionLimits Project::transitionLimits(int beforeFragment) const
+{
+    if (!isJunction(beforeFragment))
+        return {};
+    const auto& fragments = sequence_.fragments();
+    const std::size_t index = static_cast<std::size_t>(sequence_.indexOf(beforeFragment));
+    const Fragment& a = fragments[index];
+    const Fragment& b = fragments[index + 1];
+    const double tail = std::max(0.0, find(a.clipId)->duration - a.end);
+    TransitionLimits limits;
+    limits.before = std::min(b.start, a.length());
+    limits.after = std::min(tail, b.length());
+    // Le transizioni si contano da sinistra: quella sulla giunzione prima di `a` ha già preso la sua parte di `a`.
+    if (index > 0) {
+        if (const TransitionClip* previous = transitions_.atJunction(fragments[index - 1].id)) {
+            if (const auto placed = transitionPlacement(previous->id))
+                limits.before = std::max(0.0, std::min(limits.before, a.length() - placed->after));
+        }
+    }
+    return limits;
+}
+
+int Project::addTransition(int beforeFragment, const std::string& type, double duration)
+{
+    if (findTransition(type) == nullptr || transitions_.atJunction(beforeFragment) != nullptr)
+        return 0;
+    const TransitionLimits limits = transitionLimits(beforeFragment);
+    if (duration < kMinTransition - kTimeEpsilon || duration > limits.max() + kTimeEpsilon)
+        return 0;
+    TransitionClip clip;
+    clip.type = type;
+    clip.beforeFragment = beforeFragment;
+    clip.afterFragment = sequence_.fragments()[static_cast<std::size_t>(sequence_.indexOf(beforeFragment)) + 1].id;
+    clip.duration = std::min(duration, limits.max());
+    return transitions_.add(std::move(clip));
+}
+
+bool Project::removeTransition(int id)
+{
+    return transitions_.remove(id);
+}
+
+bool Project::setTransitionDuration(int id, double duration)
+{
+    TransitionClip* clip = transitions_.find(id);
+    if (clip == nullptr)
+        return false;
+    const TransitionLimits limits = transitionLimits(clip->beforeFragment);
+    if (duration < kMinTransition - kTimeEpsilon || duration > limits.max() + kTimeEpsilon)
+        return false;
+    clip->duration = std::min(duration, limits.max());
+    return true;
+}
+
+bool Project::setTransitionSettings(int id, const std::string& type, const TransitionParams& params, bool crossfadeAudio)
+{
+    TransitionClip* clip = transitions_.find(id);
+    if (clip == nullptr || findTransition(type) == nullptr)
+        return false;
+    clip->type = type;
+    clip->params = params;
+    clip->crossfadeAudio = crossfadeAudio;
+    return true;
+}
+
+std::optional<TransitionPlacement> Project::transitionPlacement(int id) const
+{
+    const TransitionClip* clip = transitions_.find(id);
+    if (clip == nullptr || findTransition(clip->type) == nullptr)
+        return std::nullopt;
+    const int index = sequence_.indexOf(clip->beforeFragment);
+    const auto& fragments = sequence_.fragments();
+    if (index < 0 || static_cast<std::size_t>(index) + 1 >= fragments.size()
+        || fragments[static_cast<std::size_t>(index) + 1].id != clip->afterFragment)
+        return std::nullopt;
+    const TransitionLimits limits = transitionLimits(clip->beforeFragment);
+    if (limits.max() <= 0.0 || clip->duration < kMinTransition - kTimeEpsilon || clip->duration > limits.max() + kTimeEpsilon)
+        return std::nullopt;
+    const auto [before, after] = splitDuration(std::min(clip->duration, limits.max()), limits);
+    TransitionPlacement placement;
+    placement.id = id;
+    placement.beforeFragment = clip->beforeFragment;
+    placement.afterFragment = clip->afterFragment;
+    placement.junction = sequence_.startOf(index + 1);
+    placement.before = before;
+    placement.after = after;
+    return placement;
+}
+
+std::vector<TransitionPlacement> Project::activeTransitions() const
+{
+    std::vector<TransitionPlacement> placements;
+    for (const TransitionClip& clip : transitions_.clips()) {
+        if (const auto placed = transitionPlacement(clip.id))
+            placements.push_back(*placed);
+    }
+    std::sort(placements.begin(), placements.end(),
+              [](const TransitionPlacement& a, const TransitionPlacement& b) { return a.junction < b.junction; });
+    return placements;
+}
+
+int Project::pruneTransitions()
+{
+    // Da sinistra a destra: i limiti di una transizione dipendono da quella prima.
+    std::vector<int> ids;
+    for (const TransitionClip& clip : transitions_.clips())
+        ids.push_back(clip.id);
+    std::sort(ids.begin(), ids.end(), [this](int a, int b) {
+        return sequence_.indexOf(transitions_.find(a)->beforeFragment) < sequence_.indexOf(transitions_.find(b)->beforeFragment);
+    });
+    int touched = 0;
+    for (const int id : ids) {
+        TransitionClip* clip = transitions_.find(id);
+        const int index = sequence_.indexOf(clip->beforeFragment);
+        const auto& fragments = sequence_.fragments();
+        const bool attached = index >= 0 && static_cast<std::size_t>(index) + 1 < fragments.size()
+                              && fragments[static_cast<std::size_t>(index) + 1].id == clip->afterFragment;
+        // Finché il file del pezzo non è analizzato (progetto appena aperto) non si sa quanto margine c'è: si lascia com'è.
+        if (attached) {
+            const Clip* source = find(fragments[static_cast<std::size_t>(index)].clipId);
+            if (source != nullptr && source->duration <= 0.0)
+                continue;
+        }
+        const TransitionLimits limits = attached ? transitionLimits(clip->beforeFragment) : TransitionLimits{};
+        if (!attached || limits.max() < kMinTransition - kTimeEpsilon) {
+            transitions_.remove(id);
+            ++touched;
+        } else if (clip->duration > limits.max() + kTimeEpsilon) {
+            clip->duration = limits.max();
+            ++touched;
+        }
+    }
+    return touched;
 }
 
 }  // namespace editor::core
