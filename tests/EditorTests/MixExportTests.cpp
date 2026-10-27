@@ -325,3 +325,32 @@ TEST_F(MixExportTest, ClosingGapsKeepsTheAudioWithTheVideo)
         head += std::abs(actual[static_cast<std::size_t>(i) * 2]);
     EXPECT_GT(head / (kRate / 2), 2000) << "la musica manca all'inizio";
 }
+
+TEST_F(MixExportTest, TransitionCrossfadesTheAudioInTheExportedFile)
+{
+    Project project;
+    const int clip = project.add(path("voce.mkv"));
+    project.setAnalysis(clip, {0.0, 1.0, 2.0, 3.0}, 4.0);
+    const int first = project.sequence().insert(-1, clip, 0.0, 2.0);
+    project.sequence().insert(-1, clip, 1.0, 3.0);
+    EXPECT_FALSE(project.audioNeedsMix());
+    const int id = project.addTransition(first, "dissolvenza", 1.0);
+    ASSERT_NE(id, 0);
+    EXPECT_TRUE(project.audioNeedsMix());
+    const AudioEdit edit = project.audioEdit(GapExport::Black);
+    ASSERT_TRUE(edit.mix);
+
+    const std::string out = path("transizione.mkv");
+    exportClips(project.exportPlan(GapExport::Black), out, edit);
+    const auto actual = decodeAll(out);
+    EXPECT_NEAR(static_cast<double>(actual.size()) / 2 / kRate, 4.0, 0.06);
+    const Comparison c = compare(mixOffline(mixSpecOf(project), 4.0), actual, kRate / 4, kRate * 15 / 4);
+    EXPECT_EQ(c.bestLag, 0);
+    EXPECT_LT(c.error, 0.03);
+
+    // Spenta la dissolvenza dell'audio l'audio non si mixa più.
+    const TransitionClip* clipOfTransition = project.transitions().find(id);
+    ASSERT_NE(clipOfTransition, nullptr);
+    ASSERT_TRUE(project.setTransitionSettings(id, clipOfTransition->type, clipOfTransition->params, false));
+    EXPECT_FALSE(project.audioNeedsMix());
+}

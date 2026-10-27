@@ -418,8 +418,15 @@ bool Project::relinkAudio(int fragmentId)
 
 bool Project::audioNeedsMix() const
 {
-    return audio_.needsMix() || std::any_of(sequence_.fragments().begin(), sequence_.fragments().end(),
-                                            [](const Fragment& f) { return !f.envelope.empty(); });
+    if (audio_.needsMix() || std::any_of(sequence_.fragments().begin(), sequence_.fragments().end(),
+                                         [](const Fragment& f) { return !f.envelope.empty(); }))
+        return true;
+    // La dissolvenza incrociata di una transizione: l'audio dei due pezzi non si può più copiare com'è.
+    const std::vector<TransitionPlacement> placements = activeTransitions();
+    return std::any_of(placements.begin(), placements.end(), [this](const TransitionPlacement& t) {
+        const TransitionClip* clip = transitions_.find(t.id);
+        return clip != nullptr && clip->crossfadeAudio;
+    });
 }
 
 AudioEdit Project::audioEdit(GapExport gaps) const
