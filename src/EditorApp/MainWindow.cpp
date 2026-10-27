@@ -1700,11 +1700,10 @@ void MainWindow::startNextProbe()
 
     cancelProbe_ = false;
     probingClipId_ = id;
-    // I fotogrammi chiave letti si salvano qui, per riaprire lo stesso file (o il progetto) senza rileggerli.
+    // I fotogrammi chiave letti si salvano nella cartella di lavoro, per riaprire lo stesso file (o il progetto) senza
+    // rileggerli.
     const std::string cacheFolder =
-        QDir::toNativeSeparators(QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation))
-                                     .filePath(QStringLiteral("keyframes")))
-            .toStdString();
+        QDir::toNativeSeparators(QDir(workFolder()).filePath(QStringLiteral("keyframes"))).toStdString();
     probeThread_ = QThread::create([utf8Path, cacheFolder, outcome, cancel = &cancelProbe_] {
         try {
             outcome->info = core::probeFile(utf8Path, cancel, cacheFolder);
