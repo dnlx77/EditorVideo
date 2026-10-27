@@ -97,6 +97,9 @@ public:
     // Qualcosa da disegnare sopra l'immagine (le scritte del montaggio): riceve il rettangolo del fotogramma, o, nello
     // spazio vuoto, un rettangolo con le proporzioni di `blankSize`. updateOverlay() lo fa ridisegnare.
     void setOverlay(std::function<void(QPainter&, const QRectF&)> overlay, QSize blankSize);
+    // Mostra un fotogramma fatto da altri (la transizione del montaggio) al posto di quello del file; a riproduzione
+    // ferma. Il prossimo fotogramma decodificato lo sostituisce.
+    void showExternalFrame(std::shared_ptr<core::VideoFrame> frame);
     void updateOverlay();
     // Il mouse sull'immagine, in frazioni del fotogramma (0..1): `press` dice se si afferra qualcosa (allora arrivano
     // `move` e `release`).

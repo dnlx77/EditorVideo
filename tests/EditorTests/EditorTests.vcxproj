@@ -41,6 +41,7 @@
     <ClCompile Include="TextTracksTests.cpp" />
     <ClCompile Include="TextImageTests.cpp" />
     <ClCompile Include="TransitionsTests.cpp" />
+    <ClCompile Include="TransitionRenderTests.cpp" />
     <ClCompile Include="TransitionModelTests.cpp" />
     <ClCompile Include="GroupsTests.cpp" />
     <ClCompile Include="GroupMoveTests.cpp" />

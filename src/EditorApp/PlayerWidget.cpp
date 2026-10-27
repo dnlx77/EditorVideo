@@ -453,6 +453,11 @@ void PlayerWidget::setOverlay(std::function<void(QPainter&, const QRectF&)> over
     view_->setOverlay(std::move(overlay), blankSize);
 }
 
+void PlayerWidget::showExternalFrame(std::shared_ptr<core::VideoFrame> frame)
+{
+    view_->setFrame(std::move(frame));
+}
+
 void PlayerWidget::setImageMouse(std::function<bool(QPointF)> press, std::function<void(QPointF)> move,
                                  std::function<void(QPointF)> release)
 {

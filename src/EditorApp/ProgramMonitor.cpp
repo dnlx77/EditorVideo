@@ -6,6 +6,7 @@
 #include "EditorCore/AudioMixer.h"
 #include "EditorCore/Playback.h"
 #include "EditorCore/Project.h"
+#include "EditorCore/Transitions.h"
 
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
@@ -98,12 +99,21 @@ void ProgramMonitor::mousePressEvent(QMouseEvent* event)
 
 void ProgramMonitor::setVideoSource(std::function<QString(const QString& path)> source)
 {
+    // Anche la transizione legge i file da qui (i proxy).
+    transitionRenderer_.setVideoSource([source](const std::string& path) {
+        return source ? source(QString::fromStdString(path)).toStdString() : path;
+    });
     player_->videoSourceFor = std::move(source);
 }
 
 void ProgramMonitor::reloadVideo()
 {
     player_->reloadVideo();
+    transitionRenderer_.reset();
+    if (transitionId_ != 0 && !playing_) {
+        if (const auto placement = project_.transitionPlacement(transitionId_))
+            showTransitionFrame(*placement, position_);
+    }
 }
 
 void ProgramMonitor::setPreviewQuality(int divisor)
@@ -123,6 +133,8 @@ void ProgramMonitor::load(int index, double offset)
     if (clip == nullptr)
         return;
     gapIndex_ = -1;
+    transitionId_ = 0;
+    transitionFrame_.reset();
     player_->setBlank(false);
     if (f.clipId != loadedClipId_) {
         player_->openFile(QString::fromStdString(clip->path));
@@ -216,6 +228,43 @@ QSize ProgramMonitor::frameSize() const
     return video != nullptr && video->width > 0 && video->height > 0 ? QSize(video->width, video->height) : QSize(1920, 1080);
 }
 
+std::optional<core::TransitionPlacement> ProgramMonitor::transitionAt(double seconds) const
+{
+    if (project_.transitions().empty())
+        return std::nullopt;
+    for (const core::TransitionPlacement& placement : project_.activeTransitions()) {
+        if (seconds >= placement.start() - 1e-6 && seconds < placement.end() - 1e-6)
+            return placement;
+    }
+    return std::nullopt;
+}
+
+void ProgramMonitor::enterTransition(const core::TransitionPlacement& placement, double seconds)
+{
+    if (player_->isPlaying())
+        player_->pause();
+    player_->setBlank(false);
+    index_ = -1;
+    gapIndex_ = -1;
+    transitionId_ = placement.id;
+    position_ = seconds;
+    gapBase_ = seconds;
+    gapClock_.restart();
+    showTransitionFrame(placement, seconds);
+}
+
+void ProgramMonitor::showTransitionFrame(const core::TransitionPlacement& placement, double seconds)
+{
+    // Le anteprime stanno in 1280x720 al massimo: due decodifiche e la fusione devono stare nel tempo di un fotogramma.
+    QSize box = frameSize();
+    if (box.width() > 1280 || box.height() > 720)
+        box = box.scaled(1280, 720, Qt::KeepAspectRatio);
+    transitionRenderer_.setBox(box.width(), box.height());
+    transitionFrame_ = transitionRenderer_.render(project_, placement, seconds);
+    if (transitionFrame_)
+        player_->showExternalFrame(transitionFrame_);
+}
+
 void ProgramMonitor::updateOverlayFrame()
 {
     const QSize frame = frameSize();
@@ -229,6 +278,12 @@ void ProgramMonitor::updateOverlayFrame()
 int ProgramMonitor::currentClipId() const
 {
     const auto& fragments = project_.sequence().fragments();
+    if (transitionId_ != 0) {
+        // Nel tratto di una transizione: il file del pezzo che finisce.
+        if (const core::TransitionClip* transition = project_.transitions().find(transitionId_))
+            if (const core::Fragment* before = project_.sequence().find(transition->beforeFragment))
+                return before->clipId;
+    }
     return index_ >= 0 && index_ < static_cast<int>(fragments.size()) ? fragments[static_cast<std::size_t>(index_)].clipId : 0;
 }
 
@@ -245,6 +300,8 @@ void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QStrin
         updateLabels();
     }
     gapIndex_ = -1;
+    transitionId_ = 0;
+    transitionFrame_.reset();
     index_ = -1;  // nessun pezzo: il prossimo seekTo riapre quello giusto
     showingSource_ = true;
     updateTextOverlay();
@@ -264,6 +321,19 @@ void ProgramMonitor::seekTo(double seconds)
     if (sequence.empty())
         return;
     const double t = std::clamp(seconds, 0.0, sequence.totalLength());
+    if (const auto placement = transitionAt(t)) {
+        // Nel tratto di una transizione si vedono i due pezzi fusi: li fa il monitor, non il lettore.
+        const bool wasPlaying = playing_;
+        if (wasPlaying) {
+            player_->pause();
+            stopAudio();
+        }
+        enterTransition(*placement, t);
+        if (wasPlaying)
+            startAudio(t);
+        updatePosition();
+        return;
+    }
     int index = sequence.indexAt(t);
     if (index < 0) {
         if (const int gap = sequence.gapIndexAt(t); gap >= 0) {
@@ -295,6 +365,8 @@ void ProgramMonitor::enterGap(int index, double seconds)
         player_->pause();
     player_->setBlank(true);
     index_ = -1;
+    transitionId_ = 0;
+    transitionFrame_.reset();
     gapIndex_ = index;
     position_ = seconds;
     gapBase_ = seconds;
@@ -348,8 +420,8 @@ void ProgramMonitor::start()
     if (onPlaybackStarted)
         onPlaybackStarted();
     startAudio(position_);
-    if (gapIndex_ >= 0) {
-        gapBase_ = position_;  // nello spazio vuoto scorre solo il tempo
+    if (gapIndex_ >= 0 || transitionId_ != 0) {
+        gapBase_ = position_;  // nello spazio vuoto e nella transizione il tempo lo dà l'audio o l'orologio
         gapClock_.restart();
     } else {
         player_->play();
@@ -385,8 +457,8 @@ void ProgramMonitor::setCurrentSpeed(double speed)
 {
     if (speed == 0.0)
         return;
-    if (gapIndex_ >= 0 && playing_) {
-        updatePosition();  // nello spazio vuoto il tempo riparte da qui con la nuova velocità
+    if ((gapIndex_ >= 0 || transitionId_ != 0) && playing_) {
+        updatePosition();  // nello spazio vuoto (o nella transizione) il tempo riparte da qui con la nuova velocità
         gapBase_ = position_;
         gapClock_.restart();
     }
@@ -565,6 +637,8 @@ void ProgramMonitor::sequenceChanged()
         playing_ = false;
         poll_->stop();
     }
+    transitionId_ = 0;  // seekTo() rientra nella transizione se il punto ci cade ancora
+    transitionFrame_.reset();
     setCurrentSpeed(baseSpeed_);
     if (loadedClipId_ != 0 && project_.find(loadedClipId_) == nullptr)
         loadedClipId_ = 0;
@@ -584,7 +658,41 @@ void ProgramMonitor::sequenceChanged()
 void ProgramMonitor::updatePosition()
 {
     const core::Sequence& sequence = project_.sequence();
-    if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
+    if (transitionId_ != 0) {
+        const auto placement = project_.transitionPlacement(transitionId_);
+        if (!placement) {
+            transitionId_ = 0;  // la transizione non c'è più (la sequenza è cambiata): sequenceChanged() riposiziona
+            transitionFrame_.reset();
+        } else {
+            const double from = placement->start();
+            const double to = placement->end();
+            if (playing_ && sequenceAudio_.running())
+                position_ = std::clamp(sequenceAudio_.position(), from, to);  // lo scandisce l'audio
+            else if (playing_)
+                position_ = std::clamp(gapBase_ + speed_ * static_cast<double>(gapClock_.nsecsElapsed()) / 1e9, from, to);
+            if (playing_ && speed_ > 0 && position_ >= to - 1e-6) {
+                // Finita la transizione: il pezzo dopo, da dove siamo arrivati.
+                const int next = sequence.indexOf(placement->afterFragment);
+                transitionId_ = 0;
+                transitionFrame_.reset();
+                if (next >= 0) {
+                    load(next, std::max(0.0, to - sequence.startOf(next)));
+                    player_->play();
+                }
+            } else if (playing_ && speed_ < 0 && position_ <= from + 1e-6) {
+                // All'indietro: la fine del pezzo prima, da dove siamo arrivati.
+                const int previous = sequence.indexOf(placement->beforeFragment);
+                transitionId_ = 0;
+                transitionFrame_.reset();
+                if (previous >= 0) {
+                    load(previous, std::max(0.0, from - sequence.startOf(previous) - 0.001));
+                    player_->play();
+                }
+            } else if (playing_) {
+                showTransitionFrame(*placement, position_);
+            }
+        }
+    } else if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
         const double gapEnd = sequence.startOf(gapIndex_);
         const double gapStart = gapEnd - sequence.fragments()[static_cast<std::size_t>(gapIndex_)].gap;
         if (playing_ && sequenceAudio_.running())
@@ -608,6 +716,11 @@ void ProgramMonitor::updatePosition()
     } else if (index_ >= 0 && index_ < static_cast<int>(sequence.fragments().size())) {
         const core::Fragment& f = sequence.fragments()[index_];
         position_ = sequence.startOf(index_) + std::clamp(player_->currentPosition() - f.start, 0.0, f.length());
+        // Arrivati al tratto di una transizione, anche da un pezzo solo: da qui in poi la fusione la fa il monitor.
+        if (playing_ && speed_ != 0.0) {
+            if (const auto placement = transitionAt(position_))
+                enterTransition(*placement, position_);
+        }
     }
     updateLabels();
     updateTextOverlay();
@@ -673,6 +786,16 @@ void ProgramMonitor::updateLabels()
     if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
         fragmentLabel_->setText(QStringLiteral("Spazio vuoto (nero) prima del pezzo %1").arg(gapIndex_ + 1));
         return;
+    }
+    if (transitionId_ != 0) {
+        if (const core::TransitionClip* transition = project_.transitions().find(transitionId_)) {
+            const core::Transition* effect = core::findTransition(transition->type);
+            fragmentLabel_->setText(QStringLiteral("Transizione %1 fra il pezzo %2 e il pezzo %3")
+                                        .arg(effect ? QString::fromUtf8(effect->name()) : QString::fromStdString(transition->type))
+                                        .arg(sequence.indexOf(transition->beforeFragment) + 1)
+                                        .arg(sequence.indexOf(transition->afterFragment) + 1));
+            return;
+        }
     }
     if (index_ < 0 || index_ >= static_cast<int>(sequence.fragments().size())) {
         fragmentLabel_->setText(sequence.empty() ? QStringLiteral("Sequenza vuota") : QString());

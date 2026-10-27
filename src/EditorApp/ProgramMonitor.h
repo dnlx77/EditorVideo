@@ -2,11 +2,13 @@
 
 #include "EditorApp/SequenceAudio.h"
 #include "EditorApp/TextOverlay.h"
+#include "EditorCore/TransitionRender.h"
 
 #include <QtCore/QElapsedTimer>
 #include <QtWidgets/QWidget>
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -15,6 +17,7 @@ class QTimer;
 
 namespace editor::core {
 class Project;
+struct VideoFrame;
 }
 
 namespace editor::app {
@@ -59,6 +62,10 @@ public:
     double position() const { return position_; }
     int currentIndex() const { return index_; }  // pezzo mostrato (-1 = sequenza vuota o spazio vuoto)
     bool inGap() const { return gapIndex_ >= 0; }  // in uno spazio vuoto
+    // Nel tratto di una transizione (id, 0 = no): il monitor mostra i due pezzi fusi, non un file solo. Il fotogramma
+    // mostrato per ultimo (nullptr se non c'è) serve alle prove.
+    int transitionShown() const { return transitionId_; }
+    std::shared_ptr<core::VideoFrame> transitionFrame() const { return transitionFrame_; }
     int currentClipId() const;  // file del pezzo mostrato (0 = nessuno)
     // Le scritte che si vedono ora sopra l'immagine (nessuna mentre si mostra un fotogramma di un file con showSourceFrame).
     std::vector<core::TextClip> visibleText() const;
@@ -106,6 +113,10 @@ private:
     void dropText(QPointF at);
     void updateOverlayFrame();  // dice al lettore come disegnare le scritte
     void updateTextOverlay();  // ridisegna le scritte se quelle visibili sono cambiate
+    // Transizioni: la transizione in cui cade `seconds` (non l'ultimo istante, che è già del pezzo dopo).
+    std::optional<core::TransitionPlacement> transitionAt(double seconds) const;
+    void enterTransition(const core::TransitionPlacement& placement, double seconds);
+    void showTransitionFrame(const core::TransitionPlacement& placement, double seconds);
 
     const core::Project& project_;
     TextOverlay overlay_;
@@ -128,6 +139,9 @@ private:
 
     int index_ = -1;
     int gapIndex_ = -1;     // nello spazio vuoto prima di questo pezzo (-1 = no)
+    int transitionId_ = 0;  // nel tratto di questa transizione (0 = no); il tempo scorre come negli spazi vuoti
+    core::TransitionRenderer transitionRenderer_;
+    std::shared_ptr<core::VideoFrame> transitionFrame_;
     double gapBase_ = 0.0;  // tempo della sequenza quando è partito gapClock_
     QElapsedTimer gapClock_;
     int loadedClipId_ = 0;  // file aperto nel lettore
