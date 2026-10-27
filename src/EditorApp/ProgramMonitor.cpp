@@ -79,6 +79,9 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     poll_ = new QTimer(this);
     poll_->setInterval(40);
     connect(poll_, &QTimer::timeout, this, [this] { updatePosition(); });
+    transitionTimer_ = new QTimer(this);
+    transitionTimer_->setInterval(5);  // come il lettore
+    connect(transitionTimer_, &QTimer::timeout, this, [this] { transitionTick(); });
 
     updateLabels();
 }
@@ -251,7 +254,8 @@ void ProgramMonitor::enterTransition(const core::TransitionPlacement& placement,
     position_ = seconds;
     gapBase_ = seconds;
     gapClock_.restart();
-    transitionFloor_ = 0;
+    transitionFrom_ = placement.start();
+    transitionTo_ = placement.end();
     showTransitionFrame(placement, seconds, wait);
 }
 
@@ -276,16 +280,31 @@ void ProgramMonitor::showTransitionFrame(const core::TransitionPlacement& placem
             player_->showExternalFrame(transitionFrame_);
         return;
     }
-    // In riproduzione il fotogramma arriva dopo un po': si chiede quello del momento in cui sarà mostrato, e intanto si
-    // mostra l'ultimo arrivato di questa transizione.
-    const double lead = speed_ * (transitionPlayback_.averageRenderSeconds() + 0.02);
-    const unsigned long long serial = transitionPlayback_.request(*job, seconds + lead);
-    if (transitionFloor_ == 0)
-        transitionFloor_ = serial;
-    const core::TransitionPlayback::Result ready = transitionPlayback_.latest();
-    if (ready.frame && ready.serial >= transitionFloor_ && ready.frame != transitionFrame_) {
-        transitionFrame_ = ready.frame;
-        player_->showExternalFrame(transitionFrame_);
+    // In riproduzione: il thread prepara i fotogrammi in anticipo, al ritmo del video, e il timer veloce mostra quello
+    // del momento (l'orologio è quello dell'audio, come per il lettore).
+    const double step = std::clamp(player_->frameDuration(), 1.0 / 60, 1.0 / 12) * std::max(1.0, std::abs(speed_));
+    transitionPlayback_.startStream(*job, seconds, step, speed_ < 0 ? -1 : 1);
+    transitionTimer_->start();
+}
+
+double ProgramMonitor::transitionClock() const
+{
+    if (playing_ && sequenceAudio_.running())
+        return sequenceAudio_.position();
+    return gapBase_ + speed_ * static_cast<double>(gapClock_.nsecsElapsed()) / 1e9;
+}
+
+void ProgramMonitor::transitionTick()
+{
+    if (transitionId_ == 0 || !playing_) {
+        transitionTimer_->stop();
+        return;
+    }
+    const double time = std::clamp(transitionClock(), transitionFrom_, transitionTo_);
+    const std::shared_ptr<core::VideoFrame> frame = transitionPlayback_.takeFrame(time);
+    if (frame && frame != transitionFrame_) {
+        transitionFrame_ = frame;
+        player_->showExternalFrame(frame);
     }
 }
 
@@ -735,8 +754,6 @@ void ProgramMonitor::updatePosition()
                     load(previous, std::max(0.0, from - sequence.startOf(previous) - 0.001));
                     player_->play();
                 }
-            } else if (playing_) {
-                showTransitionFrame(*placement, position_, false);
             }
         }
     } else if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
@@ -839,10 +856,17 @@ void ProgramMonitor::updateLabels()
     if (transitionId_ != 0) {
         if (const core::TransitionClip* transition = project_.transitions().find(transitionId_)) {
             const core::Transition* effect = core::findTransition(transition->type);
-            fragmentLabel_->setText(QStringLiteral("Transizione %1 fra il pezzo %2 e il pezzo %3")
-                                        .arg(effect ? QString::fromUtf8(effect->name()) : QString::fromStdString(transition->type))
-                                        .arg(sequence.indexOf(transition->beforeFragment) + 1)
-                                        .arg(sequence.indexOf(transition->afterFragment) + 1));
+            QString text = QStringLiteral("Transizione %1 fra il pezzo %2 e il pezzo %3")
+                               .arg(effect ? QString::fromUtf8(effect->name()) : QString::fromStdString(transition->type))
+                               .arg(sequence.indexOf(transition->beforeFragment) + 1)
+                               .arg(sequence.indexOf(transition->afterFragment) + 1);
+            // In riproduzione, quanto ci vuole a preparare un fotogramma: sotto la durata di un fotogramma va liscia.
+            const double prepare = transitionPlayback_.averageRenderSeconds();
+            if (playing_ && prepare > 0.0)
+                text += QStringLiteral(" · anteprima: %1 ms a fotogramma (limite %2 ms)")
+                            .arg(prepare * 1000.0, 0, 'f', 0)
+                            .arg(player_->frameDuration() * 1000.0 / std::max(1.0, std::abs(speed_)), 0, 'f', 0);
+            fragmentLabel_->setText(text);
             return;
         }
     }

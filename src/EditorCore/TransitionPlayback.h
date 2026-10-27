@@ -3,6 +3,7 @@
 #include "EditorCore/TransitionRender.h"
 
 #include <condition_variable>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -41,9 +42,18 @@ public:
     unsigned long long request(const TransitionJob& job, double sequenceTime);
     // Chiede e aspetta il fotogramma (nullptr se non arriva entro `timeoutMs` o non si riesce).
     std::shared_ptr<VideoFrame> render(const TransitionJob& job, double sequenceTime, int timeoutMs = 10000);
+    // Flusso di fotogrammi per la riproduzione: da `from` (tempo della sequenza), avanti (direction > 0) o indietro, uno
+    // ogni `step` secondi della sequenza, fino all'estremo della transizione. Il thread li prepara in anticipo (pochi,
+    // in coda) con il loro tempo; chi riproduce prende quello del momento con takeFrame(). Una richiesta (request,
+    // render) ferma il flusso.
+    void startStream(const TransitionJob& job, double from, double step, int direction);
+    // Il fotogramma da mostrare al tempo `time` della sequenza: l'ultimo in coda non dopo `time` (all'indietro: non
+    // prima); quelli già superati si scartano e il thread ne prepara altri. Lo stesso fotogramma torna finché non ne
+    // arriva uno nuovo. nullptr se non è ancora il momento del primo in coda (o non ce ne sono).
+    std::shared_ptr<VideoFrame> takeFrame(double time);
     // L'ultimo risultato finito.
     Result latest() const;
-    // Quanto ci mette in media a fare un fotogramma (secondi), per anticipare il tempo richiesto.
+    // Quanto ci mette in media a fare un fotogramma (secondi), per sapere se sta al passo.
     double averageRenderSeconds() const;
 
 private:
@@ -54,6 +64,7 @@ private:
         unsigned long long serial = 0;
     };
     void run();
+    bool streamWorkAvailable() const;  // il flusso ha ancora un fotogramma da preparare e posto in coda
 
     mutable std::mutex mutex_;
     std::condition_variable wake_;  // c'è una richiesta o bisogna uscire
@@ -65,6 +76,17 @@ private:
     unsigned long long serial_ = 0;
     Result result_;
     double averageSeconds_ = 0.0;
+
+    // Flusso (vedi startStream).
+    static constexpr std::size_t kMaxQueued = 6;
+    bool streamActive_ = false;
+    TransitionJob streamJob_;
+    double streamNext_ = 0.0;  // il prossimo tempo da preparare
+    double streamStep_ = 0.04;
+    int streamDirection_ = 1;
+    double clockHint_ = 0.0;   // l'ultimo tempo chiesto con takeFrame: serve a saltare i fotogrammi in ritardo
+    unsigned long long streamGeneration_ = 0;
+    std::deque<std::shared_ptr<VideoFrame>> queue_;
 
     // Impostazioni da applicare al renderer prima della richiesta dopo (lo usa solo il thread).
     bool configChanged_ = false;
