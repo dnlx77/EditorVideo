@@ -44,6 +44,19 @@ Scene sceneOf(const Project& project, ObjectRef anchor)
         item.length = sequence.fragments()[i].length();
         scene.items.push_back(item);
     }
+    // L'audio dei pezzi (non scollegato) sta su A1: le clip libere di A1 non ci si sovrappongono.
+    for (const Fragment& f : sequence.fragments()) {
+        if (f.detached)
+            continue;
+        const std::size_t i = static_cast<std::size_t>(&f - sequence.fragments().data());
+        Item item;
+        item.ref = {ObjectRef::Kind::PieceAudio, f.id};
+        item.lane = AudioTracks::kOriginalTrack;
+        item.track = AudioTracks::kOriginalTrack;
+        item.start = starts[i];
+        item.length = f.length();
+        scene.items.push_back(item);
+    }
     for (const AudioTrack& track : project.audioTracks().tracks()) {
         for (const AudioClip& clip : track.clips) {
             Item item;
@@ -98,7 +111,9 @@ int moverCount(const Scene& scene)
     if (scene.anchorComponent < 0)
         return 0;
     return static_cast<int>(std::count_if(scene.items.begin(), scene.items.end(),
-                                          [&](const Item& i) { return i.component == scene.anchorComponent; }));
+                                          [&](const Item& i) {
+                                              return i.component == scene.anchorComponent && i.ref.kind != ObjectRef::Kind::PieceAudio;
+                                          }));
 }
 
 double clampDelta(const Scene& scene, double delta, bool push)
@@ -211,6 +226,18 @@ bool applyMove(Project& project, const Scene& scene, double delta, bool push)
 
 }  // namespace
 
+std::vector<TimeRange> Project::linkedAudioRanges() const
+{
+    std::vector<TimeRange> ranges;
+    const std::vector<double> starts = sequence_.starts();
+    for (std::size_t i = 0; i < sequence_.fragments().size(); ++i) {
+        const Fragment& f = sequence_.fragments()[i];
+        if (!f.detached)
+            ranges.push_back({starts[i], starts[i] + f.length()});
+    }
+    return ranges;
+}
+
 int Project::groupMoverCount(ObjectRef anchor) const
 {
     return moverCount(sceneOf(*this, anchor));
@@ -250,8 +277,9 @@ double Project::freeSpotFor(ObjectRef object, int track, double desired, bool pu
         return now + clampDelta(scene, desired - now, push);
     if (object.kind == ObjectRef::Kind::TextClip)
         return text_.nearestFreeStart(object.id, track, desired);
-    return object.kind == ObjectRef::Kind::AudioClip ? audio_.nearestFreePosition(object.id, track, desired)
-                                                      : sequence_.nearestFreeStart(object.id, desired, push);
+    return object.kind == ObjectRef::Kind::AudioClip
+               ? audio_.nearestFreePosition(object.id, track, desired, track == AudioTracks::kOriginalTrack ? linkedAudioRanges() : std::vector<TimeRange>{})
+               : sequence_.nearestFreeStart(object.id, desired, push);
 }
 
 Project::MoveResult Project::moveObject(ObjectRef object, int track, double start, bool push)
@@ -276,7 +304,9 @@ Project::MoveResult Project::moveObject(ObjectRef object, int track, double star
     if (isText)
         result.moved = text_.moveTo(object.id, track, start);
     else
-        result.moved = isClip ? audio_.moveTo(object.id, track, start) : sequence_.moveTo(object.id, start, nullptr, push);
+        result.moved = isClip ? audio_.moveTo(object.id, track, start,
+                                              track == AudioTracks::kOriginalTrack ? linkedAudioRanges() : std::vector<TimeRange>{})
+                              : sequence_.moveTo(object.id, start, nullptr, push);
     return result;
 }
 

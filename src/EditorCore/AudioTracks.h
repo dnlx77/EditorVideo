@@ -2,6 +2,7 @@
 
 #include "EditorCore/LevelEnvelope.h"
 #include "EditorCore/Sequence.h"
+#include "EditorCore/TimeUtil.h"
 
 #include <string>
 #include <vector>
@@ -98,12 +99,13 @@ public:
 
     // Dove può iniziare la clip sulla traccia `trackId` se la si vuole a `desired`: il punto libero più vicino (vedi
     // Sequence::nearestFreeStart). -1 se la clip o la traccia non c'è.
-    double nearestFreePosition(int clipId, int trackId, double desired) const;
+    // `blocked` sono tratti già occupati sulla traccia da altro (es. l'audio dei pezzi video su A1): ci si ferma contro.
+    double nearestFreePosition(int clipId, int trackId, double desired, const std::vector<TimeRange>& blocked = {}) const;
     // Lo stesso per una clip nuova lunga `length` (es. un file da mettere sulla traccia). -1 se la traccia non c'è.
     double freePosition(int trackId, double length, double desired) const;
     // Sposta la clip a `position` sulla traccia `trackId` (anche un'altra); false (e nessuna modifica) se si
     // sovrapporrebbe ad altre clip o se la traccia non c'è.
-    bool moveTo(int clipId, int trackId, double position);
+    bool moveTo(int clipId, int trackId, double position, const std::vector<TimeRange>& blocked = {});
 
     // Divide la clip della traccia che si trova al tempo `seconds` della sequenza, proprio lì. Restituisce l'id della
     // seconda parte, 0 se lì non c'è una clip (o si è sul suo bordo).

@@ -198,3 +198,25 @@ TEST(GroupMove, ManyObjectsStayFast)
     EXPECT_GT(sum, 0.0);
     EXPECT_LT(seconds / 20.0, 0.05) << "più di 50 ms per un movimento";
 }
+
+TEST(GroupMove, FreeClipOnA1StopsAgainstTheLinkedAudioOfThePieces)
+{
+    // Regressione: una clip libera su A1 (audio scollegato) si sovrapponeva all'audio ancora legato di un altro pezzo.
+    Montage m;  // pezzi: 0..2 (A), 3..5 (B), 6..8 (C)
+    ASSERT_NE(m.project.ungroupObjects({{Kind::Piece, m.c}}).audioUnlinked, 0);
+    const AudioTrack* host = m.project.audioTracks().track(AudioTracks::kOriginalTrack);
+    ASSERT_NE(host, nullptr);
+    const int freeClip = host->clips.front().id;  // 6..8 su A1
+    const ObjectRef ref{Kind::AudioClip, freeClip};
+    constexpr int kA1 = AudioTracks::kOriginalTrack;
+    // Verso B (audio legato su A1 a 3..5) ci si ferma contro, a 5; spostarla lì sopra non si può.
+    EXPECT_NEAR(m.project.freeSpotFor(ref, kA1, 4.0, false), 5.0, 1e-6);
+    EXPECT_FALSE(m.project.audioTracks().moveTo(freeClip, kA1, 4.0, m.project.linkedAudioRanges()));
+    ASSERT_TRUE(m.project.moveObject(ref, kA1, m.project.freeSpotFor(ref, kA1, 4.0, false), false).moved);
+    EXPECT_NEAR(m.project.audioTracks().find(freeClip)->position, 5.0, 1e-6);
+    // Dopo l'ultimo pezzo il posto è libero.
+    EXPECT_NEAR(m.project.freeSpotFor(ref, kA1, 9.0, false), 9.0, 1e-6);
+    // Un pezzo con l'audio scollegato non occupa più A1.
+    ASSERT_NE(m.project.ungroupObjects({{Kind::Piece, m.b}}).audioUnlinked, 0);
+    EXPECT_EQ(m.project.linkedAudioRanges().size(), 1u);  // resta solo A
+}

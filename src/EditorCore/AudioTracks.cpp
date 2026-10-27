@@ -232,13 +232,34 @@ int AudioTracks::trackOf(int clipId) const
     return locate(clipId, t, c) ? tracks_[static_cast<std::size_t>(t)].id : -1;
 }
 
-double AudioTracks::nearestFreePosition(int clipId, int trackId, double desired) const
+namespace {
+
+// La traccia con in più, al posto dei tratti occupati da altro, clip finte (id negativi: non coincidono con nessuna).
+AudioTrack withBlocked(const AudioTrack& track, const std::vector<TimeRange>& blocked)
+{
+    AudioTrack result = track;
+    int id = -1;
+    for (const TimeRange& r : blocked) {
+        AudioClip fake;
+        fake.id = id--;
+        fake.end = r.length();
+        fake.position = r.start;
+        result.clips.push_back(fake);
+    }
+    return result;
+}
+
+}  // namespace
+
+double AudioTracks::nearestFreePosition(int clipId, int trackId, double desired, const std::vector<TimeRange>& blocked) const
 {
     const AudioClip* clip = find(clipId);
     static const AudioTrack kNoClips;
     const AudioTrack* t = trackId == kOriginalTrack && !hasHost() ? &kNoClips : track(trackId);
     if (clip == nullptr || t == nullptr)
         return -1.0;
+    if (!blocked.empty())
+        return freeSpot(withBlocked(*t, blocked), clip->length(), desired, clipId);
     return freeSpot(*t, clip->length(), desired, clipId);
 }
 
@@ -269,7 +290,7 @@ double AudioTracks::freeSpot(const AudioTrack& track, double length, double desi
     return best < 0.0 ? desired : best;
 }
 
-bool AudioTracks::moveTo(int clipId, int trackId, double position)
+bool AudioTracks::moveTo(int clipId, int trackId, double position, const std::vector<TimeRange>& blocked)
 {
     int from = 0;
     int index = 0;
@@ -282,7 +303,7 @@ bool AudioTracks::moveTo(int clipId, int trackId, double position)
     // Le tracce non cambiano posto nell'elenco finché non si crea/toglie la traccia di A1: si lavora sugli id.
     const int fromId = tracks_[static_cast<std::size_t>(from)].id;
     AudioTrack* to = trackId == kOriginalTrack ? hostTrack() : mutableTrack(trackId);
-    if (overlaps(*to, position, clip.length(), clipId)) {
+    if (overlaps(*to, position, clip.length(), clipId) || overlaps(withBlocked(AudioTrack{}, blocked), position, clip.length(), clipId)) {
         pruneHost();
         return false;
     }

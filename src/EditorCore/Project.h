@@ -178,6 +178,8 @@ public:
     // freeSpotFor: dove può andare partendo da `desired` (inizio nella sequenza), il punto più vicino che si può fare; -1
     // se l'oggetto non esiste.
     double freeSpotFor(ObjectRef object, int track, double desired, bool push) const;
+    // I tratti di A1 occupati dall'audio dei pezzi video (quello non scollegato): le clip libere di A1 non ci stanno sopra.
+    std::vector<TimeRange> linkedAudioRanges() const;
     struct MoveResult
     {
         bool moved = false;  // qualcosa si è spostato
