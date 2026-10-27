@@ -59,7 +59,9 @@ public:
     // vicino, cioè `desired` se lì ci sta, altrimenti contro il pezzo che lo blocca (o in un altro spazio, se è più
     // vicino). Verso destra però il pezzo spinge quelli dopo di lui: si può andare dovunque, non prima della fine del
     // pezzo che lo precede. Con `push` false (spinta spenta) vale sempre la regola dei pezzi che non si spostano. -1 se il pezzo non c'è.
-    double nearestFreeStart(int fragmentId, double desired, bool push = true) const;
+    // `blocked`: tratti occupati da altro (es. clip libere su A1 contro cui l'audio del pezzo non deve andare): come spazi
+    // non liberi, ma solo senza spinta.
+    double nearestFreeStart(int fragmentId, double desired, bool push = true, const std::vector<TimeRange>& blocked = {}) const;
     // Sposta il pezzo in modo che inizi a `start`. Verso destra i pezzi dopo di lui, se li urta, vengono spinti avanti
     // (a catena, senza spazi nuovi fra quelli spinti); verso sinistra non può sovrapporsi a nessuno (false, e nessuna
     // modifica) e può passare in un altro spazio vuoto. Se `shifts` c'è, ci mette (id del pezzo, di quanto si è spostato)

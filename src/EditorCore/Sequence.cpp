@@ -109,7 +109,7 @@ void Sequence::move(int fragmentId, int toIndex)
     fragments_.insert(fragments_.begin() + toIndex, fragment);
 }
 
-double Sequence::nearestFreeStart(int fragmentId, double desired, bool push) const
+double Sequence::nearestFreeStart(int fragmentId, double desired, bool push, const std::vector<TimeRange>& blocked) const
 {
     const int self = indexOf(fragmentId);
     if (self < 0)
@@ -132,7 +132,9 @@ double Sequence::nearestFreeStart(int fragmentId, double desired, bool push) con
     double best = -1.0;
     double bestDistance = 0.0;
     // Gli spazi liberi fra gli altri pezzi (che restano dove sono): in ognuno il punto più vicino a `desired`.
-    const auto consider = [&](double from, double to) {
+    std::vector<TimeRange> holes = blocked;
+    std::sort(holes.begin(), holes.end(), [](const TimeRange& a, const TimeRange& b) { return a.start < b.start; });
+    const auto considerFree = [&](double from, double to) {
         if (to - from < length - kTimeEpsilon)
             return;  // lì non ci sta
         const double candidate = std::max(from, std::min(desired, to - length));
@@ -141,6 +143,17 @@ double Sequence::nearestFreeStart(int fragmentId, double desired, bool push) con
             best = candidate;
             bestDistance = distance;
         }
+    };
+    const auto consider = [&](double from, double to) {
+        // Gli spazi fra i pezzi si dividono dove c'è altro.
+        for (const TimeRange& h : holes) {
+            if (h.end <= from + kTimeEpsilon || h.start >= to - kTimeEpsilon)
+                continue;
+            if (h.start > from)
+                considerFree(from, h.start);
+            from = std::max(from, h.end);
+        }
+        considerFree(from, to);
     };
     double freeFrom = 0.0;
     t = 0.0;

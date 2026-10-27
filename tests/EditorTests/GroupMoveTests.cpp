@@ -237,3 +237,23 @@ TEST(GroupMove, MovingAPieceRightNeverPutsItsAudioOverAFreeClipOnA1)
         EXPECT_NEAR(m.start(m.a), push ? 2.0 : 1.0, 1e-6) << "push=" << push;
     }
 }
+
+TEST(GroupMove, WithoutPushAPieceJumpsOverAFreeClipOnA1InBothDirections)
+{
+    Project project;
+    const int file = project.add("video.mp4");
+    project.setAnalysis(file, {0.0}, 60.0);
+    const int x = project.sequence().insert(-1, file, 0.0, 2.0);
+    const int y = project.sequence().insert(-1, file, 4.0, 6.0);
+    project.sequence().moveTo(x, 6.0);  // X 6..8
+    project.sequence().moveTo(y, 3.0);  // Y 3..5, con la clip libera di A1 a 3..5 dopo averne scollegato l'audio
+    ASSERT_NE(project.unlinkAudio(y), 0);
+    const ObjectRef ref{Kind::Piece, x};
+    const auto startOf = [&] { return project.sequence().startOf(project.sequence().indexOf(x)); };
+    // A sinistra: oltre Y (e oltre la clip su A1) fino a 0.5.
+    ASSERT_TRUE(project.moveObject(ref, 0, project.freeSpotFor(ref, 0, 0.5, false), false).moved);
+    EXPECT_NEAR(startOf(), 0.5, 1e-6);
+    // A destra: di nuovo oltre Y, in fondo.
+    ASSERT_TRUE(project.moveObject(ref, 0, project.freeSpotFor(ref, 0, 7.0, false), false).moved);
+    EXPECT_NEAR(startOf(), 7.0, 1e-6);
+}
