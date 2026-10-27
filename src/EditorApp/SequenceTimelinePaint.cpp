@@ -45,6 +45,19 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
     p.drawPixmap(0, 0, cache_);
     if (!blocks_.empty())
         paintCacheBar(p);
+    if (transDragActive_ && transDropIndex_ >= 0) {
+        // Una transizione trascinata dall'elenco: la giunzione dove cadrebbe, verde se ci sta e rossa se no.
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF lane = videoLane();
+        const double x = xForBlockEdge(transDropIndex_, false);
+        const QColor color = transDropValid_ ? QColor(60, 200, 90) : QColor(230, 70, 60);
+        p.setPen(QPen(color, 4));
+        p.drawLine(QPointF(x, lane.top() - 4), QPointF(x, lane.bottom() + 4));
+        p.setPen(palette().color(QPalette::Text));
+        p.drawText(QRectF(x + 6, lane.top() - 15, 320, 14), Qt::AlignLeft | Qt::AlignVCenter,
+                   transDropValid_ ? QStringLiteral("Lascia qui per mettere la transizione")
+                                   : QStringLiteral("Qui la transizione non ci sta"));
+    }
     if (fileDropX_ >= 0) {
         p.setRenderHint(QPainter::Antialiasing);
         if (fileDropLane_ > 0) {
@@ -238,6 +251,30 @@ void SequenceTimeline::paintStatic(QPainter& p)
     }
 }
 
+void SequenceTimeline::paintTransitions(QPainter& p)
+{
+    const QPalette pal = palette();
+    for (const TransitionBlock& t : transitions_) {
+        const QRectF full = transitionRect(t);
+        if (full.right() < visibleLeft() - 4 || full.left() > visibleRight() + 4)
+            continue;
+        const QRectF r = visiblePart(full);
+        const bool selected = t.id == selectedTransition_;
+        p.setBrush(QColor(255, 255, 255, selected ? 175 : 125));
+        p.setPen(selected ? QPen(pal.color(QPalette::Highlight), 2) : QPen(QColor(255, 255, 255, 230), 1));
+        p.drawRoundedRect(r, 3, 3);
+        // Le due diagonali che incrociano un pezzo nell'altro.
+        p.setPen(QPen(QColor(20, 20, 20, 150), 1));
+        p.drawLine(r.topLeft() + QPointF(2, 2), r.bottomRight() - QPointF(2, 2));
+        p.drawLine(r.bottomLeft() + QPointF(2, -2), r.topRight() + QPointF(-2, 2));
+        if (r.width() > 46) {
+            p.setPen(QColor(10, 10, 10));
+            p.drawText(r.adjusted(3, 2, -3, -2), Qt::AlignTop | Qt::AlignHCenter,
+                       p.fontMetrics().elidedText(t.label, Qt::ElideRight, static_cast<int>(r.width()) - 6));
+        }
+    }
+}
+
 void SequenceTimeline::paintVideo(QPainter& p)
 {
     const QRectF a = videoLane();
@@ -369,6 +406,7 @@ void SequenceTimeline::paintVideo(QPainter& p)
                        p.fontMetrics().elidedText(text, Qt::ElideRight, static_cast<int>(r.width() * 2)));
         }
     }
+    paintTransitions(p);
 
     p.restore();
 }

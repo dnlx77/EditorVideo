@@ -170,6 +170,15 @@ public:
     void keepTextStyles(const std::vector<core::NamedTextStyle>& styles);
     // La scritta trascinata sull'immagine del monitor: nuovo centro (0..1 del fotogramma).
     bool moveTextOnScreen(int clipId, double centerX, double centerY);
+    // Transizioni (MainWindowTransitions.cpp)
+    void refreshTransitions();  // le rimette sulla linea del tempo
+    bool canDropTransition(int beforeFragment) const;
+    void refuseTransition(int beforeFragment);
+    int addTransition(const QString& type, int beforeFragment);
+    double clampTransitionDuration(int id, double desired) const;
+    bool changeTransitionDuration(int id, double duration);
+    bool removeTransition(int id);
+    void editTransition(int id);
     bool moveTextClip(int clipId, int layerId, double position);
     bool trimTextClip(int clipId, bool atStart, double value);
     bool fadeTextClip(int clipId, double fadeIn, double fadeOut);  // le maniglie sulla linea del tempo

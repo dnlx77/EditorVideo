@@ -4,6 +4,7 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/TextEditorPanel.h"
+#include "EditorApp/TransitionMime.h"
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
@@ -1927,6 +1928,104 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                             edited ? "sì" : "NO", onMonitor ? "sì" : "NO", undone ? "sì" : "NO");
                 std::fflush(stdout);
                 ok = ok && added && split && deleted && lanes && dragged && trimmed && multi && grouped && removed && edited && onMonitor && undone;
+            }
+            // Transizioni (X5): si lascia una transizione sulla giunzione, si allarga, si toglie con Canc, si annulla.
+            {
+                const core::Project& proj = window->project();
+                auto* line = window->sequenceTimeline();
+                line->resize(line->width(), std::max(line->height(), 320));
+                window->programMonitor()->seekTo(0.0);
+                line->fitAll();
+                QCoreApplication::processEvents();
+                const std::size_t piecesBefore = proj.sequence().fragments().size();
+                const auto firstJunction = [&]() {
+                    const auto& frags = proj.sequence().fragments();
+                    for (std::size_t i = 0; i + 1 < frags.size(); ++i)
+                        if (proj.isJunction(frags[i].id))
+                            return static_cast<int>(i);
+                    return -1;
+                };
+                // Fra file interi non c'è margine: la giunzione si fa dividendo il primo pezzo a metà (le due metà hanno
+                // margine l'una nell'altra).
+                int junction = -1;
+                {
+                    const double middle = proj.sequence().fragments().front().length() / 2;
+                    window->programMonitor()->seekTo(middle);
+                    QElapsedTimer seeking;
+                    seeking.start();
+                    while (std::abs(window->programMonitor()->position() - middle) > 0.1 && seeking.elapsed() < 3000)
+                        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    window->splitAtPlayhead();
+                    junction = firstJunction();
+                }
+                line->fitAll();
+                QCoreApplication::processEvents();
+                const bool found = junction >= 0;
+                bool dropped = false, refusedElsewhere = false, widened = false, selected = false, removed = false, redone = false;
+                bool undone = false;
+                if (found) {
+                    const int beforeId = proj.sequence().fragments()[static_cast<std::size_t>(junction)].id;
+                    const double junctionX = line->xForJunction(junction);
+                    const double y = line->videoLaneCenter();
+                    const auto dropAt = [&](double x) {
+                        QMimeData data;
+                        data.setData(QLatin1String(kTransitionMime), QByteArrayLiteral("dissolvenza"));
+                        const QPoint at(static_cast<int>(x), static_cast<int>(y));
+                        QDragEnterEvent enter(at, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+                        QCoreApplication::sendEvent(line, &enter);
+                        QDropEvent drop(QPointF(at), Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+                        QCoreApplication::sendEvent(line, &drop);
+                        QCoreApplication::processEvents();
+                    };
+                    // Lontano da ogni giunzione: niente.
+                    dropAt(line->xForSequenceTime(0.0));
+                    refusedElsewhere = proj.transitions().empty();
+                    dropAt(junctionX + 5);
+                    const core::TransitionClip* added = proj.transitions().atJunction(beforeId);
+                    dropped = added != nullptr && added->type == "dissolvenza" && added->duration >= core::kMinTransition
+                           && line->transitions().size() == 1;
+                    if (dropped) {
+                        const int id = added->id;
+                        const double before = added->duration;
+                        const auto mouse = [&](QEvent::Type type, double x, Qt::MouseButtons buttons) {
+                            QMouseEvent e(type, QPointF(x, y), line->mapToGlobal(QPointF(x, y)),
+                                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
+                            QCoreApplication::sendEvent(line, &e);
+                        };
+                        mouse(QEvent::MouseButtonPress, junctionX, Qt::LeftButton);
+                        mouse(QEvent::MouseButtonRelease, junctionX, Qt::NoButton);
+                        selected = line->selectedTransition() == id;
+                        // Si stringe a metà (almeno il minimo) trascinando il bordo destro: i file di prova sono brevi.
+                        const double target = std::max(core::kMinTransition, before / 2);
+                        const double perSecond = line->xForSequenceTime(1.0) - line->xForSequenceTime(0.0);
+                        const double edge = junctionX + before / 2 * perSecond;
+                        mouse(QEvent::MouseButtonPress, edge, Qt::LeftButton);
+                        mouse(QEvent::MouseMove, (edge + junctionX) / 2, Qt::LeftButton);
+                        mouse(QEvent::MouseMove, junctionX + target / 2 * perSecond, Qt::LeftButton);
+                        mouse(QEvent::MouseButtonRelease, junctionX + target / 2 * perSecond, Qt::NoButton);
+                        QCoreApplication::processEvents();
+                        const core::TransitionClip* now = proj.transitions().find(id);
+                        widened = now != nullptr && std::abs(now->duration - target) < 0.03 && now->duration < before;
+                        line->setFocus(Qt::MouseFocusReason);
+                        line->setSelectedTransition(id);
+                        window->deleteSelection();
+                        removed = proj.transitions().empty() && line->transitions().empty();
+                        redone = window->undo() && proj.transitions().find(id) != nullptr;  // rimessa
+                        window->undo();  // durata di prima
+                        window->undo();  // aggiunta
+                        undone = proj.transitions().empty() && proj.sequence().fragments().size() >= piecesBefore;
+                    }
+                }
+                // Se la prova ha diviso un pezzo, si annulla.
+                while (proj.sequence().fragments().size() > piecesBefore && window->undo()) {
+                }
+                const bool all = found && dropped && refusedElsewhere && selected && widened && removed && redone && undone;
+                std::printf("Transizioni: giunzione %s, lasciata %s, rifiutata lontano %s, selezionata %s, durata col bordo %s, "
+                            "tolta con Canc %s, annulla %s\n",
+                            found ? "sì" : "NO", dropped ? "sì" : "NO", refusedElsewhere ? "sì" : "NO", selected ? "sì" : "NO",
+                            widened ? "sì" : "NO", removed ? "sì" : "NO", redone && undone ? "sì" : "NO");
+                std::fflush(stdout);
+                ok = ok && all;
             }
             // Mix e file solo audio (step 19): un file solo audio non va mai nella traccia video (né rilasciato né con A),
             // e livello, muto e solo si cambiano suonando senza fermare l'anteprima.

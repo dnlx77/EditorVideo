@@ -56,6 +56,7 @@
     <ClInclude Include="TextEditorPanel.h" />
     <ClInclude Include="TextOverlay.h" />
     <ClInclude Include="TransitionListPanel.h" />
+    <ClInclude Include="TransitionMime.h" />
     <ClInclude Include="TransitionPreview.h" />
     <ClInclude Include="TransitionPreviewWidget.h" />
     <ClInclude Include="SelfTests.h" />
@@ -78,6 +79,7 @@
     <ClCompile Include="MainWindowExport.cpp" />
     <ClCompile Include="MainWindowProject.cpp" />
     <ClCompile Include="MainWindowText.cpp" />
+    <ClCompile Include="MainWindowTransitions.cpp" />
     <ClCompile Include="PlayerWidget.cpp" />
     <ClCompile Include="ProgramMonitor.cpp" />
     <ClCompile Include="ProxyManager.cpp" />

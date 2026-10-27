@@ -190,6 +190,7 @@ void SequenceTimeline::setSelected(int fragmentId)
     multi_.clear();
     selected_ = fragmentId;
     if (fragmentId != 0) {
+        selectedTransition_ = 0;
         selectedGap_ = 0;
         selectedAudioClip_ = 0;
         clearTextSelection();
@@ -205,6 +206,7 @@ void SequenceTimeline::setSelectedGap(int fragmentId)
         multi_.clear();
     selectedGap_ = fragmentId;
     if (fragmentId != 0) {
+        selectedTransition_ = 0;
         selected_ = 0;
         selectedAudioClip_ = 0;
         clearTextSelection();
@@ -287,6 +289,7 @@ void SequenceTimeline::setSelectedAudioClip(int clipId)
     multi_.clear();
     selectedAudioClip_ = clipId;
     if (clipId != 0) {
+        selectedTransition_ = 0;
         selected_ = 0;
         selectedGap_ = 0;
         clearTextSelection();
@@ -846,6 +849,7 @@ void SequenceTimeline::setSelectedTextClip(int clipId)
     multi_.clear();
     selectedTextClip_ = clipId;
     if (clipId != 0) {
+        selectedTransition_ = 0;
         selected_ = 0;
         selectedGap_ = 0;
         selectedAudioClip_ = 0;
@@ -861,6 +865,7 @@ void SequenceTimeline::setSelectedTextLayer(int layerId)
 {
     selectedTextLayer_ = layerId;
     if (layerId != 0) {
+        selectedTransition_ = 0;
         multi_.clear();
         selected_ = 0;
         selectedGap_ = 0;
@@ -1013,6 +1018,104 @@ double SequenceTimeline::audioTrimTarget(double x, bool ripple) const
     t = snapped(t, snapMarks(-1, c->clipId, true, true), {0.0});
     const double desired = (audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length) + (t - edge);
     return audioTrimLimit ? audioTrimLimit(c->clipId, audioTrimAtStart_, desired, ripple) : desired;
+}
+
+// --- Transizioni
+
+void SequenceTimeline::setTransitions(std::vector<TransitionBlock> transitions)
+{
+    transitions_ = std::move(transitions);
+    const bool stillThere = std::any_of(transitions_.begin(), transitions_.end(),
+                                        [this](const TransitionBlock& t) { return t.id == selectedTransition_; });
+    if (!stillThere)
+        selectedTransition_ = 0;
+    if (transTrimId_ != 0 && !std::any_of(transitions_.begin(), transitions_.end(),
+                                          [this](const TransitionBlock& t) { return t.id == transTrimId_; })) {
+        transTrimId_ = 0;
+        transTrimming_ = false;
+    }
+    invalidate();
+}
+
+void SequenceTimeline::setSelectedTransition(int id)
+{
+    multi_.clear();
+    selectedTransition_ = id;
+    if (id != 0) {
+        selected_ = 0;
+        selectedGap_ = 0;
+        selectedAudioClip_ = 0;
+        clearTextSelection();
+        selectedTrack_ = -1;
+        syncTrackButtons();
+    }
+    invalidate();
+}
+
+QRectF SequenceTimeline::transitionRect(const TransitionBlock& t) const
+{
+    const QRectF lane = videoLane();
+    double start = t.start;
+    double end = t.end;
+    if (transTrimming_ && t.id == transTrimId_) {
+        start = t.junction - transTrimDuration_ / 2.0;  // la durata provvisoria si vede centrata sulla giunzione
+        end = t.junction + transTrimDuration_ / 2.0;
+    }
+    return QRectF(QPointF(xForTime(start), lane.top() + 2), QPointF(xForTime(end), lane.bottom() - 2));
+}
+
+QRectF SequenceTimeline::transitionRectForTest(int id) const
+{
+    const auto it = std::find_if(transitions_.begin(), transitions_.end(), [id](const TransitionBlock& t) { return t.id == id; });
+    return it == transitions_.end() ? QRectF() : transitionRect(*it);
+}
+
+double SequenceTimeline::xForJunction(int blockIndex) const
+{
+    return xForBlockEdge(blockIndex, false);
+}
+
+int SequenceTimeline::transitionAt(const QPointF& pos, bool& edge, bool& atStart) const
+{
+    const QRectF lane = videoLane();
+    if (pos.y() < lane.top() || pos.y() > lane.bottom())
+        return -1;
+    constexpr double kReach = 5.0;  // pixel
+    int best = -1;
+    double bestDistance = 1e9;
+    for (int i = 0; i < static_cast<int>(transitions_.size()); ++i) {
+        const QRectF r = transitionRect(transitions_[static_cast<std::size_t>(i)]);
+        if (pos.x() < r.left() - kReach || pos.x() > r.right() + kReach)
+            continue;
+        const double toLeft = std::abs(pos.x() - r.left());
+        const double toRight = std::abs(pos.x() - r.right());
+        const bool onEdge = r.width() >= 14 && std::min(toLeft, toRight) <= kReach;
+        const double distance = onEdge ? std::min(toLeft, toRight) : 0.0;
+        if (best < 0 || distance < bestDistance) {
+            best = i;
+            bestDistance = distance;
+            edge = onEdge;
+            atStart = toLeft <= toRight;
+        }
+    }
+    return best;
+}
+
+int SequenceTimeline::junctionAt(double x) const
+{
+    constexpr double kReach = 24.0;  // pixel
+    int best = -1;
+    double bestDistance = kReach + 1;
+    for (int i = 0; i + 1 < static_cast<int>(blocks_.size()); ++i) {
+        if (blocks_[static_cast<std::size_t>(i) + 1].gap > core::kTimeEpsilon)
+            continue;  // c'è uno spazio vuoto: non è una giunzione
+        const double distance = std::abs(x - xForBlockEdge(i, false));
+        if (distance < bestDistance) {
+            best = i;
+            bestDistance = distance;
+        }
+    }
+    return best;
 }
 
 }  // namespace editor::app

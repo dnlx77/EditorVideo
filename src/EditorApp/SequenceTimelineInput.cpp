@@ -1,5 +1,6 @@
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/SequenceTimelineShared.h"
+#include "EditorApp/TransitionMime.h"
 
 #include "EditorCore/AudioTracks.h"
 #include "EditorCore/LevelEnvelope.h"
@@ -38,6 +39,10 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
     // Ctrl+clic su un oggetto: lo aggiunge alla selezione o lo toglie (nient'altro: niente spostamento del cursore).
     if ((event->modifiers() & Qt::ControlModifier) && pos.x() >= videoLane().left() && pos.y() >= lanesTop() - 2 && ctrlPress(pos))
         return;
+    if (selectedTransition_ != 0) {  // un clic altrove toglie la selezione della transizione (se è lei, si rimette sotto)
+        selectedTransition_ = 0;
+        invalidate();
+    }
     if (!multi_.empty()) {  // un clic senza Ctrl riparte da un oggetto solo
         multi_.clear();
         invalidate();
@@ -139,6 +144,27 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         if (onSeek)
             onSeek(playhead_);
         return;
+    }
+    if (pos.y() >= videoLane().top() && pos.y() <= videoLane().bottom()) {
+        // Una transizione sulla corsia video: un clic la sceglie, un bordo ne cambia la durata.
+        bool edge = false;
+        bool atStart = false;
+        if (const int index = transitionAt(pos, edge, atStart); index >= 0) {
+            const TransitionBlock& transition = transitions_[static_cast<std::size_t>(index)];
+            const int id = transition.id;
+            setSelectedTransition(id);
+            transTrimId_ = edge ? id : 0;
+            transTrimming_ = false;
+            transTrimDuration_ = transition.end - transition.start;
+            if (!edge) {
+                playhead_ = std::clamp(t, 0.0, total_);
+                if (onSeek)
+                    onSeek(playhead_);
+            }
+            if (onTransitionSelected)
+                onTransitionSelected(id);
+            return;
+        }
     }
     if (const int lane = laneAt(pos.y()); lane >= 0) {
         // Corsie audio: la linea del livello, le clip delle tracce aggiunte (bordi o spostamento), altrimenti la
@@ -299,8 +325,11 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         // Scritte: sulla maniglia in alto (dissolvenza) il cursore è una mano e la maniglia si evidenzia; sul bordo sotto
         // (accorcia) è ⟷.
         int hoverClip = 0;
+        bool transitionEdge = false;
         if (envelopeHit(pos, envTarget, envPoint))
             setCursor(envPoint >= 0 ? Qt::SizeAllCursor : Qt::SizeVerCursor);
+        else if (transitionAt(pos, transitionEdge, atStart) >= 0 && transitionEdge)
+            setCursor(Qt::SizeHorCursor);
         else if (textFadeHandleAt(pos, lane, clip, fadeIn)) {
             setCursor(Qt::PointingHandCursor);
             hoverClip = textLanes_[static_cast<std::size_t>(lane)].clips[static_cast<std::size_t>(clip)].clipId;
@@ -398,6 +427,22 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         update();
         return;
     }
+    if (transTrimId_ != 0) {
+        if (!transTrimming_ && std::abs(x - pressX_) < 2)
+            return;
+        const auto it = std::find_if(transitions_.begin(), transitions_.end(),
+                                     [this](const TransitionBlock& t) { return t.id == transTrimId_; });
+        if (it == transitions_.end())
+            return;
+        // Il bordo segue il mouse: la durata è il doppio della distanza dalla giunzione, entro i limiti.
+        const double desired = 2.0 * std::abs(timeForX(x) - it->junction);
+        transTrimming_ = true;
+        transTrimDuration_ = transitionLimit ? transitionLimit(transTrimId_, desired) : desired;
+        QToolTip::showText(event->globalPosition().toPoint(),
+                           QStringLiteral("Durata %1 s").arg(QString::number(transTrimDuration_, 'f', 2)), this);
+        invalidate();
+        return;
+    }
     if (textTrimClip_ != 0) {
         if (!textTrimming_ && std::abs(x - pressX_) < 2)
             return;
@@ -485,6 +530,18 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
         return;
     if (scrubbing_) {
         scrubbing_ = false;
+        return;
+    }
+    if (transTrimId_ != 0) {
+        const int id = transTrimId_;
+        const bool trimmed = transTrimming_;
+        const double duration = transTrimDuration_;
+        transTrimId_ = 0;
+        transTrimming_ = false;
+        QToolTip::hideText();
+        invalidate();
+        if (trimmed && onTransitionDuration)
+            onTransitionDuration(id, duration);
         return;
     }
     if (envActive_) {
@@ -618,6 +675,16 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
 
 void SequenceTimeline::dragEnterEvent(QDragEnterEvent* event)
 {
+    if (event->mimeData()->hasFormat(QLatin1String(kTransitionMime))) {
+        transDragType_ = QString::fromUtf8(event->mimeData()->data(QLatin1String(kTransitionMime)));
+        transDragActive_ = true;
+        transDropIndex_ = junctionAt(event->position().x());
+        transDropValid_ = transDropIndex_ >= 0
+                          && (!canDropTransition || canDropTransition(blocks_[static_cast<std::size_t>(transDropIndex_)].fragmentId));
+        event->acceptProposedAction();
+        update();
+        return;
+    }
     if (droppedFiles(event->mimeData()).isEmpty())
         return;
     event->acceptProposedAction();
@@ -629,6 +696,17 @@ void SequenceTimeline::dragEnterEvent(QDragEnterEvent* event)
 
 void SequenceTimeline::dragMoveEvent(QDragMoveEvent* event)
 {
+    if (transDragActive_) {
+        const int index = junctionAt(event->position().x());
+        if (index != transDropIndex_) {
+            transDropIndex_ = index;
+            transDropValid_ = index >= 0
+                              && (!canDropTransition || canDropTransition(blocks_[static_cast<std::size_t>(index)].fragmentId));
+            update();
+        }
+        event->acceptProposedAction();
+        return;
+    }
     if (fileDropX_ < 0)
         return;
     event->acceptProposedAction();
@@ -640,6 +718,8 @@ void SequenceTimeline::dragMoveEvent(QDragMoveEvent* event)
 
 void SequenceTimeline::dragLeaveEvent(QDragLeaveEvent*)
 {
+    transDragActive_ = false;
+    transDropIndex_ = -1;
     fileDropX_ = -1.0;
     fileDropLane_ = -1;
     update();
@@ -647,6 +727,22 @@ void SequenceTimeline::dragLeaveEvent(QDragLeaveEvent*)
 
 void SequenceTimeline::dropEvent(QDropEvent* event)
 {
+    if (transDragActive_) {
+        const int index = junctionAt(event->position().x());
+        const QString type = transDragType_;
+        const bool valid = index >= 0
+                           && (!canDropTransition || canDropTransition(blocks_[static_cast<std::size_t>(index)].fragmentId));
+        const int fragment = index >= 0 ? blocks_[static_cast<std::size_t>(index)].fragmentId : 0;
+        transDragActive_ = false;
+        transDropIndex_ = -1;
+        update();
+        event->acceptProposedAction();
+        if (valid && onTransitionDropped)
+            onTransitionDropped(type, fragment);
+        else if (onTransitionDropRefused)
+            onTransitionDropRefused(fragment);
+        return;
+    }
     const QStringList files = droppedFiles(event->mimeData());
     const int lane = laneAt(event->position().y());
     const int index = blocks_.empty() ? 0 : dropIndexAt(event->position().x());
@@ -669,6 +765,15 @@ void SequenceTimeline::dropEvent(QDropEvent* event)
 void SequenceTimeline::mouseDoubleClickEvent(QMouseEvent* event)
 {
     const QPointF pos = event->position();
+    {
+        bool edge = false;
+        bool atStart = false;
+        if (const int index = transitionAt(pos, edge, atStart); index >= 0 && pos.x() >= videoLane().left()) {
+            if (onTransitionActivate)
+                onTransitionActivate(transitions_[static_cast<std::size_t>(index)].id);
+            return;
+        }
+    }
     if (textLaneAt(pos.y()) >= 0) {
         int lane = 0;
         int clip = 0;
