@@ -1995,16 +1995,17 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                         mouse(QEvent::MouseButtonPress, junctionX, Qt::LeftButton);
                         mouse(QEvent::MouseButtonRelease, junctionX, Qt::NoButton);
                         selected = line->selectedTransition() == id;
-                        // Si stringe a 0,3 s trascinando il bordo destro.
+                        // Si stringe a metà (almeno il minimo) trascinando il bordo destro: i file di prova sono brevi.
+                        const double target = std::max(core::kMinTransition, before / 2);
                         const double perSecond = line->xForSequenceTime(1.0) - line->xForSequenceTime(0.0);
                         const double edge = junctionX + before / 2 * perSecond;
                         mouse(QEvent::MouseButtonPress, edge, Qt::LeftButton);
                         mouse(QEvent::MouseMove, (edge + junctionX) / 2, Qt::LeftButton);
-                        mouse(QEvent::MouseMove, junctionX + 0.15 * perSecond, Qt::LeftButton);
-                        mouse(QEvent::MouseButtonRelease, junctionX + 0.15 * perSecond, Qt::NoButton);
+                        mouse(QEvent::MouseMove, junctionX + target / 2 * perSecond, Qt::LeftButton);
+                        mouse(QEvent::MouseButtonRelease, junctionX + target / 2 * perSecond, Qt::NoButton);
                         QCoreApplication::processEvents();
                         const core::TransitionClip* now = proj.transitions().find(id);
-                        widened = now != nullptr && std::abs(now->duration - 0.3) < 0.05 && now->duration < before;
+                        widened = now != nullptr && std::abs(now->duration - target) < 0.03 && now->duration < before;
                         line->setFocus(Qt::MouseFocusReason);
                         line->setSelectedTransition(id);
                         window->deleteSelection();
