@@ -53,7 +53,7 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
     }
     // Audio mixato: prima si scrive il mix, poi il video con quell'audio al posto di quello dei file. Se gli spazi vuoti
     // si chiudono (per scelta o perché il nero non si sa fare) vale il mix con gli spazi chiusi.
-    const PlanAnalysis plan = analyzePlan(clips, format, true, reencode.all, reencode.closeGaps, reencode.activeTexts());
+    const PlanAnalysis plan = analyzePlan(clips, format, true, reencode.all, reencode.closeGaps, reencode.activeTexts(), &reencode.transitions);
     if (!plan.problem.empty())
         throw ClipsNotJoinable(plan.problem);
     const MixSpec& spec = !plan.blackGaps && audio.mixClosed ? *audio.mixClosed : *audio.mix;
@@ -87,7 +87,7 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
     try {
         const PlanAnalysis plan =
             analyzePlan(clips, format, audio.replacement.has_value() || audio.mix != nullptr, reencode.all,
-                        reencode.closeGaps, reencode.activeTexts());
+                        reencode.closeGaps, reencode.activeTexts(), &reencode.transitions);
         preview.problem = plan.problem;
         preview.impreciseCuts = plan.impreciseCuts;
         preview.closedGaps = plan.closedGaps;
@@ -109,7 +109,10 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
                 ++preview.copiedSegments;
                 for (const Piece& piece : plan.pieces[c][r]) {
                     preview.outputSeconds += piece.range.length();
-                    if (piece.text) {
+                    if (piece.transition >= 0) {
+                        ++preview.transitionSegments;
+                        preview.transitionSeconds += piece.range.length();
+                    } else if (piece.text) {
                         ++preview.textSegments;
                         preview.textSeconds += piece.range.length();
                     } else if (piece.reencode) {
@@ -125,6 +128,39 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
         preview.problem = e.what();
     }
     return preview;
+}
+
+}  // namespace editor::core
+
+namespace editor::core {
+
+std::vector<ExportTransition> exportTransitionsOf(const Project& project)
+{
+    std::vector<ExportTransition> result;
+    const Sequence& sequence = project.sequence();
+    // La posizione di ogni pezzo nel piano: i pezzi senza file non ci sono (come in Project::exportPlan).
+    std::vector<int> rangeOf(sequence.fragments().size(), -1);
+    int next = 0;
+    for (std::size_t i = 0; i < sequence.fragments().size(); ++i) {
+        if (project.find(sequence.fragments()[i].clipId) != nullptr)
+            rangeOf[i] = next++;
+    }
+    for (const TransitionPlacement& placement : project.activeTransitions()) {
+        const int a = sequence.indexOf(placement.beforeFragment);
+        const int b = sequence.indexOf(placement.afterFragment);
+        if (a < 0 || b != a + 1 || rangeOf[static_cast<std::size_t>(a)] < 0 || rangeOf[static_cast<std::size_t>(b)] != rangeOf[static_cast<std::size_t>(a)] + 1)
+            continue;
+        const std::optional<TransitionJob> job = makeTransitionJob(project, placement);
+        if (!job)
+            continue;
+        ExportTransition t;
+        t.beforeRange = rangeOf[static_cast<std::size_t>(a)];
+        t.before = placement.before;
+        t.after = placement.after;
+        t.job = *job;
+        result.push_back(std::move(t));
+    }
+    return result;
 }
 
 }  // namespace editor::core

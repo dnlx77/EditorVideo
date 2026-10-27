@@ -48,7 +48,7 @@ ExportJob::ExportJob(const std::vector<ClipRanges>& clips, const std::string& ou
     }
 
     // Che cosa succede a ogni file: si copia (con i suoi parametri nel flusso, se diversi) o si ricodifica.
-    plan_ = analysis != nullptr ? *analysis : analyzePlan(clips_, format, replaced_, reencode_.all, reencode_.closeGaps, reencode_.activeTexts());
+    plan_ = analysis != nullptr ? *analysis : analyzePlan(clips_, format, replaced_, reencode_.all, reencode_.closeGaps, reencode_.activeTexts(), &reencode_.transitions);
     if (!plan_.problem.empty())
         throw ClipsNotJoinable(plan_.problem);
 
@@ -403,8 +403,9 @@ PacketSink ExportJob::audioSinkFor(int rate, StreamCopy* muting, double& audioEn
 // formato dei pixel li adatta l'encoder (bande nere se le proporzioni sono diverse). L'audio si copia se è uguale
 // a quello del formato, altrimenti si ricodifica in AAC (silenzio se il file non ha audio). Restituisce dove
 // finiscono, nel file creato, il video e l'audio scritti.
-std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const TimeRange& range, std::size_t c, bool continues)
+std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const TimeRange& range, std::size_t c, const Piece& piece)
 {
+    const bool continues = piece.continues;
     AVFormatContext* input = current.ctx.get();
     const double start = current.start;
     const StreamSignature& format = *plan_.reference.video();
@@ -471,8 +472,29 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         av_frame_unref(emitted.get());
         if (av_frame_ref(emitted.get(), frame) < 0)
             throw MediaError(kOutOfMemory);
-        // Sotto una scritta: il fotogramma passa dal disegno del testo (al tempo di metà fotogramma, per non sbagliare ai bordi).
-        if (const std::vector<BlendedText> texts = textsAt(doneLength_ + (k + 0.5) * frameSeconds); !texts.empty()) {
+        // Il tempo del fotogramma nel montaggio, a metà fotogramma per non sbagliare ai bordi.
+        const double frameTime = doneLength_ + (k + 0.5) * frameSeconds;
+        const std::vector<BlendedText> texts = textsAt(frameTime);
+        if (piece.transition >= 0) {
+            // Dentro una transizione: il fotogramma è la fusione dei due pezzi (con le scritte sopra, se ci sono).
+            const ExportTransition& transition = reencode_.transitions[static_cast<std::size_t>(piece.transition)];
+            const double junction = doneLength_ + (piece.transitionEnding ? range.length() : 0.0);
+            if (!transitionRenderer_) {
+                transitionRenderer_ = std::make_unique<TransitionRenderer>();
+                transitionRenderer_->setBox(format.width, format.height);
+            }
+            const std::shared_ptr<VideoFrame> mixed =
+                transitionRenderer_->render(transition.job, transition.job.start + transition.before + (frameTime - junction));
+            if (!mixed)
+                throw MediaError("La transizione non si riesce a fare: i file dei due pezzi non si leggono.");
+            if (!blender_)
+                blender_ = std::make_unique<TextFrameBlender>(format.width, format.height);
+            const AVFrame* blended = blender_->blendRaster(mixed->pixels.data(), mixed->stride, mixed->width, mixed->height, texts, frame);
+            av_frame_unref(emitted.get());
+            if (av_frame_ref(emitted.get(), blended) < 0)
+                throw MediaError(kOutOfMemory);
+        } else if (!texts.empty()) {
+            // Sotto una scritta: il fotogramma passa dal disegno del testo.
             const AVFrame* blended = withText(frame, texts);
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
@@ -809,9 +831,11 @@ ExportResult ExportJob::run()
                 for (const Piece& piece : plan_.pieces[c][r]) {
                     const TimeRange& range = piece.range;
                     if (piece.reencode) {
-                        const auto [videoEnd, audioEnd] = reencodeRange(current, range, c, piece.continues);
+                        const auto [videoEnd, audioEnd] = reencodeRange(current, range, c, piece);
                         if (plan_.reencode[c])
                             ++result_.reencodedSegments;
+                        else if (piece.transition >= 0)
+                            ++result_.transitionSegments;
                         else if (piece.text)
                             ++result_.textSegments;
                         else

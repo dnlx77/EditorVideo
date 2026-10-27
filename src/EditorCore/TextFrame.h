@@ -28,7 +28,14 @@ public:
     // prossima chiamata; ha i tempi (pts) e le proprietà di `source`.
     const AVFrame* blend(const AVFrame* source, const std::vector<BlendedText>& texts);
 
+    // Come blend(), ma il fotogramma è già un'immagine BGRA della misura del progetto (width x height, `stride` byte per
+    // riga), per esempio una transizione già fusa; `props` dà tempi e proprietà del risultato.
+    const AVFrame* blendRaster(const std::uint8_t* bgra, int stride, int width, int height, const std::vector<BlendedText>& texts,
+                               const AVFrame* props);
+
 private:
+    const AVFrame* toYuv(const std::vector<BlendedText>& texts, const AVFrame* props);
+
     int width_;
     int height_;
     std::vector<std::uint8_t> rgba_;
