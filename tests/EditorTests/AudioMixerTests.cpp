@@ -285,3 +285,75 @@ TEST_F(AudioMixerTest, FileWithoutAudioOrMissingFileIsSilence)
     for (long long f = 0; f < kRate; ++f)
         ASSERT_EQ(out[f * 2], sampleAudio(f));
 }
+
+TEST_F(AudioMixerTest, EdgeFadesFollowAConstantPowerCurve)
+{
+    MixSegment s = segment("a.wav", 0.0, 2.0, 0.0);
+    s.fadeIn = 0.5;
+    s.fadeOut = 0.5;
+    AudioMixer mixer({s}, {{0, 1.0f}});
+    const auto out = renderAll(mixer, 2.0, 700);
+    const double halfPi = 1.5707963267948966;
+    for (long long f = 0; f < 2 * kRate; ++f) {
+        double gain = 1.0;
+        if (f < kRate / 2)
+            gain *= std::sin(halfPi * static_cast<double>(f) / (kRate / 2));
+        if (2 * kRate - f < kRate / 2)
+            gain *= std::sin(halfPi * static_cast<double>(2 * kRate - f) / (kRate / 2));
+        const double expected = AudioMixer::limit(static_cast<float>(sampleAudio(f) * gain / 32768.0)) * 32768.0;
+        ASSERT_NEAR(out[f * 2], expected, 2.0) << "fotogramma " << f;
+    }
+}
+
+TEST_F(AudioMixerTest, TransitionCrossfadesTheAudioOfBothPieces)
+{
+    Project project;
+    const int a = project.add(path("a.wav"));
+    const int b = project.add(path("b.wav"));
+    project.setAnalysis(a, {}, 2.0);
+    project.setAnalysis(b, {}, 2.0);
+    const int first = project.sequence().insert(-1, a, 0.5, 1.5);
+    project.sequence().insert(-1, b, 0.5, 1.5);
+    const int id = project.addTransition(first, "dissolvenza", 0.4);
+    ASSERT_NE(id, 0);
+
+    const MixSpec spec = mixSpecOf(project);
+    ASSERT_EQ(spec.segments.size(), 2u);
+    EXPECT_NEAR(spec.segments[0].fileEnd, 1.7, 1e-9);  // il pezzo prima continua oltre la giunzione
+    EXPECT_NEAR(spec.segments[0].fadeOut, 0.4, 1e-9);
+    EXPECT_NEAR(spec.segments[1].position, 0.8, 1e-9);  // quello dopo comincia prima
+    EXPECT_NEAR(spec.segments[1].fileStart, 0.3, 1e-9);
+    EXPECT_NEAR(spec.segments[1].fadeIn, 0.4, 1e-9);
+    EXPECT_NEAR(spec.length, 2.0, 1e-9);
+
+    AudioMixer mixer(spec.segments, spec.gains);
+    const auto out = renderAll(mixer, 2.0);
+    const double halfPi = 1.5707963267948966;
+    const long long start = kRate * 8 / 10;
+    const long long span = kRate * 4 / 10;
+    for (long long f = 0; f < 2 * kRate; ++f) {
+        double expected;
+        if (f < start) {
+            expected = sampleAudio(kRate / 2 + f);
+        } else if (f < start + span) {
+            const double x = static_cast<double>(f - start) / static_cast<double>(span);
+            const double mixed = sampleAudio(kRate / 2 + f) * std::cos(halfPi * x) +
+                                 sampleAudio(2 * kRate + kRate * 3 / 10 + (f - start)) * std::sin(halfPi * x);
+            expected = AudioMixer::limit(static_cast<float>(mixed / 32768.0)) * 32768.0;
+        } else {
+            expected = sampleAudio(2 * kRate + kRate * 3 / 10 + (f - start));
+        }
+        ASSERT_NEAR(out[f * 2], expected, 3.0) << "fotogramma " << f;
+    }
+
+    // Spenta l'opzione, i pezzi restano com'erano e l'audio taglia secco sulla giunzione.
+    const TransitionClip* clip = project.transitions().find(id);
+    ASSERT_NE(clip, nullptr);
+    ASSERT_TRUE(project.setTransitionSettings(id, clip->type, clip->params, false));
+    const MixSpec plain = mixSpecOf(project);
+    ASSERT_EQ(plain.segments.size(), 2u);
+    EXPECT_NEAR(plain.segments[0].fileEnd, 1.5, 1e-9);
+    EXPECT_NEAR(plain.segments[1].position, 1.0, 1e-9);
+    EXPECT_EQ(plain.segments[0].fadeOut, 0.0);
+    EXPECT_EQ(plain.segments[1].fadeIn, 0.0);
+}

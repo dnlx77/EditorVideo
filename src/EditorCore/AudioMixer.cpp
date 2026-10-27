@@ -14,11 +14,13 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project, const Sequence& se
     std::vector<MixSegment> segments;
     const std::vector<double> starts = sequence.starts();
     const auto& fragments = sequence.fragments();
+    std::vector<int> segmentOfFragment(fragments.size(), -1);
     for (std::size_t i = 0; i < fragments.size(); ++i) {
         const Fragment& f = fragments[i];
         const Clip* clip = project.find(f.clipId);
         if (clip == nullptr || f.length() <= 0.0)
             continue;
+        segmentOfFragment[i] = static_cast<int>(segments.size());
         MixSegment s;
         s.path = clip->path;
         s.fileStart = f.start;
@@ -29,6 +31,28 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project, const Sequence& se
         s.muted = f.muted;
         s.envelope = f.envelope;
         segments.push_back(std::move(s));
+    }
+    // Transizioni con la dissolvenza dell'audio: il pezzo prima continua oltre la giunzione e quello dopo comincia
+    // prima (le "maniglie" della transizione), e i due si incrociano a potenza costante su tutta la durata.
+    for (const TransitionPlacement& t : project.activeTransitions()) {
+        const TransitionClip* clip = project.transitions().find(t.id);
+        if (clip == nullptr || !clip->crossfadeAudio)
+            continue;
+        const int indexA = sequence.indexOf(t.beforeFragment);
+        const int indexB = sequence.indexOf(t.afterFragment);
+        if (indexA < 0 || indexB < 0)
+            continue;
+        const int a = segmentOfFragment[static_cast<std::size_t>(indexA)];
+        const int b = segmentOfFragment[static_cast<std::size_t>(indexB)];
+        if (a < 0 || b < 0)
+            continue;
+        MixSegment& before = segments[static_cast<std::size_t>(a)];
+        MixSegment& after = segments[static_cast<std::size_t>(b)];
+        before.fileEnd += t.after;
+        before.fadeOut = t.duration();
+        after.fileStart -= t.before;
+        after.position -= t.before;
+        after.fadeIn = t.duration();
     }
     for (const AudioTrack& track : project.audioTracks().tracks()) {
         for (const AudioClip& clip : track.clips) {
@@ -213,6 +237,9 @@ struct AudioMixer::Reader
             failed = true;
         }
         const std::size_t have = std::min(count, available());
+        const long long fadeInFrames = std::llround(segment.fadeIn * kMixSampleRate);
+        const long long fadeOutFrames = std::llround(segment.fadeOut * kMixSampleRate);
+        const long long segmentFrames = std::max<long long>(1, std::llround(segment.length() * kMixSampleRate));
         for (std::size_t i = 0; i < have; ++i) {
             const long long frame = from + static_cast<long long>(i);
             bool muted = false;
@@ -230,6 +257,14 @@ struct AudioMixer::Reader
             if (!envelope.empty()) {
                 const double fileTime = segment.fileStart + static_cast<double>(frame - segmentFirst) / kMixSampleRate;
                 gain *= static_cast<float>(envelopeGain(envelopeDbAt(envelope, fileTime)));
+            }
+            if (fadeInFrames > 0 || fadeOutFrames > 0) {
+                const long long rel = frame - segmentFirst;
+                if (fadeInFrames > 0 && rel < fadeInFrames)
+                    gain *= std::sin(1.5707963f * static_cast<float>(rel) / static_cast<float>(fadeInFrames));
+                const long long left = segmentFrames - rel;
+                if (fadeOutFrames > 0 && left < fadeOutFrames)
+                    gain *= std::sin(1.5707963f * static_cast<float>(left) / static_cast<float>(fadeOutFrames));
             }
             const std::size_t src = (pendingPos + i) * kMixChannels;
             acc[at * 2] += pending[src] * (1.0f / 32768.0f) * gain;
