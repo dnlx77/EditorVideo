@@ -1,6 +1,4 @@
-#include "EditorApp/TextEditorDialog.h"
-
-#include "EditorApp/QtTextRenderer.h"
+#include "EditorApp/TextEditorPanel.h"
 
 #include <QtCore/QSignalBlocker>
 #include <QtGui/QPainter>
@@ -108,24 +106,17 @@ void ColorButton::updateLook()
     setToolTip(QStringLiteral("Colore: %1 (alfa %2)").arg(color_.name(), QString::number(color_.alpha())));
 }
 
-TextEditorDialog::TextEditorDialog(const core::TextClip& clip, int frameWidth, int frameHeight,
-                                   std::vector<core::NamedTextStyle> styles, QWidget* parent)
-    : QDialog(parent)
-    , initial_(clip)
-    , styles_(std::move(styles))
-    , frameWidth_(frameWidth > 0 ? frameWidth : 1920)
-    , frameHeight_(frameHeight > 0 ? frameHeight : 1080)
+TextEditorPanel::TextEditorPanel(QWidget* parent)
+    : QWidget(parent)
 {
-    setWindowTitle(QStringLiteral("Scritta"));
     build();
-    load(clip);
     fillStyleList(std::string());
-    renderPreview();
+    setClip(nullptr, {});
 }
 
-void TextEditorDialog::build()
+void TextEditorPanel::build()
 {
-    // Colonna di sinistra: il testo e, sotto, tutti i controlli dell'aspetto.
+    // Il testo e, sotto, tutti i controlli dell'aspetto.
     text_ = new QPlainTextEdit;
     text_->setObjectName(QStringLiteral("testo"));
     text_->setPlaceholderText(QStringLiteral("Scrivi qui il testo (Invio va a capo)"));
@@ -274,46 +265,28 @@ void TextEditorDialog::build()
     whereGrid->addWidget(new QLabel(QStringLiteral("Sparisce in")), 4, 1);
     whereGrid->addWidget(fadeOut_, 4, 2);
 
-    auto* controls = new QWidget;
-    auto* controlsLayout = new QVBoxLayout(controls);
+    controls_ = new QWidget;
+    auto* controlsLayout = new QVBoxLayout(controls_);
     controlsLayout->setContentsMargins(0, 0, 6, 0);
+    controlsLayout->addWidget(text_);
     controlsLayout->addWidget(look);
     controlsLayout->addWidget(effects);
     controlsLayout->addWidget(where);
     controlsLayout->addStretch(1);
     auto* scroll = new QScrollArea;
-    scroll->setWidget(controls);
+    scroll->setWidget(controls_);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setMinimumWidth(400);
 
-    auto* left = new QVBoxLayout;
-    left->addWidget(text_);
-    left->addWidget(scroll, 1);
-
-    // Colonna di destra: l'anteprima.
-    previewLabel_ = new QLabel;
-    previewLabel_->setObjectName(QStringLiteral("anteprima"));
-    previewLabel_->setAlignment(Qt::AlignCenter);
-    previewLabel_->setMinimumSize(420, static_cast<int>(420.0 * frameHeight_ / frameWidth_));
-    previewLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    auto* right = new QVBoxLayout;
-    right->addWidget(new QLabel(QStringLiteral("Anteprima (fotogramma di prova %1 x %2)").arg(frameWidth_).arg(frameHeight_)));
-    right->addWidget(previewLabel_, 1);
-
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-
-    auto* columns = new QHBoxLayout;
-    columns->addLayout(left, 0);
-    columns->addLayout(right, 1);
+    hint_ = new QLabel(QStringLiteral("Scegli una scritta sulla linea del tempo (o Scritte > Nuova scritta)."));
+    hint_->setObjectName(QStringLiteral("suggerimento"));
+    hint_->setWordWrap(true);
     auto* main = new QVBoxLayout(this);
-    main->addLayout(columns, 1);
-    main->addWidget(buttons);
-    resize(980, 620);
+    main->setContentsMargins(4, 4, 4, 4);
+    main->addWidget(hint_);
+    main->addWidget(scroll, 1);
 
-    // Ogni cambiamento ridisegna l'anteprima.
+    // Ogni cambiamento arriva subito a onEdited.
     connect(text_, &QPlainTextEdit::textChanged, this, [this] { changed(); });
     connect(font_, &QFontComboBox::currentFontChanged, this, [this](const QFont& f) {
         if (!loading_)
@@ -331,10 +304,12 @@ void TextEditorDialog::build()
         button->onColorChanged = [this] { changed(); };
 }
 
-void TextEditorDialog::load(const core::TextClip& clip)
+void TextEditorPanel::load(const core::TextClip& clip)
 {
     loading_ = true;
-    text_->setPlainText(QString::fromUtf8(clip.text.c_str()));
+    const QString text = QString::fromUtf8(clip.text.c_str());
+    if (text_->toPlainText() != text)  // uguale = non si tocca, così il cursore resta dov'è
+        text_->setPlainText(text);
     length_->setValue(clip.length);
     fadeIn_->setValue(clip.fadeIn);
     fadeOut_->setValue(clip.fadeOut);
@@ -342,7 +317,30 @@ void TextEditorDialog::load(const core::TextClip& clip)
     loadStyle(clip.style);
 }
 
-void TextEditorDialog::loadStyle(const core::TextStyle& s)
+void TextEditorPanel::setClip(const core::TextClip* clip, std::vector<core::NamedTextStyle> styles)
+{
+    const bool stylesSame = styles == styles_;
+    styles_ = std::move(styles);
+    hasClip_ = clip != nullptr;
+    controls_->setEnabled(hasClip_);
+    hint_->setVisible(!hasClip_);
+    if (!hasClip_)
+        return;
+    initial_ = *clip;
+    if (!stylesSame)
+        fillStyleList(std::string());
+    // Se i controlli dicono già questa scritta non c'è niente da ricaricare.
+    if (!(this->clip() == *clip))
+        load(*clip);
+}
+
+void TextEditorPanel::focusText()
+{
+    text_->setFocus();
+    text_->selectAll();
+}
+
+void TextEditorPanel::loadStyle(const core::TextStyle& s)
 {
     loading_ = true;
     fontFamily_ = s.fontFamily;
@@ -370,7 +368,7 @@ void TextEditorDialog::loadStyle(const core::TextStyle& s)
     loading_ = false;
 }
 
-core::TextClip TextEditorDialog::clip() const
+core::TextClip TextEditorPanel::clip() const
 {
     core::TextClip clip = initial_;
     clip.text = text_->toPlainText().toStdString();
@@ -381,7 +379,7 @@ core::TextClip TextEditorDialog::clip() const
     return clip;
 }
 
-core::TextStyle TextEditorDialog::currentStyle() const
+core::TextStyle TextEditorPanel::currentStyle() const
 {
     core::TextStyle style;
     core::TextStyle& s = style;
@@ -409,7 +407,7 @@ core::TextStyle TextEditorDialog::currentStyle() const
     return style;
 }
 
-void TextEditorDialog::fillStyleList(const std::string& select)
+void TextEditorPanel::fillStyleList(const std::string& select)
 {
     const QSignalBlocker blocker(styleList_);
     styleList_->clear();
@@ -423,7 +421,7 @@ void TextEditorDialog::fillStyleList(const std::string& select)
     styleList_->setCurrentIndex(selected);
 }
 
-void TextEditorDialog::saveStyleAs(const std::string& name)
+void TextEditorPanel::saveStyleAs(const std::string& name)
 {
     if (name.empty())
         return;
@@ -434,64 +432,40 @@ void TextEditorDialog::saveStyleAs(const std::string& name)
     else
         styles_.push_back({name, style});
     fillStyleList(name);
+    if (onStylesChanged)
+        onStylesChanged(styles_);
 }
 
-void TextEditorDialog::applySelectedStyle()
+void TextEditorPanel::applySelectedStyle()
 {
     const int index = styleList_->currentIndex() - 1;
     if (index < 0 || index >= static_cast<int>(styles_.size()))
         return;
     loadStyle(styles_[static_cast<std::size_t>(index)].style);
-    renderPreview();
+    changed();
 }
 
-void TextEditorDialog::deleteSelectedStyle()
+void TextEditorPanel::deleteSelectedStyle()
 {
     const int index = styleList_->currentIndex() - 1;
     if (index < 0 || index >= static_cast<int>(styles_.size()))
         return;
     styles_.erase(styles_.begin() + index);
     fillStyleList(std::string());
+    if (onStylesChanged)
+        onStylesChanged(styles_);
 }
 
-void TextEditorDialog::setPosition(double x, double y)
+void TextEditorPanel::setPosition(double x, double y)
 {
     centerX_->setValue(x * 100.0);
     centerY_->setValue(y * 100.0);
 }
 
-void TextEditorDialog::changed()
+void TextEditorPanel::changed()
 {
-    if (!loading_)
-        renderPreview();
-}
-
-void TextEditorDialog::renderPreview()
-{
-    // Il fotogramma di prova: una sfumatura scura con qualche riquadro più chiaro, così si vedono bene sia le scritte
-    // chiare sia quelle scure e le trasparenze.
-    const int w = 640;
-    const int h = std::max(1, static_cast<int>(std::lround(640.0 * frameHeight_ / frameWidth_)));
-    QImage frame(w, h, QImage::Format_ARGB32_Premultiplied);
-    {
-        QPainter p(&frame);
-        QLinearGradient gradient(0, 0, w, h);
-        gradient.setColorAt(0.0, QColor(60, 78, 104));
-        gradient.setColorAt(1.0, QColor(128, 112, 96));
-        p.fillRect(frame.rect(), gradient);
-        p.fillRect(QRect(w / 8, h / 4, w / 4, h / 2), QColor(255, 255, 255, 40));
-        p.fillRect(QRect(w / 2, h / 6, w / 3, h / 3), QColor(0, 0, 0, 50));
-    }
-    const QtTextRenderer renderer;
-    const core::TextImage image = renderer.render(clip(), w, h);
-    if (!image.empty()) {
-        // RGBA premoltiplicato: Qt lo legge direttamente (le righe sono già senza spazi).
-        const QImage text(image.rgba.data(), image.width, image.height, image.width * 4, QImage::Format_RGBA8888_Premultiplied);
-        QPainter p(&frame);
-        p.drawImage(image.x, image.y, text);
-    }
-    preview_ = frame;
-    previewLabel_->setPixmap(QPixmap::fromImage(frame).scaled(previewLabel_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    if (!loading_ && hasClip_ && onEdited)
+        onEdited(clip());
 }
 
 }  // namespace editor::app

@@ -21,6 +21,12 @@ public:
     // Toglie la possibilità di ripetere.
     void record(std::string label, const Project& before);
 
+    // Cambia ancora lo stato dopo l'ultima modifica registrata, senza una voce nuova (es. si continua a scrivere in un
+    // pannello): annullando si torna comunque a prima della prima modifica. Lo stato salvato non si ritrova più.
+    // false, e nessun effetto, se non c'è una voce da proseguire o c'è qualcosa da ripetere.
+    bool amend();
+    std::size_t undoCount() const { return undo_.size(); }  // per sapere se l'ultima voce è ancora la stessa
+
     bool canUndo() const { return !undo_.empty(); }
     bool canRedo() const { return !redo_.empty(); }
     std::string undoLabel() const;  // es. "Dividi pezzo"; vuoto se non c'è niente

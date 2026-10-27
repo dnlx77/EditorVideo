@@ -3,8 +3,7 @@
 #include "EditorCore/TextTracks.h"
 
 #include <QtGui/QColor>
-#include <QtGui/QImage>
-#include <QtWidgets/QDialog>
+#include <QtWidgets/QWidget>
 #include <QtWidgets/QPushButton>
 
 #include <functional>
@@ -37,26 +36,29 @@ private:
     bool withAlpha_ = true;
 };
 
-// L'editor delle scritte: testo, font, grandezza, colore, contorno, ombra, sfondo, posizione e durata, con
-// un'anteprima viva (la stessa che si vedrà nel montaggio, disegnata da QtTextRenderer) su un fotogramma di prova della
-// stessa forma di quelli del progetto.
-class TextEditorDialog : public QDialog
+// L'editor delle scritte, in un pannello agganciabile: testo, font, grandezza, colore, contorno, ombra, sfondo, posizione,
+// durata e dissolvenze della scritta scelta. Ogni cambiamento arriva subito a `onEdited` (l'anteprima è quella del
+// Montaggio, dove la scritta si vede sul video vero).
+class TextEditorPanel : public QWidget
 {
 public:
-    // `clip` è la scritta di partenza; `frameWidth` e `frameHeight` le misure dei fotogrammi del progetto (solo per la
-    // forma dell'anteprima e per le proporzioni del testo).
-    // `styles`: gli stili con nome disponibili (progetto e impostazioni), che l'utente può applicare, salvare e togliere.
-    TextEditorDialog(const core::TextClip& clip, int frameWidth, int frameHeight,
-                     std::vector<core::NamedTextStyle> styles = {}, QWidget* parent = nullptr);
+    explicit TextEditorPanel(QWidget* parent = nullptr);
 
-    // La scritta come è ora nella finestra (id e posizione nella sequenza restano quelli di partenza).
+    // La scritta da modificare (nullptr = nessuna: il pannello si disattiva). `styles`: gli stili con nome disponibili
+    // (progetto e impostazioni), che si possono applicare, salvare e togliere. I controlli già uguali non si toccano
+    // (così non salta il cursore del testo mentre si scrive).
+    void setClip(const core::TextClip* clip, std::vector<core::NamedTextStyle> styles);
+    bool hasClip() const { return hasClip_; }
+    // La scritta come è ora nei controlli (id e posizione nella sequenza restano quelli di partenza).
     core::TextClip clip() const;
-    // L'anteprima com'è ora (per le prove).
-    QImage previewImage() const { return preview_; }
-    // Gli stili con nome come sono ora nella finestra (con quelli salvati o tolti qui).
+    // Gli stili con nome come sono ora nel pannello (con quelli salvati o tolti qui).
     const std::vector<core::NamedTextStyle>& styles() const { return styles_; }
-    // Lo stile attuale della finestra salvato con questo nome (se c'è già, lo sostituisce); poi è quello scelto.
+    // Lo stile attuale salvato con questo nome (se c'è già, lo sostituisce); poi è quello scelto.
     void saveStyleAs(const std::string& name);
+    void focusText();  // il cursore nel testo, tutto selezionato
+
+    std::function<void(const core::TextClip&)> onEdited;  // un controllo è cambiato (il progetto non usa moc)
+    std::function<void(const std::vector<core::NamedTextStyle>&)> onStylesChanged;  // salvato o tolto uno stile
 
 private:
     void build();
@@ -66,13 +68,11 @@ private:
     void fillStyleList(const std::string& select);
     void applySelectedStyle();
     void deleteSelectedStyle();
-    void changed();  // un controllo è cambiato: ridisegna l'anteprima
-    void renderPreview();
+    void changed();  // un controllo è cambiato: lo dice a onEdited
     void setPosition(double x, double y);
 
     core::TextClip initial_;
-    int frameWidth_ = 1920;
-    int frameHeight_ = 1080;
+    bool hasClip_ = false;
     bool loading_ = false;
     std::string fontFamily_;  // quello scelto (resta anche se il font non è installato)
 
@@ -103,8 +103,8 @@ private:
     QDoubleSpinBox* fadeOut_ = nullptr;
     std::vector<core::NamedTextStyle> styles_;
     QComboBox* styleList_ = nullptr;
-    QLabel* previewLabel_ = nullptr;
-    QImage preview_;
+    QLabel* hint_ = nullptr;
+    QWidget* controls_ = nullptr;
 };
 
 }  // namespace editor::app
