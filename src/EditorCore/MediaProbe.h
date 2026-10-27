@@ -74,7 +74,10 @@ public:
 // Analizza il file (percorso in UTF-8): contenitore, flussi e fotogrammi chiave.
 // I fotogrammi chiave si ricavano leggendo i pacchetti del flusso video, senza decodificarli.
 // Se `cancel` diventa true durante la lettura, lancia ProbeCancelled. Lancia ProbeError per gli altri errori.
-MediaInfo probeFile(const std::string& utf8Path, const std::atomic<bool>* cancel = nullptr);
+// Con `keyframeCacheFolder` (vedi KeyframeCache.h) i fotogrammi chiave già letti in passato si prendono da lì e quelli
+// letti ora vengono salvati; vuota = nessuna cache.
+MediaInfo probeFile(const std::string& utf8Path, const std::atomic<bool>* cancel = nullptr,
+                    const std::string& keyframeCacheFolder = {});
 
 const char* streamKindName(StreamKind kind);  // "Video", "Audio", "Sottotitoli", "Altro"
 

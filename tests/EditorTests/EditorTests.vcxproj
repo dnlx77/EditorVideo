@@ -54,6 +54,7 @@
     <ClCompile Include="JoinExportTests.cpp" />
     <ClCompile Include="LibraryInfoTests.cpp" />
     <ClCompile Include="MediaChecks.cpp" />
+    <ClCompile Include="KeyframeCacheTests.cpp" />
     <ClCompile Include="MediaProbeTests.cpp" />
     <ClCompile Include="NalUnitsTests.cpp" />
     <ClCompile Include="MultiFileJoinTests.cpp" />
