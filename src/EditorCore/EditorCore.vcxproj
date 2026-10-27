@@ -44,6 +44,7 @@
     <ClInclude Include="TextTracks.h" />
     <ClInclude Include="TextFrame.h" />
     <ClInclude Include="TextImage.h" />
+    <ClInclude Include="Transitions.h" />
     <ClInclude Include="Compatibility.h" />
     <ClInclude Include="CutSegment.h" />
     <ClInclude Include="EditHistory.h" />
@@ -83,6 +84,7 @@
     <ClCompile Include="TextTracks.cpp" />
     <ClCompile Include="TextFrame.cpp" />
     <ClCompile Include="TextImage.cpp" />
+    <ClCompile Include="Transitions.cpp" />
     <ClCompile Include="Compatibility.cpp" />
     <ClCompile Include="CutSegment.cpp" />
     <ClCompile Include="EditHistory.cpp" />
