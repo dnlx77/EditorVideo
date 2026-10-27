@@ -1963,6 +1963,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 const bool found = junction >= 0;
                 bool dropped = false, refusedElsewhere = false, widened = false, selected = false, removed = false, redone = false;
                 bool undone = false;
+                bool onMonitor = false;
                 if (found) {
                     const int beforeId = proj.sequence().fragments()[static_cast<std::size_t>(junction)].id;
                     const double junctionX = line->xForJunction(junction);
@@ -1987,6 +1988,39 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                     if (dropped) {
                         const int id = added->id;
                         const double before = added->duration;
+                        // Il monitor del montaggio: dentro il tratto mostra i due pezzi fusi, fuori il lettore; cursore fermo e
+                        // in riproduzione attraverso la transizione.
+                        {
+                            ProgramMonitor* monitor = window->programMonitor();
+                            const core::TransitionPlacement placed = *proj.transitionPlacement(id);
+                            monitor->seekTo(placed.junction);
+                            const bool inside = monitor->transitionShown() == id && monitor->transitionFrame() != nullptr
+                                             && monitor->transitionFrame()->width > 0 && monitor->transitionFrame()->width <= 1280
+                                             && monitor->transitionFrame()->height <= 720;
+                            monitor->seekTo(std::max(0.0, placed.start() - 0.05));
+                            const bool beforeSpan = placed.start() < 0.05 || monitor->transitionShown() == 0;
+                            monitor->seekTo(std::min(proj.sequence().totalLength(), placed.end() + 0.02));
+                            const bool afterSpan = placed.end() + 0.02 > proj.sequence().totalLength() || monitor->transitionShown() == 0;
+                            // In riproduzione, da poco prima.
+                            monitor->seekTo(std::max(0.0, placed.start() - 0.1));
+                            monitor->setPlaying(true);
+                            bool seen = false;
+                            QElapsedTimer playing;
+                            playing.start();
+                            while (playing.elapsed() < 4000 && monitor->isPlaying() && monitor->position() < placed.end() + 0.1) {
+                                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                                seen = seen || monitor->transitionShown() == id;
+                            }
+                            const bool through = seen && monitor->position() >= placed.end() - 0.02
+                                              && (monitor->transitionShown() == 0 || !monitor->isPlaying());
+                            monitor->setPlaying(false);
+                            std::printf("  monitor: dentro il tratto %s, prima %s, dopo %s, in riproduzione attraverso %s (posizione %.3f s, "
+                                        "transizione da %.3f a %.3f s)\n",
+                                        inside ? "sì" : "NO", beforeSpan ? "sì" : "NO", afterSpan ? "sì" : "NO", through ? "sì" : "NO",
+                                        monitor->position(), placed.start(), placed.end());
+                            onMonitor = inside && beforeSpan && afterSpan && through;
+                            monitor->seekTo(0.0);
+                        }
                         const auto mouse = [&](QEvent::Type type, double x, Qt::MouseButtons buttons) {
                             QMouseEvent e(type, QPointF(x, y), line->mapToGlobal(QPointF(x, y)),
                                           type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
@@ -2019,11 +2053,11 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 // Se la prova ha diviso un pezzo, si annulla.
                 while (proj.sequence().fragments().size() > piecesBefore && window->undo()) {
                 }
-                const bool all = found && dropped && refusedElsewhere && selected && widened && removed && redone && undone;
+                const bool all = found && dropped && refusedElsewhere && selected && widened && removed && redone && undone && onMonitor;
                 std::printf("Transizioni: giunzione %s, lasciata %s, rifiutata lontano %s, selezionata %s, durata col bordo %s, "
-                            "tolta con Canc %s, annulla %s\n",
+                            "tolta con Canc %s, annulla %s, monitor %s\n",
                             found ? "sì" : "NO", dropped ? "sì" : "NO", refusedElsewhere ? "sì" : "NO", selected ? "sì" : "NO",
-                            widened ? "sì" : "NO", removed ? "sì" : "NO", redone && undone ? "sì" : "NO");
+                            widened ? "sì" : "NO", removed ? "sì" : "NO", redone && undone ? "sì" : "NO", onMonitor ? "sì" : "NO");
                 std::fflush(stdout);
                 ok = ok && all;
             }

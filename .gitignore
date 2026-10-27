@@ -9,3 +9,6 @@ out/
 
 # vcpkg (manifest mode)
 vcpkg_installed/
+
+# Compiled objects dropped by accident while compiling by hand
+*.o
