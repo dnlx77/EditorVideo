@@ -236,6 +236,7 @@ protected:
     void changeEvent(QEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
+    void leaveEvent(QEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -388,6 +389,8 @@ private:
     bool textTrimming_ = false;
     double textTrimValue_ = 0.0;  // dove andrà il bordo, tempo della sequenza
     double textTrimGrab_ = 0.0;
+    int textHoverClip_ = 0;       // maniglia di dissolvenza sotto il mouse (evidenziata): scritta e se è quella dell'entrata
+    bool textHoverIn_ = false;
     int textFadeClip_ = 0;        // scritta di cui si trascina una maniglia di dissolvenza
     bool textFadeIsIn_ = false;   // quella dell'entrata (altrimenti dell'uscita)
     bool textFading_ = false;

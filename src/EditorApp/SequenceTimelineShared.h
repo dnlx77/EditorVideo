@@ -15,11 +15,11 @@ namespace editor::app::detail {
 inline constexpr double kTop = 6;           // spazio fra il righello e la corsia video
 inline constexpr double kLaneGap = 4;
 inline constexpr double kHeaderWidth = 118;  // a sinistra delle corsie: nome, muto, solo, livello
-inline constexpr double kTextLaneHeight = 22;   // una corsia di scritte (sopra la corsia video)
-inline constexpr double kTextFadeTop = 6;       // la linea dell'opacità di una scritta: in alto = piena (sotto il bordo della corsia)
+inline constexpr double kTextLaneHeight = 28;   // una corsia di scritte (sopra la corsia video)
+inline constexpr double kTextFadeTop = 8;       // la linea dell'opacità di una scritta: in alto = piena (sotto il bordo della corsia)
 inline constexpr double kTextFadeBottom = 5;    // in basso = trasparente (sopra il bordo in basso)
-inline constexpr double kTextFadeNear = 6;      // distanza orizzontale (pixel) entro cui si prende una maniglia
-inline constexpr double kTextFadeNearY = 3.5;   // e verticale: stretta, così il bordo sotto la maniglia accorcia la scritta
+inline constexpr double kTextFadeNear = 8;      // distanza orizzontale (pixel) entro cui si prende una maniglia
+inline constexpr double kTextFadeNearY = 5;     // e verticale: stretta, così il bordo sotto la maniglia accorcia la scritta
 inline constexpr double kTextFadeMinWidth = 24; // sotto questa larghezza la scritta non ha maniglie
 inline constexpr double kAudioLaneHeight = 40; // altezza in più che chiede ogni traccia aggiunta
 
