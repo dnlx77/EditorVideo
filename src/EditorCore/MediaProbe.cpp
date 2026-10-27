@@ -1,6 +1,7 @@
 #include "EditorCore/MediaProbe.h"
 
 #include "EditorCore/FfmpegUtil.h"
+#include "EditorCore/KeyframeCache.h"
 
 #include <algorithm>
 #include <cmath>
@@ -100,7 +101,7 @@ ProbeCancelled::ProbeCancelled()
 {
 }
 
-MediaInfo probeFile(const std::string& utf8Path, const std::atomic<bool>* cancel)
+MediaInfo probeFile(const std::string& utf8Path, const std::atomic<bool>* cancel, const std::string& keyframeCacheFolder)
 {
     FormatContextPtr fmt = openInput(utf8Path, cancel);
 
@@ -116,8 +117,18 @@ MediaInfo probeFile(const std::string& utf8Path, const std::atomic<bool>* cancel
         info.streams.push_back(describeStream(fmt.get(), fmt->streams[i]));
 
     info.keyframeStreamIndex = findMainStream(fmt.get(), AVMEDIA_TYPE_VIDEO);
-    if (info.keyframeStreamIndex >= 0)
-        info.keyframeTimes = readKeyframes(fmt.get(), info.keyframeStreamIndex, cancel);
+    if (info.keyframeStreamIndex >= 0) {
+        // Se i fotogrammi chiave di questo file (così com'è ora) sono già stati salvati, non serve scorrerlo tutto.
+        int cachedStream = -1;
+        std::vector<double> cachedTimes;
+        if (loadKeyframeCache(keyframeCacheFolder, utf8Path, cachedStream, cachedTimes) &&
+            cachedStream == info.keyframeStreamIndex) {
+            info.keyframeTimes = std::move(cachedTimes);
+        } else {
+            info.keyframeTimes = readKeyframes(fmt.get(), info.keyframeStreamIndex, cancel);
+            saveKeyframeCache(keyframeCacheFolder, utf8Path, info.keyframeStreamIndex, info.keyframeTimes);
+        }
+    }
 
     return info;
 }

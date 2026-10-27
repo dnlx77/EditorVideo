@@ -54,6 +54,7 @@
     <ClInclude Include="Json.h" />
     <ClInclude Include="LibraryInfo.h" />
     <ClInclude Include="MediaError.h" />
+    <ClInclude Include="KeyframeCache.h" />
     <ClInclude Include="MediaProbe.h" />
     <ClInclude Include="NalUnits.h" />
     <ClInclude Include="PathUtil.h" />
@@ -91,6 +92,7 @@
     <ClCompile Include="H264Params.cpp" />
     <ClCompile Include="Json.cpp" />
     <ClCompile Include="LibraryInfo.cpp" />
+    <ClCompile Include="KeyframeCache.cpp" />
     <ClCompile Include="MediaProbe.cpp" />
     <ClCompile Include="NalUnits.cpp" />
     <ClCompile Include="PathUtil.cpp" />
