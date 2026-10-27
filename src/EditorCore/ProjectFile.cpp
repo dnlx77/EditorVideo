@@ -301,6 +301,39 @@ TextStyle textStyleFromJson(const JsonValue& v)
     return s;
 }
 
+const char* directionName(TransitionDirection d)
+{
+    return d == TransitionDirection::Right ? "destra" : d == TransitionDirection::Up ? "alto" : d == TransitionDirection::Down ? "basso" : "sinistra";
+}
+
+TransitionDirection directionFromName(const JsonValue& value)
+{
+    const std::string name = text(value);
+    return name == "destra" ? TransitionDirection::Right
+           : name == "alto" ? TransitionDirection::Up
+           : name == "basso" ? TransitionDirection::Down
+                             : TransitionDirection::Left;
+}
+
+// Le transizioni: ognuna per posizione del pezzo prima della giunzione (gli id cambiano riaprendo il progetto).
+JsonValue transitionsToJson(const Project& project)
+{
+    JsonValue::Array list;
+    const auto& fragments = project.sequence().fragments();
+    for (const TransitionClip& clip : project.transitions().clips()) {
+        const int index = project.sequence().indexOf(clip.beforeFragment);
+        if (index < 0 || static_cast<std::size_t>(index) + 1 >= fragments.size()
+            || fragments[static_cast<std::size_t>(index) + 1].id != clip.afterFragment)
+            continue;  // la giunzione non c'è più
+        list.emplace_back(JsonValue::Object{{"dopoPezzo", index},
+                                            {"tipo", clip.type},
+                                            {"durata", ticks(clip.duration)},
+                                            {"direzione", directionName(clip.params.direction)},
+                                            {"audio", clip.crossfadeAudio}});
+    }
+    return list;
+}
+
 JsonValue textTracksToJson(const TextTracks& text)
 {
     JsonValue::Array layers;
@@ -453,8 +486,9 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         }
         groups.emplace_back(std::move(items));
     }
+    const JsonValue transitions = transitionsToJson(project);
     const bool hasText = !project.textTracks().layers().empty() || !project.textStyles().empty();
-    const int version = hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
+    const int version = !transitions.asArray().empty() ? 5 : hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
     JsonValue::Object root{
         {"formato", kFormatName},
         {"versione", version},
@@ -478,6 +512,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         root["scritte"] = textTracksToJson(project.textTracks());
     if (!project.textStyles().empty())
         root["stiliScritte"] = textStylesToJson(project.textStyles());
+    if (!transitions.asArray().empty())
+        root["transizioni"] = transitions;
     return JsonValue(root).dump();
 }
 
@@ -685,6 +721,29 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                 groups.push_back(std::move(members));
             }
             loaded.project.groups().restore(groups);
+        }
+
+        // Transizioni: ognuna è data dalla posizione del pezzo prima della giunzione; quelle senza giunzione o con una durata
+        // che non ha senso si scartano (il controllo dei margini si fa quando i file sono analizzati).
+        if (root["transizioni"].isArray()) {
+            const auto& fragmentsBuilt = loaded.project.sequence().fragments();
+            std::vector<TransitionClip> clips;
+            for (const JsonValue& item : root["transizioni"].asArray()) {
+                const std::int64_t at = item["dopoPezzo"].isInteger() ? item["dopoPezzo"].asInteger() : -1;
+                if (at < 0 || at + 1 >= static_cast<std::int64_t>(fragmentsBuilt.size()) || !item["durata"].isInteger())
+                    continue;
+                TransitionClip clip;
+                clip.type = text(item["tipo"]);
+                clip.beforeFragment = fragmentsBuilt[static_cast<std::size_t>(at)].id;
+                clip.afterFragment = fragmentsBuilt[static_cast<std::size_t>(at) + 1].id;
+                clip.duration = ticksToSeconds(item["durata"].asInteger());
+                clip.params.direction = directionFromName(item["direzione"]);
+                clip.crossfadeAudio = !item["audio"].isBool() || item["audio"].asBool();
+                if (clip.type.empty() || !(clip.duration > 0.0))
+                    continue;
+                clips.push_back(std::move(clip));
+            }
+            loaded.project.mutableTransitions().restore(std::move(clips));
         }
 
         // Formato del progetto. I progetti di prima non ce l'hanno: lo si ricava poi dal primo pezzo.

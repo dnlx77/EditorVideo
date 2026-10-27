@@ -6,6 +6,7 @@
 #include "EditorCore/MixSpec.h"
 #include "EditorCore/Sequence.h"
 #include "EditorCore/TextTracks.h"
+#include "EditorCore/TransitionList.h"
 
 #include <memory>
 #include <optional>
@@ -78,6 +79,35 @@ enum class GapExport
     Black,
 };
 
+// Dove sta una transizione nel montaggio: a cavallo della giunzione fra due pezzi, `before` secondi prima e `after` dopo
+// (before + after = durata). Prima della giunzione il pezzo che segue si vede con il suo materiale precedente al
+// proprio inizio, dopo la giunzione il pezzo che precede si vede con quello successivo alla propria fine: servono
+// margini nei file ("maniglie"), e se da un lato mancano la transizione si sposta dall'altro.
+struct TransitionPlacement
+{
+    int id = 0;
+    int beforeFragment = 0;
+    int afterFragment = 0;
+    double junction = 0.0;  // tempo della giunzione nella sequenza
+    double before = 0.0;
+    double after = 0.0;
+    double start() const { return junction - before; }
+    double end() const { return junction + after; }
+    double duration() const { return before + after; }
+};
+
+// Quanto può estendersi una transizione su una giunzione: `before` secondi prima, `after` dopo (tutti e due 0 se lì non
+// c'è una giunzione valida). La durata massima è la somma.
+struct TransitionLimits
+{
+    double before = 0.0;
+    double after = 0.0;
+    double max() const { return before + after; }
+};
+
+// Durata minima di una transizione, in secondi.
+inline constexpr double kMinTransition = 0.1;
+
 // Progetto: i file di partenza e la sequenza (il montaggio) fatta con pezzi di quei file.
 class Project
 {
@@ -113,6 +143,32 @@ public:
     // Gli stili con nome delle scritte, salvati con il progetto.
     std::vector<NamedTextStyle>& textStyles() { return textStyles_; }
     const std::vector<NamedTextStyle>& textStyles() const { return textStyles_; }
+
+    // Transizioni sulle giunzioni fra pezzi video (vedi TransitionPlacement). transitions() è l'archivio, grezzo: per
+    // l'anteprima e l'esportazione serve activeTransitions(), che lascia fuori quelle che non valgono più.
+    const TransitionList& transitions() const { return transitions_; }
+    // Per rimettere le transizioni salvate (ProjectFile) e per le prove; le modifiche vere passano da addTransition ecc.
+    TransitionList& mutableTransitions() { return transitions_; }
+    // La giunzione fra il pezzo `beforeFragment` e quello che lo segue: valida se sono attaccati (senza spazio vuoto)
+    // e il file del primo è analizzato (serve la durata per i margini).
+    bool isJunction(int beforeFragment) const;
+    // Fin dove può arrivare una transizione lì (vedi TransitionLimits), tenendo conto delle transizioni vicine.
+    TransitionLimits transitionLimits(int beforeFragment) const;
+    // Mette una transizione del registro sulla giunzione dopo `beforeFragment`; restituisce l'id, 0 se non si può
+    // (tipo sconosciuto, nessuna giunzione, già una lì, durata fuori da kMinTransition..transitionLimits.max()).
+    int addTransition(int beforeFragment, const std::string& type, double duration);
+    bool removeTransition(int id);
+    // Cambia la durata; false (e nessuna modifica) se fuori dai limiti.
+    bool setTransitionDuration(int id, double duration);
+    // Cambia tipo, impostazioni e dissolvenza dell'audio; false se la transizione o il tipo non ci sono.
+    bool setTransitionSettings(int id, const std::string& type, const TransitionParams& params, bool crossfadeAudio);
+    // Dove sta la transizione (std::nullopt se non vale: giunzione sparita, durata che non ci sta più, tipo sconosciuto).
+    std::optional<TransitionPlacement> transitionPlacement(int id) const;
+    // Tutte quelle che valgono, in ordine di tempo.
+    std::vector<TransitionPlacement> activeTransitions() const;
+    // Toglie le transizioni la cui giunzione non c'è più e accorcia quelle che non ci stanno più (se non resta
+    // kMinTransition le toglie). Si chiama dopo le modifiche alla sequenza. Restituisce quante ne ha toccate.
+    int pruneTransitions();
 
     // Traccia audio sostitutiva (vedi AudioReplacement), il caso più semplice delle tracce audio: impostarla toglie
     // tutte le tracce aggiunte e mette il file su A2 con A1 silenziata; std::nullopt rimette le tracce come
@@ -201,6 +257,7 @@ private:
     std::vector<Clip> clips_;
     AudioTracks audio_;
     TextTracks text_;
+    TransitionList transitions_;
     std::vector<NamedTextStyle> textStyles_;
     ProjectFormat format_;
     Sequence sequence_;

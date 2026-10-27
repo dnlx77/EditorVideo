@@ -528,3 +528,68 @@ TEST(GapExport, GapsAreClosedInTheExportedFile)
 }
 
 }  // namespace
+
+TEST_F(ProjectFileTest, TransitionsAreSavedByJunctionAndReopened)
+{
+    ProjectView view;
+    Project project = sample(view);
+    const auto& fragments = project.sequence().fragments();
+    ASSERT_GE(fragments.size(), 4u);
+    const int first = project.addTransition(fragments[0].id, "scorrimento", 0.5);
+    ASSERT_NE(first, 0);
+    TransitionParams up;
+    up.direction = TransitionDirection::Up;
+    ASSERT_TRUE(project.setTransitionSettings(first, "scorrimento", up, false));
+    const int second = project.addTransition(fragments[2].id, "dissolvenza", 1.0 + 1.0 / 48000);
+    ASSERT_NE(second, 0);
+
+    saveProjectFile(projectPath(), project, view);
+    const std::string saved = read(projectPath());
+    EXPECT_NE(saved.find("\"transizioni\""), std::string::npos);
+    const LoadedProject loaded = loadProjectFile(projectPath());
+    const auto& back = loaded.project.transitions().clips();
+    ASSERT_EQ(back.size(), 2u);
+    const auto& frags = loaded.project.sequence().fragments();
+    EXPECT_EQ(back[0].type, "scorrimento");
+    EXPECT_EQ(back[0].beforeFragment, frags[0].id);
+    EXPECT_EQ(back[0].afterFragment, frags[1].id);
+    EXPECT_NEAR(back[0].duration, 0.5, 1e-6);
+    EXPECT_EQ(back[0].params.direction, TransitionDirection::Up);
+    EXPECT_FALSE(back[0].crossfadeAudio);
+    EXPECT_EQ(back[1].type, "dissolvenza");
+    EXPECT_EQ(back[1].beforeFragment, frags[2].id);
+    EXPECT_EQ(back[1].afterFragment, frags[3].id);
+    EXPECT_NEAR(back[1].duration, 1.0 + 1.0 / 48000, 1e-6);
+    EXPECT_TRUE(back[1].crossfadeAudio);
+    // Salvando di nuovo le transizioni sono le stesse (il resto del file cambia: i file non sono ancora analizzati).
+    saveProjectFile(projectPath(), loaded.project, loaded.view);
+    const auto block = [](const std::string& text) {
+        const auto from = text.find("\"transizioni\"");
+        return from == std::string::npos ? std::string() : text.substr(from, text.find("\"unitaDiTempo\"", from) - from);
+    };
+    EXPECT_FALSE(block(saved).empty());
+    EXPECT_EQ(block(read(projectPath())), block(saved));
+}
+
+TEST_F(ProjectFileTest, TransitionsOnJunctionsThatAreGoneOrNonsenseAreDropped)
+{
+    ProjectView view;
+    Project project = sample(view);
+    const int id = project.addTransition(project.sequence().fragments()[0].id, "dissolvenza", 0.5);
+    ASSERT_NE(id, 0);
+    std::string json = projectToJson(projectPath(), project, view);
+    const auto replaceOnce = [&](const std::string& from, const std::string& to) {
+        const auto at = json.find(from);
+        ASSERT_NE(at, std::string::npos) << from;
+        json.replace(at, from.size(), to);
+    };
+    replaceOnce("\"dopoPezzo\": 0", "\"dopoPezzo\": 3");  // l'ultimo pezzo non ha una giunzione dopo di sé
+    EXPECT_TRUE(projectFromJson(projectPath(), json).project.transitions().empty());
+    json = projectToJson(projectPath(), project, view);
+    replaceOnce("\"dopoPezzo\": 0", "\"dopoPezzo\": -1");
+    EXPECT_TRUE(projectFromJson(projectPath(), json).project.transitions().empty());
+    // Un progetto senza transizioni resta nel formato di prima.
+    Project plain = sample(view);
+    EXPECT_EQ(projectToJson(projectPath(), plain, view).find("transizioni"), std::string::npos);
+}
+
