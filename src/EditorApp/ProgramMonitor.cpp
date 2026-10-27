@@ -862,10 +862,18 @@ void ProgramMonitor::updateLabels()
                                .arg(sequence.indexOf(transition->afterFragment) + 1);
             // In riproduzione, quanto ci vuole a preparare un fotogramma: sotto la durata di un fotogramma va liscia.
             const double prepare = transitionPlayback_.averageRenderSeconds();
-            if (playing_ && prepare > 0.0)
-                text += QStringLiteral(" · anteprima: %1 ms a fotogramma (limite %2 ms)")
+            if (playing_ && prepare > 0.0) {
+                const auto timing = transitionPlayback_.averageTiming();
+                text += QStringLiteral(" · anteprima: %1 ms a fotogramma (limite %2 ms; decodifica %3 (%7) + %4 (%8), fusione %5, riposizionamenti %6)")
                             .arg(prepare * 1000.0, 0, 'f', 0)
-                            .arg(player_->frameDuration() * 1000.0 / std::max(1.0, std::abs(speed_)), 0, 'f', 0);
+                            .arg(player_->frameDuration() * 1000.0 / std::max(1.0, std::abs(speed_)), 0, 'f', 0)
+                            .arg(timing.decodeFrom * 1000.0, 0, 'f', 0)
+                            .arg(timing.decodeTo * 1000.0, 0, 'f', 0)
+                            .arg(timing.blend * 1000.0, 0, 'f', 0)
+                            .arg(timing.seeks)
+                            .arg(timing.hardwareFrom ? QStringLiteral("GPU") : QStringLiteral("CPU"))
+                            .arg(timing.hardwareTo ? QStringLiteral("GPU") : QStringLiteral("CPU"));
+            }
             fragmentLabel_->setText(text);
             return;
         }

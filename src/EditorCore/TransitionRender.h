@@ -56,6 +56,19 @@ public:
     // Chiude i decoder (es. cambia il file da cui leggere).
     void reset();
 
+    // Dove è andato il tempo nell'ultimo fotogramma (secondi), per capire cosa rallenta: decodifica dei due lati,
+    // composizione e fusione; `seeks` = quante volte in tutto un decoder è stato riposizionato (invece di leggere avanti).
+    struct Timing
+    {
+        double decodeFrom = 0.0;
+        double decodeTo = 0.0;
+        double blend = 0.0;
+        long long seeks = 0;
+        bool hardwareFrom = false;  // i due decoder usano la GPU?
+        bool hardwareTo = false;
+    };
+    const Timing& timing() const { return timing_; }
+
     // Il fotogramma della transizione `placement` al tempo `sequenceTime` (della sequenza; fuori dal suo tratto si
     // limita agli estremi). nullptr se la transizione o i pezzi non ci sono o i file non si aprono. Il fotogramma è
     // BGRA, boxWidth x boxHeight.
@@ -66,6 +79,7 @@ private:
     struct Side;
     std::unique_ptr<Side> from_;
     std::unique_ptr<Side> to_;
+    Timing timing_;
     int boxWidth_ = 1280;
     int boxHeight_ = 720;
     bool hardware_ = true;

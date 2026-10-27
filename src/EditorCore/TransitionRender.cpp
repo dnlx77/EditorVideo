@@ -3,6 +3,7 @@
 #include "EditorCore/Transitions.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <exception>
@@ -17,6 +18,7 @@ struct TransitionRenderer::Side
     std::shared_ptr<VideoFrame> current;  // l'ultimo fotogramma non dopo il tempo chiesto (o quello cercato)
     std::shared_ptr<VideoFrame> next;     // già letto ma ancora nel futuro
     bool ended = false;                   // il file è finito
+    long long seeks = 0;                  // quante volte si è riposizionato il decoder
 
     void close()
     {
@@ -36,6 +38,7 @@ struct TransitionRenderer::Side
         constexpr double kEpsilon = 1e-6;
         if (!current || time < current->time - frameDuration || time > current->time + kMaxAhead) {
             current = decoder->seek(time);
+            ++seeks;
             next.reset();
             ended = false;
             return current;
@@ -197,9 +200,18 @@ std::shared_ptr<VideoFrame> TransitionRenderer::render(const TransitionJob& job,
         return nullptr;
     std::shared_ptr<VideoFrame> frameA;
     std::shared_ptr<VideoFrame> frameB;
+    const auto now = [] { return std::chrono::steady_clock::now(); };
+    const auto since = [&](std::chrono::steady_clock::time_point from) { return std::chrono::duration<double>(now() - from).count(); };
     try {
+        auto begin = now();
         frameA = from_->frameAt(timeA);
+        timing_.decodeFrom = since(begin);
+        begin = now();
         frameB = to_->frameAt(timeB);
+        timing_.decodeTo = since(begin);
+        timing_.seeks = from_->seeks + to_->seeks;
+        timing_.hardwareFrom = from_->decoder->usingHardware();
+        timing_.hardwareTo = to_->decoder->usingHardware();
     } catch (const std::exception&) {
         reset();
         return nullptr;
@@ -208,6 +220,7 @@ std::shared_ptr<VideoFrame> TransitionRenderer::render(const TransitionJob& job,
         return nullptr;
 
     // Se un lato ha un fotogramma più piccolo del riquadro (o di altre proporzioni) sta al centro, con i bordi neri.
+    const auto blendBegin = now();
     std::shared_ptr<VideoFrame> out = onCanvas(*frameA, boxWidth_, boxHeight_);
     const std::shared_ptr<VideoFrame> second = onCanvas(*frameB, boxWidth_, boxHeight_);
     const double duration = job.end - job.start;
@@ -216,6 +229,7 @@ std::shared_ptr<VideoFrame> TransitionRenderer::render(const TransitionJob& job,
                   {second->pixels.data(), second->width, second->height, second->stride}, progress, job.params,
                   {out->pixels.data(), out->stride});
     out->time = t;
+    timing_.blend = since(blendBegin);
     return out;
 }
 

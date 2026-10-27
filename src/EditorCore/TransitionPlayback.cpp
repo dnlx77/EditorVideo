@@ -128,9 +128,26 @@ std::shared_ptr<VideoFrame> TransitionPlayback::takeFrame(double time)
     return frame;
 }
 
+void TransitionPlayback::updateTiming(const TransitionRenderer::Timing& last)
+{
+    const auto mix = [](double average, double value) { return average == 0.0 ? value : 0.8 * average + 0.2 * value; };
+    averageTiming_.decodeFrom = mix(averageTiming_.decodeFrom, last.decodeFrom);
+    averageTiming_.decodeTo = mix(averageTiming_.decodeTo, last.decodeTo);
+    averageTiming_.blend = mix(averageTiming_.blend, last.blend);
+    averageTiming_.seeks = last.seeks;
+    averageTiming_.hardwareFrom = last.hardwareFrom;
+    averageTiming_.hardwareTo = last.hardwareTo;
+}
+
 bool TransitionPlayback::streamWorkAvailable() const
 {
     return streamActive_ && queue_.size() < kMaxQueued;
+}
+
+TransitionRenderer::Timing TransitionPlayback::averageTiming() const
+{
+    std::lock_guard lock(mutex_);
+    return averageTiming_;
 }
 
 void TransitionPlayback::run()
@@ -168,6 +185,7 @@ void TransitionPlayback::run()
             const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
             lock.lock();
             averageSeconds_ = averageSeconds_ == 0.0 ? seconds : 0.8 * averageSeconds_ + 0.2 * seconds;
+            updateTiming(renderer.timing());
             if (generation == streamGeneration_ && streamActive_) {
                 if (!frame) {
                     streamActive_ = false;  // non si riesce a farne: il flusso finisce
@@ -191,6 +209,7 @@ void TransitionPlayback::run()
         lock.lock();
         result_ = {std::move(frame), job.time, job.serial};
         averageSeconds_ = averageSeconds_ == 0.0 ? seconds : 0.8 * averageSeconds_ + 0.2 * seconds;
+        updateTiming(renderer.timing());
         done_.notify_all();
     }
 }

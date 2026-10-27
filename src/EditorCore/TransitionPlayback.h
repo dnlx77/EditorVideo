@@ -55,6 +55,8 @@ public:
     Result latest() const;
     // Quanto ci mette in media a fare un fotogramma (secondi), per sapere se sta al passo.
     double averageRenderSeconds() const;
+    // Lo stesso, diviso per fase (media degli ultimi fotogrammi; seeks = totale finora): vedi TransitionRenderer::Timing.
+    TransitionRenderer::Timing averageTiming() const;
 
 private:
     struct Request
@@ -64,6 +66,7 @@ private:
         unsigned long long serial = 0;
     };
     void run();
+    void updateTiming(const TransitionRenderer::Timing& last);  // con il mutex preso
     bool streamWorkAvailable() const;  // il flusso ha ancora un fotogramma da preparare e posto in coda
 
     mutable std::mutex mutex_;
@@ -76,6 +79,7 @@ private:
     unsigned long long serial_ = 0;
     Result result_;
     double averageSeconds_ = 0.0;
+    TransitionRenderer::Timing averageTiming_;
 
     // Flusso (vedi startStream).
     static constexpr std::size_t kMaxQueued = 6;
