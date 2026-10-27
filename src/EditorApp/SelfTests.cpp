@@ -2056,14 +2056,14 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                         const QString reopenFile =
                             QDir::temp().filePath(QStringLiteral("EditorVideoProvaTransizioni") + core::kProjectExtension);
                         dropAt(junctionX + 5);
-                        const bool savedWith = proj.transitions().size() == 1 && window->saveProjectAs(reopenFile, false);
+                        const bool savedWith = proj.transitions().clips().size() == 1 && window->saveProjectAs(reopenFile, false);
                         reopenedKept = savedWith && window->openProject(reopenFile, false);
                         QElapsedTimer analyzing;
                         analyzing.start();
                         while (!window->project().allAnalyzed() && analyzing.elapsed() < 20000)
                             QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
                         QCoreApplication::processEvents();
-                        reopenedKept = reopenedKept && window->project().transitions().size() == 1
+                        reopenedKept = reopenedKept && window->project().transitions().clips().size() == 1
                                     && window->sequenceTimeline()->transitions().size() == 1;
                         QFile::remove(reopenFile);
                         // Il progetto com'era prima della prova.
