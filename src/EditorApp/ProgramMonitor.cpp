@@ -100,7 +100,7 @@ void ProgramMonitor::mousePressEvent(QMouseEvent* event)
 void ProgramMonitor::setVideoSource(std::function<QString(const QString& path)> source)
 {
     // Anche la transizione legge i file da qui (i proxy).
-    transitionRenderer_.setVideoSource([source](const std::string& path) {
+    transitionPlayback_.setVideoSource([source](const std::string& path) {
         return source ? source(QString::fromStdString(path)).toStdString() : path;
     });
     player_->videoSourceFor = std::move(source);
@@ -109,10 +109,10 @@ void ProgramMonitor::setVideoSource(std::function<QString(const QString& path)> 
 void ProgramMonitor::reloadVideo()
 {
     player_->reloadVideo();
-    transitionRenderer_.reset();
+    transitionPlayback_.reset();
     if (transitionId_ != 0 && !playing_) {
         if (const auto placement = project_.transitionPlacement(transitionId_))
-            showTransitionFrame(*placement, position_);
+            showTransitionFrame(*placement, position_, true);
     }
 }
 
@@ -134,6 +134,7 @@ void ProgramMonitor::load(int index, double offset)
         return;
     gapIndex_ = -1;
     transitionId_ = 0;
+    primedTransitionId_ = 0;
     transitionFrame_.reset();
     player_->setBlank(false);
     if (f.clipId != loadedClipId_) {
@@ -239,7 +240,7 @@ std::optional<core::TransitionPlacement> ProgramMonitor::transitionAt(double sec
     return std::nullopt;
 }
 
-void ProgramMonitor::enterTransition(const core::TransitionPlacement& placement, double seconds)
+void ProgramMonitor::enterTransition(const core::TransitionPlacement& placement, double seconds, bool wait)
 {
     if (player_->isPlaying())
         player_->pause();
@@ -250,19 +251,62 @@ void ProgramMonitor::enterTransition(const core::TransitionPlacement& placement,
     position_ = seconds;
     gapBase_ = seconds;
     gapClock_.restart();
-    showTransitionFrame(placement, seconds);
+    transitionFloor_ = 0;
+    showTransitionFrame(placement, seconds, wait);
 }
 
-void ProgramMonitor::showTransitionFrame(const core::TransitionPlacement& placement, double seconds)
+void ProgramMonitor::setTransitionBox()
 {
     // Le anteprime stanno in 1280x720 al massimo: due decodifiche e la fusione devono stare nel tempo di un fotogramma.
     QSize box = frameSize();
     if (box.width() > 1280 || box.height() > 720)
         box = box.scaled(1280, 720, Qt::KeepAspectRatio);
-    transitionRenderer_.setBox(box.width(), box.height());
-    transitionFrame_ = transitionRenderer_.render(project_, placement, seconds);
-    if (transitionFrame_)
+    transitionPlayback_.setBox(box.width(), box.height());
+}
+
+void ProgramMonitor::showTransitionFrame(const core::TransitionPlacement& placement, double seconds, bool wait)
+{
+    const std::optional<core::TransitionJob> job = core::makeTransitionJob(project_, placement);
+    if (!job)
+        return;
+    setTransitionBox();
+    if (wait) {
+        transitionFrame_ = transitionPlayback_.render(*job, seconds);
+        if (transitionFrame_)
+            player_->showExternalFrame(transitionFrame_);
+        return;
+    }
+    // In riproduzione il fotogramma arriva dopo un po': si chiede quello del momento in cui sarà mostrato, e intanto si
+    // mostra l'ultimo arrivato di questa transizione.
+    const double lead = speed_ * (transitionPlayback_.averageRenderSeconds() + 0.02);
+    const unsigned long long serial = transitionPlayback_.request(*job, seconds + lead);
+    if (transitionFloor_ == 0)
+        transitionFloor_ = serial;
+    const core::TransitionPlayback::Result ready = transitionPlayback_.latest();
+    if (ready.frame && ready.serial >= transitionFloor_ && ready.frame != transitionFrame_) {
+        transitionFrame_ = ready.frame;
         player_->showExternalFrame(transitionFrame_);
+    }
+}
+
+void ProgramMonitor::primeTransition()
+{
+    // Aprire due file e posizionarli richiede un po': lo si fa un secondo prima, mentre il pezzo suona ancora.
+    if (project_.transitions().empty() || speed_ == 0.0)
+        return;
+    const double window = std::max(1.0, std::abs(speed_));
+    for (const core::TransitionPlacement& placement : project_.activeTransitions()) {
+        const bool ahead = speed_ > 0 ? placement.start() > position_ && placement.start() - position_ <= window
+                                      : placement.end() < position_ && position_ - placement.end() <= window;
+        if (!ahead || placement.id == primedTransitionId_)
+            continue;
+        if (const std::optional<core::TransitionJob> job = core::makeTransitionJob(project_, placement)) {
+            primedTransitionId_ = placement.id;
+            setTransitionBox();
+            transitionPlayback_.request(*job, speed_ > 0 ? placement.start() : placement.end() - 1e-3);
+        }
+        return;
+    }
 }
 
 void ProgramMonitor::updateOverlayFrame()
@@ -328,7 +372,7 @@ void ProgramMonitor::seekTo(double seconds)
             player_->pause();
             stopAudio();
         }
-        enterTransition(*placement, t);
+        enterTransition(*placement, t, !wasPlaying);
         if (wasPlaying)
             startAudio(t);
         updatePosition();
@@ -420,6 +464,7 @@ void ProgramMonitor::start()
     if (onPlaybackStarted)
         onPlaybackStarted();
     startAudio(position_);
+    primedTransitionId_ = 0;
     if (gapIndex_ >= 0 || transitionId_ != 0) {
         gapBase_ = position_;  // nello spazio vuoto e nella transizione il tempo lo dà l'audio o l'orologio
         gapClock_.restart();
@@ -638,7 +683,9 @@ void ProgramMonitor::sequenceChanged()
         poll_->stop();
     }
     transitionId_ = 0;  // seekTo() rientra nella transizione se il punto ci cade ancora
+    primedTransitionId_ = 0;
     transitionFrame_.reset();
+    transitionPlayback_.reset();  // i file o le durate possono essere cambiati
     setCurrentSpeed(baseSpeed_);
     if (loadedClipId_ != 0 && project_.find(loadedClipId_) == nullptr)
         loadedClipId_ = 0;
@@ -689,7 +736,7 @@ void ProgramMonitor::updatePosition()
                     player_->play();
                 }
             } else if (playing_) {
-                showTransitionFrame(*placement, position_);
+                showTransitionFrame(*placement, position_, false);
             }
         }
     } else if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
@@ -719,7 +766,9 @@ void ProgramMonitor::updatePosition()
         // Arrivati al tratto di una transizione, anche da un pezzo solo: da qui in poi la fusione la fa il monitor.
         if (playing_ && speed_ != 0.0) {
             if (const auto placement = transitionAt(position_))
-                enterTransition(*placement, position_);
+                enterTransition(*placement, position_, false);
+            else
+                primeTransition();
         }
     }
     updateLabels();

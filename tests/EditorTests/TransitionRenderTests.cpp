@@ -1,4 +1,5 @@
 #include "EditorCore/Project.h"
+#include "EditorCore/TransitionPlayback.h"
 #include "EditorCore/TransitionRender.h"
 #include "EditorCore/Transitions.h"
 #include "EditorCore/VideoDecoder.h"
@@ -200,4 +201,49 @@ TEST_F(TransitionRenderTest, FailsCleanlyWithoutTransitionOrFiles)
     const int id = broken.addTransition(fa, "dissolvenza", 1.0);
     ASSERT_NE(id, 0);
     EXPECT_EQ(renderer->render(broken, *broken.transitionPlacement(id), 2.0), nullptr);
+}
+
+TEST_F(TransitionRenderTest, PlaybackThreadGivesTheSameFramesAsTheRenderer)
+{
+    auto setup = makeSetup("scorrimento");
+    const auto job = makeTransitionJob(setup->project, setup->placement);
+    ASSERT_TRUE(job.has_value());
+    TransitionPlayback playback;
+    playback.setHardwareAllowed(false);
+    playback.setBox(kWidth, kHeight);
+    for (const double t : {1.52, 1.56, 2.0, 2.4}) {
+        const auto threaded = playback.render(*job, t);
+        const auto direct = makeRenderer()->render(setup->project, setup->placement, t);
+        ASSERT_TRUE(threaded && direct) << t;
+        EXPECT_EQ(threaded->pixels, direct->pixels) << t;
+    }
+    const auto latest = playback.latest();
+    ASSERT_NE(latest.frame, nullptr);
+    EXPECT_NEAR(latest.time, 2.4, 1e-9);
+    EXPECT_GT(playback.averageRenderSeconds(), 0.0);
+}
+
+TEST_F(TransitionRenderTest, PlaybackThreadKeepsOnlyTheLastRequest)
+{
+    auto setup = makeSetup();
+    const auto job = makeTransitionJob(setup->project, setup->placement);
+    ASSERT_TRUE(job.has_value());
+    TransitionPlayback playback;
+    playback.setHardwareAllowed(false);
+    playback.setBox(kWidth, kHeight);
+    // Tante richieste di fila: alla fine arriva comunque l'ultima.
+    unsigned long long last = 0;
+    for (int k = 0; k < 20; ++k)
+        last = playback.request(*job, 1.52 + 0.04 * k);
+    const auto frame = playback.render(*job, 2.0);
+    ASSERT_NE(frame, nullptr);
+    const auto latest = playback.latest();
+    EXPECT_GT(latest.serial, last);
+    EXPECT_NEAR(latest.time, 2.0, 1e-9);
+    // Una richiesta fatta con una misura diversa si applica da quella dopo.
+    playback.setBox(32, 24);
+    const auto small = playback.render(*job, 2.0);
+    ASSERT_NE(small, nullptr);
+    EXPECT_EQ(small->width, 32);
+    EXPECT_EQ(small->height, 24);
 }
