@@ -131,6 +131,25 @@ TEST(EditHistory, CleanStateFollowsSaving)
     EXPECT_TRUE(history.isClean());
 }
 
+TEST(EditHistory, AmendContinuesTheLastStepWithoutANewOne)
+{
+    Project project = start();
+    EditHistory history;
+    EXPECT_FALSE(history.amend());  // niente da proseguire
+    const Project original = project;
+    project.sequence().insert(-1, 1, 0.0, 1.0);
+    history.record("Modifica", original);
+    history.setClean();  // salvato dopo la prima modifica
+    EXPECT_TRUE(history.isClean());
+    project.sequence().insert(-1, 1, 1.0, 2.0);  // si continua a modificare
+    EXPECT_TRUE(history.amend());
+    EXPECT_EQ(history.undoCount(), 1u);
+    EXPECT_FALSE(history.isClean());  // lo stato salvato non c'è più
+    EXPECT_TRUE(history.undo(project));  // una sola voce: si torna a prima della prima modifica
+    EXPECT_EQ(project.sequence().fragments().size(), original.sequence().fragments().size());
+    EXPECT_FALSE(history.amend());  // c'è qualcosa da ripetere: non si prosegue
+}
+
 TEST(EditHistory, LimitDropsTheOldestSteps)
 {
     Project project = start();

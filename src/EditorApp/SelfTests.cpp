@@ -3,6 +3,7 @@
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
+#include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
@@ -36,6 +37,9 @@
 #include <QtGui/QWheelEvent>
 #include <QtGui/QWindow>
 #include <QtWidgets/QDockWidget>
+#include <QtWidgets/QDoubleSpinBox>
+#include <QtWidgets/QPlainTextEdit>
+#include <QtWidgets/QTabWidget>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressDialog>
@@ -1852,6 +1856,30 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                     const bool fadesBack = window->undo() && *text.find(third) == original;
                     edited = shown && back && fadesSet && fadesBack;
                 }
+                // Il pannello della scritta (scheda del pannello Sorgente): le modifiche valgono subito e scrivere una frase
+                // di fila è una sola voce di Annulla.
+                bool panel = false;
+                if (text.find(third) != nullptr) {
+                    const core::TextClip original = *text.find(third);
+                    window->showTextPanel(third, false);
+                    auto* edit = window->textPanel()->findChild<QPlainTextEdit*>("testo");
+                    auto* sizeBox = window->textPanel()->findChild<QDoubleSpinBox*>("grandezza");
+                    if (edit != nullptr && sizeBox != nullptr && window->textPanel()->hasClip()
+                        && window->sourceTabs()->currentWidget() == window->textPanel()) {
+                        edit->setPlainText(QStringLiteral("Prima"));
+                        edit->setPlainText(QStringLiteral("Prima e dopo"));
+                        sizeBox->setValue(9.0);
+                        const bool applied = text.find(third) != nullptr && text.find(third)->text == "Prima e dopo"
+                                          && std::abs(text.find(third)->style.size - 0.09) < 1e-9;
+                        const bool oneEntry = window->undo() && text.find(third) != nullptr && *text.find(third) == original
+                                           && window->textPanel()->clip() == original;
+                        panel = applied && oneEntry;
+                    }
+                }
+                std::printf("Scritte: pannello nella scheda della Sorgente, modifiche subito e in una sola voce di Annulla %s\n",
+                            panel ? "sì" : "NO");
+                std::fflush(stdout);
+                ok = ok && panel;
                 // Anteprima (step T5): al tempo della scritta il monitor la mostra, fuori no, e la modifica si vede subito.
                 bool onMonitor = false;
                 if (const core::TextClip* now = text.find(third)) {

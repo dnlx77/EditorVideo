@@ -21,6 +21,15 @@ void EditHistory::record(std::string label, const Project& before)
     }
 }
 
+bool EditHistory::amend()
+{
+    if (undo_.empty() || !redo_.empty())
+        return false;
+    if (clean_ == static_cast<long long>(undo_.size()))
+        clean_ = -1;
+    return true;
+}
+
 std::string EditHistory::undoLabel() const
 {
     return undo_.empty() ? std::string() : undo_.back().label;

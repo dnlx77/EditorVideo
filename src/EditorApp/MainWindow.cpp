@@ -16,6 +16,7 @@
 #include "EditorCore/MixExport.h"
 #include "EditorCore/Proxy.h"
 #include "EditorCore/SegmentExport.h"
+#include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/ThumbnailCache.h"
 #include "EditorApp/WaveformStore.h"
 #include "EditorCore/TimeUtil.h"
@@ -109,6 +110,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(clipList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* item) {
         if (item != nullptr && !updatingList_) {
             setProgramActive(false);
+            sourceTabs_->setCurrentIndex(0);  // un file scelto si vede nella scheda Sorgente (non in quella delle scritte)
             selectClip(item->data(Qt::UserRole).toInt());
         }
     });
@@ -343,6 +345,7 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onTextClipSelected = [this](int) {
         setProgramActive(true);
         showGroupStatus();
+        refreshTextPanel();
     };
     timeline_->textFreePosition = [this](int clipId, int layerId, double desired) {
         return project_.freeSpotFor({core::ObjectRef::Kind::TextClip, clipId}, layerId, desired, pushPieces_);
@@ -377,7 +380,20 @@ MainWindow::MainWindow(QWidget* parent)
         return dock;
     };
     filesDock_ = makeDock(QStringLiteral("File del progetto"), QStringLiteral("pannelloFile"), leftPanel);
-    sourceDock_ = makeDock(QStringLiteral("Sorgente"), QStringLiteral("pannelloSorgente"), sourcePanel);
+    // Il pannello Sorgente ha una scheda in più, "Scritta": l'editor della scritta scelta (le modifiche valgono subito e si
+    // vedono nel Montaggio, che resta a fianco).
+    textPanel_ = new TextEditorPanel;
+    textPanel_->onEdited = [this](const core::TextClip& edited) { applyTextEdit(edited, nullptr, true); };
+    textPanel_->onStylesChanged = [this](const std::vector<core::NamedTextStyle>& styles) {
+        const core::Project before = project_;
+        keepTextStyles(styles);
+        recordEdit(QStringLiteral("Cambia stili delle scritte"), before);
+    };
+    sourceTabs_ = new QTabWidget;
+    sourceTabs_->setDocumentMode(true);
+    sourceTabs_->addTab(sourcePanel, QStringLiteral("Sorgente"));
+    sourceTabs_->addTab(textPanel_, QStringLiteral("Scritta"));
+    sourceDock_ = makeDock(QStringLiteral("Sorgente"), QStringLiteral("pannelloSorgente"), sourceTabs_);
     programDock_ = makeDock(QStringLiteral("Montaggio"), QStringLiteral("pannelloMontaggio"), program_);
     timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),
                              sequencePanel);
@@ -912,6 +928,7 @@ void MainWindow::sequenceChanged()
     updateProxies();
     refreshClipList();
     updateExportAction();
+    refreshTextPanel();
 }
 
 const core::MediaSignature* MainWindow::signatureFor(const std::string& path)
@@ -1539,7 +1556,7 @@ void MainWindow::createMenus()
     QAction* newText = textMenu->addAction(QStringLiteral("&Nuova scritta al cursore"), this, [this] { addTextClip(); });
     newText->setShortcut(QKeySequence(Qt::Key_T));
     newText->setStatusTip(QStringLiteral("Una scritta di 5 secondi sul livello scelto (o dove c'è posto), dal cursore del montaggio"));
-    editTextAction_ = textMenu->addAction(QStringLiteral("&Modifica scritta..."), this, [this] { editTextClip(timeline_->selectedTextClip()); });
+    editTextAction_ = textMenu->addAction(QStringLiteral("&Modifica scritta"), this, [this] { editTextClip(timeline_->selectedTextClip()); });
     editTextAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
     editTextAction_->setStatusTip(QStringLiteral("Testo, font, colore, contorno, ombra, sfondo e posizione della scritta scelta (anche con doppio clic)"));
     editTextAction_->setEnabled(false);

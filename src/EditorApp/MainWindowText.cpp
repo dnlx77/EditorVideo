@@ -3,12 +3,13 @@
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/SequenceTimeline.h"
-#include "EditorApp/TextEditorDialog.h"
+#include "EditorApp/TextEditorPanel.h"
 #include "EditorCore/ProjectFile.h"
 #include "EditorApp/UiText.h"
 
 #include <QtCore/QSettings>
 #include <QtWidgets/QStatusBar>
+#include <QtWidgets/QTabWidget>
 
 #include <algorithm>
 #include <optional>
@@ -99,25 +100,13 @@ void MainWindow::keepTextStyles(const std::vector<core::NamedTextStyle>& styles)
 
 int MainWindow::addTextClip(bool withEditor)
 {
-    std::optional<std::vector<core::NamedTextStyle>> styles;
     core::TextTracks& text = project_.textTracks();
     const double at = std::max(0.0, program_->position());
     core::TextClip clip;
     clip.position = at;
     clip.length = kNewTextLength;
     clip.text = kNewTextDefault;
-    if (withEditor) {
-        const QSize size = frameSize();
-        TextEditorDialog dialog(clip, size.width(), size.height(), availableTextStyles(), this);
-        dialog.setWindowTitle(QStringLiteral("Nuova scritta"));
-        if (dialog.exec() != QDialog::Accepted)
-            return 0;
-        clip = dialog.clip();
-        styles = dialog.styles();
-    }
     const core::Project before = project_;
-    if (styles)
-        keepTextStyles(*styles);
     // Il livello scelto se lì c'è posto, altrimenti il primo dove ci sta; se non ci sta da nessuna parte, un livello nuovo.
     std::vector<int> candidates;
     if (text.layer(timeline_->selectedTextLayer()) != nullptr)
@@ -144,25 +133,48 @@ int MainWindow::addTextClip(bool withEditor)
                                  .arg(clip.length)
                                  .arg(qs(text.layerName(layerId)), timeText(at)),
                              8000);
+    if (withEditor)
+        showTextPanel(id, true);  // il testo è già selezionato: basta scrivere
     return id;
 }
 
 bool MainWindow::editTextClip(int clipId)
 {
-    const core::TextClip* current = project_.textTracks().find(clipId);
-    if (current == nullptr) {
+    if (project_.textTracks().find(clipId) == nullptr) {
         statusBar()->showMessage(QStringLiteral("Scegli prima una scritta sulla linea del tempo."), 6000);
         return false;
     }
-    const QSize size = frameSize();
-    TextEditorDialog dialog(*current, size.width(), size.height(), availableTextStyles(), this);
-    if (dialog.exec() != QDialog::Accepted)
-        return false;
-    const std::vector<core::NamedTextStyle> styles = dialog.styles();
-    return applyTextEdit(dialog.clip(), &styles);
+    timeline_->setSelectedTextClip(clipId);
+    showTextPanel(clipId, true);
+    return true;
 }
 
-bool MainWindow::applyTextEdit(const core::TextClip& edited, const std::vector<core::NamedTextStyle>* styles)
+void MainWindow::showTextPanel(int clipId, bool focusText)
+{
+    if (timeline_->selectedTextClip() != clipId)
+        timeline_->setSelectedTextClip(clipId);
+    if (fullScreenDock_ != nullptr)
+        exitFullScreen();
+    sourceDock_->show();
+    sourceDock_->raise();
+    sourceTabs_->setCurrentWidget(textPanel_);
+    refreshTextPanel();
+    if (focusText)
+        textPanel_->focusText();
+}
+
+void MainWindow::refreshTextPanel()
+{
+    if (textPanel_ == nullptr)
+        return;
+    const core::TextClip* clip = project_.textTracks().find(timeline_->selectedTextClip());
+    if (clip == nullptr)
+        textPanel_->setClip(nullptr, {});
+    else
+        textPanel_->setClip(clip, availableTextStyles());
+}
+
+bool MainWindow::applyTextEdit(const core::TextClip& edited, const std::vector<core::NamedTextStyle>* styles, bool merge)
 {
     const core::TextClip* current = project_.textTracks().find(edited.id);
     if (current == nullptr)
@@ -170,7 +182,14 @@ bool MainWindow::applyTextEdit(const core::TextClip& edited, const std::vector<c
     const bool stylesChanged = styles != nullptr && *styles != availableTextStyles();
     if (*current == edited && !stylesChanged)
         return true;  // niente è cambiato
-    const core::Project before = project_;
+    // Scrivere una frase nel pannello è una sola modifica: se l'ultima voce di Annulla è la precedente modifica di questa
+    // scritta (e dopo non è successo altro), si continua quella.
+    const bool onlyStyles = *current == edited;  // (qui sono cambiati solo gli stili con nome)
+    const bool continues = merge && textMergeClip_ == edited.id && textMergeCount_ == history_.undoCount() && history_.canUndo()
+                        && history_.undoLabel() == "Modifica scritta" && !history_.canRedo();
+    std::optional<core::Project> before;
+    if (!continues)
+        before = project_;
     if (stylesChanged)
         keepTextStyles(*styles);
     core::TextTracks& text = project_.textTracks();
@@ -182,7 +201,12 @@ bool MainWindow::applyTextEdit(const core::TextClip& edited, const std::vector<c
     text.setStyle(edited.id, edited.style);
     text.setFades(edited.id, edited.fadeIn, edited.fadeOut);
     timeline_->setSelectedTextClip(edited.id);
-    recordEdit(*current == edited && stylesChanged ? QStringLiteral("Cambia stili delle scritte") : QStringLiteral("Modifica scritta"), before);
+    if (continues && history_.amend())
+        sequenceChanged();
+    else
+        recordEdit(onlyStyles ? QStringLiteral("Cambia stili delle scritte") : QStringLiteral("Modifica scritta"), before ? *before : project_);
+    textMergeClip_ = merge ? edited.id : 0;
+    textMergeCount_ = history_.undoCount();
     return true;
 }
 

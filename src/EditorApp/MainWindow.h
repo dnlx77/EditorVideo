@@ -27,6 +27,7 @@ class QAction;
 class QDockWidget;
 class QLabel;
 class QMenu;
+class QTabWidget;
 class QListWidget;
 class QThread;
 class QTreeWidget;
@@ -42,6 +43,7 @@ class ThumbnailCache;
 class ProxyManager;
 class WaveformStore;
 class ProgramMonitor;
+class TextEditorPanel;
 class SequenceTimeline;
 
 // Finestra principale: a sinistra i file del progetto; al centro l'anteprima del file scelto (Sorgente, dove si
@@ -143,12 +145,18 @@ public:
     bool removeTextLayer(int layerId);
     void removeSelectedTextLayer();  // quello scelto sulla linea del tempo, altrimenti l'ultimo
     void groupSelection();           // G: gli oggetti scelti con Ctrl+clic diventano un gruppo
-    // Al cursore del montaggio, 5 secondi, sul livello scelto (o dove c'è posto). Con `withEditor` si apre prima l'editor
-    // e la scritta si aggiunge solo se lo si conferma; 0 se non è stata aggiunta.
+    // Al cursore del montaggio, 5 secondi, sul livello scelto (o dove c'è posto). Con `withEditor` si mostra subito il
+    // pannello della scritta, col cursore nel testo; 0 se non è stata aggiunta.
     int addTextClip(bool withEditor = true);
-    bool editTextClip(int clipId);   // l'editor sulla scritta; con OK applica testo, stile e durata (Annulla/Ripeti)
-    // Cambia testo, stile e durata della scritta (senza finestra); false e nessuna modifica se la durata non ci sta.
-    bool applyTextEdit(const core::TextClip& edited, const std::vector<core::NamedTextStyle>* styles = nullptr);
+    bool editTextClip(int clipId);   // sceglie la scritta e mostra il suo pannello (le modifiche valgono subito, con Annulla/Ripeti)
+    // Cambia testo, stile, durata e dissolvenze della scritta; false e nessuna modifica se la durata non ci sta. Con
+    // `merge` e se l'ultima modifica era un'altra di questo tipo sulla stessa scritta, ne continua la voce di Annulla
+    // (il pannello: scrivere una frase è una sola modifica).
+    bool applyTextEdit(const core::TextClip& edited, const std::vector<core::NamedTextStyle>* styles = nullptr, bool merge = false);
+    void showTextPanel(int clipId, bool focusText);  // la scheda "Scritta" del pannello Sorgente, con questa scritta
+    void refreshTextPanel();                          // la rimette in pari con la scritta scelta e col progetto
+    TextEditorPanel* textPanel() const { return textPanel_; }
+    QTabWidget* sourceTabs() const { return sourceTabs_; }
     std::vector<core::NamedTextStyle> availableTextStyles() const;  // del progetto e dell'elenco globale
     void keepTextStyles(const std::vector<core::NamedTextStyle>& styles);
     // La scritta trascinata sull'immagine del monitor: nuovo centro (0..1 del fotogramma).
@@ -338,6 +346,10 @@ private:
     QDockWidget* sourceDock_ = nullptr;
     QDockWidget* programDock_ = nullptr;
     QDockWidget* timelineDock_ = nullptr;
+    QTabWidget* sourceTabs_ = nullptr;      // il pannello Sorgente ha due schede: Sorgente e Scritta (l'editor delle scritte)
+    TextEditorPanel* textPanel_ = nullptr;
+    int textMergeClip_ = 0;                 // scritta dell'ultima modifica del pannello, per unire quelle di fila
+    std::size_t textMergeCount_ = 0;        // quante voci aveva Annulla dopo quella modifica
     QDockWidget* fullScreenDock_ = nullptr;
     QByteArray layoutBeforeFullScreen_;  // disposizione da ritrovare uscendo dallo schermo intero
     std::optional<CornerDrag> cornerDrag_;  // si sta trascinando un incrocio fra separatori

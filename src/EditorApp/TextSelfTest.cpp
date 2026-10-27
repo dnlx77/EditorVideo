@@ -1,9 +1,10 @@
 #include "EditorApp/QtTextRenderer.h"
 #include "EditorApp/SelfTests.h"
-#include "EditorApp/TextEditorDialog.h"
+#include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/TextOverlay.h"
 
 #include <QtCore/QStringList>
+#include <QtGui/QTextCursor>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QPushButton>
@@ -262,11 +263,19 @@ int runTextTest(const QStringList&, qsizetype)
         titolo.style.size = 0.12;
         titolo.style.bold = true;
         titolo.style.centerY = 0.2;
-        TextEditorDialog dialog(start, 1280, 720, {titolo});
+        TextEditorPanel dialog;
+        check(!dialog.hasClip(), "senza una scritta il pannello è spento");
+        dialog.setClip(&start, {titolo});
+        check(dialog.hasClip(), "con una scritta il pannello si accende");
+        int edits = 0;
+        core::TextClip lastEdit;
+        dialog.onEdited = [&](const core::TextClip& c) {
+            ++edits;
+            lastEdit = c;
+        };
         const core::TextClip back = dialog.clip();
         check(back == start, "l'editor restituisce la scritta di partenza senza cambiarla");
-        check(!dialog.previewImage().isNull() && dialog.previewImage().width() == 640 && dialog.previewImage().height() == 360,
-              "l'anteprima ha la forma del fotogramma del progetto");
+        check(edits == 0, "caricare una scritta non conta come modifica");
         auto* box = dialog.findChild<QPlainTextEdit*>("testo");
         auto* size = dialog.findChild<QDoubleSpinBox*>("grandezza");
         auto* bold = dialog.findChild<QToolButton*>("grassetto");
@@ -276,6 +285,7 @@ int runTextTest(const QStringList&, qsizetype)
         check(box && size && bold && shadow && place && length, "i controlli dell'editor ci sono");
         if (box && size && bold && shadow && place && length) {
             box->setPlainText("Nuovo");
+            check(edits >= 1 && lastEdit.text == "Nuovo", "scrivere nel testo avvisa subito");
             size->setValue(10.0);
             bold->setChecked(true);
             shadow->setChecked(true);
@@ -318,7 +328,16 @@ int runTextTest(const QStringList&, qsizetype)
                 check(dialog.styles().size() == 1 && dialog.styles()[0].name == "Piccolo", "si toglie lo stile scelto");
             }
             check(changed.style.fontFamily == "Arial", "il font scelto non viene cambiato anche se non è installato");
-            check(dialog.previewImage() != QImage(), "l'anteprima si ridisegna");
+            // Ricaricare la stessa scritta (come fa il programma dopo ogni modifica) non fa saltare il cursore né avvisa.
+            const int before = edits;
+            box->setFocus();
+            QTextCursor cursor = box->textCursor();
+            cursor.setPosition(2);
+            box->setTextCursor(cursor);
+            dialog.setClip(&changed, dialog.styles());
+            check(edits == before && box->textCursor().position() == 2, "ricaricare la stessa scritta non tocca il cursore del testo");
+            dialog.setClip(nullptr, {});
+            check(!dialog.hasClip(), "senza scritta il pannello si spegne");
         }
     }
 
