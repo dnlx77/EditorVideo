@@ -146,3 +146,30 @@ TEST(Groups, AreSavedAndReopened)
     EXPECT_EQ(again.groupMembers({Kind::Piece, c}).size(), 1u);
     std::filesystem::remove_all(dir);
 }
+
+TEST(Groups, GroupAfterUngroupBindsVideoAndItsAudioAgain)
+{
+    Montage m;
+    const int clip = m.project.unlinkAudio(m.a);
+    ASSERT_NE(clip, 0);
+    ASSERT_TRUE(m.project.sequence().find(m.a)->detached);
+
+    int relinked = 0;
+    EXPECT_EQ(m.project.groupObjects({{Kind::Piece, m.a}, {Kind::AudioClip, clip}}, &relinked), 0);
+    EXPECT_EQ(relinked, 1);
+    EXPECT_FALSE(m.project.sequence().find(m.a)->detached);
+    EXPECT_EQ(m.project.audioTracks().find(clip), nullptr);
+    EXPECT_TRUE(m.project.objectExists({Kind::PieceAudio, m.a}));
+    EXPECT_TRUE(m.project.sequence().mutedRanges().empty());
+}
+
+TEST(Groups, SplitKeepsTheUnlinkedAudioUnlinkedInBothHalves)
+{
+    Montage m;
+    ASSERT_EQ(m.project.ungroupObjects({{Kind::Piece, m.a}}).audioUnlinked, 1);
+    const auto created = m.project.splitGroup({Kind::Piece, m.a}, 1.0);
+    ASSERT_FALSE(created.empty());
+    const int second = created.front().id;
+    EXPECT_TRUE(m.project.sequence().find(m.a)->detached);
+    EXPECT_TRUE(m.project.sequence().find(second)->detached);
+}

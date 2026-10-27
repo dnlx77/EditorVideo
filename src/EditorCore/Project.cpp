@@ -209,12 +209,33 @@ std::vector<ObjectRef> Project::groupMembers(ObjectRef object) const
     return found;
 }
 
-int Project::groupObjects(const std::vector<ObjectRef>& objects)
+int Project::groupObjects(const std::vector<ObjectRef>& objects, int* relinked)
 {
     std::vector<ObjectRef> valid;
     for (const ObjectRef& o : objects) {
         if (objectExists(o) && std::find(valid.begin(), valid.end(), o) == valid.end())
             valid.push_back(o);
+    }
+    // Un pezzo con l'audio scollegato e la sua clip audio (ancora allineata) tornano un oggetto solo, come prima di U.
+    for (const ObjectRef& piece : std::vector<ObjectRef>(valid)) {
+        const Fragment* f = piece.kind == ObjectRef::Kind::Piece ? sequence_.find(piece.id) : nullptr;
+        const Clip* source = f != nullptr && f->detached ? find(f->clipId) : nullptr;
+        if (source == nullptr)
+            continue;
+        const double from = sequence_.startOf(sequence_.indexOf(piece.id));
+        const double offset = from - f->start;
+        std::vector<ObjectRef> aligned;
+        for (const ObjectRef& o : valid) {
+            const AudioClip* c = o.kind == ObjectRef::Kind::AudioClip ? audio_.find(o.id) : nullptr;
+            if (c != nullptr && c->path == source->path && std::abs((c->position - c->start) - offset) < 1e-6
+                && c->position < from + f->length() - 1e-9 && c->endPosition() > from + 1e-9)
+                aligned.push_back(o);
+        }
+        if (aligned.empty() || !relinkAudio(piece.id))
+            continue;
+        if (relinked != nullptr)
+            ++*relinked;
+        std::erase_if(valid, [&](const ObjectRef& o) { return !objectExists(o); });
     }
     if (valid.size() < 2)
         return 0;

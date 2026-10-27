@@ -202,7 +202,9 @@ public:
     std::vector<ObjectRef> groupMembers(ObjectRef object) const;
     // Mette gli oggetti (quelli che esistono) in un gruppo nuovo; restituisce l'id, 0 se non c'è niente da raggruppare
     // (meno di due oggetti, o sono già tutti legati fra loro).
-    int groupObjects(const std::vector<ObjectRef>& objects);
+    // Se fra gli oggetti ci sono un pezzo con l'audio scollegato e la sua clip audio ancora allineata, G li riunisce
+    // come prima di U (relinkAudio): *relinked conta i pezzi ricollegati (in quel caso il valore restituito può essere 0).
+    int groupObjects(const std::vector<ObjectRef>& objects, int* relinked = nullptr);
     // Scioglie i gruppi degli oggetti; se non ne ha sciolto nessuno, scollega l'audio dei pezzi video fra gli oggetti
     // (unlinkAudio): così con U si scioglie prima il gruppo e poi il legame fra il video e il suo audio.
     struct UngroupResult

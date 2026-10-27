@@ -440,11 +440,17 @@ void MainWindow::groupSelection()
         }
     }
     const core::Project before = project_;
-    if (refs.size() < 2 || project_.groupObjects(refs) == 0) {
+    int relinked = 0;
+    const int group = refs.size() < 2 ? 0 : project_.groupObjects(refs, &relinked);
+    if (group == 0 && relinked == 0) {
         statusBar()->showMessage(QStringLiteral("Per fare un gruppo scegli almeno due oggetti diversi con Ctrl+clic."), 8000);
         return;
     }
-    recordEdit(QStringLiteral("Crea gruppo"), before);
+    recordEdit(group != 0 ? QStringLiteral("Crea gruppo") : QStringLiteral("Ricollega audio"), before);
+    if (group == 0) {
+        statusBar()->showMessage(QStringLiteral("Video e audio di nuovo uniti in un gruppo."), 8000);
+        return;
+    }
     showGroupStatus();
 }
 
