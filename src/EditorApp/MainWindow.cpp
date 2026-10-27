@@ -1799,6 +1799,13 @@ void MainWindow::startNextProbe()
                     }
                 }
                 refreshClipList();
+                // Le transizioni di un progetto appena aperto si vedono (e si controllano i margini) solo quando i file
+                // sono analizzati: finché non si sa quanto durano non c'è una giunzione valida.
+                if (!project_.transitions().empty()) {
+                    if (project_.allAnalyzed())
+                        project_.pruneTransitions();
+                    refreshTransitions();
+                }
                 // Le miniature di un file si chiedono solo dopo l'analisi: la timeline deve ridisegnare i suoi blocchi.
                 timeline_->thumbnailsChanged();
                 updateExportAction();
