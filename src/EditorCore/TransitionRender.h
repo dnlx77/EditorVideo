@@ -5,9 +5,31 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace editor::core {
+
+// Tutto quello che serve a fare i fotogrammi di una transizione, copiato dal progetto: così si può lavorare in un altro
+// thread mentre il progetto cambia.
+struct TransitionJob
+{
+    std::string typeId;     // della transizione (vedi Transition::id)
+    TransitionParams params;
+    std::string pathA;      // file del pezzo che finisce e di quello che inizia (UTF-8, non il proxy)
+    std::string pathB;
+    double durationA = 0.0;  // durata dei file (0 = sconosciuta)
+    double durationB = 0.0;
+    double fragmentStartA = 0.0;  // inizio dei pezzi nei loro file
+    double fragmentStartB = 0.0;
+    double sequenceStartA = 0.0;  // e nella sequenza
+    double sequenceStartB = 0.0;
+    double start = 0.0;  // il tratto della transizione nella sequenza
+    double end = 0.0;
+};
+
+// std::nullopt se la transizione, i pezzi o i file non ci sono.
+std::optional<TransitionJob> makeTransitionJob(const Project& project, const TransitionPlacement& placement);
 
 // Fa i fotogrammi di una transizione per l'anteprima: decodifica insieme il pezzo che finisce (con il materiale oltre la
 // sua fine) e quello che inizia (con quello prima del suo inizio) e li fonde con l'effetto della transizione. Ognuno
@@ -38,6 +60,7 @@ public:
     // limita agli estremi). nullptr se la transizione o i pezzi non ci sono o i file non si aprono. Il fotogramma è
     // BGRA, boxWidth x boxHeight.
     std::shared_ptr<VideoFrame> render(const Project& project, const TransitionPlacement& placement, double sequenceTime);
+    std::shared_ptr<VideoFrame> render(const TransitionJob& job, double sequenceTime);
 
 private:
     struct Side;
