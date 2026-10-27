@@ -44,6 +44,7 @@ class ProxyManager;
 class WaveformStore;
 class ProgramMonitor;
 class TextEditorPanel;
+class TransitionListPanel;
 class SequenceTimeline;
 
 // Finestra principale: a sinistra i file del progetto; al centro l'anteprima del file scelto (Sorgente, dove si
@@ -156,6 +157,8 @@ public:
     void showTextPanel(int clipId, bool focusText);  // la scheda "Scritta" del pannello Sorgente, con questa scritta
     void refreshTextPanel();                          // la rimette in pari con la scritta scelta e col progetto
     TextEditorPanel* textPanel() const { return textPanel_; }
+    QTabWidget* leftTabs() const { return leftTabs_; }
+    TransitionListPanel* transitionPanel() const { return transitionPanel_; }
     QTabWidget* sourceTabs() const { return sourceTabs_; }
     std::vector<core::NamedTextStyle> availableTextStyles() const;  // del progetto e dell'elenco globale
     void keepTextStyles(const std::vector<core::NamedTextStyle>& styles);
@@ -348,6 +351,8 @@ private:
     QDockWidget* timelineDock_ = nullptr;
     QTabWidget* sourceTabs_ = nullptr;      // il pannello Sorgente ha due schede: Sorgente e Scritta (l'editor delle scritte)
     TextEditorPanel* textPanel_ = nullptr;
+    QTabWidget* leftTabs_ = nullptr;        // il blocco in alto a sinistra ha due schede: File del progetto e Transizioni
+    TransitionListPanel* transitionPanel_ = nullptr;
     int textMergeClip_ = 0;                 // scritta dell'ultima modifica del pannello, per unire quelle di fila
     std::size_t textMergeCount_ = 0;        // quante voci aveva Annulla dopo quella modifica
     QDockWidget* fullScreenDock_ = nullptr;

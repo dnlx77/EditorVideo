@@ -235,6 +235,12 @@ jobs:
           # Le scritte disegnate con Qt (font, colore, contorno, ombra, sfondo, opacità, posizione) controllate a pixel.
           & ci\run-editorvideo.ps1 -Name scritte -Arguments '--text-test'
 
+      - name: Prova dell'elenco delle transizioni
+        shell: pwsh
+        run: |
+          # L'elenco delle transizioni (voci, miniature, scelta) e le due schede del blocco in alto a sinistra.
+          & ci\run-editorvideo.ps1 -Name transizioni -Arguments '--transition-test'
+
       - name: Prova dell'esportazione dalla finestra
         shell: pwsh
         run: |

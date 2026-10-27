@@ -725,6 +725,7 @@ constexpr CommandLineTest kTests[] = {
     {"--export-test", runExportTest},   {"--thumbnail-test", runThumbnailTest}, {"--project-test", runProjectTest},
     {"--audio-test", runAudioTest},     {"--codec-info", runCodecInfo},         {"--sequence-test", runSequenceTest},
     {"--join-test", runJoinTest},         {"--text-test", runTextTest},
+    {"--transition-test", runTransitionTest},
 };
 
 }  // namespace

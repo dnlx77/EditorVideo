@@ -21,6 +21,10 @@ std::optional<int> runCommandLineTest(const QStringList& arguments);
 // --text-test: disegna scritte con Qt e le controlla a pixel (vedi TextSelfTest.cpp).
 int runTextTest(const QStringList& arguments, qsizetype at);
 
+// --transition-test: l'elenco delle transizioni, le miniature e le due schede del blocco in alto a sinistra (vedi
+// TransitionSelfTest.cpp).
+int runTransitionTest(const QStringList& arguments, qsizetype at);
+
 // Come runCommandLineTest, per le prove con la finestra vera: --dock-test, --project-export-test, --export-dialog-test
 // (descritte sotto).
 std::optional<int> runWindowTest(QApplication& app, const QStringList& arguments);
