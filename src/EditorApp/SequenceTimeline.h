@@ -104,7 +104,24 @@ public:
         std::vector<TextBlock> clips;
     };
 
+    // Una transizione sulla giunzione fra due pezzi, disegnata a cavallo della giunzione sulla corsia video.
+    struct TransitionBlock
+    {
+        int id = 0;
+        QString label;           // il nome della transizione
+        double start = 0.0;      // dove inizia nella sequenza
+        double end = 0.0;        // dove finisce
+        double junction = 0.0;   // dove sta la giunzione
+    };
+
     explicit SequenceTimeline(QWidget* parent = nullptr);
+
+    // Le transizioni (vedi Project::activeTransitions). Selezionarne una toglie la selezione di ogni altro oggetto e
+    // viceversa.
+    void setTransitions(std::vector<TransitionBlock> transitions);
+    const std::vector<TransitionBlock>& transitions() const { return transitions_; }
+    void setSelectedTransition(int id);
+    int selectedTransition() const { return selectedTransition_; }
 
     void setBlocks(std::vector<Block> blocks);
     void setPlayhead(double seconds);
@@ -188,6 +205,20 @@ public:
     // chiama lasciando il mouse con i due valori nuovi.
     std::function<void(int clipId, double fadeIn, double fadeOut)> onTextFades;
 
+    // Transizioni. Dall'elenco si trascina una transizione sulla giunzione fra due pezzi attaccati (il tipo di dati è
+    // kTransitionMime): sopra una giunzione si evidenzia (verde se canDropTransition dice di sì, rossa altrimenti) e
+    // lasciandola si chiama onTransitionDropped con l'id della transizione e il pezzo prima della giunzione; se non si
+    // può, onTransitionDropRefused (con 0 se non c'è nessuna giunzione vicina). Una transizione si seleziona con un clic,
+    // la durata si cambia trascinando i suoi bordi (transitionLimit limita la durata voluta; onTransitionDuration si
+    // chiama lasciando il mouse), il doppio clic la apre.
+    std::function<bool(int beforeFragmentId)> canDropTransition;
+    std::function<void(const QString& type, int beforeFragmentId)> onTransitionDropped;
+    std::function<void(int beforeFragmentId)> onTransitionDropRefused;
+    std::function<void(int id)> onTransitionSelected;
+    std::function<double(int id, double desired)> transitionLimit;
+    std::function<void(int id, double duration)> onTransitionDuration;
+    std::function<void(int id)> onTransitionActivate;
+
     // Tracce audio: pulsanti "+" e "−" in alto a sinistra, muto, solo e livello di una corsia (onLevel si chiama
     // lasciando il cursore del livello, o con un doppio clic che lo riporta a 0 dB).
     std::function<void()> onAddTrack;
@@ -227,6 +258,10 @@ public:
     QToolButton* addTrackButton() const { return addTrack_; }
     QToolButton* removeTrackButton() const { return removeTrack_; }
     double xForBlockEdge(int index, bool atStart) const;  // dove sta il bordo del blocco `index`
+    // Solo per le prove: il riquadro di una transizione e dove sta la giunzione, in coordinate del widget.
+    QRectF transitionRectForTest(int id) const;
+    double xForJunction(int blockIndex) const;  // fine del blocco `blockIndex`
+    int transitionDropBlock() const { return transDropIndex_; }
     double textLaneCenter(int layerIndex) const { return textLane(layerIndex).center().y(); }  // 0 = il livello più basso
 
 protected:
@@ -270,6 +305,12 @@ private:
     double textDragTarget(double x, int lane) const;
     double textTrimTarget(double x) const;
     void paintText(QPainter& p);
+    // Transizioni: il riquadro di una (con la durata provvisoria se la si sta trascinando), quale sta sotto il mouse
+    // (bordo = vicino al bordo sinistro o destro), la giunzione vicina a x (indice del blocco prima), il disegno.
+    QRectF transitionRect(const TransitionBlock& t) const;
+    int transitionAt(const QPointF& pos, bool& edge, bool& atStart) const;
+    int junctionAt(double x) const;
+    void paintTransitions(QPainter& p);
     void clearTextSelection();
     int laneAt(double y) const;             // corsia audio sotto y (-1 = nessuna)
     QRectF headerRect(const QRectF& lane) const;  // il riquadro a sinistra della corsia, con nome e pulsanti
@@ -424,6 +465,16 @@ private:
     int fileDropLane_ = -1;    // file trascinati sopra una traccia aggiunta: quale (-1 = sopra il video o A1)
 
     double fileDropX_ = -1.0;  // file trascinati sopra la linea del tempo: dove (-1 = nessuno)
+
+    std::vector<TransitionBlock> transitions_;
+    int selectedTransition_ = 0;
+    int transTrimId_ = 0;           // transizione di cui si trascina un bordo
+    bool transTrimming_ = false;    // il bordo si è mosso
+    double transTrimDuration_ = 0.0;  // la durata che avrà
+    bool transDragActive_ = false;  // si sta trascinando una transizione dall'elenco sopra la linea del tempo
+    QString transDragType_;
+    int transDropIndex_ = -1;       // blocco prima della giunzione evidenziata (-1 = nessuna)
+    bool transDropValid_ = false;
 
     QPixmap cache_;
     bool cacheValid_ = false;

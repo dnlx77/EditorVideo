@@ -1,11 +1,18 @@
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/SelfTests.h"
+#include "EditorApp/SequenceTimeline.h"
+#include "EditorApp/TransitionMime.h"
 #include "EditorApp/TransitionListPanel.h"
 #include "EditorApp/TransitionPreview.h"
 #include "EditorApp/TransitionPreviewWidget.h"
 
+#include <QtCore/QCoreApplication>
+#include <QtCore/QMimeData>
 #include <QtCore/QStringList>
+#include <QtGui/QDragEnterEvent>
+#include <QtGui/QDropEvent>
+#include <QtGui/QMouseEvent>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QListWidget>
 #include <QtWidgets/QStackedWidget>
@@ -93,6 +100,137 @@ int runTransitionTest(const QStringList&, qsizetype)
           "a metà ciclo il fotogramma è quello a metà transizione");
     preview.setTime(middle);
     check(std::abs(preview.time() - middle) < 1e-9, "il punto del ciclo mostrato si può impostare");
+
+    // Trascinare dall'elenco: il trascinamento porta l'id della transizione.
+    {
+        QMimeData* mime = panel.list()->model()->mimeData({panel.list()->model()->index(2, 0)});
+        check(mime != nullptr && mime->hasFormat(QLatin1String(kTransitionMime))
+                  && QString::fromUtf8(mime->data(QLatin1String(kTransitionMime))) == QString::fromUtf8(registry[2]->id()),
+              "il trascinamento dall'elenco porta l'id della transizione");
+        delete mime;
+    }
+
+    // La linea del tempo: due pezzi attaccati da 4 s l'uno, la giunzione a 4 s.
+    {
+        SequenceTimeline line;
+        line.resize(1000, 320);
+        line.show();
+        QCoreApplication::processEvents();
+        SequenceTimeline::Block a;
+        a.fragmentId = 11;
+        a.label = QStringLiteral("a.mp4");
+        a.length = 4.0;
+        a.clipId = 1;
+        SequenceTimeline::Block b = a;
+        b.fragmentId = 12;
+        b.sourceStart = 10.0;
+        line.setBlocks({a, b});
+        line.fitAll();
+        QCoreApplication::processEvents();
+        const double junctionX = line.xForJunction(0);
+        const double y = line.videoLaneCenter();
+        check(std::abs(junctionX - line.xForSequenceTime(4.0)) < 1.0, "la giunzione è alla fine del primo pezzo");
+
+        // Si lascia sulla giunzione: arriva il tipo e il pezzo prima; lontano dalla giunzione: rifiutata.
+        QString droppedType;
+        int droppedAt = -1;
+        int refusedAt = -1;
+        bool allow = true;
+        line.canDropTransition = [&](int) { return allow; };
+        line.onTransitionDropped = [&](const QString& type, int fragment) {
+            droppedType = type;
+            droppedAt = fragment;
+        };
+        line.onTransitionDropRefused = [&](int fragment) { refusedAt = fragment; };
+        const auto dropAt = [&](double x) {
+            QMimeData mimeData;
+            mimeData.setData(QLatin1String(kTransitionMime), QByteArrayLiteral("scorrimento"));
+            const QPoint at(static_cast<int>(x), static_cast<int>(y));
+            QDragEnterEvent enter(at, Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(&line, &enter);
+            const int hovered = line.transitionDropBlock();
+            QDropEvent drop(QPointF(at), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(&line, &drop);
+            return hovered;
+        };
+        const int onJunction = dropAt(junctionX + 6);
+        check(onJunction == 0 && droppedType == QStringLiteral("scorrimento") && droppedAt == 11 && refusedAt == -1,
+              "lasciata sulla giunzione: arrivano il tipo e il pezzo prima");
+        droppedAt = -1;
+        const int far = dropAt(line.xForSequenceTime(1.0));
+        check(far == -1 && droppedAt == -1 && refusedAt == 0, "lasciata lontano da una giunzione: rifiutata");
+        allow = false;
+        refusedAt = -1;
+        dropAt(junctionX);
+        check(droppedAt == -1 && refusedAt == 11, "giunzione che non ammette la transizione: rifiutata con il pezzo");
+        allow = true;
+
+        // Il blocco della transizione sta a cavallo della giunzione.
+        line.setTransitions({{5, QStringLiteral("Dissolvenza incrociata"), 3.0, 5.0, 4.0}});
+        const QRectF block = line.transitionRectForTest(5);
+        check(std::abs(block.left() - line.xForSequenceTime(3.0)) < 1.0 && std::abs(block.right() - line.xForSequenceTime(5.0)) < 1.0
+                  && std::abs(block.center().x() - junctionX) < 1.0,
+              "il blocco della transizione è a cavallo della giunzione");
+
+        const auto mouse = [&](QEvent::Type type, double x, Qt::MouseButtons buttons) {
+            QMouseEvent e(type, QPointF(x, y), line.mapToGlobal(QPointF(x, y)),
+                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
+            QCoreApplication::sendEvent(&line, &e);
+        };
+        int selectedCallback = 0;
+        line.onTransitionSelected = [&](int id) { selectedCallback = id; };
+        mouse(QEvent::MouseButtonPress, junctionX, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, junctionX, Qt::NoButton);
+        check(line.selectedTransition() == 5 && selectedCallback == 5 && line.selected() == 0,
+              "un clic sul blocco seleziona la transizione, non il pezzo sotto");
+
+        // Il bordo destro trascinato cambia la durata (limitata); lasciare senza muovere non cambia niente.
+        int changedId = 0;
+        double changedTo = 0.0;
+        int calls = 0;
+        line.transitionLimit = [](int, double desired) { return std::clamp(desired, 0.1, 3.0); };
+        line.onTransitionDuration = [&](int id, double duration) {
+            changedId = id;
+            changedTo = duration;
+            ++calls;
+        };
+        mouse(QEvent::MouseButtonPress, block.right(), Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, block.right(), Qt::NoButton);
+        check(calls == 0, "un clic sul bordo senza trascinare non cambia la durata");
+        const double perSecond = line.xForSequenceTime(1.0) - line.xForSequenceTime(0.0);
+        mouse(QEvent::MouseButtonPress, block.right(), Qt::LeftButton);
+        mouse(QEvent::MouseMove, block.right() + 0.25 * perSecond, Qt::LeftButton);
+        mouse(QEvent::MouseMove, block.right() + 0.5 * perSecond, Qt::LeftButton);
+        const QRectF during = line.transitionRectForTest(5);
+        mouse(QEvent::MouseButtonRelease, block.right() + 0.5 * perSecond, Qt::NoButton);
+        check(calls == 1 && changedId == 5 && std::abs(changedTo - 3.0) < 0.05 && std::abs(during.width() - 3.0 * perSecond) < 2.0,
+              "trascinando il bordo la durata diventa il doppio della distanza dalla giunzione (3 s)");
+        mouse(QEvent::MouseButtonPress, block.right(), Qt::LeftButton);
+        mouse(QEvent::MouseMove, junctionX + 0.02 * perSecond, Qt::LeftButton);
+        mouse(QEvent::MouseMove, junctionX + 0.01 * perSecond, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, junctionX + 0.01 * perSecond, Qt::NoButton);
+        check(calls == 2 && std::abs(changedTo - 0.1) < 1e-9, "la durata non scende sotto il minimo");
+
+        // Doppio clic: si apre; un clic su un pezzo toglie la selezione della transizione.
+        int activated = 0;
+        line.onTransitionActivate = [&](int id) { activated = id; };
+        {
+            QMouseEvent e(QEvent::MouseButtonDblClick, QPointF(junctionX, y), line.mapToGlobal(QPointF(junctionX, y)), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(&line, &e);
+        }
+        check(activated == 5, "il doppio clic sul blocco apre la transizione");
+        const double awayX = line.xForSequenceTime(0.5);
+        mouse(QEvent::MouseButtonPress, awayX, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, awayX, Qt::NoButton);
+        check(line.selectedTransition() == 0 && line.selected() == 11, "un clic su un pezzo toglie la selezione della transizione");
+        line.setSelectedTransition(5);
+        line.setSelected(12);
+        check(line.selectedTransition() == 0, "scegliere un pezzo toglie la selezione della transizione");
+        line.setSelectedTransition(5);
+        line.setTransitions({});
+        check(line.selectedTransition() == 0, "se la transizione sparisce, la selezione sparisce");
+    }
 
     // Le due schede nella finestra.
     MainWindow window;

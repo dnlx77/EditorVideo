@@ -366,6 +366,14 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onTextTrim = [this](int clipId, bool atStart, double value) { trimTextClip(clipId, atStart, value); };
     timeline_->onTextFades = [this](int clipId, double fadeIn, double fadeOut) { fadeTextClip(clipId, fadeIn, fadeOut); };
     timeline_->onTextActivate = [this](int clipId) { editTextClip(clipId); };
+    // Transizioni (step X5).
+    timeline_->canDropTransition = [this](int beforeFragment) { return canDropTransition(beforeFragment); };
+    timeline_->onTransitionDropped = [this](const QString& type, int beforeFragment) { addTransition(type, beforeFragment); };
+    timeline_->onTransitionDropRefused = [this](int beforeFragment) { refuseTransition(beforeFragment); };
+    timeline_->onTransitionSelected = [this](int) { setProgramActive(true); };
+    timeline_->transitionLimit = [this](int id, double desired) { return clampTransitionDuration(id, desired); };
+    timeline_->onTransitionDuration = [this](int id, double duration) { changeTransitionDuration(id, duration); };
+    timeline_->onTransitionActivate = [this](int id) { editTransition(id); };
     sequenceLabel_ = new QLabel;
     // L'etichetta resta alta quanto il suo testo: lo spazio in più va tutto alla linea del tempo (stretch sotto).
     sequenceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Maximum);
@@ -790,6 +798,10 @@ void MainWindow::deleteSelection()
         return;
     }
     const core::Project before = project_;
+    if (const int transition = timeline_->selectedTransition(); transition != 0) {
+        removeTransition(transition);
+        return;
+    }
     if (timeline_->selectedObjects().size() >= 2) {
         // Più oggetti scelti con Ctrl+clic: si tolgono solo quelli (gli altri del gruppo restano).
         if (project_.removeObjects(selectedRefs()) > 0) {
@@ -942,6 +954,11 @@ void MainWindow::afterHistoryChange(const QString& message)
 
 void MainWindow::sequenceChanged()
 {
+    // Le transizioni la cui giunzione non c'è più (pezzo tolto, spostato, accorciato) si tolgono o si accorciano.
+    if (!loading_ && project_.pruneTransitions() > 0)
+        statusBar()->showMessage(QStringLiteral("Una transizione non ci stava più ed è stata tolta o accorciata (Annulla per "
+                                                "rimetterla)."),
+                                 8000);
     if (!loading_)
         setModified(true);
     ensureProjectFormat();
@@ -1108,6 +1125,7 @@ void MainWindow::refreshTimeline()
         textLanes.push_back(std::move(lane));
     }
     timeline_->setTextLanes(std::move(textLanes));
+    refreshTransitions();
     if (removeTextLayerAction_ != nullptr)
         removeTextLayerAction_->setEnabled(!project_.textTracks().layers().empty());
     if (editTextAction_ != nullptr)
