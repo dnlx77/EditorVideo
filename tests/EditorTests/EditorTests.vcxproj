@@ -65,6 +65,7 @@
     <ClCompile Include="PlaybackTests.cpp" />
     <ClCompile Include="PreciseCutTests.cpp" />
     <ClCompile Include="TextExportTests.cpp" />
+    <ClCompile Include="TransitionExportTests.cpp" />
     <ClCompile Include="ProjectFileTests.cpp" />
     <ClCompile Include="ReencodeTests.cpp" />
     <ClCompile Include="ProjectTests.cpp" />
