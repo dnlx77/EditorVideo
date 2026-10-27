@@ -140,17 +140,91 @@ double clampDelta(const Scene& scene, double delta, bool push)
     return std::clamp(delta, std::min(lowest, 0.0), std::max(highest, 0.0));
 }
 
+// Senza spinta chi passa oltre un altro oggetto ci salta e si ferma dall'altra parte (a destra e a sinistra): fra gli
+// spostamenti che non sovrappongono nessuno, il più vicino a `delta`.
+double freeDelta(const Scene& scene, double delta)
+{
+    if (scene.anchorComponent < 0)
+        return 0.0;
+    double lowest = -std::numeric_limits<double>::infinity();
+    std::vector<std::pair<double, double>> forbidden;  // spostamenti che sovrappongono (estremi esclusi)
+    for (const Item& mover : scene.items) {
+        if (mover.component != scene.anchorComponent)
+            continue;
+        lowest = std::max(lowest, -mover.start);  // non prima di 0
+        for (const Item& other : scene.items) {
+            if (other.component == scene.anchorComponent || other.lane != mover.lane)
+                continue;
+            if (mover.lane == kVideoLane) {
+                // I pezzi video non si scambiano di posto: ci si ferma contro.
+                if (other.start >= mover.end() - kTimeEpsilon)
+                    forbidden.emplace_back(other.start - mover.end(), std::numeric_limits<double>::infinity());
+                else
+                    forbidden.emplace_back(-std::numeric_limits<double>::infinity(), other.end() - mover.start);
+            } else {
+                forbidden.emplace_back(other.start - mover.end(), other.end() - mover.start);
+            }
+        }
+    }
+    const auto isFree = [&](double d) {
+        if (d < lowest - kTimeEpsilon)
+            return false;
+        return std::none_of(forbidden.begin(), forbidden.end(), [&](const auto& f) {
+            return d > f.first + kTimeEpsilon && d < f.second - kTimeEpsilon;
+        });
+    };
+    if (isFree(delta))
+        return delta;
+    double best = 0.0;
+    double bestDistance = std::numeric_limits<double>::infinity();
+    std::vector<double> candidates{lowest, 0.0};
+    for (const auto& f : forbidden) {
+        candidates.push_back(f.first);
+        candidates.push_back(f.second);
+    }
+    for (const double c : candidates) {
+        if (!std::isfinite(c) || !isFree(c))
+            continue;
+        if (std::abs(c - delta) < bestDistance) {
+            best = c;
+            bestDistance = std::abs(c - delta);
+        }
+    }
+    return best;
+}
+
+// Quanto ci si può spostare davvero: con la spinta ci si ferma contro chi sta a sinistra, senza si salta oltre.
+double limitDelta(const Scene& scene, double delta, bool push)
+{
+    return push ? clampDelta(scene, delta, push) : freeDelta(scene, delta);
+}
+
 // Se lo spostamento passa dalla scena (limiti, spinta e gruppo): più oggetti insieme, oppure un pezzo video con l'audio
 // legato su A1 mentre ci sono clip libere su A1, contro cui il suo audio non deve andare a sovrapporsi.
-bool movesAsScene(const Scene& scene, ObjectRef object)
+bool movesAsScene(const Scene& scene, ObjectRef object, bool push)
 {
     if (moverCount(scene) > 1)
         return true;
+    if (!push)
+        return false;  // senza spinta un pezzo da solo salta dove c'è posto (Sequence), evitando le clip libere di A1
     if (object.kind != ObjectRef::Kind::Piece && object.kind != ObjectRef::Kind::PieceAudio)
         return false;
     return std::any_of(scene.items.begin(), scene.items.end(), [](const Item& i) {
         return i.ref.kind == ObjectRef::Kind::AudioClip && i.lane == AudioTracks::kOriginalTrack;
     });
+}
+
+// Le clip libere di A1 contro cui l'audio legato di un pezzo non deve andare (vuoto se il pezzo non ha l'audio legato).
+std::vector<TimeRange> freeClipRanges(const Project& project, ObjectRef object)
+{
+    std::vector<TimeRange> ranges;
+    const Fragment* f = object.kind == ObjectRef::Kind::Piece ? project.sequence().find(object.id) : nullptr;
+    const AudioTrack* host = project.audioTracks().track(AudioTracks::kOriginalTrack);
+    if (f == nullptr || f->detached || host == nullptr)
+        return ranges;
+    for (const AudioClip& clip : host->clips)
+        ranges.push_back({clip.position, clip.endPosition()});
+    return ranges;
 }
 
 // Sposta di `delta` il gruppo della scena (e, con la spinta, quelli che urta); false e nessuna modifica se non si può.
@@ -160,7 +234,7 @@ bool applyMove(Project& project, const Scene& scene, double delta, bool push)
         return false;
     if (std::abs(delta) <= kTimeEpsilon)
         return true;
-    if (std::abs(clampDelta(scene, delta, push) - delta) > kTimeEpsilon)
+    if (std::abs(limitDelta(scene, delta, push) - delta) > kTimeEpsilon)
         return false;
     // Di quanto si sposta ogni gruppo: quello preso `delta`, gli altri solo se spinti (verso destra).
     std::map<int, double> shift;
@@ -286,13 +360,13 @@ double Project::freeSpotFor(ObjectRef object, int track, double desired, bool pu
         now = sequence_.startOf(index);
     }
     const Scene scene = sceneOf(*this, object);
-    if (movesAsScene(scene, object))
-        return now + clampDelta(scene, desired - now, push);
+    if (movesAsScene(scene, object, push))
+        return now + limitDelta(scene, desired - now, push);
     if (object.kind == ObjectRef::Kind::TextClip)
         return text_.nearestFreeStart(object.id, track, desired);
     return object.kind == ObjectRef::Kind::AudioClip
                ? audio_.nearestFreePosition(object.id, track, desired, track == AudioTracks::kOriginalTrack ? linkedAudioRanges() : std::vector<TimeRange>{})
-               : sequence_.nearestFreeStart(object.id, desired, push);
+               : sequence_.nearestFreeStart(object.id, desired, push, freeClipRanges(*this, object));
 }
 
 Project::MoveResult Project::moveObject(ObjectRef object, int track, double start, bool push)
@@ -306,10 +380,10 @@ Project::MoveResult Project::moveObject(ObjectRef object, int track, double star
     if ((isClip && clip == nullptr) || (isText && textClip == nullptr) || (!isClip && !isText && index < 0))
         return result;
     const Scene scene = sceneOf(*this, object);
-    if (movesAsScene(scene, object)) {
+    if (movesAsScene(scene, object, push)) {
         // Nel gruppo si muove tutto insieme, ognuno sulla sua traccia.
         const double now = isClip ? clip->position : isText ? textClip->position : sequence_.startOf(index);
-        const double delta = clampDelta(scene, start - now, push);
+        const double delta = limitDelta(scene, start - now, push);
         result.group = moverCount(scene) > 1;
         result.moved = std::abs(delta) >= 0.0005 && applyMove(*this, scene, delta, push);
         return result;
