@@ -140,6 +140,19 @@ double clampDelta(const Scene& scene, double delta, bool push)
     return std::clamp(delta, std::min(lowest, 0.0), std::max(highest, 0.0));
 }
 
+// Se lo spostamento passa dalla scena (limiti, spinta e gruppo): più oggetti insieme, oppure un pezzo video con l'audio
+// legato su A1 mentre ci sono clip libere su A1, contro cui il suo audio non deve andare a sovrapporsi.
+bool movesAsScene(const Scene& scene, ObjectRef object)
+{
+    if (moverCount(scene) > 1)
+        return true;
+    if (object.kind != ObjectRef::Kind::Piece && object.kind != ObjectRef::Kind::PieceAudio)
+        return false;
+    return std::any_of(scene.items.begin(), scene.items.end(), [](const Item& i) {
+        return i.ref.kind == ObjectRef::Kind::AudioClip && i.lane == AudioTracks::kOriginalTrack;
+    });
+}
+
 // Sposta di `delta` il gruppo della scena (e, con la spinta, quelli che urta); false e nessuna modifica se non si può.
 bool applyMove(Project& project, const Scene& scene, double delta, bool push)
 {
@@ -273,7 +286,7 @@ double Project::freeSpotFor(ObjectRef object, int track, double desired, bool pu
         now = sequence_.startOf(index);
     }
     const Scene scene = sceneOf(*this, object);
-    if (moverCount(scene) > 1)
+    if (movesAsScene(scene, object))
         return now + clampDelta(scene, desired - now, push);
     if (object.kind == ObjectRef::Kind::TextClip)
         return text_.nearestFreeStart(object.id, track, desired);
@@ -293,11 +306,11 @@ Project::MoveResult Project::moveObject(ObjectRef object, int track, double star
     if ((isClip && clip == nullptr) || (isText && textClip == nullptr) || (!isClip && !isText && index < 0))
         return result;
     const Scene scene = sceneOf(*this, object);
-    if (moverCount(scene) > 1) {
+    if (movesAsScene(scene, object)) {
         // Nel gruppo si muove tutto insieme, ognuno sulla sua traccia.
         const double now = isClip ? clip->position : isText ? textClip->position : sequence_.startOf(index);
         const double delta = clampDelta(scene, start - now, push);
-        result.group = true;
+        result.group = moverCount(scene) > 1;
         result.moved = std::abs(delta) >= 0.0005 && applyMove(*this, scene, delta, push);
         return result;
     }

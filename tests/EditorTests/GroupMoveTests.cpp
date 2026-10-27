@@ -220,3 +220,20 @@ TEST(GroupMove, FreeClipOnA1StopsAgainstTheLinkedAudioOfThePieces)
     ASSERT_NE(m.project.ungroupObjects({{Kind::Piece, m.b}}).audioUnlinked, 0);
     EXPECT_EQ(m.project.linkedAudioRanges().size(), 1u);  // resta solo A
 }
+
+TEST(GroupMove, MovingAPieceRightNeverPutsItsAudioOverAFreeClipOnA1)
+{
+    // Regressione: spostando verso destra un pezzo, il suo audio legato finiva sopra la clip libera di A1.
+    for (const bool push : {false, true}) {
+        Montage m;  // pezzi: 0..2 (A), 3..5 (B), 6..8 (C)
+        ASSERT_NE(m.project.ungroupObjects({{Kind::Piece, m.b}}).audioUnlinked, 0);
+        const int freeClip = m.project.audioTracks().track(AudioTracks::kOriginalTrack)->clips.front().id;  // 3..5 su A1
+        const ObjectRef a{Kind::Piece, m.a};
+        const double spot = m.project.freeSpotFor(a, 0, 2.0, push);
+        m.project.moveObject(a, 0, spot, push);
+        const double audioEnd = m.start(m.a) + 2.0;
+        const double clipStart = m.project.audioTracks().find(freeClip)->position;
+        EXPECT_LE(audioEnd, clipStart + 1e-6) << "push=" << push;
+        EXPECT_NEAR(m.start(m.a), push ? 2.0 : 1.0, 1e-6) << "push=" << push;
+    }
+}
