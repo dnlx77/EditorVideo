@@ -18,6 +18,7 @@
 #include "EditorCore/SegmentExport.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/TransitionListPanel.h"
+#include "EditorApp/TransitionPreviewWidget.h"
 #include "EditorApp/ThumbnailCache.h"
 #include "EditorApp/WaveformStore.h"
 #include "EditorCore/TimeUtil.h"
@@ -65,6 +66,7 @@
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QSplitter>
 #include <QtWidgets/QStatusBar>
+#include <QtWidgets/QStackedWidget>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QVBoxLayout>
@@ -108,6 +110,7 @@ MainWindow::MainWindow(QWidget* parent)
                                          "trascina un file sulla linea del tempo per metterlo nel montaggio o su una "
                                          "traccia audio"));
     clipList_->installEventFilter(this);
+    connect(clipList_, &QListWidget::itemClicked, this, [this](QListWidgetItem*) { showSourcePlayer(); });
     connect(clipList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* item) {
         if (item != nullptr && !updatingList_) {
             setProgramActive(false);
@@ -182,7 +185,12 @@ MainWindow::MainWindow(QWidget* parent)
     auto* sourcePanel = new QWidget;
     auto* sourceLayout = new QVBoxLayout(sourcePanel);
     sourceLayout->setContentsMargins(0, 0, 0, 0);
-    sourceLayout->addWidget(player_, 1);
+    // La Sorgente mostra il file scelto oppure, scegliendo una transizione nell'elenco, la sua anteprima animata.
+    transitionPreview_ = new TransitionPreviewWidget;
+    sourceStack_ = new QStackedWidget;
+    sourceStack_->addWidget(player_);
+    sourceStack_->addWidget(transitionPreview_);
+    sourceLayout->addWidget(sourceStack_, 1);
 
     program_ = new ProgramMonitor(project_);
     program_->onActivated = [this] { setProgramActive(true); };
@@ -382,6 +390,13 @@ MainWindow::MainWindow(QWidget* parent)
     };
     // Il blocco in alto a sinistra ha due schede: i file del progetto e l'elenco delle transizioni.
     transitionPanel_ = new TransitionListPanel;
+    transitionPanel_->onSelected = [this](const core::Transition* transition) {
+        if (transition == nullptr)
+            return;
+        transitionPreview_->setTransition(transition);
+        sourceStack_->setCurrentWidget(transitionPreview_);
+        sourceTabs_->setCurrentIndex(0);
+    };
     leftTabs_ = new QTabWidget;
     leftTabs_->setDocumentMode(true);
     leftTabs_->addTab(leftPanel, QStringLiteral("File del progetto"));
@@ -1779,10 +1794,18 @@ void MainWindow::startNextProbe()
     probeThread_->start();
 }
 
+void MainWindow::showSourcePlayer()
+{
+    sourceStack_->setCurrentWidget(player_);
+}
+
 void MainWindow::selectClip(int id)
 {
     const core::Clip* clip = project_.find(id);
-    if (clip == nullptr || id == currentClipId_)
+    if (clip == nullptr)
+        return;
+    showSourcePlayer();  // un file scelto sostituisce l'anteprima di una transizione
+    if (id == currentClipId_)
         return;
 
     currentClipId_ = id;
