@@ -274,6 +274,15 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         onSeek(playhead_);
 }
 
+void SequenceTimeline::leaveEvent(QEvent* event)
+{
+    if (textHoverClip_ != 0) {
+        textHoverClip_ = 0;
+        update();
+    }
+    ZoomableTimeline::leaveEvent(event);
+}
+
 void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
 {
     const QPointF pos = event->position();
@@ -287,14 +296,23 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         EnvTarget envTarget;
         int envPoint = -1;
         bool fadeIn = false;
+        // Scritte: sulla maniglia in alto (dissolvenza) il cursore è una mano e la maniglia si evidenzia; sul bordo sotto
+        // (accorcia) è ⟷.
+        int hoverClip = 0;
         if (envelopeHit(pos, envTarget, envPoint))
             setCursor(envPoint >= 0 ? Qt::SizeAllCursor : Qt::SizeVerCursor);
-        else if (textFadeHandleAt(pos, lane, clip, fadeIn))
-            setCursor(Qt::SizeHorCursor);
-        else if (edgeAt(pos, atStart) >= 0 || audioEdgeAt(pos, lane, clip, atStart) || textEdgeAt(pos, lane, clip, atStart) || (header >= 0 && levelBar(header).contains(pos)))
+        else if (textFadeHandleAt(pos, lane, clip, fadeIn)) {
+            setCursor(Qt::PointingHandCursor);
+            hoverClip = textLanes_[static_cast<std::size_t>(lane)].clips[static_cast<std::size_t>(clip)].clipId;
+        } else if (edgeAt(pos, atStart) >= 0 || audioEdgeAt(pos, lane, clip, atStart) || textEdgeAt(pos, lane, clip, atStart) || (header >= 0 && levelBar(header).contains(pos)))
             setCursor(Qt::SizeHorCursor);
         else
             setCursor(Qt::ArrowCursor);
+        if (hoverClip != textHoverClip_ || (hoverClip != 0 && fadeIn != textHoverIn_)) {
+            textHoverClip_ = hoverClip;
+            textHoverIn_ = hoverClip != 0 && fadeIn;
+            update();
+        }
         return;
     }
     if (envActive_ && envPoint_ >= 0) {

@@ -482,10 +482,13 @@ void SequenceTimeline::paintText(QPainter& p)
                 p.setBrush(Qt::NoBrush);
                 p.setPen(QPen(QColor(255, 255, 255, 220), 1.5));
                 p.drawPath(path);
-                p.setBrush(Qt::white);
                 p.setPen(QPen(base.darker(160), 1));
-                for (const QPointF& handle : {inHandle, outHandle})
-                    p.drawEllipse(handle, 3.0, 3.0);
+                for (const bool in : {true, false}) {
+                    // Sotto il mouse (o trascinata) la maniglia diventa più grande e gialla: è lei che si prende.
+                    const bool active = (textHoverClip_ == c.clipId && textHoverIn_ == in) || (textFadeClip_ == c.clipId && textFadeIsIn_ == in);
+                    p.setBrush(active ? QColor(255, 210, 0) : QColor(Qt::white));
+                    p.drawEllipse(in ? inHandle : outHandle, active ? 5.5 : 4.0, active ? 5.5 : 4.0);
+                }
                 p.setRenderHint(QPainter::Antialiasing, false);
             }
         }
