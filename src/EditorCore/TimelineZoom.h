@@ -32,6 +32,9 @@ public:
 
     double xForTime(double seconds) const;  // può uscire da [0, width] se il tempo non è visibile
     double timeForX(double x) const;        // sempre dentro [0, durata]
+    // Come timeForX ma senza il limite della durata (solo non prima di 0): per i trascinamenti che possono andare oltre
+    // la fine del contenuto (allungare un bordo, spostare in avanti).
+    double timeForXBeyondEnd(double x) const;
 
     // Moltiplica i pixel per secondo per `factor` tenendo fermo il tempo che sta in `x` (es. sotto il mouse), entro
     // lo zoom minimo e massimo. Quando tutto il contenuto sta nella larghezza parte sempre dal bordo sinistro: lì il

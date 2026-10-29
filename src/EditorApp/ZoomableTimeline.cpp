@@ -69,6 +69,11 @@ double ZoomableTimeline::timeForX(double x) const
     return zoom_.timeForX(x - timeAxis().left());
 }
 
+double ZoomableTimeline::timeForXBeyondEnd(double x) const
+{
+    return zoom_.timeForXBeyondEnd(x - timeAxis().left());
+}
+
 void ZoomableTimeline::zoomAtX(double factor, double widgetX)
 {
     const bool wasFit = zoom_.isFit();

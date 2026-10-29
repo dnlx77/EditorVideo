@@ -86,6 +86,11 @@ double TimelineZoom::timeForX(double x) const
     return std::clamp(offset() + x / pixelsPerSecond(), 0.0, duration_);
 }
 
+double TimelineZoom::timeForXBeyondEnd(double x) const
+{
+    return std::max(0.0, offset() + x / pixelsPerSecond());
+}
+
 void TimelineZoom::zoomAt(double factor, double x)
 {
     if (duration_ <= 0 || factor <= 0)
