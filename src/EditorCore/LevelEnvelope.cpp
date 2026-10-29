@@ -92,6 +92,16 @@ std::vector<LevelPoint> withoutPointAt(std::vector<LevelPoint> points, double ti
     return points;
 }
 
+std::vector<LevelPoint> withoutPointsBetween(std::vector<LevelPoint> points, double from, double to)
+{
+    points.erase(std::remove_if(points.begin(), points.end(),
+                                [&](const LevelPoint& p) {
+                                    return p.time >= from - kEdgePointTolerance && p.time <= to + kEdgePointTolerance;
+                                }),
+                 points.end());
+    return points;
+}
+
 std::vector<LevelPoint> withPointAt(std::vector<LevelPoint> points, double time, double db)
 {
     points = withoutPointAt(std::move(points), time);
