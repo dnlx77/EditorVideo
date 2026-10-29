@@ -329,6 +329,38 @@ Project::UngroupResult Project::ungroupObjects(const std::vector<ObjectRef>& obj
     return result;
 }
 
+bool Project::addToGroup(int groupId, ObjectRef object)
+{
+    return objectExists(object) && groups_.addTo(groupId, object);
+}
+
+bool Project::removeFromGroup(ObjectRef object)
+{
+    return groups_.remove(object);
+}
+
+bool Project::renameGroup(int groupId, const std::string& name)
+{
+    return groups_.rename(groupId, name);
+}
+
+std::vector<ObjectGroup> Project::validGroupList() const
+{
+    std::vector<ObjectGroup> result;
+    for (const ObjectGroup& g : groups_.all()) {
+        ObjectGroup valid;
+        valid.id = g.id;
+        valid.name = g.name;
+        for (const ObjectRef& o : g.members) {
+            if (objectExists(o))
+                valid.members.push_back(o);
+        }
+        if (valid.members.size() >= 2)
+            result.push_back(std::move(valid));
+    }
+    return result;
+}
+
 std::vector<std::vector<ObjectRef>> Project::validGroups() const
 {
     std::vector<std::vector<ObjectRef>> result;

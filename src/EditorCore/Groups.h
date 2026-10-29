@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <vector>
 
 namespace editor::core {
@@ -29,7 +30,11 @@ struct ObjectRef
 struct ObjectGroup
 {
     int id = 0;
+    std::string name;  // vuoto = nome automatico (label)
     std::vector<ObjectRef> members;
+
+    // Il nome da mostrare: quello dato dall'utente, altrimenti "Gruppo N" (N = id, fisso finché il gruppo esiste).
+    std::string label() const { return name.empty() ? "Gruppo " + std::to_string(id) : name; }
 
     bool operator==(const ObjectGroup&) const = default;
 };
@@ -43,6 +48,14 @@ public:
     // gruppi rimasti con meno di due oggetti si sciolgono. Restituisce l'id, 0 se gli oggetti sono meno di due.
     int create(const std::vector<ObjectRef>& objects);
     bool dissolve(int groupId);
+    // Dà un nome al gruppo (vuoto = torna il nome automatico); false se il gruppo non c'è o il nome non cambia.
+    bool rename(int groupId, const std::string& name);
+    // Mette l'oggetto nel gruppo (in fondo). Se stava in un altro gruppo ne esce: quello rimasto con meno di due oggetti
+    // si scioglie. false se il gruppo non c'è o l'oggetto ci sta già.
+    bool addTo(int groupId, ObjectRef object);
+    // Toglie l'oggetto dal suo gruppo (non dal montaggio): se il gruppo resta con meno di due oggetti si scioglie. false
+    // se l'oggetto non era in nessun gruppo.
+    bool remove(ObjectRef object);
     int groupOf(ObjectRef object) const;  // 0 se non è in nessun gruppo
     const ObjectGroup* find(int groupId) const;
     const std::vector<ObjectGroup>& all() const { return groups_; }
@@ -50,6 +63,8 @@ public:
     void clear() { groups_.clear(); }
     // Riprende i gruppi da un elenco (riaprendo un progetto): ricevono id nuovi; quelli con meno di due oggetti si scartano.
     void restore(const std::vector<std::vector<ObjectRef>>& groups);
+    // Lo stesso con i nomi (gli id dei gruppi in `groups` non si usano).
+    void restore(const std::vector<ObjectGroup>& groups);
     // Toglie dai gruppi gli oggetti per cui `keep` dà false; i gruppi con meno di due oggetti si sciolgono.
     template <typename Keep>
     void prune(Keep keep)

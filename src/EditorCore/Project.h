@@ -245,6 +245,15 @@ public:
     };
     // Lo porta (o porta il gruppo) a `start`, entro quello che freeSpotFor permette.
     MoveResult moveObject(ObjectRef object, int track, double start, bool push);
+    // Cambiare come sono fatti i gruppi senza toccare il montaggio (l'elenco dei gruppi): nessun oggetto si sposta o
+    // si elimina. false (e nessuna modifica) se il gruppo o l'oggetto non ci sono, o non cambierebbe niente.
+    // addToGroup: l'oggetto passa dal suo gruppo (se ne ha uno) a questo. removeFromGroup: l'oggetto resta libero; il
+    // gruppo con meno di due oggetti si scioglie. renameGroup: nome vuoto = automatico.
+    bool addToGroup(int groupId, ObjectRef object);
+    bool removeFromGroup(ObjectRef object);
+    bool renameGroup(int groupId, const std::string& name);
+    // Come validGroups, con id e nome (per salvarli).
+    std::vector<ObjectGroup> validGroupList() const;
     // I gruppi dell'utente senza gli oggetti che non esistono più, con almeno due oggetti (per salvarli).
     std::vector<std::vector<ObjectRef>> validGroups() const;
 
