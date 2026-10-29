@@ -191,6 +191,9 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         EnvTarget envTarget;
         int envPoint = -1;
         if (envelopeHit(pos, envTarget, envPoint)) {
+            // Maiusc: è l'inizio del doppio clic che toglie tutti i pallini, non si aggiunge né si sposta niente.
+            if (event->modifiers() & Qt::ShiftModifier)
+                return;
             envActive_ = true;
             envTarget_ = envTarget;
             envPoints_ = *envTarget.line;
@@ -833,6 +836,21 @@ void SequenceTimeline::mouseDoubleClickEvent(QMouseEvent* event)
         if (lane >= 0 && levelBar(lane).contains(pos) && onTrackLevel)
             onTrackLevel(lanes_[static_cast<std::size_t>(lane)].trackId, 0.0);
         return;
+    }
+    if (event->modifiers() & Qt::ShiftModifier) {
+        // Maiusc + doppio clic sulla linea del livello: toglie tutti i pallini di quel pezzo o clip. Quello comune con
+        // il vicino sparisce solo da questo: il vicino tiene il suo punto sul bordo.
+        EnvTarget target;
+        int point = -1;
+        if (envelopeHit(pos, target, point)) {
+            if (onEnvelopeChanged) {
+                const std::vector<core::LevelPoint> points =
+                    core::withoutPointsBetween(*target.line, target.source, target.source + target.length);
+                if (points != *target.line)
+                    onEnvelopeChanged(target.fragment, target.id, points);
+            }
+            return;
+        }
     }
     if (JunctionDot dot; junctionHit(pos, dot)) {
         // Doppio clic sul pallino della giunzione: lo toglie.
