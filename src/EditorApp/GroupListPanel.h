@@ -5,10 +5,12 @@
 #include <QtCore/QString>
 #include <QtWidgets/QWidget>
 
+#include <functional>
 #include <vector>
 
 class QLabel;
 class QTreeWidget;
+class QTreeWidgetItem;
 
 namespace editor::app {
 
@@ -35,8 +37,8 @@ struct GroupRow
     bool operator==(const GroupRow&) const = default;
 };
 
-// L'elenco dei gruppi del montaggio: un albero con un nodo per gruppo e, dentro, i suoi oggetti. Per ora si guarda
-// soltanto: il pannello non modifica mai il progetto, lo riempie la finestra con setGroups.
+// L'elenco dei gruppi del montaggio: un albero con un nodo per gruppo e, dentro, i suoi oggetti. Il pannello non
+// modifica mai il progetto: lo riempie la finestra con setGroups, e dice cosa si è scelto con onChosen.
 class GroupListPanel : public QWidget
 {
 public:
@@ -48,10 +50,21 @@ public:
     int groupCount() const;
     QTreeWidget* tree() const { return tree_; }
 
+    // Evidenzia nell'elenco ciò che è scelto sulla linea del tempo: se sono tutti gli oggetti di un gruppo, il suo nodo; se è
+    // uno solo di un gruppo, quell'oggetto; altrimenti niente. Non chiama onChosen.
+    void showSelection(const std::vector<editor::core::ObjectRef>& selected);
+
+    // Si è scelto (con il clic o con la tastiera) un gruppo (tutti i suoi oggetti) o un oggetto: gli oggetti e il tempo
+    // d'inizio più presto fra loro.
+    std::function<void(const std::vector<editor::core::ObjectRef>&, double start)> onChosen;
+
 private:
     QTreeWidget* tree_ = nullptr;
     QLabel* empty_ = nullptr;
     std::vector<GroupRow> rows_;
+    bool choosing_ = false;  // onChosen è in corso
+    bool showing_ = false;  // showSelection sta cambiando la scelta: non è un clic dell'utente
+    void choose(const QTreeWidgetItem* item);
     std::vector<int> collapsed_;  // id dei gruppi chiusi dall'utente (restano chiusi quando l'elenco si rifà)
 };
 

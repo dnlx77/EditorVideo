@@ -269,6 +269,7 @@ private:
     void replaceAudioDialog();
     void relinkAudio();
     void ungroupSelection();  // U: scioglie il gruppo (o, se non è in gruppo, scollega l'audio del pezzo)
+    void showGroupSelection();  // evidenzia nell'elenco dei gruppi ciò che è scelto sulla linea del tempo
     void refreshGroups();     // l'elenco dei gruppi (scheda Gruppi) dal progetto
     void showGroupStatus();   // nella barra di stato: il gruppo dell'oggetto scelto
     std::vector<core::ObjectRef> selectedRefs() const;  // gli oggetti scelti, per G e U
