@@ -93,6 +93,8 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
         p.fillRect(changed, longer ? QColor(255, 255, 255, 110) : QColor(0, 0, 0, 120));
         p.setPen(QPen(palette().color(QPalette::Highlight), 3));
         p.drawLine(QPointF(newX, lane.top() - 3), QPointF(newX, lane.bottom() + 3));
+        const double edgeTime = trimEdgeSequenceTime(trimValue_);
+        paintAlignGuide(p, edgeTime, edgeMarks(trimIndex_, 0, 0, trimAtStart_ ? startOfBlock(trimIndex_) : startOfBlock(trimIndex_) + blocks_[static_cast<std::size_t>(trimIndex_)].length));
     }
     int trimLane = -1;
     if (audioTrimming_) {
@@ -107,6 +109,8 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
             p.fillRect(changed, longer ? QColor(255, 255, 255, 110) : QColor(0, 0, 0, 120));
             p.setPen(QPen(palette().color(QPalette::Highlight), 3));
             p.drawLine(QPointF(newX, lane.top() - 3), QPointF(newX, lane.bottom() + 3));
+            paintAlignGuide(p, oldEdge + audioTrimValue_ - (audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length),
+                            edgeMarks(-1, c->clipId, 0, oldEdge));
         }
     }
     if (textTrimming_) {
@@ -122,6 +126,27 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
             p.fillRect(changed, longer ? QColor(255, 255, 255, 110) : QColor(0, 0, 0, 120));
             p.setPen(QPen(palette().color(QPalette::Highlight), 3));
             p.drawLine(QPointF(newX, lane.top() - 3), QPointF(newX, lane.bottom() + 3));
+            paintAlignGuide(p, textTrimValue_, edgeMarks(-1, 0, c->clipId, oldEdge));
+        }
+    }
+    // Spostamento di una clip intera: la riga quando il suo inizio o la sua fine è a livello con un altro bordo.
+    if (dragging_ && dragIndex_ >= 0 && dragIndex_ < static_cast<int>(blocks_.size())) {
+        const auto marks = snapMarks(dragIndex_, 0, false, false);
+        paintAlignGuide(p, dragStart_, marks);
+        paintAlignGuide(p, dragStart_ + blocks_[static_cast<std::size_t>(dragIndex_)].length, marks);
+    }
+    if (audioDragging_ && audioDragLane_ >= 0) {
+        if (const AudioBlock* c = findAudioClip(audioDragClip_)) {
+            const auto marks = snapMarks(-1, c->clipId, true, true);
+            paintAlignGuide(p, audioDragStart_, marks);
+            paintAlignGuide(p, audioDragStart_ + c->length, marks);
+        }
+    }
+    if (textDragging_ && textDragLane_ >= 0) {
+        if (const TextBlock* c = findTextClip(textDragClip_)) {
+            const auto marks = snapMarks(-1, 0, true, true, c->clipId);
+            paintAlignGuide(p, textDragStart_, marks);
+            paintAlignGuide(p, textDragStart_ + c->length, marks);
         }
     }
     if (blocks_.empty() && lanes_.size() == 1 && textLanes_.empty())

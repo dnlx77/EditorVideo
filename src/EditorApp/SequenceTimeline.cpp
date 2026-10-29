@@ -557,7 +557,7 @@ double SequenceTimeline::trimTarget(double x, bool ripple) const
     const double start = starts_[static_cast<std::size_t>(trimIndex_)];
     const double edge = trimAtStart_ ? start : start + b.length;
     double t = timeForX(x) - trimGrab_;
-    t = snapped(t, snapMarks(trimIndex_, 0, true, false), {0.0});
+    t = snapped(t, edgeMarks(trimIndex_, 0, 0, edge), {0.0});
     const double desired = (trimAtStart_ ? b.sourceStart : b.sourceStart + b.length) + (t - edge);
     return trimLimit ? trimLimit(b.fragmentId, trimAtStart_, desired, ripple) : desired;
 }
@@ -834,7 +834,7 @@ double SequenceTimeline::textTrimTarget(double x) const
     if (c == nullptr)
         return 0.0;
     double t = timeForX(x) - textTrimGrab_;
-    t = snapped(t, snapMarks(-1, 0, true, true, c->clipId), {0.0});
+    t = snapped(t, edgeMarks(-1, 0, c->clipId, textTrimAtStart_ ? c->position : c->position + c->length), {0.0});
     return textTrimLimit ? textTrimLimit(c->clipId, textTrimAtStart_, t) : t;
 }
 
@@ -951,6 +951,36 @@ double SequenceTimeline::snapped(double desired, const std::vector<double>& mark
     return result;
 }
 
+std::vector<double> SequenceTimeline::edgeMarks(int ignoredBlock, int ignoredClip, int ignoredText, double originalEdge) const
+{
+    std::vector<double> marks = snapMarks(ignoredBlock, ignoredClip, true, true, ignoredText);
+    marks.erase(std::remove_if(marks.begin(), marks.end(), [originalEdge](double m) { return std::abs(m - originalEdge) < 1e-6; }),
+                marks.end());
+    return marks;
+}
+
+void SequenceTimeline::paintAlignGuide(QPainter& p, double time, const std::vector<double>& marks) const
+{
+    const double tolerance = 1.5 / zoom().pixelsPerSecond();
+    const bool aligned = std::any_of(marks.begin(), marks.end(), [&](double m) { return std::abs(m - time) < tolerance; });
+    if (!aligned)
+        return;
+    const QRectF first = textLanes_.empty() ? videoLane() : textLane(static_cast<int>(textLanes_.size()) - 1);
+    const QRectF last = audioLane(static_cast<int>(lanes_.size()) - 1);
+    const double x = xForTime(time);
+    if (x < videoLane().left() - 1 || x > videoLane().right() + 1)
+        return;
+    // Bianca con un filo scuro intorno, per vedersi sia sul chiaro sia sullo scuro.
+    p.setRenderHint(QPainter::Antialiasing, false);
+    QPen outline(QColor(0, 0, 0, 200), 4, Qt::SolidLine, Qt::FlatCap);
+    p.setPen(outline);
+    p.drawLine(QPointF(x, first.top() - 4), QPointF(x, last.bottom() + 4));
+    QPen dash(QColor(255, 255, 255), 2, Qt::CustomDashLine, Qt::FlatCap);
+    dash.setDashPattern({4.0, 3.0});
+    p.setPen(dash);
+    p.drawLine(QPointF(x, first.top() - 4), QPointF(x, last.bottom() + 4));
+}
+
 bool SequenceTimeline::audioClipAt(const QPointF& pos, int& lane, int& clip) const
 {
     lane = laneAt(pos.y());
@@ -1015,7 +1045,7 @@ double SequenceTimeline::audioTrimTarget(double x, bool ripple) const
         return 0.0;
     const double edge = audioTrimAtStart_ ? c->position : c->position + c->length;
     double t = timeForX(x) - audioTrimGrab_;
-    t = snapped(t, snapMarks(-1, c->clipId, true, true), {0.0});
+    t = snapped(t, edgeMarks(-1, c->clipId, 0, edge), {0.0});
     const double desired = (audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length) + (t - edge);
     return audioTrimLimit ? audioTrimLimit(c->clipId, audioTrimAtStart_, desired, ripple) : desired;
 }
