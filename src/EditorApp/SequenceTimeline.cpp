@@ -556,7 +556,7 @@ double SequenceTimeline::trimTarget(double x, bool ripple) const
     const Block& b = blocks_[static_cast<std::size_t>(trimIndex_)];
     const double start = starts_[static_cast<std::size_t>(trimIndex_)];
     const double edge = trimAtStart_ ? start : start + b.length;
-    double t = timeForX(x) - trimGrab_;
+    double t = timeForXBeyondEnd(x) - trimGrab_;
     t = snapped(t, snapMarks(trimIndex_, 0, true, false), {0.0});
     const double desired = (trimAtStart_ ? b.sourceStart : b.sourceStart + b.length) + (t - edge);
     return trimLimit ? trimLimit(b.fragmentId, trimAtStart_, desired, ripple) : desired;
@@ -616,7 +616,7 @@ double SequenceTimeline::dragTarget(double x) const
     if (dragIndex_ < 0 || dragIndex_ >= static_cast<int>(blocks_.size()))
         return 0.0;
     const Block& dragged = blocks_[dragIndex_];
-    double desired = timeForX(x) - dragGrab_;
+    double desired = timeForXBeyondEnd(x) - dragGrab_;
     // Aggancio ai bordi: l'inizio o la fine del blocco, a meno di 10 pixel da un bordo di un altro blocco o dall'inizio
     // della sequenza. (Il cursore no: il clic per prendere il blocco lo porta proprio lì.)
     desired = std::max(0.0, snapped(desired, snapMarks(dragIndex_, 0, false, false), {0.0, dragged.length}));
@@ -822,7 +822,7 @@ double SequenceTimeline::textDragTarget(double x, int lane) const
     const TextBlock* c = findTextClip(textDragClip_);
     if (c == nullptr || lane < 0)
         return 0.0;
-    double desired = timeForX(x) - textDragGrab_;
+    double desired = timeForXBeyondEnd(x) - textDragGrab_;
     desired = std::max(0.0, snapped(desired, snapMarks(-1, 0, true, true, c->clipId), {0.0, c->length}));
     const int layer = textLanes_[static_cast<std::size_t>(lane)].layerId;
     return textFreePosition ? textFreePosition(c->clipId, layer, desired) : desired;
@@ -833,7 +833,7 @@ double SequenceTimeline::textTrimTarget(double x) const
     const TextBlock* c = findTextClip(textTrimClip_);
     if (c == nullptr)
         return 0.0;
-    double t = timeForX(x) - textTrimGrab_;
+    double t = timeForXBeyondEnd(x) - textTrimGrab_;
     t = snapped(t, snapMarks(-1, 0, true, true, c->clipId), {0.0});
     return textTrimLimit ? textTrimLimit(c->clipId, textTrimAtStart_, t) : t;
 }
@@ -1001,7 +1001,7 @@ double SequenceTimeline::audioDragTarget(double x, int lane) const
     const AudioBlock* c = findAudioClip(audioDragClip_);
     if (c == nullptr || lane < 0)
         return 0.0;
-    double desired = timeForX(x) - audioDragGrab_;
+    double desired = timeForXBeyondEnd(x) - audioDragGrab_;
     // Aggancio ai bordi dell'inizio o della fine, a meno di 10 pixel.
     desired = std::max(0.0, snapped(desired, snapMarks(-1, c->clipId, true, true), {0.0, c->length}));
     const int track = lanes_[static_cast<std::size_t>(lane)].trackId;
@@ -1014,7 +1014,7 @@ double SequenceTimeline::audioTrimTarget(double x, bool ripple) const
     if (c == nullptr)
         return 0.0;
     const double edge = audioTrimAtStart_ ? c->position : c->position + c->length;
-    double t = timeForX(x) - audioTrimGrab_;
+    double t = timeForXBeyondEnd(x) - audioTrimGrab_;
     t = snapped(t, snapMarks(-1, c->clipId, true, true), {0.0});
     const double desired = (audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length) + (t - edge);
     return audioTrimLimit ? audioTrimLimit(c->clipId, audioTrimAtStart_, desired, ripple) : desired;

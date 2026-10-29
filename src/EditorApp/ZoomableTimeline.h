@@ -54,6 +54,7 @@ protected:
     void followPlayhead(double seconds);
     double xForTime(double seconds) const;  // coordinate del widget
     double timeForX(double x) const;
+    double timeForXBeyondEnd(double x) const;  // senza il limite della durata dell'asse (vedi TimelineZoom)
     // Parte orizzontale visibile dell'asse, per non disegnare fuori (con zoom alto l'asse è larghissimo).
     double visibleLeft() const { return timeAxis().left(); }
     double visibleRight() const { return timeAxis().right(); }

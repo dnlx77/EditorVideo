@@ -27,6 +27,9 @@ TEST(TimelineZoom, FitShowsEverything)
     EXPECT_DOUBLE_EQ(zoom.timeForX(250.0), 25.0);
     EXPECT_DOUBLE_EQ(zoom.timeForX(-20.0), 0.0);    // fuori dalla traccia: limitato alla durata
     EXPECT_DOUBLE_EQ(zoom.timeForX(5000.0), 100.0);
+    // Senza il limite della durata (trascinare un bordo oltre la fine del montaggio), ma mai prima di 0.
+    EXPECT_DOUBLE_EQ(zoom.timeForXBeyondEnd(5000.0), 500.0);
+    EXPECT_DOUBLE_EQ(zoom.timeForXBeyondEnd(-20.0), 0.0);
 }
 
 TEST(TimelineZoom, ConversionsWithZoomAndScroll)
