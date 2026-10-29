@@ -235,7 +235,7 @@ int runTransitionTest(const QStringList&, qsizetype)
     // Le due schede nella finestra.
     MainWindow window;
     QTabWidget* tabs = window.leftTabs();
-    check(tabs != nullptr && tabs->count() == 2 && tabs->tabText(0) == QStringLiteral("File del progetto")
+    check(tabs != nullptr && tabs->count() >= 2 && tabs->tabText(0) == QStringLiteral("File del progetto")
               && tabs->tabText(1) == QStringLiteral("Transizioni"),
           "il blocco in alto a sinistra ha le schede File del progetto e Transizioni");
     check(tabs != nullptr && tabs->currentIndex() == 0 && window.filesDock()->widget() == tabs,

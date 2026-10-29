@@ -1,4 +1,5 @@
 #include "EditorApp/MainWindow.h"
+#include "EditorApp/GroupListPanel.h"
 
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/PlayerWidget.h"
@@ -471,6 +472,58 @@ void MainWindow::ungroupSelection()
     statusBar()->showMessage(result.dissolved > 0 ? QStringLiteral("Gruppo sciolto.")
                                                   : QStringLiteral("Video e audio non sono più un gruppo: l'audio è una clip libera su A1."),
                              8000);
+}
+
+void MainWindow::refreshGroups()
+{
+    using Kind = core::ObjectRef::Kind;
+    const core::Sequence& sequence = project_.sequence();
+    const auto entryFor = [&](core::ObjectRef ref) {
+        GroupEntry entry;
+        entry.ref = ref;
+        if (ref.kind == Kind::Piece || ref.kind == Kind::PieceAudio) {
+            const core::Fragment* f = sequence.find(ref.id);
+            const core::Clip* clip = f != nullptr ? project_.find(f->clipId) : nullptr;
+            entry.kind = ref.kind == Kind::Piece ? QStringLiteral("Video") : QStringLiteral("Audio del video");
+            entry.name = clip != nullptr ? fileNameOf(clip->path) : QString();
+            entry.start = sequence.startOf(sequence.indexOf(ref.id));
+        } else if (ref.kind == Kind::AudioClip) {
+            const core::AudioClip* clip = project_.audioTracks().find(ref.id);
+            entry.kind = QStringLiteral("Audio");
+            entry.name = clip != nullptr ? fileNameOf(clip->path) : QString();
+            entry.start = clip != nullptr ? clip->position : 0.0;
+        } else {
+            const core::TextClip* clip = project_.textTracks().find(ref.id);
+            entry.kind = QStringLiteral("Scritta");
+            if (clip != nullptr) {
+                entry.name = QString::fromUtf8(clip->text.c_str()).section(QLatin1Char('\n'), 0, 0);
+                entry.start = clip->position;
+            }
+        }
+        return entry;
+    };
+    std::vector<GroupRow> rows;
+    for (const core::ObjectGroup& group : project_.validGroupList()) {
+        GroupRow row;
+        row.id = group.id;
+        row.title = QString::fromUtf8(group.label().c_str());
+        for (const core::ObjectRef& ref : group.members)
+            row.entries.push_back(entryFor(ref));
+        rows.push_back(std::move(row));
+    }
+    // I video con il loro audio, se nessuno dei due sta in un gruppo dell'utente.
+    for (const core::Fragment& f : sequence.fragments()) {
+        const core::ObjectRef piece{Kind::Piece, f.id};
+        const core::ObjectRef audio{Kind::PieceAudio, f.id};
+        if (!project_.objectExists(audio) || project_.groups().groupOf(piece) != 0 || project_.groups().groupOf(audio) != 0)
+            continue;
+        GroupRow row;
+        row.natural = true;
+        row.entries = {entryFor(piece), entryFor(audio)};
+        row.title = row.entries.front().name;
+        rows.push_back(std::move(row));
+    }
+    groupPanel_->setGroups(std::move(rows));
 }
 
 void MainWindow::showGroupStatus()

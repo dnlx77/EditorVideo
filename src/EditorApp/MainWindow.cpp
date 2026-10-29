@@ -17,6 +17,7 @@
 #include "EditorCore/Proxy.h"
 #include "EditorCore/SegmentExport.h"
 #include "EditorApp/TextEditorPanel.h"
+#include "EditorApp/GroupListPanel.h"
 #include "EditorApp/TransitionListPanel.h"
 #include "EditorApp/TransitionPreviewWidget.h"
 #include "EditorApp/ThumbnailCache.h"
@@ -409,6 +410,8 @@ MainWindow::MainWindow(QWidget* parent)
     leftTabs_->setDocumentMode(true);
     leftTabs_->addTab(leftPanel, QStringLiteral("File del progetto"));
     leftTabs_->addTab(transitionPanel_, QStringLiteral("Transizioni"));
+    groupPanel_ = new GroupListPanel;
+    leftTabs_->addTab(groupPanel_, QStringLiteral("Gruppi"));
     filesDock_ = makeDock(QStringLiteral("File del progetto"), QStringLiteral("pannelloFile"), leftTabs_);
     // Il pannello Sorgente ha una scheda in più, "Scritta": l'editor della scritta scelta (le modifiche valgono subito e si
     // vedono nel Montaggio, che resta a fianco).
@@ -1126,6 +1129,7 @@ void MainWindow::refreshTimeline()
     }
     timeline_->setTextLanes(std::move(textLanes));
     refreshTransitions();
+    refreshGroups();
     if (removeTextLayerAction_ != nullptr)
         removeTextLayerAction_->setEnabled(!project_.textTracks().layers().empty());
     if (editTextAction_ != nullptr)
