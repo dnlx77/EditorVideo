@@ -838,17 +838,14 @@ void SequenceTimeline::mouseDoubleClickEvent(QMouseEvent* event)
         return;
     }
     if (event->modifiers() & Qt::ShiftModifier) {
-        // Maiusc + doppio clic sulla linea del livello: toglie tutti i pallini di quel pezzo o clip. Quello comune con
-        // il vicino sparisce solo da questo: il vicino tiene il suo punto sul bordo.
+        // Maiusc + doppio clic sulla linea del livello: toglie tutti i pallini di quel pezzo o clip, anche quelli che
+        // non si vedono (fuori dai bordi tagliati). Quello comune con il vicino sparisce solo da questo: il vicino tiene
+        // il suo punto sul bordo.
         EnvTarget target;
         int point = -1;
         if (envelopeHit(pos, target, point)) {
-            if (onEnvelopeChanged) {
-                const std::vector<core::LevelPoint> points =
-                    core::withoutPointsBetween(*target.line, target.source, target.source + target.length);
-                if (points != *target.line)
-                    onEnvelopeChanged(target.fragment, target.id, points);
-            }
+            if (onEnvelopeChanged && !target.line->empty())
+                onEnvelopeChanged(target.fragment, target.id, {});
             return;
         }
     }
