@@ -231,6 +231,10 @@ public:
     // il doppio clic su un punto lo toglie. Lasciando il mouse si chiama onEnvelopeChanged con la linea nuova, di un
     // pezzo (fragment) o di una clip audio.
     std::function<void(bool fragment, int id, const std::vector<core::LevelPoint>& points)> onEnvelopeChanged;
+    // Il pallino comune su una giunzione (vedi Project::Junction): fra due pezzi o clip attaccati, sul punto in cui si
+    // toccano. Trascinarlo in verticale cambia il livello di tutti e due; cliccando sulla giunzione lo si ricrea; il
+    // doppio clic lo toglie. `db` nullo = toglierlo.
+    std::function<void(bool fragment, int first, int second, std::optional<double> db)> onJunctionLevel;
     // Clip audio: selezione, spostamento (dove può andare sulla traccia `trackId` se la si vuole a `desired`, e dove è
     // stata lasciata), bordi (come trimLimit/onTrim dei pezzi video, nei tempi del file della clip).
     std::function<void(int clipId)> onAudioClipSelected;
@@ -336,6 +340,19 @@ private:
         double source = 0.0;    // inizio nel file
         const std::vector<core::LevelPoint>* line = nullptr;
     };
+    // Una giunzione fra due pezzi o clip attaccati sulla stessa corsia, con il suo pallino se c'è.
+    struct JunctionDot
+    {
+        EnvTarget first;
+        EnvTarget second;
+        double time = 0.0;                  // dove si toccano, nella sequenza
+        std::optional<double> level;        // dB del pallino (punti sui due bordi, allo stesso livello)
+        double firstEdgeDb = 0.0;           // la linea del primo sul suo bordo finale
+        double secondEdgeDb = 0.0;          // e quella del secondo sul suo bordo iniziale
+    };
+    std::vector<JunctionDot> junctionDots() const;
+    bool junctionHit(const QPointF& pos, JunctionDot& dot) const;
+    void paintJunctions(QPainter& p, int lane, const QRectF& rect);
     EnvTarget targetOfBlock(std::size_t index) const;
     EnvTarget targetOfClip(int lane, std::size_t index) const;
     bool sameTarget(const EnvTarget& a, const EnvTarget& b) const { return a.fragment == b.fragment && a.id == b.id; }
@@ -462,6 +479,15 @@ private:
     int envPoint_ = -1;            // punto preso
     bool envMoved_ = false;        // la linea è cambiata (punto aggiunto o spostato)
     std::vector<core::LevelPoint> envPoints_;  // la linea in modifica
+    bool jointActive_ = false;     // si sta trascinando il pallino di una giunzione
+    JunctionDot joint_;
+    double jointDb_ = 0.0;
+    bool jointMoved_ = false;
+    std::vector<core::LevelPoint> jointBaseFirst_;   // le linee com'erano alla presa
+    std::vector<core::LevelPoint> jointBaseSecond_;
+    std::vector<core::LevelPoint> jointFirstLine_;   // le due linee con il pallino al livello trascinato
+    std::vector<core::LevelPoint> jointSecondLine_;
+    void updateJointLines();
     int levelLane_ = -1;           // corsia di cui si trascina il livello
     double levelValue_ = 0.0;
 

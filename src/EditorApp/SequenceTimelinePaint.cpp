@@ -601,6 +601,7 @@ void SequenceTimeline::paintAudio(QPainter& p)
         }
         for (std::size_t c = 0; c < lanes_[static_cast<std::size_t>(i)].clips.size(); ++c)
             paintEnvelope(p, targetOfClip(i, c), lane);
+        paintJunctions(p, i, lane);
         p.setRenderHint(QPainter::Antialiasing, false);
         // Tratto selezionato
         if (hasAudioSelection() && lanes_[static_cast<std::size_t>(i)].trackId == selectionTrack_) {
@@ -664,7 +665,98 @@ SequenceTimeline::EnvTarget SequenceTimeline::targetOfClip(int lane, std::size_t
 
 const std::vector<core::LevelPoint>& SequenceTimeline::lineOf(const EnvTarget& target) const
 {
+    if (jointActive_ && target.fragment == joint_.first.fragment) {
+        if (target.id == joint_.first.id)
+            return jointFirstLine_;
+        if (target.id == joint_.second.id)
+            return jointSecondLine_;
+    }
     return envActive_ && sameTarget(target, envTarget_) ? envPoints_ : *target.line;
+}
+
+std::vector<SequenceTimeline::JunctionDot> SequenceTimeline::junctionDots() const
+{
+    constexpr double kTouch = 1e-4;  // secondi
+    constexpr double kSameDb = 1e-3;
+    std::vector<JunctionDot> dots;
+    const auto make = [&](const EnvTarget& a, const EnvTarget& b) {
+        JunctionDot dot;
+        dot.first = a;
+        dot.second = b;
+        dot.time = b.position;
+        const auto& lineA = lineOf(a);
+        const auto& lineB = lineOf(b);
+        const double edgeA = a.source + a.length;
+        const double edgeB = b.source;
+        dot.firstEdgeDb = core::envelopeDbAt(lineA, edgeA);
+        dot.secondEdgeDb = core::envelopeDbAt(lineB, edgeB);
+        const core::LevelPoint* pa = core::pointAt(lineA, edgeA);
+        const core::LevelPoint* pb = core::pointAt(lineB, edgeB);
+        if (pa != nullptr && pb != nullptr && std::abs(pa->db - pb->db) <= kSameDb)
+            dot.level = pa->db;
+        dots.push_back(dot);
+    };
+    for (std::size_t b = 0; b + 1 < blocks_.size(); ++b) {
+        if (blocks_[b].audioDetached || blocks_[b + 1].audioDetached)
+            continue;
+        if (std::abs(starts_[b] + blocks_[b].length - starts_[b + 1]) <= kTouch)
+            make(targetOfBlock(b), targetOfBlock(b + 1));
+    }
+    for (int lane = 0; lane < static_cast<int>(lanes_.size()); ++lane) {
+        const auto& clips = lanes_[static_cast<std::size_t>(lane)].clips;
+        for (std::size_t c = 0; c + 1 < clips.size(); ++c) {
+            if (std::abs(clips[c].position + clips[c].length - clips[c + 1].position) <= kTouch)
+                make(targetOfClip(lane, c), targetOfClip(lane, c + 1));
+        }
+    }
+    return dots;
+}
+
+bool SequenceTimeline::junctionHit(const QPointF& pos, JunctionDot& dot) const
+{
+    if (pos.x() < videoLane().left() || pos.x() > videoLane().right())
+        return false;
+    const int lane = laneAt(pos.y());
+    if (lane < 0)
+        return false;
+    const QRectF rect = audioLane(lane);
+    for (const JunctionDot& candidate : junctionDots()) {
+        if (candidate.first.lane != lane || std::abs(pos.x() - xForTime(candidate.time)) > kEnvelopePointNear)
+            continue;
+        if (candidate.level) {
+            if (std::abs(pos.y() - envelopeY(rect, *candidate.level)) <= kEnvelopePointNear) {
+                dot = candidate;
+                return true;
+            }
+        } else if (std::abs(pos.y() - envelopeY(rect, candidate.firstEdgeDb)) <= kEnvelopeNear
+                   || std::abs(pos.y() - envelopeY(rect, candidate.secondEdgeDb)) <= kEnvelopeNear) {
+            dot = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+void SequenceTimeline::updateJointLines()
+{
+    jointFirstLine_ = core::withPointAt(jointBaseFirst_, joint_.first.source + joint_.first.length, jointDb_);
+    jointSecondLine_ = core::withPointAt(jointBaseSecond_, joint_.second.source, jointDb_);
+}
+
+void SequenceTimeline::paintJunctions(QPainter& p, int lane, const QRectF& rect)
+{
+    for (const JunctionDot& dot : junctionDots()) {
+        if (dot.first.lane != lane || !dot.level)
+            continue;
+        const double x = xForTime(dot.time);
+        if (x < visibleLeft() - 8 || x > visibleRight() + 8)
+            continue;
+        const bool taken = jointActive_ && sameTarget(dot.first, joint_.first) && sameTarget(dot.second, joint_.second);
+        // Il pallino comune: più grande e azzurro, sopra i due punti sui bordi.
+        p.setPen(QPen(QColor(0, 0, 0, 220), 1.5));
+        p.setBrush(taken ? QColor(255, 190, 40) : QColor(120, 205, 255));
+        p.drawEllipse(QPointF(x, envelopeY(rect, *dot.level)), taken ? 6.5 : 5.5, taken ? 6.5 : 5.5);
+    }
 }
 
 bool SequenceTimeline::envelopeHit(const QPointF& pos, EnvTarget& target, int& point) const

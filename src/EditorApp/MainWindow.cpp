@@ -333,6 +333,9 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onEnvelopeChanged = [this](bool fragment, int id, const std::vector<core::LevelPoint>& points) {
         setEnvelope(fragment, id, points);
     };
+    timeline_->onJunctionLevel = [this](bool fragment, int first, int second, std::optional<double> db) {
+        setJunctionLevel({fragment, first, second}, db);
+    };
     timeline_->onAudioClipSelected = [this](int) {
         setProgramActive(true);
         showGroupStatus();
