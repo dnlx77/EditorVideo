@@ -419,6 +419,21 @@ MainWindow::MainWindow(QWidget* parent)
     leftTabs_->addTab(transitionPanel_, QStringLiteral("Transizioni"));
     groupPanel_ = new GroupListPanel;
     leftTabs_->addTab(groupPanel_, QStringLiteral("Gruppi"));
+    // Trascinare voci dell'elenco cambia solo come sono fatti i gruppi, mai il montaggio.
+    groupPanel_->onDropped = [this](const std::vector<core::ObjectRef>& dragged, int groupId) {
+        const core::Project before = project_;
+        if (!project_.dropOnGroup(dragged, groupId))
+            return;
+        recordHistory(groupId > 0 ? QStringLiteral("Metti in un gruppo")
+                                  : dragged.size() == 1 ? QStringLiteral("Togli dal gruppo") : QStringLiteral("Crea gruppo"),
+                      before);
+        setModified(true);
+        refreshTimeline();
+        statusBar()->showMessage(groupId > 0 ? QStringLiteral("Il gruppo è cambiato: il montaggio no.")
+                                 : dragged.size() == 1 ? QStringLiteral("L'oggetto non è più in un gruppo.")
+                                                       : QStringLiteral("Nuovo gruppo creato."),
+                                 6000);
+    };
     // Scegliere un gruppo o un oggetto nell'elenco lo sceglie sulla linea del tempo e porta il cursore al suo inizio.
     groupPanel_->onChosen = [this](const std::vector<core::ObjectRef>& objects, double start) {
         timeline_->selectObjects(objects);

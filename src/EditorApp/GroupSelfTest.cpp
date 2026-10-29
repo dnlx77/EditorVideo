@@ -95,6 +95,47 @@ int runGroupTest(const QStringList&, qsizetype)
     panel.setGroups({});
     check(panel.groupCount() == 0 && panel.tree()->isHidden(), "senza più gruppi l'albero si nasconde");
 
+    // Trascinamento: solo le voci dei gruppi dell'utente si trascinano, e solo i loro nodi accolgono voci.
+    panel.setGroups({user, pair});
+    const QTreeWidgetItem* userNode = panel.tree()->topLevelItem(0);
+    const QTreeWidgetItem* pairNode = panel.tree()->topLevelItem(1);
+    check((userNode->child(0)->flags() & Qt::ItemIsDragEnabled) && !(pairNode->child(0)->flags() & Qt::ItemIsDragEnabled),
+          "le voci di un gruppo dell'utente si trascinano, quelle di un video con il suo audio no");
+    check((userNode->flags() & Qt::ItemIsDropEnabled) && !(pairNode->flags() & Qt::ItemIsDropEnabled)
+              && !(userNode->flags() & Qt::ItemIsDragEnabled),
+          "un gruppo dell'utente accoglie voci, il video con il suo audio no, e il nodo non si trascina");
+    panel.tree()->clearSelection();
+    panel.tree()->topLevelItem(0)->child(1)->setSelected(true);
+    panel.tree()->topLevelItem(1)->child(0)->setSelected(true);
+    check(panel.draggableSelection().size() == 1 && panel.draggableSelection()[0] == core::ObjectRef{Kind::TextClip, 7},
+          "fra le voci scelte si trascinano solo quelle dei gruppi dell'utente");
+
+    std::vector<core::ObjectRef> dropped;
+    int droppedOn = -1;
+    int droppedCalls = 0;
+    panel.onDropped = [&](const std::vector<core::ObjectRef>& refs, int groupId) {
+        dropped = refs;
+        droppedOn = groupId;
+        ++droppedCalls;
+    };
+    GroupRow other;
+    other.id = 4;
+    other.title = QStringLiteral("Gruppo 4");
+    other.entries = {{{Kind::Piece, 5}, QStringLiteral("Video"), QStringLiteral("c.mp4"), 9.0},
+                     {{Kind::AudioClip, 6}, QStringLiteral("Audio"), QStringLiteral("m.mp3"), 9.0}};
+    panel.setGroups({user, other, pair});
+    panel.dropEntries({{Kind::TextClip, 7}}, 4);
+    check(droppedCalls == 1 && droppedOn == 4 && dropped.size() == 1 && dropped[0] == core::ObjectRef{Kind::TextClip, 7},
+          "un oggetto su un altro gruppo: segnalato con l'id del gruppo");
+    panel.dropEntries({{Kind::Piece, 5}, {Kind::AudioClip, 6}}, 4);
+    check(droppedCalls == 1, "oggetti già nel gruppo di arrivo: niente da segnalare");
+    panel.dropEntries({{Kind::Piece, 5}}, 0);
+    check(droppedCalls == 2 && droppedOn == 0 && dropped.size() == 1, "un oggetto nello spazio vuoto: segnalato con groupId 0");
+    panel.dropEntries({{Kind::Piece, 5}, {Kind::AudioClip, 6}}, 0);
+    check(droppedCalls == 2, "tutto un gruppo nello spazio vuoto lo rifarebbe uguale: niente da segnalare");
+    panel.dropEntries({{Kind::Piece, 1}, {Kind::AudioClip, 6}}, 0);
+    check(droppedCalls == 3 && dropped.size() == 2 && droppedOn == 0, "due oggetti di gruppi diversi nello spazio vuoto: segnalati");
+
     // Le tre schede nella finestra.
     MainWindow window;
     QTabWidget* tabs = window.leftTabs();

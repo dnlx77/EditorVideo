@@ -2,6 +2,9 @@
 
 #include "EditorApp/UiText.h"
 
+#include <QtCore/QTimer>
+#include <QtGui/QDragMoveEvent>
+#include <QtGui/QDropEvent>
 #include <QtGui/QFont>
 #include <QtWidgets/QAbstractItemView>
 #include <QtWidgets/QLabel>
@@ -12,11 +15,73 @@
 
 namespace editor::app {
 
+namespace {
+
+// L'albero dei gruppi: accetta il trascinamento di voci sue su un gruppo o nello spazio vuoto, ma non sposta niente da
+// solo (lo fa chi riceve `dropped`, cambiando il progetto e rifacendo l'elenco).
+class GroupTree : public QTreeWidget
+{
+public:
+    std::function<bool(const QTreeWidgetItem* target)> canDrop;  // target: il nodo del gruppo, nullptr = spazio vuoto
+    std::function<void(const QTreeWidgetItem* target)> dropped;
+
+protected:
+    const QTreeWidgetItem* targetAt(const QPoint& at) const
+    {
+        const QTreeWidgetItem* item = itemAt(at);
+        return item != nullptr && item->parent() != nullptr ? item->parent() : item;
+    }
+    void dragMoveEvent(QDragMoveEvent* event) override
+    {
+        QTreeWidget::dragMoveEvent(event);
+        if (event->source() == this && canDrop && canDrop(targetAt(event->position().toPoint()))) {
+            event->setDropAction(Qt::CopyAction);
+            event->accept();
+        } else {
+            event->ignore();
+        }
+    }
+    void dropEvent(QDropEvent* event) override
+    {
+        if (event->source() == this && dropped && canDrop && canDrop(targetAt(event->position().toPoint()))) {
+            dropped(targetAt(event->position().toPoint()));
+            event->setDropAction(Qt::CopyAction);  // niente "sposta": le voci non si tolgono da sole
+            event->accept();
+        } else {
+            event->ignore();
+        }
+        stopAutoScroll();
+        viewport()->update();
+    }
+};
+
+}  // namespace
+
 GroupListPanel::GroupListPanel(QWidget* parent) : QWidget(parent)
 {
-    tree_ = new QTreeWidget;
+    auto* tree = new GroupTree;
+    tree_ = tree;
     tree_->setHeaderHidden(true);
-    tree_->setSelectionMode(QAbstractItemView::SingleSelection);
+    tree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    tree_->setDragEnabled(true);
+    tree_->setAcceptDrops(true);
+    tree_->setDragDropMode(QAbstractItemView::DragDrop);
+    tree_->setDefaultDropAction(Qt::CopyAction);
+    tree->canDrop = [this](const QTreeWidgetItem* target) {
+        if (draggableSelection().empty())
+            return false;
+        if (target == nullptr)
+            return true;
+        const int row = tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(target));
+        return row >= 0 && row < static_cast<int>(rows_.size()) && !rows_[static_cast<std::size_t>(row)].natural;
+    };
+    // Il cambiamento si fa dopo la fine del trascinamento: l'elenco si rifà e le voci trascinate spariscono.
+    tree->dropped = [this](const QTreeWidgetItem* target) {
+        const std::vector<editor::core::ObjectRef> dragged = draggableSelection();
+        const int row = target == nullptr ? -1 : tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(target));
+        const int groupId = row >= 0 && row < static_cast<int>(rows_.size()) ? rows_[static_cast<std::size_t>(row)].id : 0;
+        QTimer::singleShot(0, this, [this, dragged, groupId] { dropEntries(dragged, groupId); });
+    };
     tree_->setRootIsDecorated(true);
     tree_->setMinimumSize(40, 24);
     tree_->setToolTip(QStringLiteral("I gruppi del montaggio: ognuno con gli oggetti che si muovono insieme"));
@@ -52,6 +117,9 @@ void GroupListPanel::setGroups(std::vector<GroupRow> rows)
     tree_->clear();
     for (const GroupRow& row : rows_) {
         auto* top = new QTreeWidgetItem(tree_);
+        // I gruppi dell'utente accolgono voci; i video con il loro audio si guardano soltanto.
+        top->setFlags(row.natural ? Qt::ItemIsEnabled | Qt::ItemIsSelectable
+                                  : Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDropEnabled);
         top->setText(0, QStringLiteral("%1  (%2)").arg(row.title).arg(row.entries.size()));
         top->setData(0, Qt::UserRole, row.id);
         if (row.natural) {
@@ -65,6 +133,8 @@ void GroupListPanel::setGroups(std::vector<GroupRow> rows)
             auto* child = new QTreeWidgetItem(top);
             child->setText(0, QStringLiteral("%1 · %2 · %3").arg(entry.kind, entry.name, timeText(entry.start)));
             child->setData(0, Qt::UserRole, -1);
+            child->setFlags(row.natural ? Qt::ItemIsEnabled | Qt::ItemIsSelectable
+                                        : Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
         }
         top->setExpanded(row.id <= 0 || std::find(collapsed_.begin(), collapsed_.end(), row.id) == collapsed_.end());
     }
@@ -128,6 +198,50 @@ void GroupListPanel::showSelection(const std::vector<editor::core::ObjectRef>& s
     if (target == nullptr)
         tree_->clearSelection();
     showing_ = false;
+}
+
+std::vector<editor::core::ObjectRef> GroupListPanel::draggableSelection() const
+{
+    std::vector<editor::core::ObjectRef> refs;
+    for (const QTreeWidgetItem* item : tree_->selectedItems()) {
+        const QTreeWidgetItem* top = item->parent();
+        if (top == nullptr)
+            continue;
+        const int row = tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(top));
+        const int index = top->indexOfChild(const_cast<QTreeWidgetItem*>(item));
+        if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[static_cast<std::size_t>(row)].natural || index < 0
+            || index >= static_cast<int>(rows_[static_cast<std::size_t>(row)].entries.size()))
+            continue;
+        refs.push_back(rows_[static_cast<std::size_t>(row)].entries[static_cast<std::size_t>(index)].ref);
+    }
+    return refs;
+}
+
+void GroupListPanel::dropEntries(const std::vector<editor::core::ObjectRef>& dragged, int groupId)
+{
+    if (dragged.empty() || !onDropped)
+        return;
+    // Quello che non cambierebbe niente non si segnala: tutti già nel gruppo di arrivo, o (nello spazio vuoto) tutto un
+    // gruppo che si rifarebbe uguale.
+    const auto rowOf = [&](const editor::core::ObjectRef& ref) {
+        for (const GroupRow& row : rows_) {
+            if (std::any_of(row.entries.begin(), row.entries.end(), [&](const GroupEntry& e) { return e.ref == ref; }))
+                return &row;
+        }
+        return static_cast<const GroupRow*>(nullptr);
+    };
+    if (groupId > 0 && std::all_of(dragged.begin(), dragged.end(), [&](const editor::core::ObjectRef& r) {
+            const GroupRow* row = rowOf(r);
+            return row != nullptr && row->id == groupId;
+        }))
+        return;
+    if (groupId == 0 && dragged.size() >= 2) {
+        const GroupRow* first = rowOf(dragged.front());
+        if (first != nullptr && first->entries.size() == dragged.size()
+            && std::all_of(dragged.begin(), dragged.end(), [&](const editor::core::ObjectRef& r) { return rowOf(r) == first; }))
+            return;
+    }
+    onDropped(dragged, groupId);
 }
 
 int GroupListPanel::groupCount() const

@@ -58,6 +58,15 @@ public:
     // d'inizio più presto fra loro.
     std::function<void(const std::vector<editor::core::ObjectRef>&, double start)> onChosen;
 
+    // Si trascinano oggetti dell'elenco (Ctrl+clic per più d'uno) su un gruppo o nello spazio vuoto. Il pannello non
+    // cambia niente: dice cosa è stato trascinato e dove (groupId > 0: su quel gruppo; 0: nello spazio vuoto). Quello
+    // che non cambierebbe niente (oggetti già in quel gruppo) non viene segnalato. I video con il loro audio non si
+    // trascinano e non accolgono oggetti.
+    std::function<void(const std::vector<editor::core::ObjectRef>&, int groupId)> onDropped;
+    void dropEntries(const std::vector<editor::core::ObjectRef>& dragged, int groupId);
+    // Gli oggetti scelti nell'elenco che si possono trascinare (voci dei gruppi dell'utente).
+    std::vector<editor::core::ObjectRef> draggableSelection() const;
+
 private:
     QTreeWidget* tree_ = nullptr;
     QLabel* empty_ = nullptr;
