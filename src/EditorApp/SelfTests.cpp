@@ -1,5 +1,6 @@
 #include "EditorApp/SelfTests.h"
 
+#include "EditorApp/GroupListPanel.h"
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
@@ -727,6 +728,7 @@ constexpr CommandLineTest kTests[] = {
     {"--audio-test", runAudioTest},     {"--codec-info", runCodecInfo},         {"--sequence-test", runSequenceTest},
     {"--join-test", runJoinTest},         {"--text-test", runTextTest},
     {"--transition-test", runTransitionTest},
+    {"--group-test", runGroupTest},
 };
 
 }  // namespace
@@ -1829,7 +1831,14 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                       line->textLaneCenter(1), Qt::NoButton, Qt::ControlModifier);
                 const bool multi = line->selectedObjects().size() == 2;
                 window->groupSelection();
-                const bool grouped = placed && window->project().groupMembers({core::ObjectRef::Kind::TextClip, third}).size() == 2;
+                // Il gruppo compare nella scheda Gruppi, con le due scritte.
+                const std::vector<GroupRow>& listedGroups = window->groupPanel()->rows();
+                const bool listed = std::any_of(listedGroups.begin(), listedGroups.end(), [&](const GroupRow& row) {
+                    return row.id > 0 && row.entries.size() == 2
+                        && std::any_of(row.entries.begin(), row.entries.end(),
+                                       [&](const GroupEntry& e) { return e.ref == core::ObjectRef{core::ObjectRef::Kind::TextClip, third}; });
+                });
+                const bool grouped = placed && listed && window->project().groupMembers({core::ObjectRef::Kind::TextClip, third}).size() == 2;
                 // Il livello scelto si toglie con le sue scritte.
                 const int layersBefore = static_cast<int>(text.layers().size());
                 line->setSelectedTextLayer(second);

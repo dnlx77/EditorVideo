@@ -241,6 +241,12 @@ jobs:
           # L'elenco delle transizioni (voci, miniature, scelta) e le due schede del blocco in alto a sinistra.
           & ci\run-editorvideo.ps1 -Name transizioni -Arguments '--transition-test'
 
+      - name: Prova della scheda Gruppi
+        shell: pwsh
+        run: |
+          # L'elenco dei gruppi (nodi, oggetti, nodi chiusi) e le tre schede del blocco in alto a sinistra.
+          & ci\run-editorvideo.ps1 -Name gruppi -Arguments '--group-test'
+
       - name: Prova dell'esportazione dalla finestra
         shell: pwsh
         run: |
