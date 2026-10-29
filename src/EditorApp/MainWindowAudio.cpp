@@ -487,6 +487,8 @@ void MainWindow::ungroupSelection()
 
 void MainWindow::refreshGroups()
 {
+    if (groupPanel_ == nullptr)
+        return;
     using Kind = core::ObjectRef::Kind;
     const core::Sequence& sequence = project_.sequence();
     const auto entryFor = [&](core::ObjectRef ref) {
@@ -535,6 +537,13 @@ void MainWindow::refreshGroups()
         rows.push_back(std::move(row));
     }
     groupPanel_->setGroups(std::move(rows));
+    showGroupSelection();
+}
+
+void MainWindow::showGroupSelection()
+{
+    if (groupPanel_ != nullptr && timeline_ != nullptr)
+        groupPanel_->showSelection(timeline_->allSelectedObjects());
 }
 
 void MainWindow::showGroupStatus()

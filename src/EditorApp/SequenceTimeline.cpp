@@ -371,12 +371,19 @@ bool SequenceTimeline::ctrlPress(const QPointF& pos)
         set.push_back(target);
     // Il "principale" (quello che usano i comandi che lavorano su un solo oggetto) è l'ultimo toccato, o l'ultimo rimasto.
     const Object primary = std::find(set.begin(), set.end(), target) != set.end() ? target : (set.empty() ? Object{} : set.back());
+    applySelection(set, primary);
+    return true;
+}
+
+void SequenceTimeline::applySelection(const std::vector<Object>& set, Object primary)
+{
     multi_ = set.size() >= 2 ? set : std::vector<Object>{};
     selected_ = primary.kind == Object::Kind::Piece ? primary.id : 0;
     selectedAudioClip_ = primary.kind == Object::Kind::AudioClip ? primary.id : 0;
     selectedTextClip_ = primary.kind == Object::Kind::TextClip ? primary.id : 0;
     selectedTextLayer_ = 0;
     selectedGap_ = 0;
+    selectedTransition_ = 0;
     selectedTrack_ = -1;
     syncTrackButtons();
     if (onSelect)
@@ -388,7 +395,42 @@ bool SequenceTimeline::ctrlPress(const QPointF& pos)
     if (onMultiSelection)
         onMultiSelection();
     invalidate();
-    return true;
+}
+
+void SequenceTimeline::selectObjects(const std::vector<Object>& objects)
+{
+    std::vector<Object> set;
+    for (const Object& o : objects) {
+        bool exists = false;
+        switch (o.kind) {
+        case Object::Kind::Piece:
+            exists = std::any_of(blocks_.begin(), blocks_.end(), [&](const Block& b) { return b.fragmentId == o.id; });
+            break;
+        case Object::Kind::PieceAudio:
+            exists = std::any_of(blocks_.begin(), blocks_.end(), [&](const Block& b) { return b.fragmentId == o.id && !b.audioDetached; });
+            break;
+        case Object::Kind::AudioClip:
+            exists = findAudioClip(o.id) != nullptr;
+            break;
+        case Object::Kind::TextClip:
+            exists = findTextClip(o.id) != nullptr;
+            break;
+        }
+        if (exists && std::find(set.begin(), set.end(), o) == set.end())
+            set.push_back(o);
+    }
+    // Un oggetto solo vale come un clic: l'audio di un pezzo da solo non si sceglie (si sceglie il pezzo).
+    if (set.size() == 1 && set.front().kind == Object::Kind::PieceAudio)
+        set.front().kind = Object::Kind::Piece;
+    // Il principale è il primo pezzo video, se c'è (il Montaggio mostra quello), altrimenti l'ultimo.
+    Object primary = set.empty() ? Object{} : set.back();
+    for (const Object& o : set) {
+        if (o.kind == Object::Kind::Piece) {
+            primary = o;
+            break;
+        }
+    }
+    applySelection(set, primary);
 }
 
 void SequenceTimeline::setSelectedTrack(int trackId)

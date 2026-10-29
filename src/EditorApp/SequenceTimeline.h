@@ -163,6 +163,10 @@ public:
     const std::vector<Object>& selectedObjects() const { return multi_; }
     // Gli oggetti selezionati, anche con un oggetto solo.
     std::vector<Object> allSelectedObjects() const;
+    // Sceglie questi oggetti (come con Ctrl+clic su ognuno; quelli che non ci sono si scartano; un oggetto solo vale come
+    // un clic, vuoto toglie la selezione). Chiama gli stessi onSelect / onAudioClipSelected / onTextClipSelected /
+    // onMultiSelection del mouse.
+    void selectObjects(const std::vector<Object>& objects);
     // I compagni di gruppo di un oggetto, lui compreso (la MainWindow li prende dal progetto): quelli dei selezionati
     // hanno il contorno tratteggiato.
     std::function<std::vector<Object>(Object)> groupMembers;
@@ -323,7 +327,8 @@ private:
     QRectF soloBox(int index) const;
     QRectF levelBar(int index) const;
     bool isSelected(Object::Kind kind, int id) const;  // nella selezione (singola o multipla)
-    bool ctrlPress(const QPointF& pos);                // Ctrl+clic: aggiunge o toglie un oggetto; false se lì non ce n'è
+    bool ctrlPress(const QPointF& pos);
+    void applySelection(const std::vector<Object>& set, Object primary);  // la fine di ctrlPress e di selectObjects                // Ctrl+clic: aggiunge o toglie un oggetto; false se lì non ce n'è
     double levelForX(int index, double x) const;  // dB del cursore del livello quando il mouse è in x
     // Linea del livello: dove sta un valore (dB) nella corsia e il contrario. Sopra il centro 0..+12 dB, sotto 0..-60
     // (con più precisione vicino a 0).

@@ -242,7 +242,9 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onSelect = [this](int) {
         setProgramActive(true);
         showGroupStatus();
+        showGroupSelection();
     };
+    timeline_->onMultiSelection = [this] { showGroupSelection(); };
     timeline_->groupMembers = [this](SequenceTimeline::Object o) {
         return project_.groupMembers(o);
     };
@@ -339,6 +341,7 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onAudioClipSelected = [this](int) {
         setProgramActive(true);
         showGroupStatus();
+        showGroupSelection();
     };
     timeline_->audioFreePosition = [this](int clipId, int trackId, double desired) {
         return project_.freeSpotFor({core::ObjectRef::Kind::AudioClip, clipId}, trackId, desired, pushPieces_);
@@ -358,6 +361,7 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onTextClipSelected = [this](int) {
         setProgramActive(true);
         showGroupStatus();
+        showGroupSelection();
         refreshTextPanel();
     };
     timeline_->textFreePosition = [this](int clipId, int layerId, double desired) {
@@ -415,6 +419,12 @@ MainWindow::MainWindow(QWidget* parent)
     leftTabs_->addTab(transitionPanel_, QStringLiteral("Transizioni"));
     groupPanel_ = new GroupListPanel;
     leftTabs_->addTab(groupPanel_, QStringLiteral("Gruppi"));
+    // Scegliere un gruppo o un oggetto nell'elenco lo sceglie sulla linea del tempo e porta il cursore al suo inizio.
+    groupPanel_->onChosen = [this](const std::vector<core::ObjectRef>& objects, double start) {
+        timeline_->selectObjects(objects);
+        setProgramActive(true);
+        program_->seekTo(start);
+    };
     filesDock_ = makeDock(QStringLiteral("File del progetto"), QStringLiteral("pannelloFile"), leftTabs_);
     // Il pannello Sorgente ha una scheda in più, "Scritta": l'editor della scritta scelta (le modifiche valgono subito e si
     // vedono nel Montaggio, che resta a fianco).

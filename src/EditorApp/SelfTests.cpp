@@ -42,6 +42,7 @@
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QTabWidget>
+#include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressDialog>
@@ -1838,7 +1839,24 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                         && std::any_of(row.entries.begin(), row.entries.end(),
                                        [&](const GroupEntry& e) { return e.ref == core::ObjectRef{core::ObjectRef::Kind::TextClip, third}; });
                 });
-                const bool grouped = placed && listed && window->project().groupMembers({core::ObjectRef::Kind::TextClip, third}).size() == 2;
+                // Un clic sul gruppo nell'elenco sceglie sulla linea del tempo tutti i suoi oggetti.
+                bool fromList = false;
+                if (listed) {
+                    line->setSelected(0);
+                    line->setSelectedTextClip(0);
+                    QTreeWidget* tree = window->groupPanel()->tree();
+                    for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+                        const GroupRow& row = window->groupPanel()->rows()[static_cast<std::size_t>(i)];
+                        if (row.id <= 0 || row.entries.size() != 2)
+                            continue;
+                        tree->itemClicked(tree->topLevelItem(i), 0);
+                        fromList = line->selectedObjects().size() == 2;
+                        // E ciò che è scelto sulla linea del tempo si evidenzia nell'elenco (il nodo del gruppo).
+                        fromList = fromList && tree->currentItem() == tree->topLevelItem(i);
+                        break;
+                    }
+                }
+                const bool grouped = placed && listed && fromList && window->project().groupMembers({core::ObjectRef::Kind::TextClip, third}).size() == 2;
                 // Il livello scelto si toglie con le sue scritte.
                 const int layersBefore = static_cast<int>(text.layers().size());
                 line->setSelectedTextLayer(second);

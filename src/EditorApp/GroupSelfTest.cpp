@@ -61,6 +61,37 @@ int runGroupTest(const QStringList&, qsizetype)
     const QTreeWidgetItem* before = panel.tree()->topLevelItem(0);
     panel.setGroups({bigger, pair});
     check(panel.tree()->topLevelItem(0) == before, "se non è cambiato niente la vista non si rifà");
+
+    // Scegliere nell'elenco: un gruppo dà tutti i suoi oggetti, un oggetto solo lui; il tempo è il più presto.
+    std::vector<core::ObjectRef> chosen;
+    double chosenStart = -1.0;
+    int chosenCalls = 0;
+    panel.onChosen = [&](const std::vector<core::ObjectRef>& refs, double start) {
+        chosen = refs;
+        chosenStart = start;
+        ++chosenCalls;
+    };
+    panel.tree()->setCurrentItem(panel.tree()->topLevelItem(1));
+    check(chosen.size() == 2 && chosen[0] == core::ObjectRef{Kind::Piece, 2} && chosen[1] == core::ObjectRef{Kind::PieceAudio, 2}
+              && chosenStart == 4.0,
+          "scegliere un gruppo dà tutti i suoi oggetti e l'inizio");
+    panel.tree()->setCurrentItem(panel.tree()->topLevelItem(0)->child(2));
+    check(chosen.size() == 1 && chosen[0] == core::ObjectRef{Kind::AudioClip, 9} && chosenStart == 2.0,
+          "scegliere un oggetto dà solo lui e il suo inizio");
+    panel.tree()->setCurrentItem(panel.tree()->topLevelItem(0));
+    check(chosen.size() == 3 && chosenStart == 0.0, "scegliendo il gruppo dell'utente: i suoi tre oggetti, dal più presto");
+
+    // Ciò che è scelto sulla linea del tempo si evidenzia, senza richiamare onChosen.
+    const int calls = chosenCalls;
+    panel.showSelection({{Kind::Piece, 2}, {Kind::PieceAudio, 2}});
+    check(panel.tree()->currentItem() == panel.tree()->topLevelItem(1), "tutti gli oggetti di un gruppo: il suo nodo");
+    panel.showSelection({{Kind::TextClip, 7}});
+    check(panel.tree()->currentItem() == panel.tree()->topLevelItem(0)->child(1), "un oggetto solo: la sua voce");
+    panel.showSelection({{Kind::Piece, 1}, {Kind::Piece, 2}});
+    check(panel.tree()->currentItem() == nullptr, "oggetti di gruppi diversi: niente di evidenziato");
+    panel.showSelection({});
+    check(panel.tree()->currentItem() == nullptr && chosenCalls == calls, "nessuna selezione: niente, e onChosen non è chiamata");
+
     panel.setGroups({});
     check(panel.groupCount() == 0 && panel.tree()->isHidden(), "senza più gruppi l'albero si nasconde");
 
