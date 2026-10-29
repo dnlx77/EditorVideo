@@ -129,6 +129,26 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
             paintAlignGuide(p, textTrimValue_, edgeMarks(-1, 0, c->clipId, oldEdge));
         }
     }
+    // Spostamento di una clip intera: la riga quando il suo inizio o la sua fine è a livello con un altro bordo.
+    if (dragging_ && dragIndex_ >= 0 && dragIndex_ < static_cast<int>(blocks_.size())) {
+        const auto marks = snapMarks(dragIndex_, 0, false, false);
+        paintAlignGuide(p, dragStart_, marks);
+        paintAlignGuide(p, dragStart_ + blocks_[static_cast<std::size_t>(dragIndex_)].length, marks);
+    }
+    if (audioDragging_ && audioDragLane_ >= 0) {
+        if (const AudioBlock* c = findAudioClip(audioDragClip_)) {
+            const auto marks = snapMarks(-1, c->clipId, true, true);
+            paintAlignGuide(p, audioDragStart_, marks);
+            paintAlignGuide(p, audioDragStart_ + c->length, marks);
+        }
+    }
+    if (textDragging_ && textDragLane_ >= 0) {
+        if (const TextBlock* c = findTextClip(textDragClip_)) {
+            const auto marks = snapMarks(-1, 0, true, true, c->clipId);
+            paintAlignGuide(p, textDragStart_, marks);
+            paintAlignGuide(p, textDragStart_ + c->length, marks);
+        }
+    }
     if (blocks_.empty() && lanes_.size() == 1 && textLanes_.empty())
         return;
 
