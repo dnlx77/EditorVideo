@@ -377,6 +377,11 @@ private:
     // `desired` spostato sul segno più vicino a meno di 10 pixel. Si prova ogni `offset` (0 = il bordo stesso, la
     // lunghezza del blocco = la sua fine): il blocco si aggancia quando il bordo corrispondente è vicino al segno.
     double snapped(double desired, const std::vector<double>& marks, std::initializer_list<double> offsets) const;
+    // Segni per il trascinamento di un bordo: tutti (video, audio, scritte, cursore) tranne il bordo com'era prima,
+    // dove si aggancerebbe subito al bordo che si sta spostando (o a quello della sua clip audio collegata).
+    std::vector<double> edgeMarks(int ignoredBlock, int ignoredClip, int ignoredText, double originalEdge) const;
+    // Se il bordo trascinato in `time` è a livello con uno dei segni, la riga tratteggiata di allineamento su tutte le corsie.
+    void paintAlignGuide(QPainter& p, double time, const std::vector<double>& marks) const;
     void syncTrackButtons();
     void updateDuration();  // durata mostrata: fino alla fine dei pezzi o delle clip audio, più un po' di posto
     // Bordo di un blocco sotto il punto (corsia video, entro pochi pixel): indice del blocco, -1 se nessuno; atStart
