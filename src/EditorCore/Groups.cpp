@@ -26,6 +26,35 @@ bool Groups::dissolve(int groupId)
     return std::erase_if(groups_, [groupId](const ObjectGroup& g) { return g.id == groupId; }) > 0;
 }
 
+bool Groups::rename(int groupId, const std::string& name)
+{
+    const auto it = std::find_if(groups_.begin(), groups_.end(), [groupId](const ObjectGroup& g) { return g.id == groupId; });
+    if (it == groups_.end() || it->name == name)
+        return false;
+    it->name = name;
+    return true;
+}
+
+bool Groups::addTo(int groupId, ObjectRef object)
+{
+    if (find(groupId) == nullptr || groupOf(object) == groupId)
+        return false;
+    // Prima fuori dal vecchio gruppo (che può sciogliersi), poi dentro: il gruppo di arrivo non si scioglie mai qui,
+    // perché ha già almeno due oggetti e `object` non è fra loro.
+    remove(object);
+    std::find_if(groups_.begin(), groups_.end(), [groupId](const ObjectGroup& g) { return g.id == groupId; })
+        ->members.push_back(object);
+    return true;
+}
+
+bool Groups::remove(ObjectRef object)
+{
+    if (groupOf(object) == 0)
+        return false;
+    prune([&](const ObjectRef& o) { return o != object; });
+    return true;
+}
+
 int Groups::groupOf(ObjectRef object) const
 {
     for (const ObjectGroup& g : groups_) {
@@ -46,6 +75,15 @@ void Groups::restore(const std::vector<std::vector<ObjectRef>>& groups)
     groups_.clear();
     for (const std::vector<ObjectRef>& members : groups)
         create(members);
+}
+
+void Groups::restore(const std::vector<ObjectGroup>& groups)
+{
+    groups_.clear();
+    for (const ObjectGroup& g : groups) {
+        if (const int id = create(g.members); id != 0)
+            groups_.back().name = g.name;
+    }
 }
 
 void Groups::restoreEdits(const Groups& snapshot)

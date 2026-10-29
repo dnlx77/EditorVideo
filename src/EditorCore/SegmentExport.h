@@ -5,6 +5,7 @@
 #include "EditorCore/Project.h"
 #include "EditorCore/TextImage.h"
 #include "EditorCore/TimeUtil.h"
+#include "EditorCore/TransitionRender.h"
 
 #include <functional>
 #include <string>
@@ -41,8 +42,22 @@ struct ExportResult
     int preciseCuts = 0;        // bordi ricodificati per il taglio preciso (da IN al fotogramma chiave, ...)
     int blackGaps = 0;          // spazi vuoti diventati nero e silenzio
     int textSegments = 0;       // parti ricodificate perché sotto una scritta
+    int transitionSegments = 0;  // parti ricodificate perché dentro una transizione
     int mixedAudioFiles = 0;    // file audio mixati e ricodificati in AAC (AudioEdit::mix); 0 = audio copiato
 };
+
+// Una transizione da fondere nel file esportato (vedi ReencodeOptions::transitions): sta sulla giunzione fra il tratto
+// `beforeRange` del piano e il successivo.
+struct ExportTransition
+{
+    int beforeRange = 0;  // posizione del tratto che finisce nella giunzione, contando tutti i tratti di tutti i file del piano
+    double before = 0.0;  // secondi di transizione prima della giunzione (alla fine del tratto) e dopo (all'inizio del successivo)
+    double after = 0.0;
+    TransitionJob job;    // i due pezzi e l'effetto, come per l'anteprima
+};
+
+// Le transizioni del progetto per l'esportazione, nello stesso ordine dei tratti di Project::exportPlan.
+std::vector<ExportTransition> exportTransitionsOf(const Project& project);
 
 // Ricodifica all'esportazione (vedi exportClips).
 struct ReencodeOptions
@@ -55,6 +70,11 @@ struct ReencodeOptions
     // degli spazi vuoti; gli altri si copiano come sempre. Senza `textRenderer` le scritte non si esportano.
     TextTracks texts;
     const TextRenderer* textRenderer = nullptr;
+
+    // Transizioni: la parte dei due tratti dentro la transizione si ricodifica, con i due pezzi decodificati e fusi
+    // dall'effetto (alla misura del fotogramma del progetto, bande nere comprese); il resto come sempre. Il video
+    // dei file originali si usa sempre, mai il proxy.
+    std::vector<ExportTransition> transitions;
 
     const TextTracks* activeTexts() const { return textRenderer != nullptr && texts.endTime() > 0.0 ? &texts : nullptr; }
 };
@@ -76,6 +96,10 @@ struct ExportPreview
     // Tratti sotto una scritta (ricodificati con il testo sopra) e quanto durano; non contano nei bordi del taglio preciso.
     int textSegments = 0;
     double textSeconds = 0.0;
+    // Parti dentro una transizione (ricodificate con i due pezzi fusi) e quanto durano; come le scritte, non contano nei
+    // bordi del taglio preciso.
+    int transitionSegments = 0;
+    double transitionSeconds = 0.0;
     // Spazi vuoti del montaggio (ClipRanges::gapsBefore) che diventano nero e silenzio, e quanto durano.
     int blackGaps = 0;
     double blackSeconds = 0.0;

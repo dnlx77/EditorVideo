@@ -46,6 +46,7 @@ class WaveformStore;
 class ProgramMonitor;
 class TextEditorPanel;
 class TransitionListPanel;
+class GroupListPanel;
 class TransitionPreviewWidget;
 class SequenceTimeline;
 
@@ -161,6 +162,7 @@ public:
     TextEditorPanel* textPanel() const { return textPanel_; }
     QTabWidget* leftTabs() const { return leftTabs_; }
     TransitionListPanel* transitionPanel() const { return transitionPanel_; }
+    GroupListPanel* groupPanel() const { return groupPanel_; }
     // La Sorgente mostra il file (il lettore) o l'anteprima della transizione scelta.
     QStackedWidget* sourceStack() const { return sourceStack_; }
     TransitionPreviewWidget* transitionPreview() const { return transitionPreview_; }
@@ -186,6 +188,7 @@ public:
     void setTrackMuted(int trackId, bool muted);
     void setTrackSolo(int trackId, bool solo);
     void setTrackLevel(int trackId, double db);
+    void setJunctionLevel(const core::Project::Junction& junction, std::optional<double> db);  // pallino sulla giunzione
     void setEnvelope(bool fragment, int id, const std::vector<core::LevelPoint>& points);  // linea del livello di un pezzo o clip
     // Forme d'onda ancora da calcolare (0 = tutte pronte).
     int pendingWaveforms() const;
@@ -266,6 +269,8 @@ private:
     void replaceAudioDialog();
     void relinkAudio();
     void ungroupSelection();  // U: scioglie il gruppo (o, se non è in gruppo, scollega l'audio del pezzo)
+    void showGroupSelection();  // evidenzia nell'elenco dei gruppi ciò che è scelto sulla linea del tempo
+    void refreshGroups();     // l'elenco dei gruppi (scheda Gruppi) dal progetto
     void showGroupStatus();   // nella barra di stato: il gruppo dell'oggetto scelto
     std::vector<core::ObjectRef> selectedRefs() const;  // gli oggetti scelti, per G e U
     void addAudioFilesDialog();  // al cursore, sulla traccia scelta (o su una nuova)
@@ -366,8 +371,9 @@ private:
     QDockWidget* timelineDock_ = nullptr;
     QTabWidget* sourceTabs_ = nullptr;      // il pannello Sorgente ha due schede: Sorgente e Scritta (l'editor delle scritte)
     TextEditorPanel* textPanel_ = nullptr;
-    QTabWidget* leftTabs_ = nullptr;        // il blocco in alto a sinistra ha due schede: File del progetto e Transizioni
+    QTabWidget* leftTabs_ = nullptr;        // il blocco in alto a sinistra ha tre schede: File del progetto, Transizioni e Gruppi
     TransitionListPanel* transitionPanel_ = nullptr;
+    GroupListPanel* groupPanel_ = nullptr;  // terza scheda del blocco a sinistra
     TransitionPreviewWidget* transitionPreview_ = nullptr;
     QStackedWidget* sourceStack_ = nullptr;  // il lettore della Sorgente o l'anteprima della transizione
     int textMergeClip_ = 0;                 // scritta dell'ultima modifica del pannello, per unire quelle di fila

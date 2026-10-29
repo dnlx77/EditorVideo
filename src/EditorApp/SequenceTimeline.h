@@ -163,6 +163,10 @@ public:
     const std::vector<Object>& selectedObjects() const { return multi_; }
     // Gli oggetti selezionati, anche con un oggetto solo.
     std::vector<Object> allSelectedObjects() const;
+    // Sceglie questi oggetti (come con Ctrl+clic su ognuno; quelli che non ci sono si scartano; un oggetto solo vale come
+    // un clic, vuoto toglie la selezione). Chiama gli stessi onSelect / onAudioClipSelected / onTextClipSelected /
+    // onMultiSelection del mouse.
+    void selectObjects(const std::vector<Object>& objects);
     // I compagni di gruppo di un oggetto, lui compreso (la MainWindow li prende dal progetto): quelli dei selezionati
     // hanno il contorno tratteggiato.
     std::function<std::vector<Object>(Object)> groupMembers;
@@ -231,6 +235,10 @@ public:
     // il doppio clic su un punto lo toglie. Lasciando il mouse si chiama onEnvelopeChanged con la linea nuova, di un
     // pezzo (fragment) o di una clip audio.
     std::function<void(bool fragment, int id, const std::vector<core::LevelPoint>& points)> onEnvelopeChanged;
+    // Il pallino comune su una giunzione (vedi Project::Junction): fra due pezzi o clip attaccati, sul punto in cui si
+    // toccano. Trascinarlo in verticale cambia il livello di tutti e due; cliccando sulla giunzione lo si ricrea; il
+    // doppio clic lo toglie. `db` nullo = toglierlo.
+    std::function<void(bool fragment, int first, int second, std::optional<double> db)> onJunctionLevel;
     // Clip audio: selezione, spostamento (dove può andare sulla traccia `trackId` se la si vuole a `desired`, e dove è
     // stata lasciata), bordi (come trimLimit/onTrim dei pezzi video, nei tempi del file della clip).
     std::function<void(int clipId)> onAudioClipSelected;
@@ -319,7 +327,8 @@ private:
     QRectF soloBox(int index) const;
     QRectF levelBar(int index) const;
     bool isSelected(Object::Kind kind, int id) const;  // nella selezione (singola o multipla)
-    bool ctrlPress(const QPointF& pos);                // Ctrl+clic: aggiunge o toglie un oggetto; false se lì non ce n'è
+    bool ctrlPress(const QPointF& pos);
+    void applySelection(const std::vector<Object>& set, Object primary);  // la fine di ctrlPress e di selectObjects                // Ctrl+clic: aggiunge o toglie un oggetto; false se lì non ce n'è
     double levelForX(int index, double x) const;  // dB del cursore del livello quando il mouse è in x
     // Linea del livello: dove sta un valore (dB) nella corsia e il contrario. Sopra il centro 0..+12 dB, sotto 0..-60
     // (con più precisione vicino a 0).
@@ -336,6 +345,19 @@ private:
         double source = 0.0;    // inizio nel file
         const std::vector<core::LevelPoint>* line = nullptr;
     };
+    // Una giunzione fra due pezzi o clip attaccati sulla stessa corsia, con il suo pallino se c'è.
+    struct JunctionDot
+    {
+        EnvTarget first;
+        EnvTarget second;
+        double time = 0.0;                  // dove si toccano, nella sequenza
+        std::optional<double> level;        // dB del pallino (punti sui due bordi, allo stesso livello)
+        double firstEdgeDb = 0.0;           // la linea del primo sul suo bordo finale
+        double secondEdgeDb = 0.0;          // e quella del secondo sul suo bordo iniziale
+    };
+    std::vector<JunctionDot> junctionDots() const;
+    bool junctionHit(const QPointF& pos, JunctionDot& dot) const;
+    void paintJunctions(QPainter& p, int lane, const QRectF& rect);
     EnvTarget targetOfBlock(std::size_t index) const;
     EnvTarget targetOfClip(int lane, std::size_t index) const;
     bool sameTarget(const EnvTarget& a, const EnvTarget& b) const { return a.fragment == b.fragment && a.id == b.id; }
@@ -373,10 +395,19 @@ private:
     double audioTrimTarget(double x, bool ripple) const;
     // Segni a cui ci si aggancia: l'inizio della sequenza, i bordi dei pezzi video (tranne il blocco `ignoredBlock`),
     // se richiesti il cursore e i bordi delle clip audio (tranne `ignoredClip`).
-    std::vector<double> snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio, int ignoredText = 0) const;
+    std::vector<double> snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio, int ignoredText = 0,
+                                  const std::vector<Object>& moving = {}) const;
+    // Segni per lo spostamento del pezzo `dragIndex_`: come gli altri, ma con le clip audio, e senza i compagni di
+    // gruppo che si muovono con lui (il suo audio staccato, per esempio): il loro bordo coinciderebbe sempre.
+    std::vector<double> pieceDragMarks() const;
     // `desired` spostato sul segno più vicino a meno di 10 pixel. Si prova ogni `offset` (0 = il bordo stesso, la
     // lunghezza del blocco = la sua fine): il blocco si aggancia quando il bordo corrispondente è vicino al segno.
     double snapped(double desired, const std::vector<double>& marks, std::initializer_list<double> offsets) const;
+    // Segni per il trascinamento di un bordo: tutti (video, audio, scritte, cursore) tranne il bordo com'era prima,
+    // dove si aggancerebbe subito al bordo che si sta spostando (o a quello della sua clip audio collegata).
+    std::vector<double> edgeMarks(int ignoredBlock, int ignoredClip, int ignoredText, double originalEdge) const;
+    // Se il bordo trascinato in `time` è a livello con uno dei segni, la riga tratteggiata di allineamento su tutte le corsie.
+    void paintAlignGuide(QPainter& p, double time, const std::vector<double>& marks) const;
     void syncTrackButtons();
     void updateDuration();  // durata mostrata: fino alla fine dei pezzi o delle clip audio, più un po' di posto
     // Bordo di un blocco sotto il punto (corsia video, entro pochi pixel): indice del blocco, -1 se nessuno; atStart
@@ -457,6 +488,15 @@ private:
     int envPoint_ = -1;            // punto preso
     bool envMoved_ = false;        // la linea è cambiata (punto aggiunto o spostato)
     std::vector<core::LevelPoint> envPoints_;  // la linea in modifica
+    bool jointActive_ = false;     // si sta trascinando il pallino di una giunzione
+    JunctionDot joint_;
+    double jointDb_ = 0.0;
+    bool jointMoved_ = false;
+    std::vector<core::LevelPoint> jointBaseFirst_;   // le linee com'erano alla presa
+    std::vector<core::LevelPoint> jointBaseSecond_;
+    std::vector<core::LevelPoint> jointFirstLine_;   // le due linee con il pallino al livello trascinato
+    std::vector<core::LevelPoint> jointSecondLine_;
+    void updateJointLines();
     int levelLane_ = -1;           // corsia di cui si trascina il livello
     double levelValue_ = 0.0;
 

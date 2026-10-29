@@ -135,6 +135,8 @@ MainWindow::ExportSettings MainWindow::exportSettings(bool drawText) const
         settings.reencode.texts = project_.textTracks();
         settings.reencode.textRenderer = settings.textRenderer.get();
     }
+    // Le transizioni: la parte dei pezzi dentro una transizione si ricodifica con i due pezzi fusi.
+    settings.reencode.transitions = core::exportTransitionsOf(project_);
     return settings;
 }
 
@@ -290,6 +292,7 @@ bool MainWindow::exportOptionsDialog()
         core::ReencodeOptions options{reencodeOptions_.quality, all, closeGaps};
         options.texts = textSettings.reencode.texts;
         options.textRenderer = textSettings.reencode.textRenderer;
+        options.transitions = textSettings.reencode.transitions;
         const core::ExportPreview result = core::previewExport(plan, audio, format.empty() ? nullptr : &format, options);
         QApplication::restoreOverrideCursor();
         return result;
@@ -341,6 +344,10 @@ bool MainWindow::exportOptionsDialog()
             text += QStringLiteral(", <b>%1 con scritte</b> (%2 ricodificati col testo sopra)")
                         .arg(p.textSegments)
                         .arg(timeText(p.textSeconds));
+        if (p.transitionSegments > 0)
+            text += QStringLiteral(", <b>%1 con transizioni</b> (%2 ricodificati con i due pezzi fusi)")
+                        .arg(p.transitionSegments)
+                        .arg(timeText(p.transitionSeconds));
         if (p.blackGaps > 0)
             text += p.blackGaps == 1 ? QStringLiteral(", <b>1 spazio nero</b> (%1)").arg(timeText(p.blackSeconds))
                                      : QStringLiteral(", <b>%1 spazi neri</b> (%2)").arg(p.blackGaps).arg(timeText(p.blackSeconds));
@@ -357,7 +364,7 @@ bool MainWindow::exportOptionsDialog()
             text += QStringLiteral("<br>I pezzi copiati non perdono niente; quelli ricodificati sono quasi uguali "
                                    "all'originale con la qualità alta.");
         summary->setText(text);
-        quality->setEnabled(p.reencodedSegments > 0 || p.preciseCuts > 0 || p.blackGaps > 0 || p.textSegments > 0);
+        quality->setEnabled(p.reencodedSegments > 0 || p.preciseCuts > 0 || p.blackGaps > 0 || p.textSegments > 0 || p.transitionSegments > 0);
     };
     describe(first);
     const auto update = [&] { describe(preview(all->isChecked(), closeGaps->isChecked())); };

@@ -26,6 +26,10 @@ struct MixSegment
     bool ofPiece = false;  // l'audio di un pezzo video (le clip libere su A1 hanno lo stesso trackId ma ofPiece falso)
     std::vector<TimeRange> muted;  // tratti senza audio, nei tempi del file
     std::vector<LevelPoint> envelope;  // linea del livello, nei tempi del file
+    // Dissolvenza a potenza costante ai bordi del tratto (transizioni): il livello sale con sin(x * pi/2) nei primi
+    // `fadeIn` secondi e scende con la stessa curva negli ultimi `fadeOut` (0 = nessuna dissolvenza).
+    double fadeIn = 0.0;
+    double fadeOut = 0.0;
 
     double length() const { return fileEnd - fileStart; }
 };

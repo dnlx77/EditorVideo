@@ -146,3 +146,170 @@ TEST(Groups, AreSavedAndReopened)
     EXPECT_EQ(again.groupMembers({Kind::Piece, c}).size(), 1u);
     std::filesystem::remove_all(dir);
 }
+
+TEST(Groups, GroupAfterUngroupBindsVideoAndItsAudioAgain)
+{
+    Montage m;
+    const int clip = m.project.unlinkAudio(m.a);
+    ASSERT_NE(clip, 0);
+    ASSERT_TRUE(m.project.sequence().find(m.a)->detached);
+
+    int relinked = 0;
+    EXPECT_EQ(m.project.groupObjects({{Kind::Piece, m.a}, {Kind::AudioClip, clip}}, &relinked), 0);
+    EXPECT_EQ(relinked, 1);
+    EXPECT_FALSE(m.project.sequence().find(m.a)->detached);
+    EXPECT_EQ(m.project.audioTracks().find(clip), nullptr);
+    EXPECT_TRUE(m.project.objectExists({Kind::PieceAudio, m.a}));
+    EXPECT_TRUE(m.project.sequence().mutedRanges().empty());
+}
+
+TEST(Groups, SplitKeepsTheUnlinkedAudioUnlinkedInBothHalves)
+{
+    Montage m;
+    ASSERT_EQ(m.project.ungroupObjects({{Kind::Piece, m.a}}).audioUnlinked, 1);
+    const auto created = m.project.splitGroup({Kind::Piece, m.a}, 1.0);
+    ASSERT_FALSE(created.empty());
+    const int second = created.front().id;
+    EXPECT_TRUE(m.project.sequence().find(m.a)->detached);
+    EXPECT_TRUE(m.project.sequence().find(second)->detached);
+}
+
+TEST(Groups, EditingOneObjectAtATime)
+{
+    Montage m;
+    const int g1 = m.project.groupObjects({{Kind::Piece, m.a}, {Kind::Piece, m.b}});
+    const int g2 = m.project.groupObjects({{Kind::Piece, m.c}, {Kind::AudioClip, m.music}});
+    ASSERT_NE(g1, 0);
+    ASSERT_NE(g2, 0);
+    // Un oggetto passa da un gruppo all'altro; il montaggio non cambia.
+    const double startOfB = m.project.sequence().startOf(m.project.sequence().indexOf(m.b));
+    EXPECT_TRUE(m.project.addToGroup(g2, {Kind::Piece, m.b}));
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.b}), g2);
+    EXPECT_EQ(m.project.groups().find(g2)->members.size(), 3u);
+    EXPECT_EQ(m.project.sequence().startOf(m.project.sequence().indexOf(m.b)), startOfB);
+    // Il gruppo 1 è rimasto con il solo A: si scioglie.
+    EXPECT_EQ(m.project.groups().find(g1), nullptr);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.a}), 0);
+    // Già nel gruppo, gruppo o oggetto che non ci sono: niente da fare.
+    EXPECT_FALSE(m.project.addToGroup(g2, {Kind::Piece, m.b}));
+    EXPECT_FALSE(m.project.addToGroup(999, {Kind::Piece, m.a}));
+    EXPECT_FALSE(m.project.addToGroup(g2, {Kind::Piece, 999}));
+    // Aggiungere un oggetto libero.
+    EXPECT_TRUE(m.project.addToGroup(g2, {Kind::Piece, m.a}));
+    EXPECT_EQ(m.project.groups().find(g2)->members.size(), 4u);
+    // Toglierne uno lascia il gruppo; toglierne fino a uno solo lo scioglie e libera anche l'ultimo.
+    EXPECT_TRUE(m.project.removeFromGroup({Kind::Piece, m.a}));
+    EXPECT_FALSE(m.project.removeFromGroup({Kind::Piece, m.a}));
+    EXPECT_TRUE(m.project.removeFromGroup({Kind::Piece, m.b}));
+    EXPECT_TRUE(m.project.removeFromGroup({Kind::AudioClip, m.music}));
+    EXPECT_TRUE(m.project.groups().all().empty());
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.c}), 0);
+    // Sempre tutto al suo posto.
+    EXPECT_EQ(m.project.sequence().fragments().size(), 3u);
+}
+
+TEST(Groups, NamesAreAutomaticUntilGiven)
+{
+    Montage m;
+    const int id = m.project.groupObjects({{Kind::Piece, m.a}, {Kind::Piece, m.b}});
+    ASSERT_NE(id, 0);
+    EXPECT_EQ(m.project.groups().find(id)->label(), "Gruppo " + std::to_string(id));
+    EXPECT_TRUE(m.project.renameGroup(id, "Introduzione"));
+    EXPECT_FALSE(m.project.renameGroup(id, "Introduzione"));
+    EXPECT_FALSE(m.project.renameGroup(999, "Altro"));
+    EXPECT_EQ(m.project.groups().find(id)->label(), "Introduzione");
+    // Annulla e Ripeti riportano anche il nome.
+    const Project named = m.project;
+    ASSERT_TRUE(m.project.renameGroup(id, ""));
+    EXPECT_EQ(m.project.groups().find(id)->label(), "Gruppo " + std::to_string(id));
+    m.project.restoreEdits(named);
+    EXPECT_EQ(m.project.groups().find(id)->label(), "Introduzione");
+}
+
+TEST(Groups, NamesAreSavedAndOldFilesHaveNone)
+{
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "EditorVideoGroupNamesTests";
+    std::filesystem::create_directories(dir);
+    const std::string path = (dir / "nomi.evproj").string();
+    Montage m;
+    const int g1 = m.project.groupObjects({{Kind::Piece, m.a}, {Kind::Piece, m.b}});
+    const int g2 = m.project.groupObjects({{Kind::Piece, m.c}, {Kind::AudioClip, m.music}});
+    ASSERT_NE(g1, 0);
+    ASSERT_NE(g2, 0);
+    // Senza nomi il file non ha la chiave dei nomi (si apre anche con i programmi di prima).
+    saveProjectFile(path, m.project, ProjectView{});
+    {
+        std::ifstream in(path);
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        EXPECT_EQ(text.find("nomiGruppi"), std::string::npos);
+    }
+    ASSERT_TRUE(m.project.renameGroup(g2, "Finale"));
+    saveProjectFile(path, m.project, ProjectView{});
+    const LoadedProject loaded = loadProjectFile(path);
+    const auto groups = loaded.project.validGroupList();
+    ASSERT_EQ(groups.size(), 2u);
+    EXPECT_TRUE(groups[0].name.empty());
+    EXPECT_EQ(groups[1].name, "Finale");
+    EXPECT_EQ(groups[1].members.size(), 2u);
+    std::filesystem::remove_all(dir);
+}
+
+TEST(Groups, DroppingObjectsOnTheGroupList)
+{
+    Montage m;
+    const int g1 = m.project.groupObjects({{Kind::Piece, m.a}, {Kind::Piece, m.b}});
+    const int g2 = m.project.groupObjects({{Kind::Piece, m.c}, {Kind::AudioClip, m.music}});
+    ASSERT_NE(g1, 0);
+    ASSERT_NE(g2, 0);
+    const double startOfC = m.project.sequence().startOf(m.project.sequence().indexOf(m.c));
+    // Su un gruppo: l'oggetto passa lì (e il gruppo che resta con uno solo si scioglie); su quello in cui è già, niente.
+    EXPECT_FALSE(m.project.dropOnGroup({{Kind::Piece, m.c}}, g2));
+    EXPECT_TRUE(m.project.dropOnGroup({{Kind::Piece, m.a}}, g2));
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.a}), g2);
+    EXPECT_EQ(m.project.groups().find(g1), nullptr);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.b}), 0);
+    // Più oggetti insieme su un gruppo.
+    EXPECT_TRUE(m.project.dropOnGroup({{Kind::Piece, m.b}, {Kind::Piece, m.a}}, g2));
+    EXPECT_EQ(m.project.groups().find(g2)->members.size(), 4u);
+    // Uno solo nello spazio vuoto: esce dal gruppo; uno già libero: niente.
+    EXPECT_TRUE(m.project.dropOnGroup({{Kind::Piece, m.b}}, 0));
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.b}), 0);
+    EXPECT_FALSE(m.project.dropOnGroup({{Kind::Piece, m.b}}, 0));
+    // Due o più nello spazio vuoto: un gruppo nuovo (quello vecchio che resta con uno solo si scioglie).
+    EXPECT_TRUE(m.project.dropOnGroup({{Kind::Piece, m.a}, {Kind::AudioClip, m.music}}, 0));
+    const int fresh = m.project.groups().groupOf({Kind::Piece, m.a});
+    EXPECT_NE(fresh, 0);
+    EXPECT_NE(fresh, g2);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::AudioClip, m.music}), fresh);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.c}), 0);
+    // Gruppo o oggetti che non ci sono: niente.
+    EXPECT_FALSE(m.project.dropOnGroup({{Kind::Piece, m.b}}, 999));
+    EXPECT_FALSE(m.project.dropOnGroup({{Kind::Piece, 999}}, fresh));
+    EXPECT_FALSE(m.project.dropOnGroup({}, fresh));
+    // Il montaggio non si è mosso.
+    EXPECT_EQ(m.project.sequence().startOf(m.project.sequence().indexOf(m.c)), startOfC);
+    EXPECT_EQ(m.project.sequence().fragments().size(), 3u);
+    // Annulla e Ripeti.
+    const Project after = m.project;
+    Project before = m.project;
+    ASSERT_TRUE(m.project.dropOnGroup({{Kind::Piece, m.a}}, 0));
+    m.project.restoreEdits(before);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.a}), fresh);
+    m.project.restoreEdits(after);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.a}), fresh);
+}
+
+TEST(Groups, DroppingOnAVideoWithItsAudioMakesANewGroupOfAll)
+{
+    Montage m;
+    // Come dall'elenco: la musica trascinata sul video B con il suo audio (già legati, non in un gruppo dell'utente).
+    const double startOfB = m.project.sequence().startOf(m.project.sequence().indexOf(m.b));
+    EXPECT_TRUE(m.project.dropOnGroup({{Kind::AudioClip, m.music}, {Kind::Piece, m.b}, {Kind::PieceAudio, m.b}}, 0));
+    const int id = m.project.groups().groupOf({Kind::Piece, m.b});
+    ASSERT_NE(id, 0);
+    EXPECT_EQ(m.project.groups().find(id)->members.size(), 3u);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::AudioClip, m.music}), id);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::PieceAudio, m.b}), id);
+    EXPECT_EQ(m.project.sequence().startOf(m.project.sequence().indexOf(m.b)), startOfB);
+    EXPECT_TRUE(m.project.sequence().find(m.b) != nullptr && !m.project.sequence().find(m.b)->detached);
+}

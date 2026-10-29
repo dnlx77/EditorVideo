@@ -202,7 +202,9 @@ public:
     std::vector<ObjectRef> groupMembers(ObjectRef object) const;
     // Mette gli oggetti (quelli che esistono) in un gruppo nuovo; restituisce l'id, 0 se non c'è niente da raggruppare
     // (meno di due oggetti, o sono già tutti legati fra loro).
-    int groupObjects(const std::vector<ObjectRef>& objects);
+    // Se fra gli oggetti ci sono un pezzo con l'audio scollegato e la sua clip audio ancora allineata, G li riunisce
+    // come prima di U (relinkAudio): *relinked conta i pezzi ricollegati (in quel caso il valore restituito può essere 0).
+    int groupObjects(const std::vector<ObjectRef>& objects, int* relinked = nullptr);
     // Scioglie i gruppi degli oggetti; se non ne ha sciolto nessuno, scollega l'audio dei pezzi video fra gli oggetti
     // (unlinkAudio): così con U si scioglie prima il gruppo e poi il legame fra il video e il suo audio.
     struct UngroupResult
@@ -243,8 +245,46 @@ public:
     };
     // Lo porta (o porta il gruppo) a `start`, entro quello che freeSpotFor permette.
     MoveResult moveObject(ObjectRef object, int track, double start, bool push);
+    // Cambiare come sono fatti i gruppi senza toccare il montaggio (l'elenco dei gruppi): nessun oggetto si sposta o
+    // si elimina. false (e nessuna modifica) se il gruppo o l'oggetto non ci sono, o non cambierebbe niente.
+    // addToGroup: l'oggetto passa dal suo gruppo (se ne ha uno) a questo. removeFromGroup: l'oggetto resta libero; il
+    // gruppo con meno di due oggetti si scioglie. renameGroup: nome vuoto = automatico.
+    bool addToGroup(int groupId, ObjectRef object);
+    bool removeFromGroup(ObjectRef object);
+    bool renameGroup(int groupId, const std::string& name);
+    // Trascinare oggetti (che esistono) nell'elenco dei gruppi: con groupId > 0 passano in quel gruppo; con 0 (spazio
+    // vuoto) uno solo esce dal suo gruppo e due o più ne formano uno nuovo. false (e nessuna modifica) se non cambia niente.
+    bool dropOnGroup(const std::vector<ObjectRef>& objects, int groupId);
+    // Come validGroups, con id e nome (per salvarli).
+    std::vector<ObjectGroup> validGroupList() const;
     // I gruppi dell'utente senza gli oggetti che non esistono più, con almeno due oggetti (per salvarli).
     std::vector<std::vector<ObjectRef>> validGroups() const;
+
+    // Giunzioni audio: due clip audio attaccate sulla stessa traccia, o due pezzi video attaccati (la loro audio su A1).
+    // Su una giunzione c'è un pallino del livello comune: un punto sul bordo finale del primo e uno sul bordo iniziale
+    // del secondo, allo stesso livello. Spostarlo cambia il volume di tutti e due; poi le linee dei due restano
+    // indipendenti (altri punti si aggiungono e si spostano come sempre) e il pallino si toglie come gli altri.
+    struct Junction
+    {
+        bool fragment = false;  // pezzi video (id dei pezzi); altrimenti clip audio (id delle clip)
+        int first = 0;          // il pezzo o la clip che precede
+        int second = 0;         // quello che segue
+
+        bool operator==(const Junction&) const = default;
+    };
+    // Tutte le giunzioni (audio dei pezzi non scollegato) nell'ordine: prima i pezzi, poi le clip per traccia.
+    std::vector<Junction> junctions() const;
+    // Il livello (dB) del pallino comune; std::nullopt se non c'è (nessun punto sul bordo da una delle due parti, o con
+    // livelli diversi) o la giunzione non esiste più.
+    std::optional<double> junctionLevel(const Junction& junction) const;
+    // Mette il pallino al livello `db` (lo crea o lo sposta). false se la giunzione non c'è o non cambia nulla.
+    bool setJunctionLevel(const Junction& junction, double db);
+    // Toglie i due punti sul bordo. false se non ce ne sono.
+    bool removeJunctionPoint(const Junction& junction);
+    // Dopo uno spostamento: dove due clip audio (non pezzi video: la linea di un pezzo costringe a mixare l'audio
+    // esportando) sono ora attaccate e prima no (`before` = junctions() di prima), crea il pallino se in quel punto le
+    // due linee hanno già lo stesso livello e non hanno punti sul bordo. Restituisce quanti ne ha creati.
+    int linkNewJunctions(const std::vector<Junction>& before);
 
     // Formato del progetto (vedi ProjectFormat): vuoto finché non lo si decide, di solito al primo pezzo messo nel
     // montaggio. Fa parte delle modifiche (Annulla e Ripeti lo riportano com'era).

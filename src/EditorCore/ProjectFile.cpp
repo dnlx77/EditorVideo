@@ -450,9 +450,13 @@ std::string projectToJson(const std::string& projectPath, const Project& project
     // I gruppi: ogni oggetto per posizione (pezzo nella sequenza, clip audio per traccia e posizione nella traccia), gli id
     // cambiano riaprendo il progetto.
     JsonValue::Array groups;
-    for (const std::vector<ObjectRef>& members : project.validGroups()) {
+    JsonValue::Array groupNames;  // in parallelo a `groups`, scritto solo se almeno un gruppo ha un nome (versione 3 lo ignora)
+    bool anyGroupName = false;
+    for (const ObjectGroup& group : project.validGroupList()) {
         JsonValue::Array items;
-        for (const ObjectRef& o : members) {
+        groupNames.emplace_back(group.name);
+        anyGroupName = anyGroupName || !group.name.empty();
+        for (const ObjectRef& o : group.members) {
             if (o.kind == ObjectRef::Kind::TextClip) {
                 int layerIndex = -1;
                 int clipIndex = -1;
@@ -508,6 +512,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         root["tracceAudio"] = std::move(audioTracks);
     if (!groups.empty())
         root["gruppi"] = std::move(groups);
+    if (anyGroupName)
+        root["nomiGruppi"] = std::move(groupNames);
     if (!project.textTracks().layers().empty())
         root["scritte"] = textTracksToJson(project.textTracks());
     if (!project.textStyles().empty())
@@ -694,7 +700,8 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
         // Gruppi: ogni oggetto è dato per posizione (vedi projectToJson); quelli che non ci sono più si scartano.
         if (root["gruppi"].isArray()) {
             const Project& built = loaded.project;
-            std::vector<std::vector<ObjectRef>> groups;
+            std::vector<ObjectGroup> groups;
+            const JsonValue& names = root["nomiGruppi"];
             for (const JsonValue& group : root["gruppi"].asArray()) {
                 std::vector<ObjectRef> members;
                 for (const JsonValue& item : group.asArray()) {
@@ -718,7 +725,11 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                                            built.sequence().fragments()[static_cast<std::size_t>(at)].id});
                     }
                 }
-                groups.push_back(std::move(members));
+                ObjectGroup loadedGroup;
+                loadedGroup.members = std::move(members);
+                if (names.isArray() && groups.size() < names.asArray().size() && names.asArray()[groups.size()].isString())
+                    loadedGroup.name = text(names.asArray()[groups.size()]);
+                groups.push_back(std::move(loadedGroup));
             }
             loaded.project.groups().restore(groups);
         }

@@ -75,6 +75,30 @@ double envelopeDbAt(const std::vector<LevelPoint>& points, double seconds)
     return span <= 0.0 ? b.db : a.db + (b.db - a.db) * (seconds - a.time) / span;
 }
 
+const LevelPoint* pointAt(const std::vector<LevelPoint>& points, double time)
+{
+    for (const LevelPoint& p : points) {
+        if (std::abs(p.time - time) <= kEdgePointTolerance)
+            return &p;
+    }
+    return nullptr;
+}
+
+std::vector<LevelPoint> withoutPointAt(std::vector<LevelPoint> points, double time)
+{
+    points.erase(std::remove_if(points.begin(), points.end(),
+                                [&](const LevelPoint& p) { return std::abs(p.time - time) <= kEdgePointTolerance; }),
+                 points.end());
+    return points;
+}
+
+std::vector<LevelPoint> withPointAt(std::vector<LevelPoint> points, double time, double db)
+{
+    points = withoutPointAt(std::move(points), time);
+    points.push_back({time, db});
+    return normalizeEnvelope(std::move(points));
+}
+
 double envelopeGain(double db)
 {
     return db <= kLevelMinDb ? 0.0 : std::pow(10.0, db / 20.0);

@@ -1,4 +1,5 @@
 #include "EditorApp/MainWindow.h"
+#include "EditorApp/GroupListPanel.h"
 
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/PlayerWidget.h"
@@ -348,10 +349,12 @@ bool MainWindow::moveAudioClip(int clipId, int trackId, double position)
     if (audio.find(clipId) == nullptr)
         return false;
     const core::Project before = project_;
+    const std::vector<core::Project::Junction> junctionsBefore = project_.junctions();
     const core::Project::MoveResult moved =
         project_.moveObject({core::ObjectRef::Kind::AudioClip, clipId}, trackId, position, pushPieces_);
     if (!moved.moved)
         return false;
+    project_.linkNewJunctions(junctionsBefore);  // clip appena attaccate: compare il pallino comune
     recordEdit(moved.group ? QStringLiteral("Sposta gruppo") : QStringLiteral("Sposta clip audio"), before);
     return true;
 }
@@ -407,6 +410,15 @@ void MainWindow::setEnvelope(bool fragment, int id, const std::vector<core::Leve
         refreshTimeline();  // il punto trascinato torna dov'era
 }
 
+void MainWindow::setJunctionLevel(const core::Project::Junction& junction, std::optional<double> db)
+{
+    const core::Project before = project_;
+    if (db ? project_.setJunctionLevel(junction, *db) : project_.removeJunctionPoint(junction))
+        recordMixEdit(db ? QStringLiteral("Pallino della giunzione") : QStringLiteral("Toglie il pallino della giunzione"), before);
+    else
+        refreshTimeline();  // il pallino torna dov'era
+}
+
 void MainWindow::relinkAudio()
 {
     const int fragment = timeline_->selected();
@@ -440,11 +452,17 @@ void MainWindow::groupSelection()
         }
     }
     const core::Project before = project_;
-    if (refs.size() < 2 || project_.groupObjects(refs) == 0) {
+    int relinked = 0;
+    const int group = refs.size() < 2 ? 0 : project_.groupObjects(refs, &relinked);
+    if (group == 0 && relinked == 0) {
         statusBar()->showMessage(QStringLiteral("Per fare un gruppo scegli almeno due oggetti diversi con Ctrl+clic."), 8000);
         return;
     }
-    recordEdit(QStringLiteral("Crea gruppo"), before);
+    recordEdit(group != 0 ? QStringLiteral("Crea gruppo") : QStringLiteral("Ricollega audio"), before);
+    if (group == 0) {
+        statusBar()->showMessage(QStringLiteral("Video e audio di nuovo uniti in un gruppo."), 8000);
+        return;
+    }
     showGroupStatus();
 }
 
@@ -465,6 +483,67 @@ void MainWindow::ungroupSelection()
     statusBar()->showMessage(result.dissolved > 0 ? QStringLiteral("Gruppo sciolto.")
                                                   : QStringLiteral("Video e audio non sono più un gruppo: l'audio è una clip libera su A1."),
                              8000);
+}
+
+void MainWindow::refreshGroups()
+{
+    if (groupPanel_ == nullptr)
+        return;
+    using Kind = core::ObjectRef::Kind;
+    const core::Sequence& sequence = project_.sequence();
+    const auto entryFor = [&](core::ObjectRef ref) {
+        GroupEntry entry;
+        entry.ref = ref;
+        if (ref.kind == Kind::Piece || ref.kind == Kind::PieceAudio) {
+            const core::Fragment* f = sequence.find(ref.id);
+            const core::Clip* clip = f != nullptr ? project_.find(f->clipId) : nullptr;
+            entry.kind = ref.kind == Kind::Piece ? QStringLiteral("Video") : QStringLiteral("Audio del video");
+            entry.name = clip != nullptr ? fileNameOf(clip->path) : QString();
+            entry.start = sequence.startOf(sequence.indexOf(ref.id));
+        } else if (ref.kind == Kind::AudioClip) {
+            const core::AudioClip* clip = project_.audioTracks().find(ref.id);
+            entry.kind = QStringLiteral("Audio");
+            entry.name = clip != nullptr ? fileNameOf(clip->path) : QString();
+            entry.start = clip != nullptr ? clip->position : 0.0;
+        } else {
+            const core::TextClip* clip = project_.textTracks().find(ref.id);
+            entry.kind = QStringLiteral("Scritta");
+            if (clip != nullptr) {
+                entry.name = QString::fromUtf8(clip->text.c_str()).section(QLatin1Char('\n'), 0, 0);
+                entry.start = clip->position;
+            }
+        }
+        return entry;
+    };
+    std::vector<GroupRow> rows;
+    for (const core::ObjectGroup& group : project_.validGroupList()) {
+        GroupRow row;
+        row.id = group.id;
+        row.title = QString::fromUtf8(group.label().c_str());
+        for (const core::ObjectRef& ref : group.members)
+            row.entries.push_back(entryFor(ref));
+        rows.push_back(std::move(row));
+    }
+    // I video con il loro audio, se nessuno dei due sta in un gruppo dell'utente.
+    for (const core::Fragment& f : sequence.fragments()) {
+        const core::ObjectRef piece{Kind::Piece, f.id};
+        const core::ObjectRef audio{Kind::PieceAudio, f.id};
+        if (!project_.objectExists(audio) || project_.groups().groupOf(piece) != 0 || project_.groups().groupOf(audio) != 0)
+            continue;
+        GroupRow row;
+        row.natural = true;
+        row.entries = {entryFor(piece), entryFor(audio)};
+        row.title = row.entries.front().name;
+        rows.push_back(std::move(row));
+    }
+    groupPanel_->setGroups(std::move(rows));
+    showGroupSelection();
+}
+
+void MainWindow::showGroupSelection()
+{
+    if (groupPanel_ != nullptr && timeline_ != nullptr)
+        groupPanel_->showSelection(timeline_->allSelectedObjects());
 }
 
 void MainWindow::showGroupStatus()

@@ -1,5 +1,6 @@
 #include "EditorApp/SelfTests.h"
 
+#include "EditorApp/GroupListPanel.h"
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
@@ -41,6 +42,7 @@
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QTabWidget>
+#include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QProgressDialog>
@@ -727,6 +729,7 @@ constexpr CommandLineTest kTests[] = {
     {"--audio-test", runAudioTest},     {"--codec-info", runCodecInfo},         {"--sequence-test", runSequenceTest},
     {"--join-test", runJoinTest},         {"--text-test", runTextTest},
     {"--transition-test", runTransitionTest},
+    {"--group-test", runGroupTest},
 };
 
 }  // namespace
@@ -1829,7 +1832,31 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                       line->textLaneCenter(1), Qt::NoButton, Qt::ControlModifier);
                 const bool multi = line->selectedObjects().size() == 2;
                 window->groupSelection();
-                const bool grouped = placed && window->project().groupMembers({core::ObjectRef::Kind::TextClip, third}).size() == 2;
+                // Il gruppo compare nella scheda Gruppi, con le due scritte.
+                const std::vector<GroupRow>& listedGroups = window->groupPanel()->rows();
+                const bool listed = std::any_of(listedGroups.begin(), listedGroups.end(), [&](const GroupRow& row) {
+                    return row.id > 0 && row.entries.size() == 2
+                        && std::any_of(row.entries.begin(), row.entries.end(),
+                                       [&](const GroupEntry& e) { return e.ref == core::ObjectRef{core::ObjectRef::Kind::TextClip, third}; });
+                });
+                // Un clic sul gruppo nell'elenco sceglie sulla linea del tempo tutti i suoi oggetti.
+                bool fromList = false;
+                if (listed) {
+                    line->setSelected(0);
+                    line->setSelectedTextClip(0);
+                    QTreeWidget* tree = window->groupPanel()->tree();
+                    for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+                        const GroupRow& row = window->groupPanel()->rows()[static_cast<std::size_t>(i)];
+                        if (row.id <= 0 || row.entries.size() != 2)
+                            continue;
+                        tree->itemClicked(tree->topLevelItem(i), 0);
+                        fromList = line->selectedObjects().size() == 2;
+                        // E ciò che è scelto sulla linea del tempo si evidenzia nell'elenco (il nodo del gruppo).
+                        fromList = fromList && tree->currentItem() == tree->topLevelItem(i);
+                        break;
+                    }
+                }
+                const bool grouped = placed && listed && fromList && window->project().groupMembers({core::ObjectRef::Kind::TextClip, third}).size() == 2;
                 // Il livello scelto si toglie con le sue scritte.
                 const int layersBefore = static_cast<int>(text.layers().size());
                 line->setSelectedTextLayer(second);
@@ -1938,6 +1965,9 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 line->fitAll();
                 QCoreApplication::processEvents();
                 const std::size_t piecesBefore = proj.sequence().fragments().size();
+                const QString restoreFile =
+                    QDir::temp().filePath(QStringLiteral("EditorVideoProvaTransizioniPrima") + core::kProjectExtension);
+                const bool restorable = window->saveProjectAs(restoreFile, false);
                 const auto firstJunction = [&]() {
                     const auto& frags = proj.sequence().fragments();
                     for (std::size_t i = 0; i + 1 < frags.size(); ++i)
@@ -1964,6 +1994,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 bool dropped = false, refusedElsewhere = false, widened = false, selected = false, removed = false, redone = false;
                 bool undone = false;
                 bool onMonitor = false;
+                bool reopenedKept = false;
                 if (found) {
                     const int beforeId = proj.sequence().fragments()[static_cast<std::size_t>(junction)].id;
                     const double junctionX = line->xForJunction(junction);
@@ -2048,16 +2079,37 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                         window->undo();  // durata di prima
                         window->undo();  // aggiunta
                         undone = proj.transitions().empty() && proj.sequence().fragments().size() >= piecesBefore;
+                        // Salvata e riaperta: la transizione c'è ancora, e si vede sulla timeline appena i file sono analizzati.
+                        const QString reopenFile =
+                            QDir::temp().filePath(QStringLiteral("EditorVideoProvaTransizioni") + core::kProjectExtension);
+                        dropAt(junctionX + 5);
+                        const bool savedWith = proj.transitions().clips().size() == 1 && window->saveProjectAs(reopenFile, false);
+                        reopenedKept = savedWith && window->openProject(reopenFile, false);
+                        QElapsedTimer analyzing;
+                        analyzing.start();
+                        while (!window->project().allAnalyzed() && analyzing.elapsed() < 20000)
+                            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                        QCoreApplication::processEvents();
+                        reopenedKept = reopenedKept && window->project().transitions().clips().size() == 1
+                                    && window->sequenceTimeline()->transitions().size() == 1;
+                        QFile::remove(reopenFile);
+                        // Il progetto com'era prima della prova.
+                        window->openProject(restoreFile, false);
+                        while (!window->project().allAnalyzed() && analyzing.elapsed() < 40000)
+                            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
                     }
                 }
                 // Se la prova ha diviso un pezzo, si annulla.
                 while (proj.sequence().fragments().size() > piecesBefore && window->undo()) {
                 }
-                const bool all = found && dropped && refusedElsewhere && selected && widened && removed && redone && undone && onMonitor;
+                QFile::remove(restoreFile);
+                const bool all = found && dropped && refusedElsewhere && selected && widened && removed && redone && undone && onMonitor
+                              && restorable && reopenedKept;
                 std::printf("Transizioni: giunzione %s, lasciata %s, rifiutata lontano %s, selezionata %s, durata col bordo %s, "
-                            "tolta con Canc %s, annulla %s, monitor %s\n",
+                            "tolta con Canc %s, annulla %s, monitor %s, salvata e riaperta %s\n",
                             found ? "sì" : "NO", dropped ? "sì" : "NO", refusedElsewhere ? "sì" : "NO", selected ? "sì" : "NO",
-                            widened ? "sì" : "NO", removed ? "sì" : "NO", redone && undone ? "sì" : "NO", onMonitor ? "sì" : "NO");
+                            widened ? "sì" : "NO", removed ? "sì" : "NO", redone && undone ? "sì" : "NO", onMonitor ? "sì" : "NO",
+                            reopenedKept ? "sì" : "NO");
                 std::fflush(stdout);
                 ok = ok && all;
             }

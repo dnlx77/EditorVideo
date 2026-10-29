@@ -3,6 +3,7 @@
 #include "EditorCore/Transitions.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <exception>
@@ -17,6 +18,7 @@ struct TransitionRenderer::Side
     std::shared_ptr<VideoFrame> current;  // l'ultimo fotogramma non dopo il tempo chiesto (o quello cercato)
     std::shared_ptr<VideoFrame> next;     // già letto ma ancora nel futuro
     bool ended = false;                   // il file è finito
+    long long seeks = 0;                  // quante volte si è riposizionato il decoder
 
     void close()
     {
@@ -36,6 +38,7 @@ struct TransitionRenderer::Side
         constexpr double kEpsilon = 1e-6;
         if (!current || time < current->time - frameDuration || time > current->time + kMaxAhead) {
             current = decoder->seek(time);
+            ++seeks;
             next.reset();
             ended = false;
             return current;
@@ -122,34 +125,60 @@ std::shared_ptr<VideoFrame> onCanvas(const VideoFrame& frame, int boxWidth, int 
 
 }  // namespace
 
-std::shared_ptr<VideoFrame> TransitionRenderer::render(const Project& project, const TransitionPlacement& placement,
-                                                       double sequenceTime)
+std::optional<TransitionJob> makeTransitionJob(const Project& project, const TransitionPlacement& placement)
 {
     const TransitionClip* transition = project.transitions().find(placement.id);
-    const Transition* effect = transition != nullptr ? findTransition(transition->type) : nullptr;
     const Sequence& sequence = project.sequence();
     const Fragment* a = sequence.find(placement.beforeFragment);
     const Fragment* b = sequence.find(placement.afterFragment);
-    if (effect == nullptr || a == nullptr || b == nullptr)
-        return nullptr;
+    if (transition == nullptr || a == nullptr || b == nullptr)
+        return std::nullopt;
     const Clip* clipA = project.find(a->clipId);
     const Clip* clipB = project.find(b->clipId);
     if (clipA == nullptr || clipB == nullptr)
+        return std::nullopt;
+    TransitionJob job;
+    job.typeId = transition->type;
+    job.params = transition->params;
+    job.pathA = clipA->path;
+    job.pathB = clipB->path;
+    job.durationA = clipA->duration;
+    job.durationB = clipB->duration;
+    job.fragmentStartA = a->start;
+    job.fragmentStartB = b->start;
+    job.sequenceStartA = sequence.startOf(sequence.indexOf(a->id));
+    job.sequenceStartB = sequence.startOf(sequence.indexOf(b->id));
+    job.start = placement.start();
+    job.end = placement.end();
+    return job;
+}
+
+std::shared_ptr<VideoFrame> TransitionRenderer::render(const Project& project, const TransitionPlacement& placement,
+                                                       double sequenceTime)
+{
+    const std::optional<TransitionJob> job = makeTransitionJob(project, placement);
+    return job ? render(*job, sequenceTime) : nullptr;
+}
+
+std::shared_ptr<VideoFrame> TransitionRenderer::render(const TransitionJob& job, double sequenceTime)
+{
+    const Transition* effect = findTransition(job.typeId);
+    if (effect == nullptr)
         return nullptr;
 
-    const double t = std::clamp(sequenceTime, placement.start(), placement.end());
+    const double t = std::clamp(sequenceTime, job.start, job.end);
     // Tempi nei file: il pezzo che finisce continua oltre la sua fine, quello che inizia parte prima del suo inizio.
-    double timeA = a->start + (t - sequence.startOf(sequence.indexOf(a->id)));
-    double timeB = b->start + (t - sequence.startOf(sequence.indexOf(b->id)));
-    if (clipA->duration > 0)
-        timeA = std::min(timeA, clipA->duration);
+    double timeA = job.fragmentStartA + (t - job.sequenceStartA);
+    double timeB = job.fragmentStartB + (t - job.sequenceStartB);
+    if (job.durationA > 0)
+        timeA = std::min(timeA, job.durationA);
     timeA = std::max(timeA, 0.0);
     timeB = std::max(timeB, 0.0);
-    if (clipB->duration > 0)
-        timeB = std::min(timeB, clipB->duration);
+    if (job.durationB > 0)
+        timeB = std::min(timeB, job.durationB);
 
-    const auto open = [&](Side& side, const Clip& clip) {
-        const std::string path = videoSource_ ? videoSource_(clip.path) : clip.path;
+    const auto open = [&](Side& side, const std::string& original) {
+        const std::string path = videoSource_ ? videoSource_(original) : original;
         if (side.decoder != nullptr && side.path == path)
             return true;
         side.close();
@@ -167,13 +196,22 @@ std::shared_ptr<VideoFrame> TransitionRenderer::render(const Project& project, c
             return false;
         }
     };
-    if (!open(*from_, *clipA) || !open(*to_, *clipB))
+    if (!open(*from_, job.pathA) || !open(*to_, job.pathB))
         return nullptr;
     std::shared_ptr<VideoFrame> frameA;
     std::shared_ptr<VideoFrame> frameB;
+    const auto now = [] { return std::chrono::steady_clock::now(); };
+    const auto since = [&](std::chrono::steady_clock::time_point from) { return std::chrono::duration<double>(now() - from).count(); };
     try {
+        auto begin = now();
         frameA = from_->frameAt(timeA);
+        timing_.decodeFrom = since(begin);
+        begin = now();
         frameB = to_->frameAt(timeB);
+        timing_.decodeTo = since(begin);
+        timing_.seeks = from_->seeks + to_->seeks;
+        timing_.hardwareFrom = from_->decoder->usingHardware();
+        timing_.hardwareTo = to_->decoder->usingHardware();
     } catch (const std::exception&) {
         reset();
         return nullptr;
@@ -182,14 +220,16 @@ std::shared_ptr<VideoFrame> TransitionRenderer::render(const Project& project, c
         return nullptr;
 
     // Se un lato ha un fotogramma più piccolo del riquadro (o di altre proporzioni) sta al centro, con i bordi neri.
+    const auto blendBegin = now();
     std::shared_ptr<VideoFrame> out = onCanvas(*frameA, boxWidth_, boxHeight_);
     const std::shared_ptr<VideoFrame> second = onCanvas(*frameB, boxWidth_, boxHeight_);
-    const double duration = placement.duration();
-    const double progress = duration > 0 ? (t - placement.start()) / duration : 1.0;
+    const double duration = job.end - job.start;
+    const double progress = duration > 0 ? (t - job.start) / duration : 1.0;
     effect->blend({out->pixels.data(), out->width, out->height, out->stride},
-                  {second->pixels.data(), second->width, second->height, second->stride}, progress, transition->params,
+                  {second->pixels.data(), second->width, second->height, second->stride}, progress, job.params,
                   {out->pixels.data(), out->stride});
     out->time = t;
+    timing_.blend = since(blendBegin);
     return out;
 }
 

@@ -4,6 +4,7 @@
 #include "EditorCore/TimeUtil.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace editor::core {
@@ -209,12 +210,33 @@ std::vector<ObjectRef> Project::groupMembers(ObjectRef object) const
     return found;
 }
 
-int Project::groupObjects(const std::vector<ObjectRef>& objects)
+int Project::groupObjects(const std::vector<ObjectRef>& objects, int* relinked)
 {
     std::vector<ObjectRef> valid;
     for (const ObjectRef& o : objects) {
         if (objectExists(o) && std::find(valid.begin(), valid.end(), o) == valid.end())
             valid.push_back(o);
+    }
+    // Un pezzo con l'audio scollegato e la sua clip audio (ancora allineata) tornano un oggetto solo, come prima di U.
+    for (const ObjectRef& piece : std::vector<ObjectRef>(valid)) {
+        const Fragment* f = piece.kind == ObjectRef::Kind::Piece ? sequence_.find(piece.id) : nullptr;
+        const Clip* source = f != nullptr && f->detached ? find(f->clipId) : nullptr;
+        if (source == nullptr)
+            continue;
+        const double from = sequence_.startOf(sequence_.indexOf(piece.id));
+        const double offset = from - f->start;
+        std::vector<ObjectRef> aligned;
+        for (const ObjectRef& o : valid) {
+            const AudioClip* c = o.kind == ObjectRef::Kind::AudioClip ? audio_.find(o.id) : nullptr;
+            if (c != nullptr && c->path == source->path && std::abs((c->position - c->start) - offset) < 1e-6
+                && c->position < from + f->length() - 1e-9 && c->endPosition() > from + 1e-9)
+                aligned.push_back(o);
+        }
+        if (aligned.empty() || !relinkAudio(piece.id))
+            continue;
+        if (relinked != nullptr)
+            ++*relinked;
+        std::erase_if(valid, [&](const ObjectRef& o) { return !objectExists(o); });
     }
     if (valid.size() < 2)
         return 0;
@@ -308,6 +330,60 @@ Project::UngroupResult Project::ungroupObjects(const std::vector<ObjectRef>& obj
     return result;
 }
 
+bool Project::addToGroup(int groupId, ObjectRef object)
+{
+    return objectExists(object) && groups_.addTo(groupId, object);
+}
+
+bool Project::removeFromGroup(ObjectRef object)
+{
+    return groups_.remove(object);
+}
+
+bool Project::renameGroup(int groupId, const std::string& name)
+{
+    return groups_.rename(groupId, name);
+}
+
+bool Project::dropOnGroup(const std::vector<ObjectRef>& objects, int groupId)
+{
+    std::vector<ObjectRef> valid;
+    for (const ObjectRef& o : objects) {
+        if (objectExists(o) && std::find(valid.begin(), valid.end(), o) == valid.end())
+            valid.push_back(o);
+    }
+    if (valid.empty())
+        return false;
+    if (groupId > 0) {
+        if (groups_.find(groupId) == nullptr)
+            return false;
+        bool changed = false;
+        for (const ObjectRef& o : valid)
+            changed = groups_.addTo(groupId, o) || changed;
+        return changed;
+    }
+    if (valid.size() == 1)
+        return groups_.remove(valid.front());
+    return groups_.create(valid) != 0;
+}
+
+std::vector<ObjectGroup> Project::validGroupList() const
+{
+    std::vector<ObjectGroup> result;
+    for (const ObjectGroup& g : groups_.all()) {
+        ObjectGroup valid;
+        valid.id = g.id;
+        valid.name = g.name;
+        for (const ObjectRef& o : g.members) {
+            if (objectExists(o))
+                valid.members.push_back(o);
+        }
+        if (valid.members.size() >= 2)
+            result.push_back(std::move(valid));
+    }
+    return result;
+}
+
 std::vector<std::vector<ObjectRef>> Project::validGroups() const
 {
     std::vector<std::vector<ObjectRef>> result;
@@ -397,8 +473,15 @@ bool Project::relinkAudio(int fragmentId)
 
 bool Project::audioNeedsMix() const
 {
-    return audio_.needsMix() || std::any_of(sequence_.fragments().begin(), sequence_.fragments().end(),
-                                            [](const Fragment& f) { return !f.envelope.empty(); });
+    if (audio_.needsMix() || std::any_of(sequence_.fragments().begin(), sequence_.fragments().end(),
+                                         [](const Fragment& f) { return !f.envelope.empty(); }))
+        return true;
+    // La dissolvenza incrociata di una transizione: l'audio dei due pezzi non si può più copiare com'è.
+    const std::vector<TransitionPlacement> placements = activeTransitions();
+    return std::any_of(placements.begin(), placements.end(), [this](const TransitionPlacement& t) {
+        const TransitionClip* clip = transitions_.find(t.id);
+        return clip != nullptr && clip->crossfadeAudio;
+    });
 }
 
 AudioEdit Project::audioEdit(GapExport gaps) const
@@ -582,6 +665,138 @@ int Project::pruneTransitions()
         }
     }
     return touched;
+}
+
+}  // namespace editor::core
+
+namespace editor::core {
+
+namespace {
+
+constexpr double kJunctionGap = 1e-4;     // quanto possono distare due bordi per dirli attaccati (secondi)
+constexpr double kJunctionSameDb = 1e-3;  // e due livelli per dirli uguali
+
+}  // namespace
+
+std::vector<Project::Junction> Project::junctions() const
+{
+    std::vector<Junction> result;
+    const std::vector<Fragment>& fragments = sequence_.fragments();
+    const std::vector<double> starts = sequence_.starts();
+    for (std::size_t i = 0; i + 1 < fragments.size(); ++i) {
+        if (fragments[i].detached || fragments[i + 1].detached)
+            continue;
+        if (std::abs(starts[i] + fragments[i].length() - starts[i + 1]) <= kJunctionGap)
+            result.push_back({true, fragments[i].id, fragments[i + 1].id});
+    }
+    for (const AudioTrack& track : audio_.tracks()) {
+        for (std::size_t i = 0; i + 1 < track.clips.size(); ++i) {
+            if (std::abs(track.clips[i].endPosition() - track.clips[i + 1].position) <= kJunctionGap)
+                result.push_back({false, track.clips[i].id, track.clips[i + 1].id});
+        }
+    }
+    return result;
+}
+
+std::optional<double> Project::junctionLevel(const Junction& junction) const
+{
+    const std::vector<LevelPoint>* a = nullptr;
+    const std::vector<LevelPoint>* b = nullptr;
+    double aEdge = 0.0;
+    double bEdge = 0.0;
+    if (junction.fragment) {
+        const Fragment* first = sequence_.find(junction.first);
+        const Fragment* second = sequence_.find(junction.second);
+        if (first == nullptr || second == nullptr)
+            return std::nullopt;
+        a = &first->envelope;
+        b = &second->envelope;
+        aEdge = first->end;
+        bEdge = second->start;
+    } else {
+        const AudioClip* first = audio_.find(junction.first);
+        const AudioClip* second = audio_.find(junction.second);
+        if (first == nullptr || second == nullptr)
+            return std::nullopt;
+        a = &first->envelope;
+        b = &second->envelope;
+        aEdge = first->end;
+        bEdge = second->start;
+    }
+    const LevelPoint* pa = pointAt(*a, aEdge);
+    const LevelPoint* pb = pointAt(*b, bEdge);
+    if (pa == nullptr || pb == nullptr || std::abs(pa->db - pb->db) > kJunctionSameDb)
+        return std::nullopt;
+    return pa->db;
+}
+
+bool Project::setJunctionLevel(const Junction& junction, double db)
+{
+    db = std::clamp(db, kLevelMinDb, kLevelMaxDb);
+    if (junction.fragment) {
+        const Fragment* first = sequence_.find(junction.first);
+        const Fragment* second = sequence_.find(junction.second);
+        if (first == nullptr || second == nullptr)
+            return false;
+        const std::vector<LevelPoint> a = withPointAt(first->envelope, first->end, db);
+        const std::vector<LevelPoint> b = withPointAt(second->envelope, second->start, db);
+        const bool changedA = sequence_.setEnvelope(junction.first, a);
+        const bool changedB = sequence_.setEnvelope(junction.second, b);
+        return changedA || changedB;
+    }
+    const AudioClip* first = audio_.find(junction.first);
+    const AudioClip* second = audio_.find(junction.second);
+    if (first == nullptr || second == nullptr)
+        return false;
+    const std::vector<LevelPoint> a = withPointAt(first->envelope, first->end, db);
+    const std::vector<LevelPoint> b = withPointAt(second->envelope, second->start, db);
+    const bool changedA = audio_.setClipEnvelope(junction.first, a);
+    const bool changedB = audio_.setClipEnvelope(junction.second, b);
+    return changedA || changedB;
+}
+
+bool Project::removeJunctionPoint(const Junction& junction)
+{
+    if (junction.fragment) {
+        const Fragment* first = sequence_.find(junction.first);
+        const Fragment* second = sequence_.find(junction.second);
+        if (first == nullptr || second == nullptr)
+            return false;
+        const std::vector<LevelPoint> a = withoutPointAt(first->envelope, first->end);
+        const std::vector<LevelPoint> b = withoutPointAt(second->envelope, second->start);
+        const bool changedA = sequence_.setEnvelope(junction.first, a);
+        const bool changedB = sequence_.setEnvelope(junction.second, b);
+        return changedA || changedB;
+    }
+    const AudioClip* first = audio_.find(junction.first);
+    const AudioClip* second = audio_.find(junction.second);
+    if (first == nullptr || second == nullptr)
+        return false;
+    const std::vector<LevelPoint> a = withoutPointAt(first->envelope, first->end);
+    const std::vector<LevelPoint> b = withoutPointAt(second->envelope, second->start);
+    const bool changedA = audio_.setClipEnvelope(junction.first, a);
+    const bool changedB = audio_.setClipEnvelope(junction.second, b);
+    return changedA || changedB;
+}
+
+int Project::linkNewJunctions(const std::vector<Junction>& before)
+{
+    int created = 0;
+    for (const Junction& junction : junctions()) {
+        if (junction.fragment || std::find(before.begin(), before.end(), junction) != before.end())
+            continue;
+        const AudioClip* first = audio_.find(junction.first);
+        const AudioClip* second = audio_.find(junction.second);
+        if (first == nullptr || second == nullptr || pointAt(first->envelope, first->end) != nullptr
+            || pointAt(second->envelope, second->start) != nullptr)
+            continue;
+        const double a = envelopeDbAt(first->envelope, first->end);
+        if (std::abs(a - envelopeDbAt(second->envelope, second->start)) > kJunctionSameDb)
+            continue;
+        if (setJunctionLevel(junction, a))
+            ++created;
+    }
+    return created;
 }
 
 }  // namespace editor::core

@@ -405,6 +405,7 @@ int Sequence::split(double seconds)
     if (cut <= f.start + kTimeEpsilon || cut >= f.end - kTimeEpsilon)
         return 0;  // sul bordo del pezzo: non resterebbe niente da una parte
     Fragment second{nextId_++, f.clipId, cut, f.end, clipRanges(f.muted, cut, f.end)};
+    second.detached = f.detached;  // l'audio scollegato resta tale anche nella seconda parte
     second.envelope = f.envelope;  // la linea è nei tempi del file: ognuno tiene la sua parte
     f.end = cut;
     f.muted = clipRanges(f.muted, f.start, cut);

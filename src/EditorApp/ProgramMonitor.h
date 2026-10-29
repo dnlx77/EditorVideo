@@ -2,7 +2,7 @@
 
 #include "EditorApp/SequenceAudio.h"
 #include "EditorApp/TextOverlay.h"
-#include "EditorCore/TransitionRender.h"
+#include "EditorCore/TransitionPlayback.h"
 
 #include <QtCore/QElapsedTimer>
 #include <QtWidgets/QWidget>
@@ -115,8 +115,14 @@ private:
     void updateTextOverlay();  // ridisegna le scritte se quelle visibili sono cambiate
     // Transizioni: la transizione in cui cade `seconds` (non l'ultimo istante, che è già del pezzo dopo).
     std::optional<core::TransitionPlacement> transitionAt(double seconds) const;
-    void enterTransition(const core::TransitionPlacement& placement, double seconds);
-    void showTransitionFrame(const core::TransitionPlacement& placement, double seconds);
+    // `wait`: aspetta il fotogramma (cursore fermo); altrimenti parte il flusso di fotogrammi preparati in anticipo, che un
+    // timer veloce mostra al tempo dell'audio (riproduzione).
+    void enterTransition(const core::TransitionPlacement& placement, double seconds, bool wait);
+    void showTransitionFrame(const core::TransitionPlacement& placement, double seconds, bool wait);
+    void primeTransition();  // in riproduzione: apre in anticipo i file della transizione che sta per arrivare
+    void setTransitionBox();
+    double transitionClock() const;  // il tempo della sequenza adesso, nel tratto di una transizione in riproduzione
+    void transitionTick();           // mostra il fotogramma pronto per questo momento
 
     const core::Project& project_;
     TextOverlay overlay_;
@@ -140,7 +146,11 @@ private:
     int index_ = -1;
     int gapIndex_ = -1;     // nello spazio vuoto prima di questo pezzo (-1 = no)
     int transitionId_ = 0;  // nel tratto di questa transizione (0 = no); il tempo scorre come negli spazi vuoti
-    core::TransitionRenderer transitionRenderer_;
+    core::TransitionPlayback transitionPlayback_;  // fa i fotogrammi in un thread a parte
+    QTimer* transitionTimer_ = nullptr;            // in riproduzione nella transizione: sceglie il fotogramma ogni pochi ms
+    double transitionFrom_ = 0.0;                  // tratto della transizione in cui si sta (tempi della sequenza)
+    double transitionTo_ = 0.0;
+    int primedTransitionId_ = 0;                   // quella aperta in anticipo
     std::shared_ptr<core::VideoFrame> transitionFrame_;
     double gapBase_ = 0.0;  // tempo della sequenza quando è partito gapClock_
     QElapsedTimer gapClock_;

@@ -25,6 +25,10 @@ int runTextTest(const QStringList& arguments, qsizetype at);
 // TransitionSelfTest.cpp).
 int runTransitionTest(const QStringList& arguments, qsizetype at);
 
+// --group-test: la scheda Gruppi del blocco in alto a sinistra: l'elenco dei gruppi (nodi, oggetti, nodi chiusi che
+// restano chiusi) e le tre schede nella finestra (vedi GroupSelfTest.cpp).
+int runGroupTest(const QStringList& arguments, qsizetype at);
+
 // Come runCommandLineTest, per le prove con la finestra vera: --dock-test, --project-export-test, --export-dialog-test
 // (descritte sotto).
 std::optional<int> runWindowTest(QApplication& app, const QStringList& arguments);

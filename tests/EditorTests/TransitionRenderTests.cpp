@@ -1,4 +1,5 @@
 #include "EditorCore/Project.h"
+#include "EditorCore/TransitionPlayback.h"
 #include "EditorCore/TransitionRender.h"
 #include "EditorCore/Transitions.h"
 #include "EditorCore/VideoDecoder.h"
@@ -6,7 +7,9 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <memory>
+#include <thread>
 #include <vector>
 
 using namespace editor::core;
@@ -200,4 +203,119 @@ TEST_F(TransitionRenderTest, FailsCleanlyWithoutTransitionOrFiles)
     const int id = broken.addTransition(fa, "dissolvenza", 1.0);
     ASSERT_NE(id, 0);
     EXPECT_EQ(renderer->render(broken, *broken.transitionPlacement(id), 2.0), nullptr);
+}
+
+TEST_F(TransitionRenderTest, PlaybackThreadGivesTheSameFramesAsTheRenderer)
+{
+    auto setup = makeSetup("scorrimento");
+    const auto job = makeTransitionJob(setup->project, setup->placement);
+    ASSERT_TRUE(job.has_value());
+    TransitionPlayback playback;
+    playback.setHardwareAllowed(false);
+    playback.setBox(kWidth, kHeight);
+    for (const double t : {1.52, 1.56, 2.0, 2.4}) {
+        const auto threaded = playback.render(*job, t);
+        const auto direct = makeRenderer()->render(setup->project, setup->placement, t);
+        ASSERT_TRUE(threaded && direct) << t;
+        EXPECT_EQ(threaded->pixels, direct->pixels) << t;
+    }
+    const auto latest = playback.latest();
+    ASSERT_NE(latest.frame, nullptr);
+    EXPECT_NEAR(latest.time, 2.4, 1e-9);
+    EXPECT_GT(playback.averageRenderSeconds(), 0.0);
+}
+
+TEST_F(TransitionRenderTest, PlaybackThreadKeepsOnlyTheLastRequest)
+{
+    auto setup = makeSetup();
+    const auto job = makeTransitionJob(setup->project, setup->placement);
+    ASSERT_TRUE(job.has_value());
+    TransitionPlayback playback;
+    playback.setHardwareAllowed(false);
+    playback.setBox(kWidth, kHeight);
+    // Tante richieste di fila: alla fine arriva comunque l'ultima.
+    unsigned long long last = 0;
+    for (int k = 0; k < 20; ++k)
+        last = playback.request(*job, 1.52 + 0.04 * k);
+    const auto frame = playback.render(*job, 2.0);
+    ASSERT_NE(frame, nullptr);
+    const auto latest = playback.latest();
+    EXPECT_GT(latest.serial, last);
+    EXPECT_NEAR(latest.time, 2.0, 1e-9);
+    // Una richiesta fatta con una misura diversa si applica da quella dopo.
+    playback.setBox(32, 24);
+    const auto small = playback.render(*job, 2.0);
+    ASSERT_NE(small, nullptr);
+    EXPECT_EQ(small->width, 32);
+    EXPECT_EQ(small->height, 24);
+}
+
+namespace {
+
+// Aspetta (al massimo 5 s) un fotogramma del flusso per `time`, che abbia raggiunto almeno `minTime` (avanti) o al più
+// `maxTime` (indietro).
+std::shared_ptr<VideoFrame> waitFrame(TransitionPlayback& playback, double time, bool forward, double tolerance)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto frame = playback.takeFrame(time);
+        if (frame && (forward ? frame->time >= time - tolerance : frame->time <= time + tolerance))
+            return frame;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+TEST_F(TransitionRenderTest, StreamPreparesTheFramesInOrderAhead)
+{
+    auto setup = makeSetup("dissolvenza");
+    const auto job = makeTransitionJob(setup->project, setup->placement);
+    ASSERT_TRUE(job.has_value());
+    TransitionPlayback playback;
+    playback.setHardwareAllowed(false);
+    playback.setBox(kWidth, kHeight);
+    playback.startStream(*job, 1.52, 0.04, +1);  // sui tempi dei fotogrammi: scelta del fotogramma senza ambiguità
+    std::shared_ptr<VideoFrame> previous;
+    for (int k = 0; k <= 24; ++k) {
+        const double t = 1.52 + 0.04 * k;
+        const auto frame = waitFrame(playback, t, true, 1e-6);
+        ASSERT_NE(frame, nullptr) << k;
+        EXPECT_NEAR(frame->time, std::min(t, 2.5), 1e-6) << k;
+        EXPECT_NE(frame, previous) << k;
+        // Lo stesso fotogramma torna finché non arriva il tempo del successivo.
+        EXPECT_EQ(playback.takeFrame(t + 0.01), frame) << k;
+        const auto direct = makeRenderer()->render(setup->project, setup->placement, frame->time);
+        ASSERT_NE(direct, nullptr);
+        EXPECT_EQ(frame->pixels, direct->pixels) << k;
+        previous = frame;
+    }
+}
+
+TEST_F(TransitionRenderTest, StreamGoesBackwardAndSkipsWhenTheClockJumps)
+{
+    auto setup = makeSetup("dissolvenza-nero");
+    const auto job = makeTransitionJob(setup->project, setup->placement);
+    ASSERT_TRUE(job.has_value());
+    TransitionPlayback playback;
+    playback.setHardwareAllowed(false);
+    playback.setBox(kWidth, kHeight);
+    // All'indietro dalla fine.
+    playback.startStream(*job, 2.5, 0.04, -1);
+    for (int k = 0; k <= 10; ++k) {
+        const double t = 2.5 - 0.04 * k;
+        const auto frame = waitFrame(playback, t, false, 1e-6);
+        ASSERT_NE(frame, nullptr) << k;
+        EXPECT_NEAR(frame->time, t, 1e-6) << k;
+    }
+    // In avanti, con il tempo che salta molto più avanti: si arriva al tempo giusto senza fare tutti i fotogrammi.
+    playback.startStream(*job, 1.5, 0.04, +1);
+    const auto jumped = waitFrame(playback, 2.3, true, 0.05);
+    ASSERT_NE(jumped, nullptr);
+    EXPECT_NEAR(jumped->time, 2.3, 0.05);
+    // Fino alla fine: l'ultimo fotogramma è proprio quello dell'estremo e poi il flusso si ferma.
+    const auto last = waitFrame(playback, 2.5, true, 1e-6);
+    ASSERT_NE(last, nullptr);
+    EXPECT_NEAR(last->time, 2.5, 1e-6);
 }

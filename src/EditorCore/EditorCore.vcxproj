@@ -44,6 +44,7 @@
     <ClInclude Include="TextTracks.h" />
     <ClInclude Include="TextFrame.h" />
     <ClInclude Include="TextImage.h" />
+    <ClInclude Include="TransitionPlayback.h" />
     <ClInclude Include="TransitionRender.h" />
     <ClInclude Include="Transitions.h" />
     <ClInclude Include="TransitionList.h" />
@@ -86,6 +87,7 @@
     <ClCompile Include="TextTracks.cpp" />
     <ClCompile Include="TextFrame.cpp" />
     <ClCompile Include="TextImage.cpp" />
+    <ClCompile Include="TransitionPlayback.cpp" />
     <ClCompile Include="TransitionRender.cpp" />
     <ClCompile Include="Transitions.cpp" />
     <ClCompile Include="TransitionList.cpp" />

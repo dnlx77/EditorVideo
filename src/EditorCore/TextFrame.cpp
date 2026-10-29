@@ -77,6 +77,35 @@ const AVFrame* TextFrameBlender::blend(const AVFrame* frame, const std::vector<B
     const int destinationStride[4] = {width_ * 4, 0, 0, 0};
     sws_scale(toRgba_.get(), source->data, source->linesize, 0, source->height, destination, destinationStride);
 
+    return toYuv(texts, frame);
+}
+
+const AVFrame* TextFrameBlender::blendRaster(const std::uint8_t* bgra, int stride, int width, int height,
+                                             const std::vector<BlendedText>& texts, const AVFrame* props)
+{
+    if (width != width_ || height != height_)
+        throw MediaError("La transizione non ha la misura del fotogramma del progetto.");
+    for (int y = 0; y < height_; ++y) {
+        const std::uint8_t* in = bgra + static_cast<std::ptrdiff_t>(y) * stride;
+        std::uint8_t* out = rgba_.data() + static_cast<std::size_t>(y) * width_ * 4;
+        for (int x = 0; x < width_; ++x, in += 4, out += 4) {
+            out[0] = in[2];
+            out[1] = in[1];
+            out[2] = in[0];
+            out[3] = 255;
+        }
+    }
+    toYuv_.reset(sws_getCachedContext(toYuv_.release(), width_, height_, AV_PIX_FMT_RGBA, width_, height_, AV_PIX_FMT_YUV420P,
+                                      SWS_BICUBIC, nullptr, nullptr, nullptr));
+    if (!toYuv_)
+        throw MediaError("Conversione del fotogramma da codificare non possibile.");
+    const int* coefficients = sws_getCoefficients(SWS_CS_DEFAULT);
+    sws_setColorspaceDetails(toYuv_.get(), coefficients, 1, coefficients, 0, 0, 1 << 16, 1 << 16);
+    return toYuv(texts, props);
+}
+
+const AVFrame* TextFrameBlender::toYuv(const std::vector<BlendedText>& texts, const AVFrame* props)
+{
     for (const BlendedText& text : texts) {
         if (text.image != nullptr)
             blendTextOver(rgba_.data(), width_ * 4, width_, height_, *text.image, text.opacity);
@@ -87,9 +116,9 @@ const AVFrame* TextFrameBlender::blend(const AVFrame* frame, const std::vector<B
     const std::uint8_t* rgbaPlanes[4] = {rgba_.data(), nullptr, nullptr, nullptr};
     const int rgbaStride[4] = {width_ * 4, 0, 0, 0};
     sws_scale(toYuv_.get(), rgbaPlanes, rgbaStride, 0, height_, output_->data, output_->linesize);
-    av_frame_copy_props(output_.get(), source);
+    av_frame_copy_props(output_.get(), props);
     output_->sample_aspect_ratio = {1, 1};
-    output_->pts = frame->pts;
+    output_->pts = props->pts;
     output_->color_range = AVCOL_RANGE_MPEG;
     return output_.get();
 }
