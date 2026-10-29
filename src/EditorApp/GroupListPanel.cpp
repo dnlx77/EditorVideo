@@ -73,13 +73,19 @@ GroupListPanel::GroupListPanel(QWidget* parent) : QWidget(parent)
         if (target == nullptr)
             return true;
         const int row = tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(target));
-        return row >= 0 && row < static_cast<int>(rows_.size()) && !rows_[static_cast<std::size_t>(row)].natural;
+        return row >= 0 && row < static_cast<int>(rows_.size());
     };
     // Il cambiamento si fa dopo la fine del trascinamento: l'elenco si rifà e le voci trascinate spariscono.
     tree->dropped = [this](const QTreeWidgetItem* target) {
-        const std::vector<editor::core::ObjectRef> dragged = draggableSelection();
+        std::vector<editor::core::ObjectRef> dragged = draggableSelection();
         const int row = target == nullptr ? -1 : tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(target));
-        const int groupId = row >= 0 && row < static_cast<int>(rows_.size()) ? rows_[static_cast<std::size_t>(row)].id : 0;
+        int groupId = row >= 0 && row < static_cast<int>(rows_.size()) ? rows_[static_cast<std::size_t>(row)].id : 0;
+        // Su un video con il suo audio: i due, già legati, si uniscono agli oggetti trascinati in un gruppo nuovo.
+        if (row >= 0 && row < static_cast<int>(rows_.size()) && rows_[static_cast<std::size_t>(row)].natural) {
+            for (const GroupEntry& e : rows_[static_cast<std::size_t>(row)].entries)
+                dragged.push_back(e.ref);
+            groupId = 0;
+        }
         QTimer::singleShot(0, this, [this, dragged, groupId] { dropEntries(dragged, groupId); });
     };
     tree_->setRootIsDecorated(true);
@@ -117,9 +123,8 @@ void GroupListPanel::setGroups(std::vector<GroupRow> rows)
     tree_->clear();
     for (const GroupRow& row : rows_) {
         auto* top = new QTreeWidgetItem(tree_);
-        // I gruppi dell'utente accolgono voci; i video con il loro audio si guardano soltanto.
-        top->setFlags(row.natural ? Qt::ItemIsEnabled | Qt::ItemIsSelectable
-                                  : Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDropEnabled);
+        // Tutti i nodi accolgono voci; quelle dei video con il loro audio, però, non si trascinano.
+        top->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDropEnabled);
         top->setText(0, QStringLiteral("%1  (%2)").arg(row.title).arg(row.entries.size()));
         top->setData(0, Qt::UserRole, row.id);
         if (row.natural) {

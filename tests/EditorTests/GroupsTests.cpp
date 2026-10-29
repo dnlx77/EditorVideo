@@ -298,3 +298,18 @@ TEST(Groups, DroppingObjectsOnTheGroupList)
     m.project.restoreEdits(after);
     EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.a}), fresh);
 }
+
+TEST(Groups, DroppingOnAVideoWithItsAudioMakesANewGroupOfAll)
+{
+    Montage m;
+    // Come dall'elenco: la musica trascinata sul video B con il suo audio (già legati, non in un gruppo dell'utente).
+    const double startOfB = m.project.sequence().startOf(m.project.sequence().indexOf(m.b));
+    EXPECT_TRUE(m.project.dropOnGroup({{Kind::AudioClip, m.music}, {Kind::Piece, m.b}, {Kind::PieceAudio, m.b}}, 0));
+    const int id = m.project.groups().groupOf({Kind::Piece, m.b});
+    ASSERT_NE(id, 0);
+    EXPECT_EQ(m.project.groups().find(id)->members.size(), 3u);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::AudioClip, m.music}), id);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::PieceAudio, m.b}), id);
+    EXPECT_EQ(m.project.sequence().startOf(m.project.sequence().indexOf(m.b)), startOfB);
+    EXPECT_TRUE(m.project.sequence().find(m.b) != nullptr && !m.project.sequence().find(m.b)->detached);
+}
