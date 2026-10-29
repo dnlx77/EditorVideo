@@ -492,14 +492,8 @@ TEST(AudioTracks, JunctionLevelNeedsBothEdgePointsAtTheSameLevel)
     EXPECT_TRUE(project.junctionLevel(junction).has_value());
 }
 
-TEST(LevelEnvelope, WithoutPointsBetweenClearsOneClipAndLeavesTheNeighbourJunctionPoint)
+TEST(LevelEnvelope, ClearingOneClipLineLeavesTheNeighbourJunctionPoint)
 {
-    const std::vector<LevelPoint> line{{0.0, -5.0}, {1.0, -10.0}, {3.0, -20.0}, {4.0, -10.0}, {6.0, -3.0}};
-    // Clip da 0 a 4 s: tutti i suoi punti (bordi compresi) spariscono, quelli fuori restano.
-    const std::vector<LevelPoint> cleared = withoutPointsBetween(line, 0.0, 4.0);
-    ASSERT_EQ(cleared.size(), 1u);
-    EXPECT_NEAR(cleared[0].time, 6.0, 1e-9);
-
     // Due clip attaccate col pallino comune: svuotando la prima, la seconda tiene il suo punto sul bordo.
     Project project;
     AudioTracks& audio = project.audioTracks();
@@ -507,11 +501,10 @@ TEST(LevelEnvelope, WithoutPointsBetweenClearsOneClipAndLeavesTheNeighbourJuncti
     const int a = audio.add(track, clipOf("a.mp3", 0.0, 4.0, 0.0));
     const int b = audio.add(track, clipOf("b.mp3", 0.0, 4.0, 4.0));
     const Project::Junction junction{false, a, b};
-    ASSERT_TRUE(audio.setClipEnvelope(a, {{1.0, -6.0}, {4.0, -10.0}}));
+    ASSERT_TRUE(audio.setClipEnvelope(a, {{1.0, -6.0}, {4.0, -10.0}, {8.0, -3.0}}));  // l'ultimo è fuori dai bordi
     ASSERT_TRUE(audio.setClipEnvelope(b, {{0.0, -10.0}, {2.0, -12.0}}));
     ASSERT_TRUE(project.junctionLevel(junction).has_value());
-    const AudioClip* first = audio.find(a);
-    ASSERT_TRUE(audio.setClipEnvelope(a, withoutPointsBetween(first->envelope, first->start, first->end)));
+    ASSERT_TRUE(audio.setClipEnvelope(a, {}));  // Maiusc + doppio clic: via anche i punti non visibili
     EXPECT_TRUE(audio.find(a)->envelope.empty());
     EXPECT_FALSE(project.junctionLevel(junction).has_value());
     ASSERT_NE(pointAt(audio.find(b)->envelope, audio.find(b)->start), nullptr);

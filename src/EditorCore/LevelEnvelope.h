@@ -45,8 +45,5 @@ const LevelPoint* pointAt(const std::vector<LevelPoint>& points, double time);
 // La linea con un punto a `time` di livello `db` (se c'era già lì, ne cambia il livello), e senza.
 std::vector<LevelPoint> withPointAt(std::vector<LevelPoint> points, double time, double db);
 std::vector<LevelPoint> withoutPointAt(std::vector<LevelPoint> points, double time);
-// La linea senza i punti da `from` a `to` (bordi compresi): serve per togliere tutti i pallini di un pezzo o di una clip
-// (Maiusc + doppio clic) lasciando quelli fuori dai suoi bordi (e quelli della clip vicina, che ha i suoi).
-std::vector<LevelPoint> withoutPointsBetween(std::vector<LevelPoint> points, double from, double to);
 
 }  // namespace editor::core
