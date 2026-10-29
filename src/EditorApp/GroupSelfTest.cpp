@@ -101,9 +101,9 @@ int runGroupTest(const QStringList&, qsizetype)
     const QTreeWidgetItem* pairNode = panel.tree()->topLevelItem(1);
     check((userNode->child(0)->flags() & Qt::ItemIsDragEnabled) && !(pairNode->child(0)->flags() & Qt::ItemIsDragEnabled),
           "le voci di un gruppo dell'utente si trascinano, quelle di un video con il suo audio no");
-    check((userNode->flags() & Qt::ItemIsDropEnabled) && !(pairNode->flags() & Qt::ItemIsDropEnabled)
+    check((userNode->flags() & Qt::ItemIsDropEnabled) && (pairNode->flags() & Qt::ItemIsDropEnabled)
               && !(userNode->flags() & Qt::ItemIsDragEnabled),
-          "un gruppo dell'utente accoglie voci, il video con il suo audio no, e il nodo non si trascina");
+          "tutti i nodi accolgono voci (anche il video con il suo audio), e i nodi non si trascinano");
     panel.tree()->clearSelection();
     panel.tree()->topLevelItem(0)->child(1)->setSelected(true);
     panel.tree()->topLevelItem(1)->child(0)->setSelected(true);

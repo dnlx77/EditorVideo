@@ -60,8 +60,9 @@ public:
 
     // Si trascinano oggetti dell'elenco (Ctrl+clic per più d'uno) su un gruppo o nello spazio vuoto. Il pannello non
     // cambia niente: dice cosa è stato trascinato e dove (groupId > 0: su quel gruppo; 0: nello spazio vuoto). Quello
-    // che non cambierebbe niente (oggetti già in quel gruppo) non viene segnalato. I video con il loro audio non si
-    // trascinano e non accolgono oggetti.
+    // che non cambierebbe niente (oggetti già in quel gruppo) non viene segnalato. Lasciare voci su un video con il suo
+    // audio le unisce a loro in un gruppo nuovo (groupId 0, con anche il video e l'audio fra gli oggetti); le voci di un
+    // video con il suo audio non si trascinano.
     std::function<void(const std::vector<editor::core::ObjectRef>&, int groupId)> onDropped;
     void dropEntries(const std::vector<editor::core::ObjectRef>& dragged, int groupId);
     // Gli oggetti scelti nell'elenco che si possono trascinare (voci dei gruppi dell'utente).
