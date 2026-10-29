@@ -427,3 +427,116 @@ TEST(AudioTracks, ShorteningTheStartCarriesItsFadeInAlong)
     EXPECT_NEAR(points[0].time, 3.0, 1e-6);
     EXPECT_NEAR(points[1].time, 5.0, 1e-6);
 }
+
+TEST(AudioTracks, JoinedClipsShareAJunctionDotThatMovesBothLevels)
+{
+    Project project;
+    AudioTracks& audio = project.audioTracks();
+    const int track = audio.addTrack();
+    const int a = audio.add(track, clipOf("a.mp3", 0.0, 4.0, 0.0));
+    const int b = audio.add(track, clipOf("b.mp3", 1.0, 5.0, 4.0));
+    const int c = audio.add(track, clipOf("c.mp3", 0.0, 4.0, 10.0));
+    const std::vector<Project::Junction> junctions = project.junctions();
+    ASSERT_EQ(junctions.size(), 1u);  // c è staccata
+    const Project::Junction junction = junctions[0];
+    EXPECT_EQ(junction, (Project::Junction{false, a, b}));
+    EXPECT_FALSE(project.junctionLevel(junction).has_value());
+
+    ASSERT_TRUE(project.setJunctionLevel(junction, -12.0));
+    ASSERT_TRUE(project.junctionLevel(junction).has_value());
+    EXPECT_NEAR(*project.junctionLevel(junction), -12.0, 1e-9);
+    // Un punto sul bordo finale di a e uno sul bordo iniziale di b (tempi del file).
+    ASSERT_EQ(audio.find(a)->envelope.size(), 1u);
+    EXPECT_NEAR(audio.find(a)->envelope[0].time, 4.0, 1e-9);
+    ASSERT_EQ(audio.find(b)->envelope.size(), 1u);
+    EXPECT_NEAR(audio.find(b)->envelope[0].time, 1.0, 1e-9);
+    EXPECT_TRUE(audio.find(c)->envelope.empty());
+
+    // Spostarlo cambia tutti e due.
+    ASSERT_TRUE(project.setJunctionLevel(junction, -30.0));
+    EXPECT_NEAR(audio.find(a)->envelope[0].db, -30.0, 1e-9);
+    EXPECT_NEAR(audio.find(b)->envelope[0].db, -30.0, 1e-9);
+    EXPECT_FALSE(project.setJunctionLevel(junction, -30.0));  // nessun cambiamento
+
+    // I punti delle singole clip funzionano come sempre e il pallino resta.
+    ASSERT_TRUE(audio.setClipEnvelope(a, {{2.0, -6.0}, {4.0, -30.0}}));
+    ASSERT_TRUE(audio.setClipEnvelope(b, {{1.0, -30.0}, {3.0, 3.0}}));
+    ASSERT_TRUE(project.junctionLevel(junction).has_value());
+
+    // Si toglie come gli altri: via i due punti sul bordo, gli altri restano.
+    ASSERT_TRUE(project.removeJunctionPoint(junction));
+    EXPECT_FALSE(project.junctionLevel(junction).has_value());
+    ASSERT_EQ(audio.find(a)->envelope.size(), 1u);
+    EXPECT_NEAR(audio.find(a)->envelope[0].time, 2.0, 1e-9);
+    ASSERT_EQ(audio.find(b)->envelope.size(), 1u);
+    EXPECT_FALSE(project.removeJunctionPoint(junction));
+
+    // Si ricrea sulla giunzione.
+    ASSERT_TRUE(project.setJunctionLevel(junction, 0.0));
+    EXPECT_NEAR(*project.junctionLevel(junction), 0.0, 1e-9);
+}
+
+TEST(AudioTracks, JunctionLevelNeedsBothEdgePointsAtTheSameLevel)
+{
+    Project project;
+    AudioTracks& audio = project.audioTracks();
+    const int track = audio.addTrack();
+    const int a = audio.add(track, clipOf("a.mp3", 0.0, 4.0, 0.0));
+    const int b = audio.add(track, clipOf("b.mp3", 0.0, 4.0, 4.0));
+    const Project::Junction junction{false, a, b};
+    ASSERT_TRUE(audio.setClipEnvelope(a, {{4.0, -10.0}}));
+    EXPECT_FALSE(project.junctionLevel(junction).has_value());  // solo da una parte
+    ASSERT_TRUE(audio.setClipEnvelope(b, {{0.0, -20.0}}));
+    EXPECT_FALSE(project.junctionLevel(junction).has_value());  // livelli diversi
+    ASSERT_TRUE(audio.setClipEnvelope(b, {{0.0, -10.0}}));
+    EXPECT_TRUE(project.junctionLevel(junction).has_value());
+}
+
+TEST(AudioTracks, MovingClipsTogetherCreatesTheJunctionDotOnlyWhenNothingChangesAudibly)
+{
+    Project project;
+    AudioTracks& audio = project.audioTracks();
+    const int track = audio.addTrack();
+    const int a = audio.add(track, clipOf("a.mp3", 0.0, 4.0, 0.0));
+    const int b = audio.add(track, clipOf("b.mp3", 0.0, 4.0, 6.0));
+    const std::vector<Project::Junction> before = project.junctions();
+    EXPECT_TRUE(before.empty());
+    ASSERT_TRUE(audio.moveTo(b, track, 4.0));
+    EXPECT_EQ(project.linkNewJunctions(before), 1);
+    EXPECT_TRUE(project.junctionLevel({false, a, b}).has_value());
+    EXPECT_NEAR(*project.junctionLevel({false, a, b}), 0.0, 1e-9);
+    // Una giunzione già esistente non ne crea di nuove (né rimette un pallino tolto).
+    ASSERT_TRUE(project.removeJunctionPoint({false, a, b}));
+    EXPECT_EQ(project.linkNewJunctions(project.junctions()), 0);
+    EXPECT_FALSE(project.junctionLevel({false, a, b}).has_value());
+
+    // Livelli diversi sui due bordi: niente pallino (cambierebbe il suono).
+    Project other;
+    AudioTracks& audio2 = other.audioTracks();
+    const int t2 = audio2.addTrack();
+    const int c = audio2.add(t2, clipOf("c.mp3", 0.0, 4.0, 0.0));
+    const int d = audio2.add(t2, clipOf("d.mp3", 0.0, 4.0, 7.0));
+    ASSERT_TRUE(audio2.setClipEnvelope(c, {{2.0, 0.0}, {4.0, -40.0}}));
+    const std::vector<Project::Junction> none = other.junctions();
+    ASSERT_TRUE(audio2.moveTo(d, t2, 4.0));
+    EXPECT_EQ(other.linkNewJunctions(none), 0);
+    EXPECT_FALSE(other.junctionLevel({false, c, d}).has_value());
+}
+
+TEST(AudioTracks, VideoPiecesJoinedAlsoHaveJunctions)
+{
+    Project project;
+    const int file = project.add("v.mp4");
+    const int p1 = project.sequence().insert(-1, file, 0.0, 4.0);
+    const int p2 = project.sequence().insert(-1, file, 10.0, 14.0);
+    const std::vector<Project::Junction> junctions = project.junctions();
+    ASSERT_EQ(junctions.size(), 1u);
+    EXPECT_EQ(junctions[0], (Project::Junction{true, p1, p2}));
+    ASSERT_TRUE(project.setJunctionLevel(junctions[0], -20.0));
+    EXPECT_NEAR(project.sequence().find(p1)->envelope[0].time, 4.0, 1e-9);
+    EXPECT_NEAR(project.sequence().find(p2)->envelope[0].time, 10.0, 1e-9);
+    EXPECT_NEAR(*project.junctionLevel(junctions[0]), -20.0, 1e-9);
+    EXPECT_TRUE(project.audioNeedsMix());
+    ASSERT_TRUE(project.removeJunctionPoint(junctions[0]));
+    EXPECT_FALSE(project.audioNeedsMix());
+}

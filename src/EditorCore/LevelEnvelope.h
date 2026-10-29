@@ -38,4 +38,12 @@ double envelopeDbAt(const std::vector<LevelPoint>& points, double seconds);
 // Quanto moltiplica il segnale un valore della linea: 0 al minimo (silenzio), altrimenti 10^(db/20).
 double envelopeGain(double db);
 
+// Il punto della linea posto al tempo `time` (entro kEdgePointTolerance), nullptr se non c'è. Serve per il pallino della
+// giunzione (Project::junctions): un punto sul bordo del pezzo o della clip.
+inline constexpr double kEdgePointTolerance = 1e-4;
+const LevelPoint* pointAt(const std::vector<LevelPoint>& points, double time);
+// La linea con un punto a `time` di livello `db` (se c'era già lì, ne cambia il livello), e senza.
+std::vector<LevelPoint> withPointAt(std::vector<LevelPoint> points, double time, double db);
+std::vector<LevelPoint> withoutPointAt(std::vector<LevelPoint> points, double time);
+
 }  // namespace editor::core

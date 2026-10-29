@@ -348,10 +348,12 @@ bool MainWindow::moveAudioClip(int clipId, int trackId, double position)
     if (audio.find(clipId) == nullptr)
         return false;
     const core::Project before = project_;
+    const std::vector<core::Project::Junction> junctionsBefore = project_.junctions();
     const core::Project::MoveResult moved =
         project_.moveObject({core::ObjectRef::Kind::AudioClip, clipId}, trackId, position, pushPieces_);
     if (!moved.moved)
         return false;
+    project_.linkNewJunctions(junctionsBefore);  // clip appena attaccate: compare il pallino comune
     recordEdit(moved.group ? QStringLiteral("Sposta gruppo") : QStringLiteral("Sposta clip audio"), before);
     return true;
 }
@@ -405,6 +407,15 @@ void MainWindow::setEnvelope(bool fragment, int id, const std::vector<core::Leve
         recordMixEdit(QStringLiteral("Linea del livello"), before);
     else
         refreshTimeline();  // il punto trascinato torna dov'era
+}
+
+void MainWindow::setJunctionLevel(const core::Project::Junction& junction, std::optional<double> db)
+{
+    const core::Project before = project_;
+    if (db ? project_.setJunctionLevel(junction, *db) : project_.removeJunctionPoint(junction))
+        recordMixEdit(db ? QStringLiteral("Pallino della giunzione") : QStringLiteral("Toglie il pallino della giunzione"), before);
+    else
+        refreshTimeline();  // il pallino torna dov'era
 }
 
 void MainWindow::relinkAudio()

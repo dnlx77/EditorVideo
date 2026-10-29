@@ -248,6 +248,32 @@ public:
     // I gruppi dell'utente senza gli oggetti che non esistono più, con almeno due oggetti (per salvarli).
     std::vector<std::vector<ObjectRef>> validGroups() const;
 
+    // Giunzioni audio: due clip audio attaccate sulla stessa traccia, o due pezzi video attaccati (la loro audio su A1).
+    // Su una giunzione c'è un pallino del livello comune: un punto sul bordo finale del primo e uno sul bordo iniziale
+    // del secondo, allo stesso livello. Spostarlo cambia il volume di tutti e due; poi le linee dei due restano
+    // indipendenti (altri punti si aggiungono e si spostano come sempre) e il pallino si toglie come gli altri.
+    struct Junction
+    {
+        bool fragment = false;  // pezzi video (id dei pezzi); altrimenti clip audio (id delle clip)
+        int first = 0;          // il pezzo o la clip che precede
+        int second = 0;         // quello che segue
+
+        bool operator==(const Junction&) const = default;
+    };
+    // Tutte le giunzioni (audio dei pezzi non scollegato) nell'ordine: prima i pezzi, poi le clip per traccia.
+    std::vector<Junction> junctions() const;
+    // Il livello (dB) del pallino comune; std::nullopt se non c'è (nessun punto sul bordo da una delle due parti, o con
+    // livelli diversi) o la giunzione non esiste più.
+    std::optional<double> junctionLevel(const Junction& junction) const;
+    // Mette il pallino al livello `db` (lo crea o lo sposta). false se la giunzione non c'è o non cambia nulla.
+    bool setJunctionLevel(const Junction& junction, double db);
+    // Toglie i due punti sul bordo. false se non ce ne sono.
+    bool removeJunctionPoint(const Junction& junction);
+    // Dopo uno spostamento: dove due clip audio (non pezzi video: la linea di un pezzo costringe a mixare l'audio
+    // esportando) sono ora attaccate e prima no (`before` = junctions() di prima), crea il pallino se in quel punto le
+    // due linee hanno già lo stesso livello e non hanno punti sul bordo. Restituisce quanti ne ha creati.
+    int linkNewJunctions(const std::vector<Junction>& before);
+
     // Formato del progetto (vedi ProjectFormat): vuoto finché non lo si decide, di solito al primo pezzo messo nel
     // montaggio. Fa parte delle modifiche (Annulla e Ripeti lo riportano com'era).
     const ProjectFormat& format() const { return format_; }

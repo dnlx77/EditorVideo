@@ -172,6 +172,22 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         selected_ = 0;
         selectedGap_ = 0;
         setSelectedTrack(lanes_[static_cast<std::size_t>(lane)].trackId);
+        if (JunctionDot dot; junctionHit(pos, dot)) {
+            // Il pallino della giunzione (o la giunzione, per ricrearlo): si trascina in verticale.
+            const QRectF rect = audioLane(lane);
+            jointActive_ = true;
+            joint_ = dot;
+            jointBaseFirst_ = *dot.first.line;
+            jointBaseSecond_ = *dot.second.line;
+            jointMoved_ = false;
+            jointDb_ = dot.level ? *dot.level
+                                 : (std::abs(pos.y() - envelopeY(rect, dot.firstEdgeDb)) <= std::abs(pos.y() - envelopeY(rect, dot.secondEdgeDb))
+                                        ? dot.firstEdgeDb
+                                        : dot.secondEdgeDb);
+            updateJointLines();
+            invalidate();
+            return;
+        }
         EnvTarget envTarget;
         int envPoint = -1;
         if (envelopeHit(pos, envTarget, envPoint)) {
@@ -326,7 +342,9 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         // (accorcia) è ⟷.
         int hoverClip = 0;
         bool transitionEdge = false;
-        if (envelopeHit(pos, envTarget, envPoint))
+        if (JunctionDot dot; junctionHit(pos, dot))
+            setCursor(Qt::SizeVerCursor);
+        else if (envelopeHit(pos, envTarget, envPoint))
             setCursor(envPoint >= 0 ? Qt::SizeAllCursor : Qt::SizeVerCursor);
         else if (transitionAt(pos, transitionEdge, atStart) >= 0 && transitionEdge)
             setCursor(Qt::SizeHorCursor);
@@ -342,6 +360,20 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
             textHoverIn_ = hoverClip != 0 && fadeIn;
             update();
         }
+        return;
+    }
+    if (jointActive_) {
+        // Il pallino comune segue il mouse solo in verticale: sta sulla giunzione.
+        if (jointMoved_ || std::abs(x - pressX_) >= 2 || std::abs(pos.y() - pressY_) >= 2) {
+            jointDb_ = envelopeDbForY(audioLane(joint_.first.lane), pos.y());
+            jointMoved_ = true;
+            updateJointLines();
+        }
+        QToolTip::showText(event->globalPosition().toPoint(),
+                           QStringLiteral("%1: %2 dB (giunzione)").arg(lanes_[static_cast<std::size_t>(joint_.first.lane)].name,
+                                                                         QString::number(jointDb_, 'f', 1)),
+                           this);
+        invalidate();
         return;
     }
     if (envActive_ && envPoint_ >= 0) {
@@ -542,6 +574,20 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
         invalidate();
         if (trimmed && onTransitionDuration)
             onTransitionDuration(id, duration);
+        return;
+    }
+    if (jointActive_) {
+        const JunctionDot dot = joint_;
+        const double db = jointDb_;
+        const bool changed = jointMoved_ || !dot.level;
+        jointActive_ = false;
+        jointMoved_ = false;
+        jointFirstLine_.clear();
+        jointSecondLine_.clear();
+        QToolTip::hideText();
+        invalidate();
+        if (changed && onJunctionLevel)
+            onJunctionLevel(dot.first.fragment, dot.first.id, dot.second.id, db);
         return;
     }
     if (envActive_) {
@@ -786,6 +832,12 @@ void SequenceTimeline::mouseDoubleClickEvent(QMouseEvent* event)
         const int lane = laneAt(pos.y());
         if (lane >= 0 && levelBar(lane).contains(pos) && onTrackLevel)
             onTrackLevel(lanes_[static_cast<std::size_t>(lane)].trackId, 0.0);
+        return;
+    }
+    if (JunctionDot dot; junctionHit(pos, dot)) {
+        // Doppio clic sul pallino della giunzione: lo toglie.
+        if (dot.level && onJunctionLevel)
+            onJunctionLevel(dot.first.fragment, dot.first.id, dot.second.id, std::nullopt);
         return;
     }
     EnvTarget envTarget;
