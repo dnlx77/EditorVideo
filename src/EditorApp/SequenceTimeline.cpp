@@ -619,7 +619,7 @@ double SequenceTimeline::dragTarget(double x) const
     double desired = timeForX(x) - dragGrab_;
     // Aggancio ai bordi: l'inizio o la fine del blocco, a meno di 10 pixel da un bordo di un altro blocco o dall'inizio
     // della sequenza. (Il cursore no: il clic per prendere il blocco lo porta proprio lì.)
-    desired = std::max(0.0, snapped(desired, snapMarks(dragIndex_, 0, false, false), {0.0, dragged.length}));
+    desired = std::max(0.0, snapped(desired, pieceDragMarks(), {0.0, dragged.length}));
     return freeStart ? freeStart(dragged.fragmentId, desired) : desired;
 }
 
@@ -903,20 +903,24 @@ void SequenceTimeline::setTextLanes(std::vector<TextLane> lanes)
     invalidate();
 }
 
-std::vector<double> SequenceTimeline::snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio, int ignoredText) const
+std::vector<double> SequenceTimeline::snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio, int ignoredText,
+                                              const std::vector<Object>& moving) const
 {
+    const auto isMoving = [&](Object::Kind kind, int id) {
+        return std::find(moving.begin(), moving.end(), Object{kind, id}) != moving.end();
+    };
     std::vector<double> marks{0.0};
     if (withCursor)
         marks.push_back(playhead_);
     for (std::size_t i = 0; i < blocks_.size(); ++i) {
-        if (static_cast<int>(i) == ignoredBlock)
+        if (static_cast<int>(i) == ignoredBlock || isMoving(Object::Kind::Piece, blocks_[i].fragmentId))
             continue;
         marks.push_back(starts_[i]);
         marks.push_back(starts_[i] + blocks_[i].length);
     }
     for (const TextLane& lane : textLanes_) {
         for (const TextBlock& c : lane.clips) {
-            if (c.clipId != ignoredText) {
+            if (c.clipId != ignoredText && !isMoving(Object::Kind::TextClip, c.clipId)) {
                 marks.push_back(c.position);
                 marks.push_back(c.position + c.length);
             }
@@ -925,7 +929,7 @@ std::vector<double> SequenceTimeline::snapMarks(int ignoredBlock, int ignoredCli
     if (withAudio) {
         for (const AudioLane& lane : lanes_) {
             for (const AudioBlock& c : lane.clips) {
-                if (c.clipId != ignoredClip) {
+                if (c.clipId != ignoredClip && !isMoving(Object::Kind::AudioClip, c.clipId)) {
                     marks.push_back(c.position);
                     marks.push_back(c.position + c.length);
                 }
@@ -949,6 +953,14 @@ double SequenceTimeline::snapped(double desired, const std::vector<double>& mark
         }
     }
     return result;
+}
+
+std::vector<double> SequenceTimeline::pieceDragMarks() const
+{
+    std::vector<Object> moving;
+    if (dragIndex_ >= 0 && dragIndex_ < static_cast<int>(blocks_.size()) && groupMembers)
+        moving = groupMembers({Object::Kind::Piece, blocks_[static_cast<std::size_t>(dragIndex_)].fragmentId});
+    return snapMarks(dragIndex_, 0, false, true, 0, moving);
 }
 
 std::vector<double> SequenceTimeline::edgeMarks(int ignoredBlock, int ignoredClip, int ignoredText, double originalEdge) const

@@ -131,7 +131,7 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
     }
     // Spostamento di una clip intera: la riga quando il suo inizio o la sua fine è a livello con un altro bordo.
     if (dragging_ && dragIndex_ >= 0 && dragIndex_ < static_cast<int>(blocks_.size())) {
-        const auto marks = snapMarks(dragIndex_, 0, false, false);
+        const auto marks = pieceDragMarks();
         paintAlignGuide(p, dragStart_, marks);
         paintAlignGuide(p, dragStart_ + blocks_[static_cast<std::size_t>(dragIndex_)].length, marks);
     }
