@@ -373,7 +373,11 @@ private:
     double audioTrimTarget(double x, bool ripple) const;
     // Segni a cui ci si aggancia: l'inizio della sequenza, i bordi dei pezzi video (tranne il blocco `ignoredBlock`),
     // se richiesti il cursore e i bordi delle clip audio (tranne `ignoredClip`).
-    std::vector<double> snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio, int ignoredText = 0) const;
+    std::vector<double> snapMarks(int ignoredBlock, int ignoredClip, bool withCursor, bool withAudio, int ignoredText = 0,
+                                  const std::vector<Object>& moving = {}) const;
+    // Segni per lo spostamento del pezzo `dragIndex_`: come gli altri, ma con le clip audio, e senza i compagni di
+    // gruppo che si muovono con lui (il suo audio staccato, per esempio): il loro bordo coinciderebbe sempre.
+    std::vector<double> pieceDragMarks() const;
     // `desired` spostato sul segno più vicino a meno di 10 pixel. Si prova ogni `offset` (0 = il bordo stesso, la
     // lunghezza del blocco = la sua fine): il blocco si aggancia quando il bordo corrispondente è vicino al segno.
     double snapped(double desired, const std::vector<double>& marks, std::initializer_list<double> offsets) const;
