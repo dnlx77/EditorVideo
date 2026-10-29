@@ -252,6 +252,9 @@ public:
     bool addToGroup(int groupId, ObjectRef object);
     bool removeFromGroup(ObjectRef object);
     bool renameGroup(int groupId, const std::string& name);
+    // Trascinare oggetti (che esistono) nell'elenco dei gruppi: con groupId > 0 passano in quel gruppo; con 0 (spazio
+    // vuoto) uno solo esce dal suo gruppo e due o più ne formano uno nuovo. false (e nessuna modifica) se non cambia niente.
+    bool dropOnGroup(const std::vector<ObjectRef>& objects, int groupId);
     // Come validGroups, con id e nome (per salvarli).
     std::vector<ObjectGroup> validGroupList() const;
     // I gruppi dell'utente senza gli oggetti che non esistono più, con almeno due oggetti (per salvarli).

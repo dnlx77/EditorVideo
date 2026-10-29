@@ -253,3 +253,48 @@ TEST(Groups, NamesAreSavedAndOldFilesHaveNone)
     EXPECT_EQ(groups[1].members.size(), 2u);
     std::filesystem::remove_all(dir);
 }
+
+TEST(Groups, DroppingObjectsOnTheGroupList)
+{
+    Montage m;
+    const int g1 = m.project.groupObjects({{Kind::Piece, m.a}, {Kind::Piece, m.b}});
+    const int g2 = m.project.groupObjects({{Kind::Piece, m.c}, {Kind::AudioClip, m.music}});
+    ASSERT_NE(g1, 0);
+    ASSERT_NE(g2, 0);
+    const double startOfC = m.project.sequence().startOf(m.project.sequence().indexOf(m.c));
+    // Su un gruppo: l'oggetto passa lì (e il gruppo che resta con uno solo si scioglie); su quello in cui è già, niente.
+    EXPECT_FALSE(m.project.dropOnGroup({{Kind::Piece, m.c}}, g2));
+    EXPECT_TRUE(m.project.dropOnGroup({{Kind::Piece, m.a}}, g2));
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.a}), g2);
+    EXPECT_EQ(m.project.groups().find(g1), nullptr);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.b}), 0);
+    // Più oggetti insieme su un gruppo.
+    EXPECT_TRUE(m.project.dropOnGroup({{Kind::Piece, m.b}, {Kind::Piece, m.a}}, g2));
+    EXPECT_EQ(m.project.groups().find(g2)->members.size(), 4u);
+    // Uno solo nello spazio vuoto: esce dal gruppo; uno già libero: niente.
+    EXPECT_TRUE(m.project.dropOnGroup({{Kind::Piece, m.b}}, 0));
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.b}), 0);
+    EXPECT_FALSE(m.project.dropOnGroup({{Kind::Piece, m.b}}, 0));
+    // Due o più nello spazio vuoto: un gruppo nuovo (quello vecchio che resta con uno solo si scioglie).
+    EXPECT_TRUE(m.project.dropOnGroup({{Kind::Piece, m.a}, {Kind::AudioClip, m.music}}, 0));
+    const int fresh = m.project.groups().groupOf({Kind::Piece, m.a});
+    EXPECT_NE(fresh, 0);
+    EXPECT_NE(fresh, g2);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::AudioClip, m.music}), fresh);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.c}), 0);
+    // Gruppo o oggetti che non ci sono: niente.
+    EXPECT_FALSE(m.project.dropOnGroup({{Kind::Piece, m.b}}, 999));
+    EXPECT_FALSE(m.project.dropOnGroup({{Kind::Piece, 999}}, fresh));
+    EXPECT_FALSE(m.project.dropOnGroup({}, fresh));
+    // Il montaggio non si è mosso.
+    EXPECT_EQ(m.project.sequence().startOf(m.project.sequence().indexOf(m.c)), startOfC);
+    EXPECT_EQ(m.project.sequence().fragments().size(), 3u);
+    // Annulla e Ripeti.
+    const Project after = m.project;
+    Project before = m.project;
+    ASSERT_TRUE(m.project.dropOnGroup({{Kind::Piece, m.a}}, 0));
+    m.project.restoreEdits(before);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.a}), fresh);
+    m.project.restoreEdits(after);
+    EXPECT_EQ(m.project.groups().groupOf({Kind::Piece, m.a}), fresh);
+}

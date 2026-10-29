@@ -345,6 +345,28 @@ bool Project::renameGroup(int groupId, const std::string& name)
     return groups_.rename(groupId, name);
 }
 
+bool Project::dropOnGroup(const std::vector<ObjectRef>& objects, int groupId)
+{
+    std::vector<ObjectRef> valid;
+    for (const ObjectRef& o : objects) {
+        if (objectExists(o) && std::find(valid.begin(), valid.end(), o) == valid.end())
+            valid.push_back(o);
+    }
+    if (valid.empty())
+        return false;
+    if (groupId > 0) {
+        if (groups_.find(groupId) == nullptr)
+            return false;
+        bool changed = false;
+        for (const ObjectRef& o : valid)
+            changed = groups_.addTo(groupId, o) || changed;
+        return changed;
+    }
+    if (valid.size() == 1)
+        return groups_.remove(valid.front());
+    return groups_.create(valid) != 0;
+}
+
 std::vector<ObjectGroup> Project::validGroupList() const
 {
     std::vector<ObjectGroup> result;
