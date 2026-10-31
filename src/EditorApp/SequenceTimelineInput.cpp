@@ -1,5 +1,6 @@
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/SequenceTimelineShared.h"
+#include "EditorApp/GroupMime.h"
 #include "EditorApp/TransitionMime.h"
 
 #include "EditorCore/AudioTracks.h"
@@ -10,6 +11,7 @@
 #include <QtCore/QDir>
 #include <QtCore/QMimeData>
 #include <QtCore/QUrl>
+#include <QtGui/QDrag>
 #include <QtGui/QDragEnterEvent>
 #include <QtGui/QHelpEvent>
 #include <QtGui/QDropEvent>
@@ -17,6 +19,7 @@
 #include <QtGui/QResizeEvent>
 #include <QtGui/QPainter>
 #include <QtGui/QPainterPath>
+#include <QtWidgets/QApplication>
 #include <QtWidgets/QToolButton>
 #include <QtWidgets/QToolTip>
 
@@ -39,6 +42,17 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
     // Ctrl+clic su un oggetto: lo aggiunge alla selezione o lo toglie (nient'altro: niente spostamento del cursore).
     if ((event->modifiers() & Qt::ControlModifier) && pos.x() >= videoLane().left() && pos.y() >= lanesTop() - 2 && ctrlPress(pos))
         return;
+    // Alt+clic su un oggetto: da lì si può trascinarlo (con i compagni scelti) sull'elenco dei gruppi; niente spostamento.
+    if ((event->modifiers() & Qt::AltModifier) && pos.x() >= videoLane().left() && pos.y() >= lanesTop() - 2) {
+        Object target;
+        if (objectAt(pos, target)) {
+            const std::vector<Object> chosen = allSelectedObjects();
+            altDragObjects_ = std::find(chosen.begin(), chosen.end(), target) != chosen.end() ? chosen : std::vector<Object>{target};
+            altPress_ = pos;
+            altDragging_ = true;
+            return;
+        }
+    }
     if (selectedTransition_ != 0) {  // un clic altrove toglie la selezione della transizione (se è lei, si rimette sotto)
         selectedTransition_ = 0;
         invalidate();
@@ -328,10 +342,29 @@ void SequenceTimeline::leaveEvent(QEvent* event)
     ZoomableTimeline::leaveEvent(event);
 }
 
+void SequenceTimeline::startObjectDrag()
+{
+    altDragging_ = false;
+    if (altDragObjects_.empty())
+        return;
+    auto* mime = new QMimeData;
+    mime->setData(QLatin1String(kGroupObjectsMime), encodeGroupObjects(altDragObjects_));
+    auto* drag = new QDrag(this);
+    drag->setMimeData(mime);
+    drag->exec(Qt::CopyAction);
+}
+
 void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
 {
     const QPointF pos = event->position();
     const double x = pos.x();
+    if (altDragging_) {
+        if (!(event->buttons() & Qt::LeftButton))
+            altDragging_ = false;
+        else if ((pos - altPress_).manhattanLength() >= QApplication::startDragDistance())
+            startObjectDrag();
+        return;
+    }
     if (!(event->buttons() & Qt::LeftButton)) {
         // Sul bordo di un blocco o di una clip audio, o sul livello di una corsia, il cursore diventa ⟷.
         bool atStart = false;
@@ -563,6 +596,10 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
 {
     if (event->button() != Qt::LeftButton)
         return;
+    if (altDragging_) {  // Alt+clic senza trascinare: niente
+        altDragging_ = false;
+        return;
+    }
     if (scrubbing_) {
         scrubbing_ = false;
         return;

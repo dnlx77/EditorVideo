@@ -327,6 +327,7 @@ private:
     QRectF soloBox(int index) const;
     QRectF levelBar(int index) const;
     bool isSelected(Object::Kind kind, int id) const;  // nella selezione (singola o multipla)
+    bool objectAt(const QPointF& pos, Object& target);  // l'oggetto sotto il mouse (pezzo, audio del pezzo, clip audio, scritta)
     bool ctrlPress(const QPointF& pos);
     void applySelection(const std::vector<Object>& set, Object primary);  // la fine di ctrlPress e di selectObjects                // Ctrl+clic: aggiunge o toglie un oggetto; false se lì non ce n'è
     double levelForX(int index, double x) const;  // dB del cursore del livello quando il mouse è in x
@@ -445,6 +446,12 @@ private:
     int selectionTrack_ = 0;
     bool selecting_ = false;     // si sta trascinando una selezione su una corsia audio
     double selectionAnchor_ = 0.0;
+    // Alt+trascina un oggetto fuori dalla linea del tempo, sull'elenco dei gruppi: i suoi oggetti (quelli scelti, se è fra
+    // loro) e dove si è premuto; il trascinamento parte dopo qualche pixel.
+    bool altDragging_ = false;
+    std::vector<Object> altDragObjects_;
+    QPointF altPress_;
+    void startObjectDrag();
     bool scrubbing_ = false;     // si sta trascinando il cursore sul righello
 
     int selectedAudioClip_ = 0;
