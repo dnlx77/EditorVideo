@@ -43,9 +43,13 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
     if ((event->modifiers() & Qt::ControlModifier) && pos.x() >= videoLane().left() && pos.y() >= lanesTop() - 2 && ctrlPress(pos))
         return;
     // Alt+clic su un oggetto: da lì si può trascinarlo (con i compagni scelti) sull'elenco dei gruppi; niente spostamento.
+    // Sui bordi Alt vale come prima: il taglio che sposta anche i pezzi dopo.
     if ((event->modifiers() & Qt::AltModifier) && pos.x() >= videoLane().left() && pos.y() >= lanesTop() - 2) {
         Object target;
-        if (objectAt(pos, target)) {
+        bool edgeStart = false;
+        int edgeLane = 0;
+        int edgeClip = 0;
+        if (edgeAt(pos, edgeStart) < 0 && !audioEdgeAt(pos, edgeLane, edgeClip, edgeStart) && objectAt(pos, target)) {
             const std::vector<Object> chosen = allSelectedObjects();
             altDragObjects_ = std::find(chosen.begin(), chosen.end(), target) != chosen.end() ? chosen : std::vector<Object>{target};
             altPress_ = pos;
