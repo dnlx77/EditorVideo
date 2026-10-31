@@ -1,8 +1,11 @@
 #include "EditorApp/GroupListPanel.h"
 
+#include "EditorApp/GroupMime.h"
 #include "EditorApp/UiText.h"
 
+#include <QtCore/QMimeData>
 #include <QtCore/QTimer>
+#include <QtGui/QDragEnterEvent>
 #include <QtGui/QDragMoveEvent>
 #include <QtGui/QDropEvent>
 #include <QtGui/QFont>
@@ -22,8 +25,9 @@ namespace {
 class GroupTree : public QTreeWidget
 {
 public:
-    std::function<bool(const QTreeWidgetItem* target)> canDrop;  // target: il nodo del gruppo, nullptr = spazio vuoto
-    std::function<void(const QTreeWidgetItem* target)> dropped;
+    // target: il nodo del gruppo, nullptr = spazio vuoto; external: gli oggetti vengono dalla linea del tempo.
+    std::function<bool(const QTreeWidgetItem* target, bool external)> canDrop;
+    std::function<void(const QTreeWidgetItem* target, std::vector<editor::core::ObjectRef> external)> dropped;
 
 protected:
     const QTreeWidgetItem* targetAt(const QPoint& at) const
@@ -31,10 +35,23 @@ protected:
         const QTreeWidgetItem* item = itemAt(at);
         return item != nullptr && item->parent() != nullptr ? item->parent() : item;
     }
+    static bool fromTimeline(const QMimeData* mime)
+    {
+        return mime->hasFormat(QLatin1String(kGroupObjectsMime));
+    }
+    void dragEnterEvent(QDragEnterEvent* event) override
+    {
+        if (fromTimeline(event->mimeData()))
+            event->acceptProposedAction();
+        else
+            QTreeWidget::dragEnterEvent(event);
+    }
     void dragMoveEvent(QDragMoveEvent* event) override
     {
-        QTreeWidget::dragMoveEvent(event);
-        if (event->source() == this && canDrop && canDrop(targetAt(event->position().toPoint()))) {
+        const bool external = event->source() != this && fromTimeline(event->mimeData());
+        if (!external)
+            QTreeWidget::dragMoveEvent(event);
+        if ((external || event->source() == this) && canDrop && canDrop(targetAt(event->position().toPoint()), external)) {
             event->setDropAction(Qt::CopyAction);
             event->accept();
         } else {
@@ -43,8 +60,12 @@ protected:
     }
     void dropEvent(QDropEvent* event) override
     {
-        if (event->source() == this && dropped && canDrop && canDrop(targetAt(event->position().toPoint()))) {
-            dropped(targetAt(event->position().toPoint()));
+        const bool external = event->source() != this && fromTimeline(event->mimeData());
+        const QTreeWidgetItem* target = targetAt(event->position().toPoint());
+        const std::vector<editor::core::ObjectRef> outside =
+            external ? decodeGroupObjects(event->mimeData()->data(QLatin1String(kGroupObjectsMime))) : std::vector<editor::core::ObjectRef>{};
+        if ((external || event->source() == this) && (!external || !outside.empty()) && dropped && canDrop && canDrop(target, external)) {
+            dropped(target, outside);
             event->setDropAction(Qt::CopyAction);  // niente "sposta": le voci non si tolgono da sole
             event->accept();
         } else {
@@ -67,8 +88,8 @@ GroupListPanel::GroupListPanel(QWidget* parent) : QWidget(parent)
     tree_->setAcceptDrops(true);
     tree_->setDragDropMode(QAbstractItemView::DragDrop);
     tree_->setDefaultDropAction(Qt::CopyAction);
-    tree->canDrop = [this](const QTreeWidgetItem* target) {
-        if (draggableSelection().empty())
+    tree->canDrop = [this](const QTreeWidgetItem* target, bool external) {
+        if (!external && draggableSelection().empty())
             return false;
         if (target == nullptr)
             return true;
@@ -76,8 +97,8 @@ GroupListPanel::GroupListPanel(QWidget* parent) : QWidget(parent)
         return row >= 0 && row < static_cast<int>(rows_.size());
     };
     // Il cambiamento si fa dopo la fine del trascinamento: l'elenco si rifà e le voci trascinate spariscono.
-    tree->dropped = [this](const QTreeWidgetItem* target) {
-        std::vector<editor::core::ObjectRef> dragged = draggableSelection();
+    tree->dropped = [this](const QTreeWidgetItem* target, std::vector<editor::core::ObjectRef> external) {
+        std::vector<editor::core::ObjectRef> dragged = external.empty() ? draggableSelection() : std::move(external);
         const int row = target == nullptr ? -1 : tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(target));
         int groupId = row >= 0 && row < static_cast<int>(rows_.size()) ? rows_[static_cast<std::size_t>(row)].id : 0;
         // Su un video con il suo audio: i due, già legati, si uniscono agli oggetti trascinati in un gruppo nuovo.
@@ -90,7 +111,8 @@ GroupListPanel::GroupListPanel(QWidget* parent) : QWidget(parent)
     };
     tree_->setRootIsDecorated(true);
     tree_->setMinimumSize(40, 24);
-    tree_->setToolTip(QStringLiteral("I gruppi del montaggio: ognuno con gli oggetti che si muovono insieme"));
+    tree_->setToolTip(QStringLiteral("I gruppi del montaggio: ognuno con gli oggetti che si muovono insieme. Trascina le voci per cambiare i gruppi, "
+                                     "o Alt+trascina un oggetto dalla linea del tempo su un gruppo."));
     empty_ = new QLabel(QStringLiteral("Nessun gruppo nel montaggio.\nCon Ctrl+clic scegli più oggetti e premi G."));
     empty_->setAlignment(Qt::AlignCenter);
     empty_->setWordWrap(true);

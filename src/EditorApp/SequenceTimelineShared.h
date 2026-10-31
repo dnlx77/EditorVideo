@@ -23,6 +23,15 @@ inline constexpr double kTextFadeNearY = 5;     // e verticale: stretta, così i
 inline constexpr double kTextFadeMinWidth = 24; // sotto questa larghezza la scritta non ha maniglie
 inline constexpr double kAudioLaneHeight = 40; // altezza in più che chiede ogni traccia aggiunta
 
+// Il contorno degli oggetti che fanno parte di un gruppo con quelli scelti: arancione e tratteggiato (quello continuo
+// è la selezione).
+inline QPen matePen()
+{
+    QPen pen(QColor(255, 170, 0), 3, Qt::DashLine);
+    pen.setCapStyle(Qt::FlatCap);
+    return pen;
+}
+
 // Forma d'onda di [sourceFrom, sourceTo) di un file, disegnata in `r` (una linea verticale per pixel), solo fra
 // visibleLeft e visibleRight: con lo zoom `r` può essere molto più largo della parte che si vede.
 inline void drawWave(QPainter& p, const QRectF& r, const core::Waveform& wave, double sourceFrom, double sourceTo,

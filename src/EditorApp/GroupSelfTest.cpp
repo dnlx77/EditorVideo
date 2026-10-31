@@ -1,4 +1,5 @@
 #include "EditorApp/GroupListPanel.h"
+#include "EditorApp/GroupMime.h"
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/SelfTests.h"
 
@@ -135,6 +136,12 @@ int runGroupTest(const QStringList&, qsizetype)
     check(droppedCalls == 2, "tutto un gruppo nello spazio vuoto lo rifarebbe uguale: niente da segnalare");
     panel.dropEntries({{Kind::Piece, 1}, {Kind::AudioClip, 6}}, 0);
     check(droppedCalls == 3 && dropped.size() == 2 && droppedOn == 0, "due oggetti di gruppi diversi nello spazio vuoto: segnalati");
+
+    // Il trascinamento dalla linea del tempo porta gli oggetti come testo: andata e ritorno, e dati rovinati si scartano.
+    const std::vector<core::ObjectRef> sample = {{Kind::Piece, 3}, {Kind::PieceAudio, 3}, {Kind::AudioClip, 12}, {Kind::TextClip, 5}};
+    check(decodeGroupObjects(encodeGroupObjects(sample)) == sample, "gli oggetti trascinati dalla linea del tempo si ritrovano uguali");
+    check(decodeGroupObjects(QByteArrayLiteral("9 1\nciao\n1\n2 x\n")).empty() && decodeGroupObjects({}).empty(),
+          "dati rovinati o vuoti non danno oggetti");
 
     // Le tre schede nella finestra.
     MainWindow window;

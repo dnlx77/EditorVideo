@@ -248,7 +248,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
             QColor fill = blockColor(c->colorIndex);
             fill.setAlpha(150);
             p.setBrush(fill);
-            p.setPen(isMate(Object::Kind::AudioClip, c->clipId) ? QPen(QColor(255, 170, 0), 3) : QPen(pal.color(QPalette::Highlight), 3));
+            p.setPen(isMate(Object::Kind::AudioClip, c->clipId) ? matePen() : QPen(pal.color(QPalette::Highlight), 3));
             p.drawRoundedRect(visiblePart(target), 3, 3);
             if (target.width() > 30) {
                 p.setPen(Qt::white);
@@ -266,7 +266,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
         QColor fill = blockColor(b.colorIndex);
         fill.setAlpha(150);
         p.setBrush(fill);
-        p.setPen(isMate(Object::Kind::Piece, b.fragmentId) ? QPen(QColor(255, 170, 0), 3) : QPen(pal.color(QPalette::Highlight), 3));
+        p.setPen(isMate(Object::Kind::Piece, b.fragmentId) ? matePen() : QPen(pal.color(QPalette::Highlight), 3));
         p.drawRoundedRect(visiblePart(target), 3, 3);
         p.setPen(Qt::white);
         if (target.width() > 30)
@@ -373,7 +373,7 @@ void SequenceTimeline::paintVideo(QPainter& p)
                 p.fillRect(r, QColor(255, 255, 255, 140));
             p.restore();
         }
-        p.setPen(isMate(Object::Kind::Piece, b.fragmentId)   ? QPen(QColor(255, 170, 0), 3)
+        p.setPen(isMate(Object::Kind::Piece, b.fragmentId)   ? matePen()
                  : isSelected(Object::Kind::Piece, b.fragmentId) ? QPen(pal.color(QPalette::Highlight), 3)
                                                                : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
@@ -520,7 +520,7 @@ void SequenceTimeline::paintText(QPainter& p)
             p.setPen(Qt::NoPen);
             p.setBrush(fill);
             p.drawRoundedRect(r, 3, 3);
-            p.setPen(isMate(Object::Kind::TextClip, c.clipId)   ? QPen(QColor(255, 170, 0), 3)
+            p.setPen(isMate(Object::Kind::TextClip, c.clipId)   ? matePen()
                      : isSelected(Object::Kind::TextClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3)
                                                                     : QPen(base.darker(140), 1));
             p.setBrush(Qt::NoBrush);
@@ -566,7 +566,7 @@ void SequenceTimeline::paintText(QPainter& p)
             QColor fill = base;
             fill.setAlpha(150);
             p.setBrush(fill);
-            p.setPen(isMate(Object::Kind::TextClip, c->clipId) ? QPen(QColor(255, 170, 0), 3) : QPen(pal.color(QPalette::Highlight), 3));
+            p.setPen(isMate(Object::Kind::TextClip, c->clipId) ? matePen() : QPen(pal.color(QPalette::Highlight), 3));
             p.drawRoundedRect(visiblePart(target), 3, 3);
             if (target.width() > 30) {
                 p.setPen(Qt::white);
@@ -892,7 +892,7 @@ void SequenceTimeline::paintA1(QPainter& p, const QRectF& lane)
         }
         const bool audioMate = isMate(Object::Kind::PieceAudio, b.fragmentId);
         if ((!multi_.empty() && isSelected(Object::Kind::PieceAudio, b.fragmentId)) || audioMate) {
-            p.setPen(audioMate ? QPen(QColor(255, 170, 0), 3) : QPen(pal.color(QPalette::Highlight), 3));
+            p.setPen(audioMate ? matePen() : QPen(pal.color(QPalette::Highlight), 3));
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(r, 3, 3);
         }
@@ -945,7 +945,7 @@ void SequenceTimeline::paintTrack(QPainter& p, int index, const QRectF& lane)
             p.setPen(pal.color(QPalette::PlaceholderText));
             p.drawText(r, Qt::AlignCenter, QStringLiteral("forma d'onda..."));
         }
-        p.setPen(isMate(Object::Kind::AudioClip, c.clipId)   ? QPen(QColor(255, 170, 0), 3)
+        p.setPen(isMate(Object::Kind::AudioClip, c.clipId)   ? matePen()
                  : isSelected(Object::Kind::AudioClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3)
                                                                : QPen(color.darker(140), 1));
         p.setBrush(Qt::NoBrush);
