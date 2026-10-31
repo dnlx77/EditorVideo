@@ -329,7 +329,7 @@ bool SequenceTimeline::isMate(Object::Kind kind, int id) const
     return member && (matesGrouped_ || !isSelected(kind, id));
 }
 
-bool SequenceTimeline::ctrlPress(const QPointF& pos)
+bool SequenceTimeline::objectAt(const QPointF& pos, Object& target)
 {
     // L'oggetto sotto il mouse: un pezzo sulla corsia video, sulle corsie audio una clip o (su A1) l'audio di un pezzo.
     const double t = timeForX(pos.x());
@@ -339,7 +339,6 @@ bool SequenceTimeline::ctrlPress(const QPointF& pos)
             return 0;
         return blocks_[static_cast<std::size_t>(index)].fragmentId;
     };
-    Object target;
     if (const int textLane = textLaneAt(pos.y()); textLane >= 0) {
         int clipLane = 0;
         int clip = 0;
@@ -364,6 +363,14 @@ bool SequenceTimeline::ctrlPress(const QPointF& pos)
     } else {
         return false;
     }
+    return true;
+}
+
+bool SequenceTimeline::ctrlPress(const QPointF& pos)
+{
+    Object target;
+    if (!objectAt(pos, target))
+        return false;
     std::vector<Object> set = allSelectedObjects();
     if (const auto at = std::find(set.begin(), set.end(), target); at != set.end())
         set.erase(at);
