@@ -17,6 +17,7 @@ ExportJob::ExportJob(const std::vector<ClipRanges>& clips, const std::string& ou
     , muteMethod_(muteMethod)
     , reencode_(reencode)
     , replaced_(audio.replacement.has_value())
+    , noClipAudio_(audio.replacement.has_value() || !reencode.includeAudio)
 {
     for (const ClipRanges& clip : clips_) {
         for (std::size_t r = 0; r < clip.ranges.size(); ++r) {
@@ -48,11 +49,11 @@ ExportJob::ExportJob(const std::vector<ClipRanges>& clips, const std::string& ou
     }
 
     // Che cosa succede a ogni file: si copia (con i suoi parametri nel flusso, se diversi) o si ricodifica.
-    plan_ = analysis != nullptr ? *analysis : analyzePlan(clips_, format, replaced_, reencode_.all, reencode_.closeGaps, reencode_.activeTexts(), &reencode_.transitions);
+    plan_ = analysis != nullptr ? *analysis : analyzePlan(clips_, format, noClipAudio_, reencode_.all, reencode_.closeGaps, reencode_.activeTexts(), &reencode_.transitions, reencode_.backend);
     if (!plan_.problem.empty())
         throw ClipsNotJoinable(plan_.problem);
 
-    first_ = openClip(clips_.front().path, !replaced_);
+    first_ = openClip(clips_.front().path, !noClipAudio_);
     clipStreams_ = first_.copied;
     AVFormatContext* rawOutput = nullptr;
     if (avformat_alloc_output_context2(&rawOutput, nullptr, nullptr, outputPath_.c_str()) < 0 || rawOutput == nullptr)
@@ -415,7 +416,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     const std::int64_t base = std::llround(outputPosition_ / frameSeconds);
 
     // Un encoder per tratto: alla fine si svuota, così i suoi pacchetti non si mescolano con quelli dopo.
-    ProjectVideoEncoder video(format, fps, Rational{0, 1}, reencode_.quality);
+    ProjectVideoEncoder video(format, fps, Rational{0, 1}, reencode_);
     const PacketSink videoSink = videoSinkFor(video, 1, frameSeconds);
 
     // Decoder del video (e dell'audio, se si ricodifica).
@@ -670,7 +671,7 @@ std::pair<double, double> ExportJob::writeBlack(double seconds)
         return {outputPosition_, outputPosition_};
     // Tempi in 1/90000 s: il nero parte esattamente dove finisce il pezzo prima (non arrotondato ai fotogrammi).
     constexpr int kTicks = 90000;
-    ProjectVideoEncoder video(format, fps, Rational{1, kTicks}, reencode_.quality);
+    ProjectVideoEncoder video(format, fps, Rational{1, kTicks}, reencode_);
     const PacketSink videoSink = videoSinkFor(video, std::llround(frameSeconds * kTicks), frameSeconds);
     // Il fotogramma nero è sempre lo stesso, cambia solo il tempo.
     const FramePtr black = makeBlackFrame(format.width, format.height);
@@ -814,7 +815,7 @@ ExportResult ExportJob::run()
         lastDts_.assign(streamCount_, std::numeric_limits<std::int64_t>::min());
 
         for (std::size_t c = 0; c < clips_.size(); ++c) {
-            InputFile current = c == 0 ? std::move(first_) : openClip(clips_[c].path, !replaced_);
+            InputFile current = c == 0 ? std::move(first_) : openClip(clips_[c].path, !noClipAudio_);
             if (!plan_.reencode[c] && current.copied != clipStreams_ && !plan_.reencode.front())
                 throw MediaError("Il file " + clips_[c].path + " ha un numero di flussi diverso dal primo.");
 

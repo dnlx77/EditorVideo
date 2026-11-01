@@ -1,5 +1,8 @@
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/AudioMixer.h"
+#include "EditorCore/Encoder.h"
+#include "EditorCore/MediaProbe.h"
+#include "EditorCore/PathUtil.h"
 #include "EditorCore/MixExport.h"
 #include "EditorCore/Project.h"
 #include "EditorCore/SegmentExport.h"
@@ -14,6 +17,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <numbers>
 #include <vector>
 
@@ -178,6 +182,65 @@ TEST_F(MixExportTest, RenderedFileIsTheSameMixAsThePreview)
     const Comparison c = compare(expected, actual, kRate / 10, kRate * 5 / 2);
     EXPECT_EQ(c.bestLag, 0) << "l'audio dev'essere a tempo con la sequenza";
     EXPECT_LT(c.error, 0.02) << "AAC a 256 kb/s: l'errore dev'essere piccolo";
+}
+
+TEST_F(MixExportTest, MixCanBeWrittenInAnyAudioCodec)
+{
+    Project project = montage("video.mkv");
+    const int a2 = project.audioTracks().addTrack();
+    ASSERT_NE(project.audioTracks().add(a2, clipOf("la.wav", 0.0, 2.0, 0.0)), 0);
+    const MixSpec spec = mixSpecOf(project);
+    const std::map<AudioCodec, std::string> names = {{AudioCodec::Aac, "aac"},   {AudioCodec::Mp3, "mp3"}, {AudioCodec::Opus, "opus"},
+                                                    {AudioCodec::Ac3, "ac3"},   {AudioCodec::Flac, "flac"}};
+    for (const AudioCodec codec : availableAudioCodecs()) {
+        SCOPED_TRACE(audioCodecName(codec));
+        const std::string out = path("mix-" + names.at(codec) + ".mka");
+        EXPECT_NEAR(renderMixToFile(spec, out, {}, codec, 0), 3.0, 1e-3);
+        const MediaInfo info = probeFile(out);
+        ASSERT_EQ(info.streams.size(), 1u);
+        EXPECT_EQ(info.streams[0].codec, names.at(codec));
+        EXPECT_NEAR(info.durationSeconds, 3.0, 0.1);
+    }
+}
+
+TEST_F(MixExportTest, ExportWithAnotherAudioCodecAndWithoutAudio)
+{
+    Project project = montage("video.mkv");
+    const int a2 = project.audioTracks().addTrack();
+    ASSERT_NE(project.audioTracks().add(a2, clipOf("la.wav", 0.0, 2.0, 0.0)), 0);
+    const AudioEdit edit = project.audioEdit(GapExport::Black);
+    ASSERT_TRUE(edit.mix);
+    const auto plan = project.exportPlan(GapExport::Black);
+
+    // FLAC in un MKV: l'audio del file creato è FLAC, e il video resta quello del montaggio.
+    ReencodeOptions flac;
+    flac.audioCodec = AudioCodec::Flac;
+    const std::string withFlac = path("montaggio-flac.mkv");
+    exportClips(plan, withFlac, edit, {}, MuteMethod::Silence, nullptr, flac);
+    const MediaInfo flacInfo = probeFile(withFlac);
+    std::vector<std::string> codecs;
+    for (const StreamInfo& s : flacInfo.streams)
+        codecs.push_back(s.codec);
+    EXPECT_NE(std::find(codecs.begin(), codecs.end(), "flac"), codecs.end());
+    EXPECT_EQ(codecs.size(), 2u);
+
+    // Un codec che il contenitore non può avere: errore chiaro, nessun file.
+    ReencodeOptions flacInWebm;
+    flacInWebm.audioCodec = AudioCodec::Flac;
+    const std::string refused = path("rifiutato.webm");
+    if (!audioCodecFitsContainer(AudioCodec::Flac, "webm")) {
+        EXPECT_THROW(exportClips(plan, refused, edit, {}, MuteMethod::Silence, nullptr, flacInWebm), ClipsNotJoinable);
+        EXPECT_FALSE(fs::exists(editor::core::pathFromUtf8(refused)));
+    }
+
+    // Senza audio: il mix non si fa nemmeno e il file ha solo il video.
+    ReencodeOptions none;
+    none.includeAudio = false;
+    const std::string silent = path("montaggio-senza-audio.mkv");
+    exportClips(plan, silent, edit, {}, MuteMethod::Silence, nullptr, none);
+    const MediaInfo silentInfo = probeFile(silent);
+    ASSERT_EQ(silentInfo.streams.size(), 1u);
+    EXPECT_EQ(silentInfo.streams[0].kind, StreamKind::Video);
 }
 
 TEST_F(MixExportTest, RenderCanBeCancelledAndLeavesNoFile)

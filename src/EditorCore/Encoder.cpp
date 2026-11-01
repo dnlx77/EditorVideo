@@ -471,6 +471,15 @@ std::optional<VideoEncoderInfo> preferredVideoEncoder(VideoCodec codec)
     return found.front();
 }
 
+std::optional<VideoEncoderInfo> findVideoEncoder(VideoCodec codec, std::optional<EncoderBackend> backend)
+{
+    for (const VideoEncoderInfo& info : workingEncoders(codec)) {
+        if (!backend || info.backend == *backend)
+            return info;
+    }
+    return std::nullopt;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Video
 

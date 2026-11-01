@@ -358,7 +358,8 @@ inline double gapBefore(const ClipRanges& clip, std::size_t r)
 
 inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectFormat* format, bool replaced, bool reencodeAll,
                          bool closeGaps, const TextTracks* texts = nullptr,
-                         const std::vector<ExportTransition>* transitions = nullptr)
+                         const std::vector<ExportTransition>* transitions = nullptr,
+                         std::optional<EncoderBackend> backend = std::nullopt)
 {
     PlanAnalysis plan;
     plan.reencode.assign(clips.size(), reencodeAll);
@@ -401,9 +402,11 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
                        + ": la ricodifica per ora si fa solo in H.264 e HEVC.";
     } else {
         const VideoCodec codec = video->codec == "hevc" ? VideoCodec::Hevc : VideoCodec::H264;
-        if (!preferredVideoEncoder(codec)) {
-            cannotReencode = "Per ricodificare in " + codecName(codec) + " serve un encoder, ma su questo PC non ce n'è "
-                             "uno funzionante (vedi Aiuto > Informazioni).";
+        if (!findVideoEncoder(codec, backend)) {
+            cannotReencode = backend ? "L'encoder scelto (" + backendName(*backend) + ") non è disponibile per " + codecName(codec)
+                                           + " su questo PC: sceglierne un altro (vedi Aiuto > Informazioni)."
+                                     : "Per ricodificare in " + codecName(codec) + " serve un encoder, ma su questo PC non ce n'è "
+                                       "uno funzionante (vedi Aiuto > Informazioni).";
         } else if (!parameterSetsOf(codecIdOf(video->codec), video->extradata)) {
             cannotReencode = "I parametri di codifica del formato del progetto (" + plan.reference.sourceName
                            + ") sono in un formato che non si sa ripetere nel flusso (Annex B).";
@@ -656,8 +659,8 @@ inline AVRational projectFrameRate(const StreamSignature& format)
 // ricodificare e per il nero.
 struct ProjectVideoEncoder
 {
-    ProjectVideoEncoder(const StreamSignature& format, AVRational fps, Rational timeBase, QualityPreset quality)
-        : encoder(settingsFor(format, fps, timeBase, quality))
+    ProjectVideoEncoder(const StreamSignature& format, AVRational fps, Rational timeBase, const ReencodeOptions& options)
+        : encoder(settingsFor(format, fps, timeBase, options))
     {
         AVCodecParameters* par = avcodec_parameters_alloc();
         if (par == nullptr)
@@ -674,7 +677,7 @@ struct ProjectVideoEncoder
     ParameterSets parameters;
 
 private:
-    static VideoEncoderSettings settingsFor(const StreamSignature& format, AVRational fps, Rational timeBase, QualityPreset quality)
+    static VideoEncoderSettings settingsFor(const StreamSignature& format, AVRational fps, Rational timeBase, const ReencodeOptions& options)
     {
         VideoEncoderSettings settings;
         settings.codec = format.codec == "hevc" ? VideoCodec::Hevc : VideoCodec::H264;
@@ -682,7 +685,10 @@ private:
         settings.height = format.height;
         settings.frameRate = {fps.num, fps.den};
         settings.timeBase = timeBase;
-        settings.quality = quality;
+        settings.quality = options.quality;
+        settings.backend = options.backend;
+        settings.preset = options.preset;
+        settings.cq = options.cq;
         return settings;
     }
 };
@@ -1088,6 +1094,7 @@ private:
     double totalLength_ = 0.0;  // del montaggio, spazi vuoti compresi
     int rangeCount_ = 0;
     const bool replaced_;  // c'è una traccia sostitutiva
+    const bool noClipAudio_;  // l'audio dei file non entra nel file creato (traccia sostitutiva, o senza audio)
     ReplacementSource replacement_;
     PlanAnalysis plan_;
     InputFile first_;

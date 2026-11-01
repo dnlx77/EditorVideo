@@ -124,6 +124,16 @@ bool writeClip(const fs::path& path, const ClipSpec& spec)
     }
 }
 
+// Se il file ha un flusso di quel tipo.
+bool findStreamOfKind(const MediaInfo& info, StreamKind kind)
+{
+    for (const StreamInfo& stream : info.streams) {
+        if (stream.kind == kind)
+            return true;
+    }
+    return false;
+}
+
 struct Decoded
 {
     std::vector<int> centre;  // luminanza al centro di ogni fotogramma
@@ -353,5 +363,64 @@ TEST_F(Reencode, AnotherResolutionInTheFormatIsReencoded)
     EXPECT_EQ(decoded.height, 720);
     EXPECT_EQ(decoded.centre.size(), 60u);  // 30 al secondo
 }
+
+// --- Scelte dell'utente: encoder, preset, qualità (CQ) e audio
+
+TEST_F(Reencode, EncoderChoicesAreUsedAndAnUnavailableEncoderIsRefused)
+{
+    const ProjectFormat format = formatOf(readMediaSignature(file("a_1080p60.mp4")));
+    const std::vector<ClipRanges> plan{{file("a_1080p60.mp4"), {{0.0, 1.0}}}};
+    const auto software = findVideoEncoder(VideoCodec::H264, EncoderBackend::Software);
+    if (!software)
+        GTEST_SKIP() << "Nessun encoder software H.264 in questa build di FFmpeg.";
+
+    // CQ basso = file più grande, con lo stesso encoder (x264) e preset veloce.
+    const auto sizeAt = [&](int cq) {
+        ReencodeOptions options{QualityPreset::High, true};  // "ricodifica tutto"
+        options.backend = EncoderBackend::Software;
+        options.preset = "ultrafast";
+        options.cq = cq;
+        const fs::path out = dir_ / ("cq" + std::to_string(cq) + ".mkv");
+        const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, &format, options);
+        EXPECT_EQ(result.reencodedSegments, 1);
+        EXPECT_EQ(decodeAll(out).errors, 0);
+        return fs::file_size(out);
+    };
+    EXPECT_GT(sizeAt(14), sizeAt(40));
+
+    // Un encoder che su questo PC non c'è: l'esportazione non si può fare, e il riepilogo lo dice.
+    for (const EncoderBackend backend : {EncoderBackend::Qsv, EncoderBackend::Amf, EncoderBackend::Nvenc}) {
+        if (findVideoEncoder(VideoCodec::H264, backend))
+            continue;
+        ReencodeOptions options{QualityPreset::High, true};
+        options.backend = backend;
+        const ExportPreview preview = previewExport(plan, AudioEdit{}, &format, options);
+        EXPECT_FALSE(preview.problem.empty());
+        EXPECT_THROW(exportClips(plan, utf8FromPath(dir_ / "nessun_encoder.mkv"), AudioEdit{}, {}, MuteMethod::Silence, &format, options),
+                     ClipsNotJoinable);
+        EXPECT_FALSE(fs::exists(dir_ / "nessun_encoder.mkv"));
+        break;
+    }
+}
+
+TEST_F(Reencode, WithoutAudioTheFileHasNoAudioStream)
+{
+    const ProjectFormat format = formatOf(readMediaSignature(file("a_1080p60.mp4")));
+    ASSERT_TRUE(findStreamOfKind(probeFile(file("a_1080p60.mp4")), StreamKind::Audio)) << "il file di prova ha l'audio";
+    for (const bool reencodeAll : {false, true}) {
+        SCOPED_TRACE(reencodeAll ? "ricodificato" : "copiato");
+        ReencodeOptions options{QualityPreset::High, reencodeAll};
+        options.includeAudio = false;
+        const fs::path out = dir_ / (reencodeAll ? "muto_ricodificato.mp4" : "muto_copiato.mp4");
+        const std::vector<ClipRanges> plan{{file("a_1080p60.mp4"), {{0.0, 1.0}}}, {file("b_720p30.mp4"), {{0.0, 1.0}}}};
+        const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, &format, options);
+        EXPECT_GE(result.durationSeconds, 1.9);
+        const MediaInfo info = probeFile(utf8FromPath(out));
+        EXPECT_TRUE(findStreamOfKind(info, StreamKind::Video));
+        EXPECT_FALSE(findStreamOfKind(info, StreamKind::Audio));
+        EXPECT_EQ(decodeAll(out).errors, 0);
+    }
+}
+
 
 }  // namespace

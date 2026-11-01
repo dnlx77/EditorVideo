@@ -50,13 +50,14 @@ int mixFileCount(const MixSpec& spec)
     return static_cast<int>(paths.size());
 }
 
-double renderMixToFile(const MixSpec& spec, const std::string& path, const ExportProgress& progress)
+double renderMixToFile(const MixSpec& spec, const std::string& path, const ExportProgress& progress, AudioCodec codec,
+                       int bitRate)
 {
     AudioMixer mixer(spec.segments, spec.gains);
     const double seconds = std::max(spec.length, mixer.endTime());
     const long long totalFrames = std::max<long long>(1, std::llround(seconds * kMixSampleRate));
 
-    AudioEncoder encoder(AudioEncoderSettings{kMixSampleRate, kMixChannels, kMixBitRate});
+    AudioEncoder encoder(AudioEncoderSettings{kMixSampleRate, kMixChannels, bitRate > 0 ? bitRate : kMixBitRate, codec});
 
     AVFormatContext* raw = nullptr;
     if (avformat_alloc_output_context2(&raw, nullptr, nullptr, path.c_str()) < 0 || raw == nullptr)
