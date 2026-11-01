@@ -31,6 +31,9 @@ struct ExportDialogInput
     int gapCount = 0;        // spazi vuoti nel montaggio
     int mixedAudioFiles = 0; // file audio mixati (0 = l'audio dei file si copia)
     std::optional<core::VideoCodec> projectCodec;  // codec del formato del progetto, se si sa ricodificare
+    int sourceWidth = 0;                           // misura e fotogrammi al secondo del formato del progetto
+    int sourceHeight = 0;
+    double sourceFrameRate = 0.0;
     core::ReencodeOptions options;                 // le scelte di partenza
     // Il riepilogo di quello che farebbe l'esportazione con queste scelte (copiati, ricodificati, durata, problemi).
     std::function<core::ExportPreview(const core::ReencodeOptions&)> preview;
@@ -54,6 +57,10 @@ public:
     QString warningText() const;  // l'avviso sotto la destinazione ("Il file esiste già...")
     bool canExport() const;
     QComboBox* encoderCombo() const { return encoder_; }
+    QComboBox* codecCombo() const { return codec_; }
+    QComboBox* resolutionCombo() const { return resolution_; }
+    QComboBox* frameRateCombo() const { return frameRate_; }
+    QComboBox* containerCombo() const { return container_; }
     QComboBox* audioCodecCombo() const { return audioCodec_; }
     QCheckBox* includeAudioCheck() const { return includeAudio_; }
     QCheckBox* reencodeAllCheck() const { return reencodeAll_; }
@@ -67,12 +74,17 @@ private:
     void fillEncoders();
     void updateEncoder();      // preset e scala del CQ dell'encoder scelto
     void fillAudioBitRates();
+    void fillAudioCodecs();    // quelli che il contenitore scelto può avere
+    void changeContainer();    // l'estensione della destinazione segue il contenitore
     void updateAudio();        // quali scelte audio hanno effetto
 
     // L'encoder che si userebbe con la scelta attuale (nessuna scelta = il primo funzionante).
     std::optional<core::VideoEncoderInfo> effectiveEncoder() const;
     bool videoChoicesApply() const;  // c'è da ricodificare (o si può scegliere perché si ricodifichi tutto)
     core::AudioCodec selectedAudioCodec() const;
+    std::optional<core::VideoCodec> effectiveCodec() const;  // la scelta, o il codec del progetto
+    QString extension() const;                                // del contenitore scelto (o dei file)
+    core::VideoChange videoChange() const;
 
     ExportDialogInput input_;
     core::ExportPreview preview_;
@@ -83,6 +95,10 @@ private:
     QLineEdit* destination_ = nullptr;
     QLabel* warning_ = nullptr;
     QLabel* range_ = nullptr;
+    QComboBox* codec_ = nullptr;
+    QComboBox* resolution_ = nullptr;
+    QComboBox* frameRate_ = nullptr;
+    QComboBox* container_ = nullptr;
     QComboBox* encoder_ = nullptr;
     QComboBox* preset_ = nullptr;
     QSlider* cqSlider_ = nullptr;

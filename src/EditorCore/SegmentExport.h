@@ -61,6 +61,16 @@ struct ExportTransition
 std::vector<ExportTransition> exportTransitionsOf(const Project& project);
 
 // Ricodifica all'esportazione (vedi exportClips).
+// Il video del file creato diverso da quello dei file (0 / vuoto = come i file). Quello che cambia obbliga a ricodificare
+// tutto il video. Misure pari; solo H.264 e HEVC come codec.
+struct VideoChange
+{
+    std::optional<VideoCodec> codec;
+    int width = 0;
+    int height = 0;       // 0 = la misura dei file (width e height vanno insieme)
+    double frameRate = 0; // 0 = quello dei file
+};
+
 struct ReencodeOptions
 {
     QualityPreset quality = QualityPreset::High;
@@ -89,6 +99,8 @@ struct ReencodeOptions
     bool includeAudio = true;
     std::optional<AudioCodec> audioCodec;
     int audioBitRate = 0;
+    // Codec, misura e fotogrammi al secondo del video, se diversi da quelli dei file (dopo gli altri campi: si inizializza in ordine).
+    VideoChange video;
 
     const TextTracks* activeTexts() const { return textRenderer != nullptr && texts.endTime() > 0.0 ? &texts : nullptr; }
 };

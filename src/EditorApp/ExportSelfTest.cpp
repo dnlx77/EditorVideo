@@ -8,6 +8,7 @@
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QPushButton>
+#include <QtCore/QVariant>
 #include <QtWidgets/QSlider>
 
 #include <cstdio>
@@ -51,6 +52,9 @@ int runExportPanelTest(const QStringList&, qsizetype)
     input.gapCount = 1;
     input.mixedAudioFiles = 2;
     input.projectCodec = core::VideoCodec::H264;
+    input.sourceWidth = 1920;
+    input.sourceHeight = 1080;
+    input.sourceFrameRate = 60.0;
     input.preview = [&](const core::ReencodeOptions& options) {
         asked.push_back(options);
         core::ExportPreview preview;
@@ -107,6 +111,32 @@ int runExportPanelTest(const QStringList&, qsizetype)
         } else {
             std::printf("  (un solo encoder su questo PC: scelta dell'encoder non provata)\n");
         }
+
+        // Formato del video: di partenza come i file; risoluzione in percentuale o in altezza (misure pari), fotogrammi, codec.
+        check(dialog.options().video.width == 0 && !dialog.options().video.codec && dialog.options().video.frameRate == 0.0,
+              "di partenza il video è come quello dei file");
+        QComboBox* sizes = dialog.resolutionCombo();
+        const auto choose = [](QComboBox* combo, const QVariant& data) {
+            const int at = combo->findData(data);
+            if (at >= 0)
+                combo->setCurrentIndex(at);
+            return at >= 0;
+        };
+        check(choose(sizes, QStringLiteral("p50")) && dialog.options().video.width == 960 && dialog.options().video.height == 540,
+              "50% di 1920x1080 = 960x540");
+        check(choose(sizes, QStringLiteral("h720")) && dialog.options().video.width == 1280 && dialog.options().video.height == 720,
+              "720p tiene le proporzioni");
+        check(choose(dialog.frameRateCombo(), 30.0) && dialog.options().video.frameRate == 30.0, "30 fotogrammi al secondo");
+        check(choose(dialog.codecCombo(), static_cast<int>(core::VideoCodec::Hevc)) && dialog.options().video.codec == core::VideoCodec::Hevc,
+              "il codec scelto arriva alle opzioni");
+        check(asked.back().video.height == 720, "il riepilogo si ricalcola con la nuova misura");
+        check(choose(dialog.containerCombo(), QStringLiteral("mp4")) && dialog.target().endsWith(QStringLiteral(".mp4")),
+              "il contenitore scelto dà l'estensione della destinazione");
+        check(choose(dialog.containerCombo(), QString()) && dialog.target().endsWith(QStringLiteral(".mkv")),
+              "\"Come i file\" rimette il contenitore dei file");
+        choose(sizes, QString());
+        choose(dialog.frameRateCombo(), 0.0);
+        choose(dialog.codecCombo(), -1);
 
         // Altro codec audio: il bitrate segue (FLAC è senza perdita).
         QComboBox* codecs = dialog.audioCodecCombo();

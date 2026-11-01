@@ -20,6 +20,7 @@
 #include <QtWidgets/QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 
 namespace editor::app {
 
@@ -97,6 +98,14 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     cqSpin_ = new QSpinBox;
     cqRow->addWidget(cqSlider_, 1);
     cqRow->addWidget(cqSpin_);
+    codec_ = new QComboBox;
+    resolution_ = new QComboBox;
+    frameRate_ = new QComboBox;
+    container_ = new QComboBox;
+    videoForm->addRow(QStringLiteral("Contenitore:"), container_);
+    videoForm->addRow(QStringLiteral("Codec:"), codec_);
+    videoForm->addRow(QStringLiteral("Risoluzione:"), resolution_);
+    videoForm->addRow(QStringLiteral("Fotogrammi al secondo:"), frameRate_);
     videoForm->addRow(QStringLiteral("Encoder:"), encoder_);
     videoForm->addRow(QStringLiteral("Preset:"), preset_);
     videoForm->addRow(QStringLiteral("Qualità (CQ, meno = migliore):"), cqRow);
@@ -140,6 +149,39 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
 
     videoWidgets_ = {encoder_, preset_, cqSlider_, cqSpin_};
 
+    // --- Formato del file: contenitore, codec, risoluzione e fotogrammi al secondo (la prima voce = come i file)
+    const bool canChange = input_.montage && input_.projectCodec.has_value();
+    container_->addItem(QStringLiteral("Come i file (%1)").arg(input_.extension.toUpper()), QString());
+    for (const QString& ext : {QStringLiteral("mp4"), QStringLiteral("mkv"), QStringLiteral("mov")})
+        container_->addItem(ext.toUpper(), ext);
+    codec_->addItem(QStringLiteral("Come i file (%1)").arg(input_.projectCodec == core::VideoCodec::Hevc ? QStringLiteral("HEVC")
+                                                                                                         : QStringLiteral("H.264")),
+                    -1);
+    codec_->addItem(QStringLiteral("H.264"), static_cast<int>(core::VideoCodec::H264));
+    codec_->addItem(QStringLiteral("HEVC (H.265)"), static_cast<int>(core::VideoCodec::Hevc));
+    resolution_->addItem(input_.sourceWidth > 0 ? QStringLiteral("Come i file (%1x%2)").arg(input_.sourceWidth).arg(input_.sourceHeight)
+                                                : QStringLiteral("Come i file"),
+                         QString());
+    for (const int percent : {75, 50, 25})
+        resolution_->addItem(QStringLiteral("%1%").arg(percent), QStringLiteral("p%1").arg(percent));
+    for (const int height : {2160, 1440, 1080, 720, 480, 360})
+        resolution_->addItem(QStringLiteral("%1p").arg(height), QStringLiteral("h%1").arg(height));
+    frameRate_->addItem(input_.sourceFrameRate > 0 ? QStringLiteral("Come i file (%1)").arg(input_.sourceFrameRate, 0, 'f', 2) : QStringLiteral("Come i file"),
+                        0.0);
+    for (const double rate : {24.0, 25.0, 30.0, 50.0, 60.0})
+        frameRate_->addItem(QString::number(rate, 'f', 0), rate);
+    container_->setEnabled(input_.montage);
+    codec_->setEnabled(canChange);
+    resolution_->setEnabled(canChange);
+    frameRate_->setEnabled(canChange);
+    {
+        const core::VideoChange& v = input_.options.video;
+        if (v.codec)
+            codec_->setCurrentIndex(codec_->findData(static_cast<int>(*v.codec)));
+        if (v.frameRate > 0)
+            frameRate_->setCurrentIndex(std::max(0, frameRate_->findData(v.frameRate)));
+    }
+
     // --- Valori di partenza
     reencodeAll_->setChecked(input_.options.all);
     closeGaps_->setChecked(input_.options.closeGaps);
@@ -151,14 +193,7 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
         cqSpin_->setValue(input_.options.cq);
         cqSlider_->setValue(cqSpin_->value());
     }
-    // Codec audio: quelli che il contenitore può avere.
-    for (const core::AudioCodec codec : core::availableAudioCodecs()) {
-        if (core::audioCodecFitsContainer(codec, input_.extension.toStdString()))
-            audioCodec_->addItem(qs(core::audioCodecName(codec)), static_cast<int>(codec));
-    }
-    if (const int at = audioCodec_->findData(static_cast<int>(input_.options.audioCodec.value_or(core::AudioCodec::Aac))); at >= 0)
-        audioCodec_->setCurrentIndex(at);
-    fillAudioBitRates();
+    fillAudioCodecs();
     updating_ = false;
 
     // --- Collegamenti
@@ -183,6 +218,26 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
         updating_ = true;
         cqSlider_->setValue(value);
         updating_ = false;
+    });
+    connect(codec_, &QComboBox::currentIndexChanged, this, [this] {
+        if (updating_)
+            return;
+        updating_ = true;
+        fillEncoders();
+        updating_ = false;
+        updateEncoder();
+    });
+    connect(resolution_, &QComboBox::currentIndexChanged, this, [this] {
+        if (!updating_)
+            updatePreview();
+    });
+    connect(frameRate_, &QComboBox::currentIndexChanged, this, [this] {
+        if (!updating_)
+            updatePreview();
+    });
+    connect(container_, &QComboBox::currentIndexChanged, this, [this] {
+        if (!updating_)
+            changeContainer();
     });
     connect(reencodeAll_, &QCheckBox::toggled, this, [this] { updatePreview(); });
     connect(closeGaps_, &QCheckBox::toggled, this, [this] { updatePreview(); });
@@ -209,6 +264,53 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     updateDestination();
 }
 
+void ExportDialog::fillAudioCodecs()
+{
+    const core::AudioCodec keep = audioCodec_->count() > 0 ? selectedAudioCodec()
+                                                           : input_.options.audioCodec.value_or(core::AudioCodec::Aac);
+    audioCodec_->clear();
+    for (const core::AudioCodec codec : core::availableAudioCodecs()) {
+        if (core::audioCodecFitsContainer(codec, extension().toStdString()))
+            audioCodec_->addItem(qs(core::audioCodecName(codec)), static_cast<int>(codec));
+    }
+    if (const int at = audioCodec_->findData(static_cast<int>(keep)); at >= 0)
+        audioCodec_->setCurrentIndex(at);
+    fillAudioBitRates();
+}
+
+std::optional<core::VideoCodec> ExportDialog::effectiveCodec() const
+{
+    if (codec_ != nullptr && codec_->currentData().toInt() >= 0)
+        return static_cast<core::VideoCodec>(codec_->currentData().toInt());
+    return input_.projectCodec;
+}
+
+QString ExportDialog::extension() const
+{
+    const QString chosen = container_ != nullptr ? container_->currentData().toString() : QString();
+    return chosen.isEmpty() ? input_.extension : chosen;
+}
+
+// La misura scelta (pari, proporzioni dei file) e gli altri cambi del video; vuoto = come i file.
+core::VideoChange ExportDialog::videoChange() const
+{
+    core::VideoChange change;
+    if (!input_.montage || !input_.projectCodec)
+        return change;
+    if (codec_->currentData().toInt() >= 0)
+        change.codec = static_cast<core::VideoCodec>(codec_->currentData().toInt());
+    change.frameRate = frameRate_->currentData().toDouble();
+    const QString size = resolution_->currentData().toString();
+    if (!size.isEmpty() && input_.sourceWidth > 0 && input_.sourceHeight > 0) {
+        const int value = size.mid(1).toInt();
+        const double scale = size.startsWith(QLatin1Char('p')) ? value / 100.0 : static_cast<double>(value) / input_.sourceHeight;
+        const auto even = [](double v) { return std::max(2, static_cast<int>(std::lround(v / 2.0)) * 2); };
+        change.width = even(input_.sourceWidth * scale);
+        change.height = even(input_.sourceHeight * scale);
+    }
+    return change;
+}
+
 core::AudioCodec ExportDialog::selectedAudioCodec() const
 {
     const QVariant data = audioCodec_->currentData();
@@ -225,16 +327,17 @@ std::optional<core::VideoEncoderInfo> ExportDialog::effectiveEncoder() const
 
 bool ExportDialog::videoChoicesApply() const
 {
-    return input_.montage && input_.projectCodec.has_value() && !encoders_.empty();
+    return input_.montage && effectiveCodec().has_value() && !encoders_.empty();
 }
 
 void ExportDialog::fillEncoders()
 {
     encoders_.clear();
-    if (input_.montage && input_.projectCodec) {
+    const std::optional<core::VideoCodec> wanted = effectiveCodec();
+    if (input_.montage && wanted) {
         QApplication::setOverrideCursor(Qt::WaitCursor);  // la prima volta prova gli encoder: qualche secondo
         for (const core::VideoEncoderInfo& info : core::availableVideoEncoders()) {
-            if (info.codec == *input_.projectCodec)
+            if (info.codec == *wanted)
                 encoders_.push_back(info);
         }
         QApplication::restoreOverrideCursor();
@@ -280,6 +383,23 @@ void ExportDialog::updateEncoder()
         updatePreview();  // l'encoder scelto cambia se l'esportazione è possibile
 }
 
+void ExportDialog::changeContainer()
+{
+    // L'estensione del nome segue il contenitore (se il nome ne ha una dei contenitori che si scelgono).
+    QString path = destination_->text().trimmed();
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (!path.isEmpty() && (suffix == QLatin1String("mp4") || suffix == QLatin1String("mkv") || suffix == QLatin1String("mov")
+                            || suffix == input_.extension.toLower())) {
+        path.chop(suffix.size());
+        destination_->setText(path + extension());
+    }
+    updating_ = true;
+    fillAudioCodecs();
+    updating_ = false;
+    updateAudio();
+    updatePreview();
+}
+
 void ExportDialog::fillAudioBitRates()
 {
     const core::AudioCodec codec = selectedAudioCodec();
@@ -323,6 +443,7 @@ core::ReencodeOptions ExportDialog::options() const
     core::ReencodeOptions o = input_.options;
     o.all = reencodeAll_->isChecked();
     o.closeGaps = closeGaps_->isChecked();
+    o.video = videoChange();
     if (videoChoicesApply()) {
         const int index = encoder_->currentData().toInt();
         o.backend = index >= 0 && index < static_cast<int>(encoders_.size())
@@ -342,8 +463,8 @@ core::ReencodeOptions ExportDialog::options() const
 QString ExportDialog::target() const
 {
     QString path = destination_->text().trimmed();
-    if (QFileInfo(path).suffix().compare(input_.extension, Qt::CaseInsensitive) != 0)
-        path += QLatin1Char('.') + input_.extension;  // il formato resta quello dei file
+    if (QFileInfo(path).suffix().compare(extension(), Qt::CaseInsensitive) != 0)
+        path += QLatin1Char('.') + extension();
     return QDir::toNativeSeparators(path);
 }
 
@@ -367,7 +488,7 @@ void ExportDialog::chooseDestination()
     const QString current = destination_->text().trimmed().isEmpty() ? input_.suggestedPath : destination_->text();
     const QString chosen = QFileDialog::getSaveFileName(
         this, QStringLiteral("Scegli la destinazione"), current,
-        QStringLiteral("File %1 (*.%2)").arg(input_.extension.toUpper(), input_.extension), nullptr,
+        QStringLiteral("File %1 (*.%2)").arg(extension().toUpper(), extension()), nullptr,
         QFileDialog::DontConfirmOverwrite);  // il file che esiste già si dice sotto la destinazione
     if (!chosen.isEmpty())
         setDestination(chosen);

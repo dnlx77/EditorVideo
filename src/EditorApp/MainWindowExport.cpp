@@ -189,6 +189,9 @@ void MainWindow::exportDialog()
         const core::AudioEdit audio = project_.audioEdit(core::GapExport::Black);
         input.mixedAudioFiles = audio.mix ? core::mixFileCount(*audio.mix) : 0;
         if (const core::StreamSignature* video = project_.format().video(); video != nullptr) {
+            input.sourceWidth = video->width;
+            input.sourceHeight = video->height;
+            input.sourceFrameRate = video->frameRate;
             if (video->codec == "h264")
                 input.projectCodec = core::VideoCodec::H264;
             else if (video->codec == "hevc")

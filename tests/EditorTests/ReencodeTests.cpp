@@ -13,6 +13,7 @@ extern "C" {
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -418,6 +419,58 @@ TEST_F(Reencode, WithoutAudioTheFileHasNoAudioStream)
         const MediaInfo info = probeFile(utf8FromPath(out));
         EXPECT_TRUE(findStreamOfKind(info, StreamKind::Video));
         EXPECT_FALSE(findStreamOfKind(info, StreamKind::Audio));
+        EXPECT_EQ(decodeAll(out).errors, 0);
+    }
+}
+
+
+// --- Il video del file creato diverso da quello dei file: codec, misura, fotogrammi al secondo
+
+TEST_F(Reencode, ChosenResolutionFrameRateAndCodecChangeEveryPiece)
+{
+    const ProjectFormat format = formatOf(readMediaSignature(file("a_1080p60.mp4")));
+    const std::vector<ClipRanges> plan{{file("a_1080p60.mp4"), {{0.0, 1.0}}}, {file("a_1080p60.mp4"), {{1.0, 2.0}}}};
+
+    // Misura e fotogrammi al secondo: tutto si ricodifica e il file ha il video voluto.
+    {
+        ReencodeOptions options;
+        options.video.width = 1280;
+        options.video.height = 720;
+        options.video.frameRate = 30.0;
+        const ExportPreview preview = previewExport(plan, AudioEdit{}, &format, options);
+        EXPECT_TRUE(preview.problem.empty()) << preview.problem;
+        EXPECT_EQ(preview.copiedSegments, 0);
+        EXPECT_EQ(preview.reencodedSegments, 2);
+        const fs::path out = dir_ / "scelta_720p30.mp4";
+        exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, &format, options);
+        const Decoded decoded = decodeAll(out);
+        EXPECT_EQ(decoded.errors, 0);
+        EXPECT_EQ(decoded.width, 1280);
+        EXPECT_EQ(decoded.height, 720);
+        EXPECT_EQ(decoded.centre.size(), 60u);  // 2 s a 30 al secondo
+    }
+
+    // Le stesse misure dei file: non cambia niente, i pezzi si copiano.
+    {
+        ReencodeOptions options;
+        options.video.width = 1920;
+        options.video.height = 1080;
+        options.video.frameRate = 60.0;
+        const ExportPreview preview = previewExport(plan, AudioEdit{}, &format, options);
+        EXPECT_EQ(preview.reencodedSegments, 0);
+    }
+
+    // Un altro codec (HEVC), anche in un altro contenitore.
+    if (preferredVideoEncoder(VideoCodec::Hevc)) {
+        ReencodeOptions options;
+        options.video.codec = VideoCodec::Hevc;
+        const fs::path out = dir_ / "scelta_hevc.mkv";
+        exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, &format, options);
+        const MediaInfo info = probeFile(utf8FromPath(out));
+        const auto video = std::find_if(info.streams.begin(), info.streams.end(),
+                                        [](const StreamInfo& stream) { return stream.kind == StreamKind::Video; });
+        ASSERT_NE(video, info.streams.end());
+        EXPECT_EQ(video->codec, "hevc");
         EXPECT_EQ(decodeAll(out).errors, 0);
     }
 }
