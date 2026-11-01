@@ -13,9 +13,11 @@ extern "C" {
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <memory>
 
 namespace fs = std::filesystem;
@@ -230,6 +232,10 @@ TEST(Encoders, EveryWorkingEncoderMakesAPlayableFile)
             for (std::size_t k = 1; k < probed.keyframeTimes.size(); ++k)
                 EXPECT_LE(probed.keyframeTimes[k] - probed.keyframeTimes[k - 1], 2.0 + 0.01);
 
+            // L'AV1 software (SVT-AV1) si codifica ma questa build non ha un decoder AV1 software: qui finisce la prova.
+            if (info.codec == VideoCodec::Av1 && info.backend == EncoderBackend::Software)
+                continue;
+
             // Tutti i fotogrammi si decodificano, nell'ordine e con la luminosità giusta. L'AV1 questa build di FFmpeg lo
             // decodifica solo con la scheda video (non ha un decoder AV1 software).
             VideoDecoder decoder(utf8FromPath(file), {.allowHardware = info.codec == VideoCodec::Av1, .maxWidth = kWidth, .maxHeight = kHeight});
@@ -310,6 +316,144 @@ TEST(Encoders, AacFromAnyAudioFormat)
     ASSERT_EQ(probed.streams.size(), 1u);
     EXPECT_EQ(probed.streams[0].codec, "aac");
     EXPECT_NEAR(probed.durationSeconds, 2.0, 0.05);
+}
+
+// --- Preset, qualità (CQ) e codec audio scelti dall'utente
+
+// Quanti byte producono 40 fotogrammi di prova con queste impostazioni.
+std::int64_t videoBytes(const VideoEncoderInfo& info, const std::string& preset, int cq)
+{
+    VideoEncoderSettings settings;
+    settings.codec = info.codec;
+    settings.backend = info.backend;
+    settings.width = kWidth;
+    settings.height = kHeight;
+    settings.preset = preset;
+    settings.cq = cq;
+    VideoEncoder video(settings);
+    std::int64_t bytes = 0;
+    const PacketSink sink = [&](AVPacket* packet) { bytes += packet->size; };
+    for (int i = 0; i < 40; ++i)
+        video.encode(testFrame(i).get(), i == 0, sink);
+    video.finish(sink);
+    return bytes;
+}
+
+TEST(Encoders, TuningDescribesEveryWorkingEncoder)
+{
+    for (const VideoEncoderInfo& info : availableVideoEncoders()) {
+        const VideoEncoderTuning tuning = videoEncoderTuning(info);
+        SCOPED_TRACE(describe(info));
+        EXPECT_LT(tuning.cqMin, tuning.cqHigh);
+        EXPECT_LT(tuning.cqHigh, tuning.cqMedium);
+        EXPECT_LE(tuning.cqMedium, tuning.cqMax);
+        if (tuning.presets.empty()) {
+            EXPECT_TRUE(tuning.defaultPreset.empty());
+        } else {
+            const auto it = std::find_if(tuning.presets.begin(), tuning.presets.end(),
+                                         [&](const EncoderPreset& p) { return p.value == tuning.defaultPreset; });
+            EXPECT_NE(it, tuning.presets.end());
+        }
+    }
+}
+
+TEST(Encoders, LowerCqMakesBiggerFilesAndEveryPresetOpens)
+{
+    for (const VideoEncoderInfo& info : availableVideoEncoders()) {
+        if (info.codec == VideoCodec::Av1)
+            continue;  // la prova su AV1 la fa già l'elenco; qui bastano i codec dell'esportazione
+        SCOPED_TRACE(describe(info));
+        const VideoEncoderTuning tuning = videoEncoderTuning(info);
+        const std::string preset = tuning.defaultPreset;
+        const std::int64_t good = videoBytes(info, preset, tuning.cqMin + 8);
+        const std::int64_t poor = videoBytes(info, preset, std::min(tuning.cqMax, tuning.cqMin + 40));
+        EXPECT_GT(good, 0);
+        EXPECT_GT(good, poor);
+        // Ogni preset si apre e produce dati.
+        for (const EncoderPreset& p : tuning.presets)
+            EXPECT_GT(videoBytes(info, p.value, tuning.cqHigh), 0) << p.value;
+    }
+}
+
+// La build di FFmpeg di questo progetto include x264, x265, MP3 e Opus (vedi vcpkg.json): se mancano, il pannello di
+// esportazione non li potrebbe offrire.
+TEST(Encoders, BuildHasSoftwareEncodersAndAllAudioCodecs)
+{
+    for (const VideoCodec codec : {VideoCodec::H264, VideoCodec::Hevc}) {
+        const auto& encoders = availableVideoEncoders();
+        EXPECT_TRUE(std::any_of(encoders.begin(), encoders.end(), [&](const VideoEncoderInfo& i) {
+            return i.codec == codec && i.backend == EncoderBackend::Software;
+        })) << codecName(codec);
+    }
+    const auto& audio = availableAudioCodecs();
+    for (const AudioCodec codec : {AudioCodec::Aac, AudioCodec::Mp3, AudioCodec::Opus, AudioCodec::Ac3, AudioCodec::Flac})
+        EXPECT_NE(std::find(audio.begin(), audio.end(), codec), audio.end()) << audioCodecName(codec);
+}
+
+TEST(Encoders, AudioCodecListStartsWithAac)
+{
+    const auto& codecs = availableAudioCodecs();
+    ASSERT_FALSE(codecs.empty());
+    EXPECT_EQ(codecs.front(), AudioCodec::Aac);
+    for (const AudioCodec codec : codecs) {
+        EXPECT_FALSE(audioCodecName(codec).empty());
+        EXPECT_EQ(audioBitRatesKbps(codec).empty(), codec == AudioCodec::Flac);
+        EXPECT_GT(defaultAudioBitRateKbps(codec), 0);
+    }
+}
+
+TEST(Encoders, ContainersAcceptTheirUsualCodecs)
+{
+    EXPECT_TRUE(audioCodecFitsContainer(AudioCodec::Aac, "mp4"));
+    EXPECT_TRUE(audioCodecFitsContainer(AudioCodec::Aac, ".MKV"));
+    EXPECT_TRUE(videoCodecFitsContainer(VideoCodec::H264, "mp4"));
+    EXPECT_TRUE(videoCodecFitsContainer(VideoCodec::Hevc, ".mkv"));
+    // Estensione sconosciuta: nessun contenitore.
+    EXPECT_FALSE(audioCodecFitsContainer(AudioCodec::Aac, "qualcosa"));
+    EXPECT_FALSE(videoCodecFitsContainer(VideoCodec::H264, ""));
+}
+
+// Ogni codec audio disponibile: un secondo di audio in un file Matroska, poi riletto col codec giusto.
+TEST(Encoders, EveryAudioCodecMakesAFile)
+{
+    const std::map<AudioCodec, std::string> names = {{AudioCodec::Aac, "aac"},   {AudioCodec::Mp3, "mp3"}, {AudioCodec::Opus, "opus"},
+                                                    {AudioCodec::Ac3, "ac3"},   {AudioCodec::Flac, "flac"}};
+    for (const AudioCodec codec : availableAudioCodecs()) {
+        SCOPED_TRACE(audioCodecName(codec));
+        ASSERT_TRUE(audioCodecFitsContainer(codec, "mka"));
+        const fs::path file = testDir() / ("tutti-" + names.at(codec) + ".mka");
+        {
+            AudioEncoder audio({.sampleRate = 48000, .channels = 2, .bitRate = 0, .codec = codec});
+            Writer writer(file, nullptr, &audio);
+            const PacketSink sink = writer.audioSink();
+            for (long long sent = 0; sent < 48000; sent += 1000)
+                audio.encode(testAudio(sent, 1000).get(), sink);
+            audio.finish(sink);
+            writer.close();
+        }
+        const MediaInfo probed = probeFile(utf8FromPath(file));
+        ASSERT_EQ(probed.streams.size(), 1u);
+        EXPECT_EQ(probed.streams[0].codec, names.at(codec));
+        EXPECT_NEAR(probed.durationSeconds, 1.0, 0.1);
+    }
+}
+
+TEST(Encoders, AudioBitRateIsRespected)
+{
+    const auto sizeAt = [&](int bitRate) {
+        const fs::path file = testDir() / ("bitrate-" + std::to_string(bitRate) + ".m4a");
+        {
+            AudioEncoder audio({.sampleRate = 48000, .channels = 2, .bitRate = bitRate});
+            Writer writer(file, nullptr, &audio);
+            const PacketSink sink = writer.audioSink();
+            for (long long sent = 0; sent < 96000; sent += 1000)
+                audio.encode(testAudio(sent, 1000).get(), sink);
+            audio.finish(sink);
+            writer.close();
+        }
+        return fs::file_size(file);
+    };
+    EXPECT_GT(sizeAt(256000), 2 * sizeAt(64000));
 }
 
 TEST(Encoders, ImpossibleRequestsAreRefusedWithAMessage)
