@@ -47,28 +47,42 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
                          const ExportProgress& progress, MuteMethod muteMethod, const ProjectFormat* format,
                          const ReencodeOptions& reencode)
 {
+    if (!reencode.includeAudio) {
+        // Senza audio: niente modifiche all'audio (mix, traccia sostitutiva, tratti silenziati).
+        ExportJob job(clips, outputPath, AudioEdit{}, progress, muteMethod, format, reencode);
+        return job.run();
+    }
     if (!audio.mix) {
         ExportJob job(clips, outputPath, audio, progress, muteMethod, format, reencode);
         return job.run();
     }
     // Audio mixato: prima si scrive il mix, poi il video con quell'audio al posto di quello dei file. Se gli spazi vuoti
     // si chiudono (per scelta o perché il nero non si sa fare) vale il mix con gli spazi chiusi.
-    const PlanAnalysis plan = analyzePlan(clips, format, true, reencode.all, reencode.closeGaps, reencode.activeTexts(), &reencode.transitions);
+    const PlanAnalysis plan =
+        analyzePlan(clips, format, true, reencode.all, reencode.closeGaps, reencode.activeTexts(), &reencode.transitions, reencode.backend);
     if (!plan.problem.empty())
         throw ClipsNotJoinable(plan.problem);
     const MixSpec& spec = !plan.blackGaps && audio.mixClosed ? *audio.mixClosed : *audio.mix;
+    // Il file temporaneo del mix: M4A per l'AAC, altrimenti Matroska (che li contiene tutti). Il file creato deve
+    // poter contenere quell'audio.
+    const AudioCodec mixCodec = reencode.audioCodec.value_or(AudioCodec::Aac);
+    const std::string outputExtension = std::filesystem::path(pathFromUtf8(outputPath)).extension().string();
+    if (!audioCodecFitsContainer(mixCodec, outputExtension))
+        throw ClipsNotJoinable("Il formato " + outputExtension + " non può contenere l'audio " + audioCodecName(mixCodec)
+                               + ": scegli un altro codec audio o un altro contenitore.");
     static std::atomic<int> counter{0};
     TempMixFile temp;
     temp.path = std::filesystem::temp_directory_path()
               / ("editorvideo_mix_" + std::to_string(counter.fetch_add(1)) + "_"
-                 + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".m4a");
+                 + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())
+                 + (mixCodec == AudioCodec::Aac ? ".m4a" : ".mka"));
     constexpr double kMixShare = 0.15;
     const auto scaled = [&](double from, double to) -> ExportProgress {
         if (!progress)
             return {};
         return [&progress, from, to](double fraction) { return progress(from + (to - from) * fraction); };
     };
-    const double duration = renderMixToFile(spec, utf8FromPath(temp.path), scaled(0.0, kMixShare));
+    const double duration = renderMixToFile(spec, utf8FromPath(temp.path), scaled(0.0, kMixShare), mixCodec, reencode.audioBitRate);
     AudioEdit replaced;
     replaced.replacement = AudioReplacement{utf8FromPath(temp.path), 0.0, duration};
     const ExportProgress videoProgress = scaled(kMixShare, 1.0);  // ExportJob tiene un riferimento
@@ -86,8 +100,8 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
         return preview;
     try {
         const PlanAnalysis plan =
-            analyzePlan(clips, format, audio.replacement.has_value() || audio.mix != nullptr, reencode.all,
-                        reencode.closeGaps, reencode.activeTexts(), &reencode.transitions);
+            analyzePlan(clips, format, audio.replacement.has_value() || audio.mix != nullptr || !reencode.includeAudio,
+                        reencode.all, reencode.closeGaps, reencode.activeTexts(), &reencode.transitions, reencode.backend);
         preview.problem = plan.problem;
         preview.impreciseCuts = plan.impreciseCuts;
         preview.closedGaps = plan.closedGaps;

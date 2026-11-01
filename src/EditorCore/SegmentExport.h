@@ -8,6 +8,7 @@
 #include "EditorCore/TransitionRender.h"
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -75,6 +76,19 @@ struct ReencodeOptions
     // dall'effetto (alla misura del fotogramma del progetto, bande nere comprese); il resto come sempre. Il video
     // dei file originali si usa sempre, mai il proxy.
     std::vector<ExportTransition> transitions;
+
+    // Scelte dell'utente per l'encoder video dei tratti ricodificati (vedi VideoEncoderSettings). Senza `backend` il
+    // primo encoder funzionante; `preset` vuoto = quello dell'encoder; `cq` 0 = quello di `quality`. Se l'encoder chiesto
+    // non c'è per il codec del progetto, l'esportazione non si può fare (ExportPreview::problem).
+    std::optional<EncoderBackend> backend;
+    std::string preset;
+    int cq = 0;
+    // Audio: false = il file creato non ha audio (le modifiche all'audio non contano). `audioCodec` e `audioBitRate`
+    // (bit/s, 0 = il default del codec, per il mix 256 kb/s) valgono per l'audio mixato (AudioEdit::mix), scritto prima in
+    // un file temporaneo; senza `audioCodec` AAC. Il contenitore del file creato deve poterlo contenere.
+    bool includeAudio = true;
+    std::optional<AudioCodec> audioCodec;
+    int audioBitRate = 0;
 
     const TextTracks* activeTexts() const { return textRenderer != nullptr && texts.endTime() > 0.0 ? &texts : nullptr; }
 };

@@ -71,6 +71,8 @@ std::string describe(const VideoEncoderInfo& info);
 const std::vector<VideoEncoderInfo>& availableVideoEncoders();
 // Il primo encoder funzionante per il codec, se c'è.
 std::optional<VideoEncoderInfo> preferredVideoEncoder(VideoCodec codec);
+// Il primo encoder funzionante per il codec con questo tipo (senza `backend`: come preferredVideoEncoder).
+std::optional<VideoEncoderInfo> findVideoEncoder(VideoCodec codec, std::optional<EncoderBackend> backend);
 
 struct VideoEncoderSettings
 {
