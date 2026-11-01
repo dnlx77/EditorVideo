@@ -268,6 +268,7 @@ private:
     void showInfo(const core::MediaInfo& info);
     void replaceAudioDialog();
     void relinkAudio();
+    void ungroupRefs(const std::vector<core::ObjectRef>& refs);  // lo stesso, per questi oggetti (menu dell'elenco dei gruppi)
     void ungroupSelection();  // U: scioglie il gruppo (o, se non è in gruppo, scollega l'audio del pezzo)
     void showGroupSelection();  // evidenzia nell'elenco dei gruppi ciò che è scelto sulla linea del tempo
     void refreshGroups();     // l'elenco dei gruppi (scheda Gruppi) dal progetto
