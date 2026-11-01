@@ -440,6 +440,26 @@ MainWindow::MainWindow(QWidget* parent)
         setProgramActive(true);
         program_->seekTo(start);
     };
+    groupPanel_->onRenamed = [this](int groupId, const QString& name) {
+        const core::Project before = project_;
+        if (!project_.renameGroup(groupId, name.toStdString()))
+            return;
+        recordHistory(QStringLiteral("Rinomina gruppo"), before);
+        setModified(true);
+        refreshGroups();
+        statusBar()->showMessage(QStringLiteral("Gruppo rinominato."), 4000);
+    };
+    groupPanel_->onDissolved = [this](const std::vector<core::ObjectRef>& refs) { ungroupRefs(refs); };
+    // La scheda aperta per ultima si ricorda.
+    {
+        const int saved = settings().value(QStringLiteral("finestra/schedaSinistra"), 0).toInt();
+        if (saved > 0 && saved < leftTabs_->count())
+            leftTabs_->setCurrentIndex(saved);
+        connect(leftTabs_, &QTabWidget::currentChanged, this, [](int index) {
+            QSettings s = settings();
+            s.setValue(QStringLiteral("finestra/schedaSinistra"), index);
+        });
+    }
     filesDock_ = makeDock(QStringLiteral("File del progetto"), QStringLiteral("pannelloFile"), leftTabs_);
     // Il pannello Sorgente ha una scheda in più, "Scritta": l'editor della scritta scelta (le modifiche valgono subito e si
     // vedono nel Montaggio, che resta a fianco).

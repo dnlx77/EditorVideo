@@ -4,6 +4,8 @@
 #include "EditorApp/SelfTests.h"
 
 #include <QtCore/QStringList>
+#include <QtGui/QAction>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QTreeWidget>
 
@@ -143,6 +145,48 @@ int runGroupTest(const QStringList&, qsizetype)
     check(decodeGroupObjects(QByteArrayLiteral("9 1\nciao\n1\n2 x\n")).empty() && decodeGroupObjects({}).empty(),
           "dati rovinati o vuoti non danno oggetti");
 
+    // Rinomina e menu contestuale.
+    int renamedId = -1;
+    QString renamedTo = QStringLiteral("?");
+    std::vector<core::ObjectRef> dissolved;
+    panel.onRenamed = [&](int id, const QString& name) {
+        renamedId = id;
+        renamedTo = name;
+    };
+    panel.onDissolved = [&](const std::vector<core::ObjectRef>& refs) { dissolved = refs; };
+    panel.renameGroup(3, QStringLiteral("  Titoli  "));
+    check(renamedId == 3 && renamedTo == QStringLiteral("Titoli"), "rinominare comunica il gruppo e il nome senza spazi ai lati");
+    panel.renameGroup(3, QString());
+    check(renamedTo.isEmpty(), "nome vuoto = nome automatico");
+    renamedId = -1;
+    panel.renameGroup(0, QStringLiteral("x"));
+    check(renamedId == -1, "un video con il suo audio non si rinomina");
+    const auto labels = [](QMenu* menu) {
+        QStringList out;
+        if (menu != nullptr) {
+            for (const QAction* a : menu->actions())
+                out << a->text().section(QLatin1Char('\t'), 0, 0);
+        }
+        return out;
+    };
+    QMenu* groupMenu = panel.makeMenu(panel.tree()->topLevelItem(0));
+    check(labels(groupMenu)
+              == QStringList({QStringLiteral("Rinomina"), QStringLiteral("Sciogli il gruppo"), QStringLiteral("Seleziona sulla timeline")}),
+          "menu di un gruppo: Rinomina, Sciogli il gruppo, Seleziona sulla timeline");
+    if (groupMenu != nullptr) {
+        groupMenu->actions().at(1)->trigger();
+        check(dissolved.size() == 2 && dissolved.front() == core::ObjectRef({Kind::Piece, 1}), "Sciogli il gruppo comunica i suoi oggetti");
+    }
+    delete groupMenu;
+    QMenu* entryMenu = panel.makeMenu(panel.tree()->topLevelItem(0)->child(0));
+    check(labels(entryMenu) == QStringList({QStringLiteral("Togli dal gruppo"), QStringLiteral("Seleziona sulla timeline")}),
+          "menu di una voce: Togli dal gruppo, Seleziona sulla timeline");
+    delete entryMenu;
+    QMenu* pairMenu = panel.makeMenu(panel.tree()->topLevelItem(1));
+    check(labels(pairMenu) == QStringList({QStringLiteral("Scollega l'audio"), QStringLiteral("Seleziona sulla timeline")}),
+          "menu di un video con il suo audio: Scollega l'audio, Seleziona sulla timeline");
+    delete pairMenu;
+
     // Le tre schede nella finestra.
     MainWindow window;
     QTabWidget* tabs = window.leftTabs();
@@ -152,6 +196,18 @@ int runGroupTest(const QStringList&, qsizetype)
     check(window.groupPanel() != nullptr && tabs != nullptr && tabs->widget(2) == window.groupPanel()
               && window.groupPanel()->groupCount() == 0,
           "la scheda Gruppi c'è ed è vuota in un progetto vuoto");
+
+    // L'ultima scheda aperta si ricorda alla prossima apertura della finestra.
+    tabs->setCurrentIndex(2);
+    {
+        MainWindow again;
+        check(again.leftTabs()->currentIndex() == 2, "la scheda Gruppi, se era l'ultima aperta, si riapre");
+    }
+    tabs->setCurrentIndex(0);
+    {
+        MainWindow again;
+        check(again.leftTabs()->currentIndex() == 0, "tornando a File del progetto si riapre quella");
+    }
 
     std::printf(failures == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", failures);
     return failures == 0 ? 0 : 3;

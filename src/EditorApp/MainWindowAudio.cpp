@@ -468,7 +468,11 @@ void MainWindow::groupSelection()
 
 void MainWindow::ungroupSelection()
 {
-    const std::vector<core::ObjectRef> refs = selectedRefs();
+    ungroupRefs(selectedRefs());
+}
+
+void MainWindow::ungroupRefs(const std::vector<core::ObjectRef>& refs)
+{
     if (refs.empty()) {
         statusBar()->showMessage(QStringLiteral("Scegli prima un oggetto del gruppo."), 6000);
         return;
@@ -552,8 +556,11 @@ void MainWindow::showGroupStatus()
     if (refs.size() != 1)
         return;
     const std::size_t count = project_.groupMembers(refs.front()).size();
-    if (count > 1)
-        statusBar()->showMessage(QStringLiteral("Gruppo di %1 oggetti: si muovono insieme.").arg(count), 6000);
+    if (count <= 1)
+        return;
+    const core::ObjectGroup* group = project_.groups().find(project_.groups().groupOf(refs.front()));
+    const QString name = group != nullptr ? QStringLiteral("«%1»: ").arg(QString::fromUtf8(group->label().c_str())) : QString();
+    statusBar()->showMessage(QStringLiteral("%1Gruppo di %2 oggetti: si muovono insieme.").arg(name).arg(count), 6000);
 }
 
 }  // namespace editor::app

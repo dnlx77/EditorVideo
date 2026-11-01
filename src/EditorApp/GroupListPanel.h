@@ -9,6 +9,7 @@
 #include <vector>
 
 class QLabel;
+class QMenu;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -68,6 +69,18 @@ public:
     // Gli oggetti scelti nell'elenco che si possono trascinare (voci dei gruppi dell'utente).
     std::vector<editor::core::ObjectRef> draggableSelection() const;
 
+    // Rinomina (F2, doppio clic, menu contestuale): il pannello chiede il nome e lo comunica; nome vuoto = automatico.
+    // Vale solo per i gruppi dell'utente.
+    std::function<void(int groupId, const QString& name)> onRenamed;
+    void renameGroup(int groupId, const QString& name);
+    void askRename(int groupId);
+    // "Sciogli il gruppo" dal menu: gli oggetti del gruppo (per un video con il suo audio: il pezzo e il suo audio, che
+    // si scollega).
+    std::function<void(const std::vector<editor::core::ObjectRef>&)> onDissolved;
+    // Il menu contestuale di un nodo (nullptr se non c'è niente da proporre); lo possiede chi lo chiama. Voci: Rinomina,
+    // Sciogli il gruppo (o Scollega l'audio), Togli dal gruppo (sulle voci), Seleziona sulla timeline.
+    QMenu* makeMenu(QTreeWidgetItem* item);
+
 private:
     QTreeWidget* tree_ = nullptr;
     QLabel* empty_ = nullptr;
@@ -75,6 +88,7 @@ private:
     bool choosing_ = false;  // onChosen è in corso
     bool showing_ = false;  // showSelection sta cambiando la scelta: non è un clic dell'utente
     void choose(const QTreeWidgetItem* item);
+    const GroupRow* rowOf(const QTreeWidgetItem* item) const;  // il gruppo del nodo (o del nodo padre)
     std::vector<int> collapsed_;  // id dei gruppi chiusi dall'utente (restano chiusi quando l'elenco si rifà)
 };
 

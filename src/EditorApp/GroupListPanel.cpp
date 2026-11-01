@@ -8,9 +8,14 @@
 #include <QtGui/QDragEnterEvent>
 #include <QtGui/QDragMoveEvent>
 #include <QtGui/QDropEvent>
+#include <QtGui/QAction>
 #include <QtGui/QFont>
+#include <QtGui/QShortcut>
 #include <QtWidgets/QAbstractItemView>
+#include <QtWidgets/QInputDialog>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QLineEdit>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QVBoxLayout>
 
@@ -127,6 +132,31 @@ GroupListPanel::GroupListPanel(QWidget* parent) : QWidget(parent)
     connect(tree_, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* item, QTreeWidgetItem*) { choose(item); });
     // Anche un clic sulla voce già scelta (dopo aver scelto altro sulla linea del tempo) rifà la scelta.
     connect(tree_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int) { choose(item); });
+    // Rinomina con F2 o doppio clic; menu contestuale con il tasto destro.
+    auto* rename = new QShortcut(QKeySequence(Qt::Key_F2), tree_);
+    rename->setContext(Qt::WidgetShortcut);
+    connect(rename, &QShortcut::activated, this, [this] {
+        const GroupRow* row = rowOf(tree_->currentItem());
+        if (row != nullptr && row->id > 0)
+            askRename(row->id);
+    });
+    connect(tree_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item, int) {
+        const GroupRow* row = item != nullptr && item->parent() == nullptr ? rowOf(item) : nullptr;
+        if (row != nullptr && row->id > 0)
+            askRename(row->id);
+    });
+    tree_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tree_, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& at) {
+        QTreeWidgetItem* item = tree_->itemAt(at);
+        if (item == nullptr)
+            return;
+        tree_->setCurrentItem(item);
+        QMenu* menu = makeMenu(item);
+        if (menu == nullptr)
+            return;
+        menu->exec(tree_->viewport()->mapToGlobal(at));
+        delete menu;
+    });
     connect(tree_, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* item) {
         const int id = item->data(0, Qt::UserRole).toInt();
         if (id > 0 && std::find(collapsed_.begin(), collapsed_.end(), id) == collapsed_.end())
@@ -269,6 +299,65 @@ void GroupListPanel::dropEntries(const std::vector<editor::core::ObjectRef>& dra
             return;
     }
     onDropped(dragged, groupId);
+}
+
+const GroupRow* GroupListPanel::rowOf(const QTreeWidgetItem* item) const
+{
+    if (item == nullptr)
+        return nullptr;
+    const QTreeWidgetItem* top = item->parent() != nullptr ? item->parent() : item;
+    const int row = tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(top));
+    return row >= 0 && row < static_cast<int>(rows_.size()) ? &rows_[static_cast<std::size_t>(row)] : nullptr;
+}
+
+void GroupListPanel::renameGroup(int groupId, const QString& name)
+{
+    if (groupId > 0 && onRenamed)
+        onRenamed(groupId, name.trimmed());
+}
+
+void GroupListPanel::askRename(int groupId)
+{
+    const auto it = std::find_if(rows_.begin(), rows_.end(), [groupId](const GroupRow& r) { return r.id == groupId; });
+    if (it == rows_.end())
+        return;
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, QStringLiteral("Rinomina il gruppo"),
+                                               QStringLiteral("Nome del gruppo (vuoto = nome automatico):"), QLineEdit::Normal,
+                                               it->title, &ok);
+    if (!ok)
+        return;
+    // Il nome automatico ("Gruppo 3") non si salva come nome: il gruppo resta con il nome automatico.
+    renameGroup(groupId, name.trimmed() == QStringLiteral("Gruppo %1").arg(groupId) ? QString() : name);
+}
+
+QMenu* GroupListPanel::makeMenu(QTreeWidgetItem* item)
+{
+    const GroupRow* row = rowOf(item);
+    if (row == nullptr)
+        return nullptr;
+    auto* menu = new QMenu(tree_);
+    const bool isTop = item->parent() == nullptr;
+    const int id = row->id;
+    if (isTop && id > 0)
+        menu->addAction(QStringLiteral("Rinomina\tF2"), this, [this, id] { askRename(id); });
+    if (isTop) {
+        std::vector<editor::core::ObjectRef> refs;
+        for (const GroupEntry& e : row->entries)
+            refs.push_back(e.ref);
+        menu->addAction(row->natural ? QStringLiteral("Scollega l'audio") : QStringLiteral("Sciogli il gruppo"), this, [this, refs] {
+            if (onDissolved)
+                onDissolved(refs);
+        });
+    } else if (!row->natural) {
+        const int index = item->parent()->indexOfChild(item);
+        if (index >= 0 && index < static_cast<int>(row->entries.size())) {
+            const editor::core::ObjectRef ref = row->entries[static_cast<std::size_t>(index)].ref;
+            menu->addAction(QStringLiteral("Togli dal gruppo"), this, [this, ref] { dropEntries({ref}, 0); });
+        }
+    }
+    menu->addAction(QStringLiteral("Seleziona sulla timeline"), this, [this, item] { choose(item); });
+    return menu;
 }
 
 int GroupListPanel::groupCount() const
