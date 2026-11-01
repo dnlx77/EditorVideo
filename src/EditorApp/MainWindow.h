@@ -216,10 +216,6 @@ public:
     // slowDown rallenta di proposito i passi del primo secondo e mezzo (solo per le prove: così la finestra di
     // avanzamento compare anche con file piccoli).
     bool startExport(const QString& target, bool showResult, std::chrono::milliseconds slowDown = {});
-    // Ricodifica all'esportazione (qualità, "Ricodifica tutto"): scelte nella finestra prima di esportare.
-    // Prima di esportare il montaggio: quanti tratti si copiano e quanti si ricodificano, qualità e "Ricodifica tutto".
-    // false se si rinuncia (o non si può esportare: il motivo è già stato mostrato).
-    bool exportOptionsDialog();
     bool isExporting() const { return exportThread_ != nullptr; }
     bool lastExportSucceeded() const { return lastExportOk_; }
     QString lastExportProblem() const { return lastExportProblem_; }  // "annullata" o il messaggio d'errore
@@ -320,6 +316,9 @@ private:
     };
     // `drawText`: disegna davvero le scritte (per esportare); senza, basta sapere dove sono (per le anteprime).
     ExportSettings exportSettings(bool drawText = false) const;
+    // Le scelte dell'encoder e dell'audio ricordate fra una volta e l'altra (QSettings "esportazione/...").
+    void loadExportChoices();
+    void saveExportChoices();
     QSize frameSize() const;  // misure dei fotogrammi del progetto (1920 x 1080 se non c'è un formato)
     // Zoom della linea del tempo dell'anteprima attiva (factor > 1 ingrandisce, 0 = Adatta).
     void zoomTimeline(double factor);

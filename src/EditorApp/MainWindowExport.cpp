@@ -1,5 +1,6 @@
 #include "EditorApp/MainWindow.h"
 
+#include "EditorApp/ExportDialog.h"
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/QtTextRenderer.h"
 #include "EditorApp/PlayerWidget.h"
@@ -174,19 +175,81 @@ void MainWindow::exportDialog()
         return;
 
     // Stesso contenitore del primo file: si propone "<nome>_montaggio.<estensione>" (o "_taglio") nella cartella di lavoro.
+    const bool montage = !project_.sequence().empty();
     const QFileInfo source(qs(plan.front().path));
-    const QString extension = source.suffix();
-    const QString suffix = project_.sequence().empty() ? QStringLiteral("_taglio.") : QStringLiteral("_montaggio.");
-    const QString suggested = QDir(workFolder()).filePath(source.completeBaseName() + suffix + extension);
-    if (!project_.sequence().empty() && !exportOptionsDialog())
+    ExportDialogInput input;
+    input.extension = source.suffix();
+    input.suggestedPath = QDir(workFolder()).filePath(source.completeBaseName() + (montage ? QStringLiteral("_montaggio.") : QStringLiteral("_taglio."))
+                                                      + input.extension);
+    for (const core::ClipRanges& clip : plan)
+        input.sources << qs(clip.path);
+    input.montage = montage;
+    input.gapCount = montage ? static_cast<int>(project_.sequence().gapCount()) : 0;
+    if (montage) {
+        const core::AudioEdit audio = project_.audioEdit(core::GapExport::Black);
+        input.mixedAudioFiles = audio.mix ? core::mixFileCount(*audio.mix) : 0;
+        if (const core::StreamSignature* video = project_.format().video(); video != nullptr) {
+            if (video->codec == "h264")
+                input.projectCodec = core::VideoCodec::H264;
+            else if (video->codec == "hevc")
+                input.projectCodec = core::VideoCodec::Hevc;
+        }
+    }
+    loadExportChoices();
+    input.options = reencodeOptions_;
+    // Il riepilogo: quanti tratti si copiano e quanti si ricodificano con le scelte fatte nella finestra.
+    const ExportSettings base = exportSettings();  // audio, formato e scritte; la finestra mette le sue scelte
+    input.preview = [base, plan = previewPlan()](const core::ReencodeOptions& choices) {
+        core::ReencodeOptions options = choices;
+        options.texts = base.reencode.texts;
+        options.textRenderer = base.reencode.textRenderer;
+        options.transitions = base.reencode.transitions;
+        return core::previewExport(plan, base.audio, base.format.empty() ? nullptr : &base.format, options);
+    };
+
+    ExportDialog dialog(input, this);
+    if (dialog.exec() != QDialog::Accepted)
         return;
-    QString target = QFileDialog::getSaveFileName(
-        this, QStringLiteral("Esporta"), suggested, QStringLiteral("File %1 (*.%2)").arg(extension.toUpper(), extension));
-    if (target.isEmpty())
-        return;
-    if (QFileInfo(target).suffix().compare(extension, Qt::CaseInsensitive) != 0)
-        target += QLatin1Char('.') + extension;  // il formato resta quello del progetto
-    startExport(QDir::toNativeSeparators(target), true);
+    reencodeOptions_ = dialog.options();
+    saveExportChoices();
+    startExport(dialog.target(), true);
+}
+
+// Le scelte dell'encoder e dell'audio si ricordano fra una volta e l'altra (le altre, come "Ricodifica tutto" o togliere
+// l'audio, valgono solo per l'esportazione in corso).
+void MainWindow::loadExportChoices()
+{
+    QSettings s = settings();
+    const QString encoder = s.value(QStringLiteral("esportazione/encoder")).toString();
+    reencodeOptions_.backend.reset();
+    for (const core::EncoderBackend backend : {core::EncoderBackend::Nvenc, core::EncoderBackend::Qsv, core::EncoderBackend::Amf,
+                                               core::EncoderBackend::MediaFoundation, core::EncoderBackend::Software}) {
+        if (encoder == qs(core::backendName(backend)))
+            reencodeOptions_.backend = backend;
+    }
+    reencodeOptions_.preset = s.value(QStringLiteral("esportazione/preset")).toString().toStdString();
+    reencodeOptions_.cq = std::max(0, s.value(QStringLiteral("esportazione/cq"), 0).toInt());
+    reencodeOptions_.includeAudio = true;
+    reencodeOptions_.audioCodec.reset();
+    const QString codec = s.value(QStringLiteral("esportazione/codecAudio")).toString();
+    for (const core::AudioCodec candidate : core::availableAudioCodecs()) {
+        if (codec == qs(core::audioCodecName(candidate)))
+            reencodeOptions_.audioCodec = candidate;
+    }
+    reencodeOptions_.audioBitRate = std::max(0, s.value(QStringLiteral("esportazione/bitrateAudio"), 0).toInt());
+}
+
+void MainWindow::saveExportChoices()
+{
+    QSettings s = settings();
+    s.setValue(QStringLiteral("esportazione/encoder"),
+               reencodeOptions_.backend ? qs(core::backendName(*reencodeOptions_.backend)) : QString());
+    s.setValue(QStringLiteral("esportazione/preset"), qs(reencodeOptions_.preset));
+    s.setValue(QStringLiteral("esportazione/cq"), reencodeOptions_.cq);
+    if (reencodeOptions_.audioCodec) {
+        s.setValue(QStringLiteral("esportazione/codecAudio"), qs(core::audioCodecName(*reencodeOptions_.audioCodec)));
+        s.setValue(QStringLiteral("esportazione/bitrateAudio"), reencodeOptions_.audioBitRate);
+    }
 }
 
 bool MainWindow::startExport(const QString& target, bool showResult, std::chrono::milliseconds slowDown)
@@ -279,104 +342,19 @@ bool MainWindow::startExport(const QString& target, bool showResult, std::chrono
     return true;
 }
 
-bool MainWindow::exportOptionsDialog()
+namespace {
+
+// "AAC 256 kb/s", "FLAC" ...: l'audio mixato come si è scelto.
+QString audioChoiceText(const core::ReencodeOptions& options)
 {
-    const std::vector<core::ClipRanges> plan = previewPlan();
-    const core::AudioEdit audio = project_.audioEdit(core::GapExport::Black);
-    const core::ProjectFormat& format = project_.format();
-    const int mixedAudioFiles = audio.mix ? core::mixFileCount(*audio.mix) : 0;
-    const ExportSettings textSettings = exportSettings();  // per le scritte
-    // Quanti tratti si copiano e quanti si ricodificano (la prima volta prova anche gli encoder: qualche secondo).
-    const auto preview = [&](bool all, bool closeGaps) {
-        QApplication::setOverrideCursor(Qt::WaitCursor);
-        core::ReencodeOptions options{reencodeOptions_.quality, all, closeGaps};
-        options.texts = textSettings.reencode.texts;
-        options.textRenderer = textSettings.reencode.textRenderer;
-        options.transitions = textSettings.reencode.transitions;
-        const core::ExportPreview result = core::previewExport(plan, audio, format.empty() ? nullptr : &format, options);
-        QApplication::restoreOverrideCursor();
-        return result;
-    };
-    const core::ExportPreview first = preview(reencodeOptions_.all, reencodeOptions_.closeGaps);
-    if (!first.problem.empty()) {
-        QMessageBox::warning(this, QStringLiteral("Esportazione non possibile"), qs(first.problem));
-        return false;
-    }
-
-    QDialog dialog(this);
-    dialog.setWindowTitle(QStringLiteral("Esporta il montaggio"));
-    auto* layout = new QVBoxLayout(&dialog);
-    auto* summary = new QLabel;
-    summary->setWordWrap(true);
-    layout->addWidget(summary);
-    auto* form = new QFormLayout;
-    auto* quality = new QComboBox;
-    quality->addItem(QStringLiteral("Alta (quasi uguale all'originale)"));
-    quality->addItem(QStringLiteral("Media (file più piccolo)"));
-    quality->setCurrentIndex(reencodeOptions_.quality == core::QualityPreset::Medium ? 1 : 0);
-    form->addRow(QStringLiteral("Qualità della ricodifica:"), quality);
-    layout->addLayout(form);
-    auto* all = new QCheckBox(QStringLiteral("Ricodifica tutto (massima compatibilità con i lettori, più lento)"));
-    all->setChecked(reencodeOptions_.all);
-    layout->addWidget(all);
-    // Spazi vuoti: di solito diventano nero e silenzio; si possono anche chiudere (i pezzi uno dopo l'altro).
-    auto* closeGaps = new QCheckBox(QStringLiteral("Chiudi gli spazi vuoti (i pezzi uno dopo l'altro, senza nero)"));
-    closeGaps->setChecked(reencodeOptions_.closeGaps);
-    closeGaps->setVisible(project_.sequence().gapCount() > 0);
-    layout->addWidget(closeGaps);
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Esporta..."));
-    layout->addWidget(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-    const auto describe = [&](const core::ExportPreview& p) {
-        QString text = QStringLiteral("<b>%1 pezzi copiati</b> così come sono (%2)").arg(p.copiedSegments).arg(timeText(p.copiedSeconds));
-        if (p.reencodedSegments > 0)
-            text += QStringLiteral(", <b>%1 ricodificati</b> nel formato del progetto (%2)")
-                        .arg(p.reencodedSegments)
-                        .arg(timeText(p.reencodedSeconds));
-        if (p.preciseCuts > 0)
-            text += QStringLiteral(", <b>%1 tagli precisi</b> (%2 ricodificati ai bordi, fra il taglio e il fotogramma chiave più vicino)")
-                        .arg(p.preciseCuts)
-                        .arg(timeText(p.preciseSeconds));
-        if (p.textSegments > 0)
-            text += QStringLiteral(", <b>%1 con scritte</b> (%2 ricodificati col testo sopra)")
-                        .arg(p.textSegments)
-                        .arg(timeText(p.textSeconds));
-        if (p.transitionSegments > 0)
-            text += QStringLiteral(", <b>%1 con transizioni</b> (%2 ricodificati con i due pezzi fusi)")
-                        .arg(p.transitionSegments)
-                        .arg(timeText(p.transitionSeconds));
-        if (p.blackGaps > 0)
-            text += p.blackGaps == 1 ? QStringLiteral(", <b>1 spazio nero</b> (%1)").arg(timeText(p.blackSeconds))
-                                     : QStringLiteral(", <b>%1 spazi neri</b> (%2)").arg(p.blackGaps).arg(timeText(p.blackSeconds));
-        text += QStringLiteral(".<br>Durata del file: <b>%1</b>.").arg(timeText(p.outputSeconds));
-        if (mixedAudioFiles > 0)
-            text += QStringLiteral("<br>Audio: <b>mixato e ricodificato</b> in AAC 256 kb/s (%1 file audio), con livelli, linee "
-                                   "del livello, muto e solo delle tracce.")
-                        .arg(mixedAudioFiles);
-        if (!p.closedGaps.empty())
-            text += QStringLiteral("<br><span style='color:#d08a1a'>%1</span>").arg(qs(p.closedGaps).toHtmlEscaped());
-        if (!p.impreciseCuts.empty())
-            text += QStringLiteral("<br><span style='color:#d08a1a'>%1</span>").arg(qs(p.impreciseCuts).toHtmlEscaped());
-        if (p.reencodedSegments > 0 && p.copiedSegments > 0)
-            text += QStringLiteral("<br>I pezzi copiati non perdono niente; quelli ricodificati sono quasi uguali "
-                                   "all'originale con la qualità alta.");
-        summary->setText(text);
-        quality->setEnabled(p.reencodedSegments > 0 || p.preciseCuts > 0 || p.blackGaps > 0 || p.textSegments > 0 || p.transitionSegments > 0);
-    };
-    describe(first);
-    const auto update = [&] { describe(preview(all->isChecked(), closeGaps->isChecked())); };
-    connect(all, &QCheckBox::toggled, &dialog, update);
-    connect(closeGaps, &QCheckBox::toggled, &dialog, update);
-    if (dialog.exec() != QDialog::Accepted)
-        return false;
-    reencodeOptions_.quality = quality->currentIndex() == 1 ? core::QualityPreset::Medium : core::QualityPreset::High;
-    reencodeOptions_.all = all->isChecked();
-    reencodeOptions_.closeGaps = closeGaps->isChecked();
-    return true;
+    const core::AudioCodec codec = options.audioCodec.value_or(core::AudioCodec::Aac);
+    QString text = qs(core::audioCodecName(codec));
+    if (codec != core::AudioCodec::Flac)
+        text += QStringLiteral(" %1 kb/s").arg(options.audioBitRate > 0 ? options.audioBitRate / 1000 : 256);
+    return text;
 }
+
+}  // namespace
 
 void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& target)
 {
@@ -396,7 +374,9 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
                            ? QStringLiteral("Senza ricodifica del video: stessa qualità dell'originale.")
                            : QStringLiteral("%1 tratti ricodificati, gli altri copiati senza ricodifica.").arg(outcome.result->reencodedSegments);
     if (outcome.result->mixedAudioFiles > 0)
-        recoding += QStringLiteral("\nAudio ricodificato: %1 file audio mixati (AAC 256 kb/s).").arg(outcome.result->mixedAudioFiles);
+        recoding += QStringLiteral("\nAudio ricodificato: %1 file audio mixati (%2).")
+                        .arg(outcome.result->mixedAudioFiles)
+                        .arg(audioChoiceText(reencodeOptions_));
     QMessageBox::information(this, QStringLiteral("Esportazione completata"),
                              QStringLiteral("%1 in:\n%2\n\nDurata: %3\n%4")
                                  .arg(what, target, timeText(outcome.result->durationSeconds), recoding));
