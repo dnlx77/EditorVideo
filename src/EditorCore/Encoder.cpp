@@ -48,6 +48,10 @@ constexpr Candidate kCandidates[] = {
     {"av1_qsv", VideoCodec::Av1, EncoderBackend::Qsv},
     {"av1_amf", VideoCodec::Av1, EncoderBackend::Amf},
     {"av1_mf", VideoCodec::Av1, EncoderBackend::MediaFoundation},
+    // Sul processore: per ultimi, così il computer con la scheda video continua a usare quella.
+    {"libx264", VideoCodec::H264, EncoderBackend::Software},
+    {"libx265", VideoCodec::Hevc, EncoderBackend::Software},
+    {"libsvtav1", VideoCodec::Av1, EncoderBackend::Software},
 };
 
 struct FifoDeleter
@@ -96,6 +100,15 @@ const std::vector<EncoderPreset> kQsvPresets = {
     {"veryfast", "Velocissimo"}, {"faster", "Più veloce"}, {"fast", "Veloce"}, {"medium", "Medio"},
     {"slow", "Lento"},           {"slower", "Più lento"},  {"veryslow", "Lentissimo"},
 };
+const std::vector<EncoderPreset> kX26xPresets = {
+    {"ultrafast", "Velocissimo"}, {"superfast", "Superveloce"}, {"veryfast", "Molto veloce"}, {"faster", "Più veloce"},
+    {"fast", "Veloce"},           {"medium", "Medio (consigliato)"}, {"slow", "Lento"},       {"slower", "Più lento"},
+    {"veryslow", "Lentissimo"},
+};
+// SVT-AV1: da 12 (veloce) a 2 (lento, migliore).
+const std::vector<EncoderPreset> kSvtAv1Presets = {
+    {"12", "12 (il più veloce)"}, {"10", "10"}, {"8", "8 (consigliato)"}, {"6", "6"}, {"4", "4"}, {"2", "2 (il più lento)"},
+};
 const std::vector<EncoderPreset> kAmfPresets = {
     {"speed", "Velocità"}, {"balanced", "Bilanciato"}, {"quality", "Qualità"},
 };
@@ -134,6 +147,16 @@ void qualityOptions(AVCodecContext* ctx, AVDictionary** opts, EncoderBackend bac
         av_dict_set(opts, "qp_p", customCq ? std::to_string(s.cq + 2).c_str() : high ? "22" : "28", 0);
         av_dict_set(opts, "quality", s.preset.empty() ? "quality" : s.preset.c_str(), 0);
         break;
+    case EncoderBackend::Software: {
+        // Qualità costante (CRF). x264 e x265 hanno gli stessi preset; SVT-AV1 i suoi, numerici.
+        const bool av1 = codec == VideoCodec::Av1;
+        const char* preset = !s.preset.empty() ? s.preset.c_str() : av1 ? "8" : "medium";
+        av_dict_set(opts, "preset", preset, 0);
+        const int crf = customCq ? s.cq : av1 ? (high ? 30 : 38) : codec == VideoCodec::Hevc ? (high ? 20 : 26) : (high ? 18 : 24);
+        av_dict_set(opts, "crf", std::to_string(crf).c_str(), 0);
+        av_dict_set(opts, "forced-idr", "1", 0);  // i fotogrammi chiave chiesti sono IDR
+        break;
+    }
     case EncoderBackend::MediaFoundation: {
         av_dict_set(opts, "rate_control", "quality", 0);
         av_dict_set(opts, "quality", customCq ? std::to_string(mediaFoundationQuality(s.cq)).c_str() : high ? "85" : "55", 0);
@@ -173,6 +196,8 @@ CodecContextPtr openVideo(const Candidate& candidate, const VideoEncoderSettings
     qualityOptions(ctx.get(), &raw, candidate.backend, candidate.codec, s);
     if (s.inBandParameters && candidate.backend == EncoderBackend::Nvenc && candidate.codec != VideoCodec::Av1)
         av_dict_set(&raw, "repeat_headers", "1", 0);  // NVENC: parametri prima di ogni fotogramma chiave (non solo il primo)
+    if (s.inBandParameters && candidate.backend == EncoderBackend::Software && candidate.codec == VideoCodec::Hevc)
+        av_dict_set(&raw, "x265-params", "repeat-headers=1", 0);  // (x264 li ripete da solo senza "dati extra")
     const int ret = avcodec_open2(ctx.get(), codec, &raw);
     std::unique_ptr<AVDictionary, DictionaryDeleter> leftover(raw);
     if (ret < 0)
@@ -311,6 +336,8 @@ std::string backendName(EncoderBackend backend)
         return "AMD AMF";
     case EncoderBackend::MediaFoundation:
         return "Media Foundation";
+    case EncoderBackend::Software:
+        return "Software (CPU)";
     }
     return {};
 }
@@ -346,6 +373,20 @@ VideoEncoderTuning videoEncoderTuning(const VideoEncoderInfo& info)
         break;
     case EncoderBackend::MediaFoundation:
         tuning.cqMin = 1;
+        break;
+    case EncoderBackend::Software:
+        if (info.codec == VideoCodec::Av1) {
+            tuning.presets = kSvtAv1Presets;
+            tuning.defaultPreset = "8";
+            tuning.cqMax = 63;
+            tuning.cqHigh = 30;
+            tuning.cqMedium = 38;
+        } else {
+            tuning.presets = kX26xPresets;
+            tuning.defaultPreset = "medium";
+            tuning.cqHigh = info.codec == VideoCodec::Hevc ? 20 : 18;
+            tuning.cqMedium = info.codec == VideoCodec::Hevc ? 26 : 24;
+        }
         break;
     }
     return tuning;

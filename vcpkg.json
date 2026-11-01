@@ -12,7 +12,7 @@
     {
       "name": "ffmpeg",
       "default-features": false,
-      "features": [ "avcodec", "avformat", "swresample", "swscale", "nvcodec" ]
+      "features": [ "avcodec", "avformat", "swresample", "swscale", "nvcodec", "gpl", "x264", "x265", "svt-av1", "mp3lame", "opus" ]
     },
     "gtest"
   ]

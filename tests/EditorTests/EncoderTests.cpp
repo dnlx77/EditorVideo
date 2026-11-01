@@ -371,6 +371,21 @@ TEST(Encoders, LowerCqMakesBiggerFilesAndEveryPresetOpens)
     }
 }
 
+// La build di FFmpeg di questo progetto include x264, x265, MP3 e Opus (vedi vcpkg.json): se mancano, il pannello di
+// esportazione non li potrebbe offrire.
+TEST(Encoders, BuildHasSoftwareEncodersAndAllAudioCodecs)
+{
+    for (const VideoCodec codec : {VideoCodec::H264, VideoCodec::Hevc}) {
+        const auto& encoders = availableVideoEncoders();
+        EXPECT_TRUE(std::any_of(encoders.begin(), encoders.end(), [&](const VideoEncoderInfo& i) {
+            return i.codec == codec && i.backend == EncoderBackend::Software;
+        })) << codecName(codec);
+    }
+    const auto& audio = availableAudioCodecs();
+    for (const AudioCodec codec : {AudioCodec::Aac, AudioCodec::Mp3, AudioCodec::Opus, AudioCodec::Ac3, AudioCodec::Flac})
+        EXPECT_NE(std::find(audio.begin(), audio.end(), codec), audio.end()) << audioCodecName(codec);
+}
+
 TEST(Encoders, AudioCodecListStartsWithAac)
 {
     const auto& codecs = availableAudioCodecs();

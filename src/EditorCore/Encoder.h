@@ -35,6 +35,7 @@ enum class EncoderBackend
     Qsv,              // Intel Quick Sync
     Amf,              // AMD
     MediaFoundation,  // Windows (scheda video o software)
+    Software,         // sul processore (x264, x265, SVT-AV1), se la build di FFmpeg li include
 };
 
 // Qualità costante: la quantità di dati segue la complessità delle immagini.
@@ -64,7 +65,7 @@ std::string backendName(EncoderBackend backend);  // "NVIDIA NVENC", "Media Foun
 std::string describe(const VideoEncoderInfo& info);
 
 // Gli encoder video che funzionano su questo PC, in ordine di preferenza (per ogni codec: NVENC, QSV, AMF, Media
-// Foundation). La prova (un fotogramma codificato con ogni encoder) si fa la prima volta che si chiama, anche da più
+// Foundation, software). La prova (un fotogramma codificato con ogni encoder) si fa la prima volta che si chiama, anche da più
 // thread insieme, e il risultato resta in memoria: le volte dopo è immediata. Per usarne uno solo (preferredVideoEncoder,
 // VideoEncoder) si provano solo gli encoder di quel codec: AV1 non lo prova l'esportazione, solo questo elenco.
 const std::vector<VideoEncoderInfo>& availableVideoEncoders();
