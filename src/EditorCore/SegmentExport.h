@@ -73,7 +73,6 @@ struct VideoChange
 
 struct ReencodeOptions
 {
-    VideoChange video;
     QualityPreset quality = QualityPreset::High;
     bool all = false;  // "Ricodifica tutto": anche i pezzi che si potrebbero copiare
     bool closeGaps = false;  // "Chiudi gli spazi": i pezzi uno dopo l'altro invece del nero negli spazi vuoti
@@ -100,6 +99,8 @@ struct ReencodeOptions
     bool includeAudio = true;
     std::optional<AudioCodec> audioCodec;
     int audioBitRate = 0;
+    // Codec, misura e fotogrammi al secondo del video, se diversi da quelli dei file (dopo gli altri campi: si inizializza in ordine).
+    VideoChange video;
 
     const TextTracks* activeTexts() const { return textRenderer != nullptr && texts.endTime() > 0.0 ? &texts : nullptr; }
 };
