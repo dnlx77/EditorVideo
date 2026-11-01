@@ -169,6 +169,35 @@ inline std::optional<ParameterSets> parameterNalsOf(AVCodecID codec, const std::
     return sets;
 }
 
+// "Dati extra" avcC (lunghezze su 4 byte) da SPS e PPS H.264 senza codici di inizio; vuoto se non ce n'è nessuno.
+inline std::vector<std::uint8_t> buildAvcC(const ParameterSets& sets)
+{
+    std::vector<const std::vector<std::uint8_t>*> sps;
+    std::vector<const std::vector<std::uint8_t>*> pps;
+    for (const auto& unit : sets.nals) {
+        if (unit.size() < 4)
+            continue;
+        if ((unit[0] & 0x1f) == 7)
+            sps.push_back(&unit);
+        else if ((unit[0] & 0x1f) == 8)
+            pps.push_back(&unit);
+    }
+    if (sps.empty() || pps.empty())
+        return {};
+    std::vector<std::uint8_t> out{1, (*sps[0])[1], (*sps[0])[2], (*sps[0])[3], 0xFF, static_cast<std::uint8_t>(0xE0 | sps.size())};
+    const auto add = [&out](const std::vector<std::uint8_t>& unit) {
+        out.push_back(static_cast<std::uint8_t>(unit.size() >> 8));
+        out.push_back(static_cast<std::uint8_t>(unit.size() & 0xff));
+        out.insert(out.end(), unit.begin(), unit.end());
+    };
+    for (const auto* unit : sps)
+        add(*unit);
+    out.push_back(static_cast<std::uint8_t>(pps.size()));
+    for (const auto* unit : pps)
+        add(*unit);
+    return out;
+}
+
 // Pacchetto dell'encoder (Annex B, o già con le lunghezze su 4 byte) con le lunghezze su `toSize` byte e, davanti, i
 // NAL di `prefix`.
 inline bool encodedToLengthPrefixed(AVPacket* pkt, int toSize, const std::vector<std::vector<std::uint8_t>>& prefix)
@@ -693,11 +722,17 @@ struct ProjectVideoEncoder
             throw MediaError(kOutOfMemory);
         encoder.copyParameters(par);
         extradata.assign(par->extradata, par->extradata + std::max(0, par->extradata_size));
+        const AVCodecID par_codec = par->codec_id;
         const auto sets = parameterNalsOf(par->codec_id, extradata);
         avcodec_parameters_free(&par);
         if (!sets)
             throw MediaError("L'encoder " + encoder.info().ffmpegName + " non ha dato i parametri di codifica.");
         parameters = *sets;
+        // H.264 con i parametri in Annex B (come li dà l'encoder): il flusso del file vuole l'avcC.
+        if (par_codec == AV_CODEC_ID_H264 && (extradata.empty() || extradata[0] != 1)) {
+            if (std::vector<std::uint8_t> avcc = buildAvcC(parameters); !avcc.empty())
+                extradata = std::move(avcc);
+        }
     }
 
     VideoEncoder encoder;
