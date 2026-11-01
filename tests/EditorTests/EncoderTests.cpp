@@ -232,6 +232,10 @@ TEST(Encoders, EveryWorkingEncoderMakesAPlayableFile)
             for (std::size_t k = 1; k < probed.keyframeTimes.size(); ++k)
                 EXPECT_LE(probed.keyframeTimes[k] - probed.keyframeTimes[k - 1], 2.0 + 0.01);
 
+            // L'AV1 software (SVT-AV1) si codifica ma questa build non ha un decoder AV1 software: qui finisce la prova.
+            if (info.codec == VideoCodec::Av1 && info.backend == EncoderBackend::Software)
+                continue;
+
             // Tutti i fotogrammi si decodificano, nell'ordine e con la luminosità giusta. L'AV1 questa build di FFmpeg lo
             // decodifica solo con la scheda video (non ha un decoder AV1 software).
             VideoDecoder decoder(utf8FromPath(file), {.allowHardware = info.codec == VideoCodec::Av1, .maxWidth = kWidth, .maxHeight = kHeight});
