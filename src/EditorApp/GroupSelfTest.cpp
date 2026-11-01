@@ -182,7 +182,7 @@ int runGroupTest(const QStringList&, qsizetype)
     check(labels(entryMenu) == QStringList({QStringLiteral("Togli dal gruppo"), QStringLiteral("Seleziona sulla timeline")}),
           "menu di una voce: Togli dal gruppo, Seleziona sulla timeline");
     delete entryMenu;
-    QMenu* pairMenu = panel.makeMenu(panel.tree()->topLevelItem(1));
+    QMenu* pairMenu = panel.makeMenu(panel.tree()->topLevelItem(2));
     check(labels(pairMenu) == QStringList({QStringLiteral("Scollega l'audio"), QStringLiteral("Seleziona sulla timeline")}),
           "menu di un video con il suo audio: Scollega l'audio, Seleziona sulla timeline");
     delete pairMenu;
