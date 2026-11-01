@@ -3,6 +3,7 @@
 #include "EditorCore/FfmpegUtil.h"
 
 extern "C" {
+#include <libavformat/avformat.h>
 #include <libavutil/audio_fifo.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/hwcontext.h>
@@ -13,6 +14,9 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <cmath>
 #include <mutex>
 #include <thread>
 
@@ -45,8 +49,6 @@ constexpr Candidate kCandidates[] = {
     {"av1_amf", VideoCodec::Av1, EncoderBackend::Amf},
     {"av1_mf", VideoCodec::Av1, EncoderBackend::MediaFoundation},
 };
-
-constexpr int kAudioBitRate = 192000;  // AAC, bit al secondo
 
 struct FifoDeleter
 {
@@ -85,36 +87,62 @@ AVPixelFormat choosePixelFormat(const AVCodec* codec, AVPixelFormat preferred)
     return preferred;
 }
 
-// Opzioni di qualità costante per ogni tipo di encoder.
-void qualityOptions(AVCodecContext* ctx, AVDictionary** opts, EncoderBackend backend, VideoCodec codec, QualityPreset quality)
+// Preset e scala del CQ di ogni tipo di encoder (vedi videoEncoderTuning).
+const std::vector<EncoderPreset> kNvencPresets = {
+    {"p1", "p1 (il più veloce)"}, {"p2", "p2"}, {"p3", "p3"}, {"p4", "p4"},
+    {"p5", "p5 (consigliato)"},   {"p6", "p6"}, {"p7", "p7 (il più lento, migliore)"},
+};
+const std::vector<EncoderPreset> kQsvPresets = {
+    {"veryfast", "Velocissimo"}, {"faster", "Più veloce"}, {"fast", "Veloce"}, {"medium", "Medio"},
+    {"slow", "Lento"},           {"slower", "Più lento"},  {"veryslow", "Lentissimo"},
+};
+const std::vector<EncoderPreset> kAmfPresets = {
+    {"speed", "Velocità"}, {"balanced", "Bilanciato"}, {"quality", "Qualità"},
+};
+
+// Qualità Media Foundation (0..100, più = migliore) per un CQ (meno = migliore): una scala approssimata, solo perché il
+// cursore del CQ funzioni anche con questo encoder.
+int mediaFoundationQuality(int cq)
 {
-    const bool high = quality == QualityPreset::High;
+    return std::clamp(100 - cq * 3 / 2, 1, 100);
+}
+
+// Opzioni di qualità costante per ogni tipo di encoder. Preset e CQ di `s`, se ci sono, valgono più di `s.quality`.
+void qualityOptions(AVCodecContext* ctx, AVDictionary** opts, EncoderBackend backend, VideoCodec codec, const VideoEncoderSettings& s)
+{
+    const bool high = s.quality == QualityPreset::High;
+    const bool customCq = s.cq > 0;
+    const std::string number = std::to_string(s.cq);
     switch (backend) {
     case EncoderBackend::Nvenc:
-        av_dict_set(opts, "preset", high ? "p5" : "p4", 0);
+        av_dict_set(opts, "preset", s.preset.empty() ? (high ? "p5" : "p4") : s.preset.c_str(), 0);
         av_dict_set(opts, "tune", "hq", 0);
         av_dict_set(opts, "rc", "vbr", 0);
-        av_dict_set(opts, "cq", codec == VideoCodec::Av1 ? (high ? "28" : "34") : (high ? "19" : "25"), 0);
+        av_dict_set(opts, "cq", customCq ? number.c_str() : codec == VideoCodec::Av1 ? (high ? "28" : "34") : (high ? "19" : "25"), 0);
         av_dict_set(opts, "forced-idr", "1", 0);  // i fotogrammi chiave chiesti sono IDR
         ctx->bit_rate = 0;
         break;
     case EncoderBackend::Qsv:
-        ctx->global_quality = high ? 20 : 26;
+        ctx->global_quality = customCq ? s.cq : high ? 20 : 26;
+        if (!s.preset.empty())
+            av_dict_set(opts, "preset", s.preset.c_str(), 0);
         av_dict_set(opts, "forced_idr", "1", 0);
         break;
     case EncoderBackend::Amf:
         av_dict_set(opts, "rc", "cqp", 0);
-        av_dict_set(opts, "qp_i", high ? "20" : "26", 0);
-        av_dict_set(opts, "qp_p", high ? "22" : "28", 0);
-        av_dict_set(opts, "quality", "quality", 0);
+        av_dict_set(opts, "qp_i", customCq ? number.c_str() : high ? "20" : "26", 0);
+        av_dict_set(opts, "qp_p", customCq ? std::to_string(s.cq + 2).c_str() : high ? "22" : "28", 0);
+        av_dict_set(opts, "quality", s.preset.empty() ? "quality" : s.preset.c_str(), 0);
         break;
-    case EncoderBackend::MediaFoundation:
+    case EncoderBackend::MediaFoundation: {
         av_dict_set(opts, "rate_control", "quality", 0);
-        av_dict_set(opts, "quality", high ? "85" : "55", 0);
-        // Se il codificatore di Windows non conosce la qualità costante usa questa quantità di dati.
-        ctx->bit_rate = static_cast<std::int64_t>(static_cast<double>(ctx->width) * ctx->height
-                                                  * av_q2d(ctx->framerate) * (high ? 0.15 : 0.08));
+        av_dict_set(opts, "quality", customCq ? std::to_string(mediaFoundationQuality(s.cq)).c_str() : high ? "85" : "55", 0);
+        // Se il codificatore di Windows non conosce la qualità costante usa questa quantità di dati (come per gli altri
+        // encoder, ogni 6 punti di CQ in più la metà).
+        const double factor = customCq ? 0.15 * std::exp2((19 - s.cq) / 6.0) : high ? 0.15 : 0.08;
+        ctx->bit_rate = static_cast<std::int64_t>(static_cast<double>(ctx->width) * ctx->height * av_q2d(ctx->framerate) * factor);
         break;
+    }
     }
 }
 
@@ -142,7 +170,7 @@ CodecContextPtr openVideo(const Candidate& candidate, const VideoEncoderSettings
     if (!s.inBandParameters)
         ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     AVDictionary* raw = nullptr;
-    qualityOptions(ctx.get(), &raw, candidate.backend, candidate.codec, s.quality);
+    qualityOptions(ctx.get(), &raw, candidate.backend, candidate.codec, s);
     if (s.inBandParameters && candidate.backend == EncoderBackend::Nvenc && candidate.codec != VideoCodec::Av1)
         av_dict_set(&raw, "repeat_headers", "1", 0);  // NVENC: parametri prima di ogni fotogramma chiave (non solo il primo)
     const int ret = avcodec_open2(ctx.get(), codec, &raw);
@@ -290,6 +318,63 @@ std::string backendName(EncoderBackend backend)
 std::string describe(const VideoEncoderInfo& info)
 {
     return codecName(info.codec) + " - " + backendName(info.backend) + " (" + info.ffmpegName + ")";
+}
+
+VideoEncoderTuning videoEncoderTuning(const VideoEncoderInfo& info)
+{
+    VideoEncoderTuning tuning;
+    switch (info.backend) {
+    case EncoderBackend::Nvenc:
+        tuning.presets = kNvencPresets;
+        tuning.defaultPreset = "p5";
+        tuning.cqMax = info.codec == VideoCodec::Av1 ? 63 : 51;
+        tuning.cqHigh = info.codec == VideoCodec::Av1 ? 28 : 19;
+        tuning.cqMedium = info.codec == VideoCodec::Av1 ? 34 : 25;
+        break;
+    case EncoderBackend::Qsv:
+        tuning.presets = kQsvPresets;
+        tuning.defaultPreset = "medium";
+        tuning.cqMin = 1;
+        tuning.cqHigh = 20;
+        tuning.cqMedium = 26;
+        break;
+    case EncoderBackend::Amf:
+        tuning.presets = kAmfPresets;
+        tuning.defaultPreset = "quality";
+        tuning.cqHigh = 20;
+        tuning.cqMedium = 26;
+        break;
+    case EncoderBackend::MediaFoundation:
+        tuning.cqMin = 1;
+        break;
+    }
+    return tuning;
+}
+
+namespace {
+
+// Il formato di uscita (muxer) per l'estensione, o nullptr.
+const AVOutputFormat* outputFormatFor(const std::string& extension)
+{
+    std::string name = "x";
+    if (extension.empty() || extension.front() != '.')
+        name += '.';
+    name += extension;
+    return av_guess_format(nullptr, name.c_str(), nullptr);
+}
+
+bool containerAccepts(AVCodecID id, const std::string& extension)
+{
+    const AVOutputFormat* format = outputFormatFor(extension);
+    return format != nullptr && avformat_query_codec(format, id, FF_COMPLIANCE_NORMAL) == 1;
+}
+
+}  // namespace
+
+bool videoCodecFitsContainer(VideoCodec codec, const std::string& extension)
+{
+    const AVCodecID id = codec == VideoCodec::Hevc ? AV_CODEC_ID_HEVC : codec == VideoCodec::Av1 ? AV_CODEC_ID_AV1 : AV_CODEC_ID_H264;
+    return containerAccepts(id, extension);
 }
 
 namespace {
@@ -524,6 +609,136 @@ void VideoEncoder::finish(const PacketSink& sink)
 // ---------------------------------------------------------------------------------------------------------------
 // Audio
 
+namespace {
+
+struct AudioEncoderChoice
+{
+    const AVCodec* codec = nullptr;
+    bool experimental = false;  // va usato con strict_std_compliance sperimentale (es. l'Opus interno di FFmpeg)
+};
+
+// L'encoder di FFmpeg per il codec: prima quello di una libreria esterna (migliore), poi quello interno.
+AudioEncoderChoice findAudioEncoder(AudioCodec codec)
+{
+    const auto byName = [](const char* name, bool experimental) {
+        AudioEncoderChoice choice;
+        choice.codec = avcodec_find_encoder_by_name(name);
+        choice.experimental = experimental && choice.codec != nullptr;
+        return choice;
+    };
+    AudioEncoderChoice choice;
+    switch (codec) {
+    case AudioCodec::Aac:
+        return byName("aac", false);
+    case AudioCodec::Mp3:
+        return byName("libmp3lame", false);
+    case AudioCodec::Opus:
+        choice = byName("libopus", false);
+        return choice.codec != nullptr ? choice : byName("opus", true);
+    case AudioCodec::Ac3:
+        return byName("ac3", false);
+    case AudioCodec::Flac:
+        return byName("flac", false);
+    }
+    return choice;
+}
+
+AVCodecID codecIdOf(AudioCodec codec)
+{
+    switch (codec) {
+    case AudioCodec::Aac: return AV_CODEC_ID_AAC;
+    case AudioCodec::Mp3: return AV_CODEC_ID_MP3;
+    case AudioCodec::Opus: return AV_CODEC_ID_OPUS;
+    case AudioCodec::Ac3: return AV_CODEC_ID_AC3;
+    case AudioCodec::Flac: return AV_CODEC_ID_FLAC;
+    }
+    return AV_CODEC_ID_NONE;
+}
+
+// Il formato dei campioni preferito fra quelli ammessi dall'encoder (prima i float, poi gli interi).
+AVSampleFormat chooseSampleFormat(const AVCodec* codec)
+{
+    const void* configs = nullptr;
+    int count = 0;
+    if (avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_SAMPLE_FORMAT, 0, &configs, &count) < 0 || configs == nullptr)
+        return AV_SAMPLE_FMT_FLTP;
+    const auto* formats = static_cast<const AVSampleFormat*>(configs);
+    for (const AVSampleFormat wanted : {AV_SAMPLE_FMT_FLTP, AV_SAMPLE_FMT_FLT, AV_SAMPLE_FMT_S16P, AV_SAMPLE_FMT_S16,
+                                        AV_SAMPLE_FMT_S32P, AV_SAMPLE_FMT_S32}) {
+        if (std::find(formats, formats + count, wanted) != formats + count)
+            return wanted;
+    }
+    return count > 0 ? formats[0] : AV_SAMPLE_FMT_FLTP;
+}
+
+// La frequenza chiesta se l'encoder la ammette, altrimenti la più vicina fra quelle ammesse.
+int chooseSampleRate(const AVCodec* codec, int wanted)
+{
+    const void* configs = nullptr;
+    int count = 0;
+    if (avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_SAMPLE_RATE, 0, &configs, &count) < 0 || configs == nullptr
+        || count <= 0)
+        return wanted;
+    const auto* rates = static_cast<const int*>(configs);
+    int best = rates[0];
+    for (int i = 0; i < count; ++i) {
+        if (rates[i] == wanted)
+            return wanted;
+        if (std::abs(rates[i] - wanted) < std::abs(best - wanted))
+            best = rates[i];
+    }
+    return best;
+}
+
+}  // namespace
+
+std::string audioCodecName(AudioCodec codec)
+{
+    switch (codec) {
+    case AudioCodec::Aac: return "AAC";
+    case AudioCodec::Mp3: return "MP3";
+    case AudioCodec::Opus: return "Opus";
+    case AudioCodec::Ac3: return "AC-3";
+    case AudioCodec::Flac: return "FLAC";
+    }
+    return {};
+}
+
+const std::vector<AudioCodec>& availableAudioCodecs()
+{
+    static const std::vector<AudioCodec> codecs = [] {
+        std::vector<AudioCodec> found;
+        for (const AudioCodec codec : {AudioCodec::Aac, AudioCodec::Mp3, AudioCodec::Opus, AudioCodec::Ac3, AudioCodec::Flac}) {
+            if (findAudioEncoder(codec).codec != nullptr)
+                found.push_back(codec);
+        }
+        return found;
+    }();
+    return codecs;
+}
+
+bool audioCodecFitsContainer(AudioCodec codec, const std::string& extension)
+{
+    return containerAccepts(codecIdOf(codec), extension);
+}
+
+std::vector<int> audioBitRatesKbps(AudioCodec codec)
+{
+    switch (codec) {
+    case AudioCodec::Aac: return {96, 128, 160, 192, 256, 320};
+    case AudioCodec::Mp3: return {96, 128, 160, 192, 256, 320};
+    case AudioCodec::Opus: return {64, 96, 128, 160, 192, 256};
+    case AudioCodec::Ac3: return {192, 256, 384, 448, 640};
+    case AudioCodec::Flac: return {};
+    }
+    return {};
+}
+
+int defaultAudioBitRateKbps(AudioCodec codec)
+{
+    return codec == AudioCodec::Ac3 ? 384 : 192;
+}
+
 struct AudioEncoder::Impl
 {
     CodecContextPtr ctx;
@@ -573,24 +788,28 @@ struct AudioEncoder::Impl
 AudioEncoder::AudioEncoder(const AudioEncoderSettings& settings)
     : impl_(std::make_unique<Impl>())
 {
-    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
-    if (codec == nullptr)
-        throw MediaError("Encoder AAC non presente in questa versione di FFmpeg.");
-    impl_->ctx.reset(avcodec_alloc_context3(codec));
+    const AudioEncoderChoice choice = findAudioEncoder(settings.codec);
+    if (choice.codec == nullptr)
+        throw MediaError("Encoder " + audioCodecName(settings.codec) + " non presente in questa versione di FFmpeg.");
+    const std::string name = audioCodecName(settings.codec);
+    impl_->ctx.reset(avcodec_alloc_context3(choice.codec));
     if (!impl_->ctx || !impl_->packet || !impl_->block || !impl_->converted)
-        throw MediaError("Memoria insufficiente per l'encoder AAC.");
+        throw MediaError("Memoria insufficiente per l'encoder " + name + ".");
     AVCodecContext* ctx = impl_->ctx.get();
-    ctx->sample_rate = settings.sampleRate;
-    ctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+    ctx->sample_rate = chooseSampleRate(choice.codec, settings.sampleRate);
+    ctx->sample_fmt = chooseSampleFormat(choice.codec);
     av_channel_layout_default(&ctx->ch_layout, std::max(1, settings.channels));
-    ctx->bit_rate = settings.bitRate > 0 ? settings.bitRate : kAudioBitRate;
-    ctx->time_base = {1, settings.sampleRate};
+    if (settings.codec != AudioCodec::Flac)  // FLAC è senza perdita: il bitrate non c'entra
+        ctx->bit_rate = settings.bitRate > 0 ? settings.bitRate : defaultAudioBitRateKbps(settings.codec) * 1000;
+    ctx->time_base = {1, ctx->sample_rate};
     ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;  // dati extra nel contenitore (MP4, MKV)
-    if (const int ret = avcodec_open2(ctx, codec, nullptr); ret < 0)
-        throw MediaError("L'encoder AAC non si apre: " + ffmpegError(ret));
+    if (choice.experimental)
+        ctx->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
+    if (const int ret = avcodec_open2(ctx, choice.codec, nullptr); ret < 0)
+        throw MediaError("L'encoder " + name + " non si apre: " + ffmpegError(ret));
     impl_->fifo.reset(av_audio_fifo_alloc(ctx->sample_fmt, ctx->ch_layout.nb_channels, std::max(ctx->frame_size, 1024) * 4));
     if (!impl_->fifo)
-        throw MediaError("Memoria insufficiente per l'encoder AAC.");
+        throw MediaError("Memoria insufficiente per l'encoder " + name + ".");
 }
 
 AudioEncoder::~AudioEncoder() = default;

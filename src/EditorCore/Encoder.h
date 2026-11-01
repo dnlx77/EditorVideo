@@ -94,7 +94,36 @@ struct VideoEncoderSettings
     // B-frame fra un fotogramma e l'altro (0 = nessuno: l'ordine dei pacchetti è quello dei fotogrammi, più semplice da
     // unire ai pezzi copiati). Per le prove con file che li hanno.
     int bFrames = 0;
+    // Preset di velocità/qualità dell'encoder (uno dei valori di VideoEncoderTuning::presets; vuoto = quello di default
+    // dell'encoder) e qualità costante (CQ) da 0..51 (meno = migliore; 0 = quella di `quality`). Se valorizzati hanno la
+    // precedenza su `quality`.
+    std::string preset;
+    int cq = 0;
 };
+
+// Un preset di un encoder: il valore da passargli e il nome da mostrare.
+struct EncoderPreset
+{
+    std::string value;  // es. "p5"
+    std::string label;  // es. "p5 (bilanciato)"
+};
+
+// Che cosa si può regolare in un encoder video: i preset e la scala della qualità costante (CQ, meno = migliore).
+struct VideoEncoderTuning
+{
+    std::vector<EncoderPreset> presets;  // dal più veloce al più lento; vuoto = l'encoder non ha preset
+    std::string defaultPreset;           // valore del preset di default (uno di `presets`, o vuoto)
+    int cqMin = 0;
+    int cqMax = 51;
+    int cqHigh = 19;    // il CQ della qualità "Alta" per questo encoder
+    int cqMedium = 25;  // il CQ della qualità "Media"
+};
+
+// Preset e scala del CQ di un encoder (non apre l'encoder).
+VideoEncoderTuning videoEncoderTuning(const VideoEncoderInfo& info);
+
+// Se il contenitore dedotto dall'estensione ("mp4", ".mkv", senza distinzione fra maiuscole) può contenere il codec.
+bool videoCodecFitsContainer(VideoCodec codec, const std::string& extension);
 
 // Riceve ogni pacchetto prodotto. Il pacchetto appartiene all'encoder: va usato (o copiato) durante la chiamata. I tempi
 // sono nell'unità timeBase() dell'encoder.
@@ -127,14 +156,34 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-struct AudioEncoderSettings
+// Codec audio di uscita. L'encoder c'è solo se questa versione di FFmpeg lo include (vedi availableAudioCodecs).
+enum class AudioCodec
 {
-    int sampleRate = 48000;
-    int channels = 2;
-    int bitRate = 0;  // bit al secondo (0 = quello di default, 192 kb/s)
+    Aac,
+    Mp3,
+    Opus,
+    Ac3,
+    Flac,  // senza perdita: nessun bitrate
 };
 
-// AAC. I tempi dei pacchetti sono in 1/sampleRate, a partire da 0: i campioni dati a encode() sono considerati uno dopo
+std::string audioCodecName(AudioCodec codec);  // "AAC", "MP3", "Opus", "AC-3", "FLAC"
+// I codec audio che si possono codificare con questa versione di FFmpeg (in questo ordine: AAC per primo).
+const std::vector<AudioCodec>& availableAudioCodecs();
+// Se il contenitore dedotto dall'estensione può contenere il codec (senza opzioni sperimentali).
+bool audioCodecFitsContainer(AudioCodec codec, const std::string& extension);
+// I bitrate da proporre, in kb/s (vuoto per FLAC) e quello di default.
+std::vector<int> audioBitRatesKbps(AudioCodec codec);
+int defaultAudioBitRateKbps(AudioCodec codec);
+
+struct AudioEncoderSettings
+{
+    int sampleRate = 48000;  // se il codec non la ammette si usa la più vicina fra quelle ammesse (vedi timeBase())
+    int channels = 2;
+    int bitRate = 0;  // bit al secondo (0 = quello di default del codec: 192 kb/s, AC-3 384 kb/s)
+    AudioCodec codec = AudioCodec::Aac;
+};
+
+// Audio in uno dei codec di AudioCodec (di default AAC). I tempi dei pacchetti sono in 1/frequenza dell'encoder (timeBase()), a partire da 0: i campioni dati a encode() sono considerati uno dopo
 // l'altro, senza buchi (convertiti al formato, alla frequenza e ai canali dell'encoder se diversi).
 class AudioEncoder
 {
