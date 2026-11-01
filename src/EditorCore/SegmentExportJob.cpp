@@ -49,7 +49,7 @@ ExportJob::ExportJob(const std::vector<ClipRanges>& clips, const std::string& ou
     }
 
     // Che cosa succede a ogni file: si copia (con i suoi parametri nel flusso, se diversi) o si ricodifica.
-    plan_ = analysis != nullptr ? *analysis : analyzePlan(clips_, format, noClipAudio_, reencode_.all, reencode_.closeGaps, reencode_.activeTexts(), &reencode_.transitions, reencode_.backend);
+    plan_ = analysis != nullptr ? *analysis : analyzePlan(clips_, format, noClipAudio_, reencode_.all, reencode_.closeGaps, reencode_.activeTexts(), &reencode_.transitions, reencode_.backend, &reencode_.video);
     if (!plan_.problem.empty())
         throw ClipsNotJoinable(plan_.problem);
 
@@ -120,6 +120,11 @@ void ExportJob::addProjectStreams()
             requireCodec(output_->oformat, par->codec_id);
             if (!s.extradata.empty())
                 setExtradata(par, s.extradata.data(), s.extradata.size());
+            else if (plan_.videoChanged && s.kind == StreamKind::Video) {
+                // Video nuovo: i parametri di codifica sono quelli dell'encoder.
+                const ProjectVideoEncoder probe(s, projectFrameRate(s), Rational{0, 1}, reencode_);
+                setExtradata(par, probe.extradata.data(), probe.extradata.size());
+            }
             if (s.kind == StreamKind::Video) {
                 par->codec_type = AVMEDIA_TYPE_VIDEO;
                 par->width = s.width;

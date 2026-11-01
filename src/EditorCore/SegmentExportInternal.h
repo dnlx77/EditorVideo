@@ -348,6 +348,7 @@ struct PlanAnalysis
     bool parametersInStream = false;            // vedi ExportResult
     std::vector<ParameterSets> clipParameters;  // per file copiato, se parametersInStream
     std::string problem;                        // perché non si può esportare; vuoto = si può
+    bool videoChanged = false;                  // il video ha un codec, una misura o dei fotogrammi/s diversi dai file
 };
 
 // Spazio vuoto prima del tratto `r` di `clip` (0 se il piano non ne ha).
@@ -359,7 +360,7 @@ inline double gapBefore(const ClipRanges& clip, std::size_t r)
 inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectFormat* format, bool replaced, bool reencodeAll,
                          bool closeGaps, const TextTracks* texts = nullptr,
                          const std::vector<ExportTransition>* transitions = nullptr,
-                         std::optional<EncoderBackend> backend = std::nullopt)
+                         std::optional<EncoderBackend> backend = std::nullopt, const VideoChange* change = nullptr)
 {
     PlanAnalysis plan;
     plan.reencode.assign(clips.size(), reencodeAll);
@@ -379,6 +380,31 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
     plan.reference = checkFormat ? *format : formatOf(plan.signatures.front());
     if (replaced)
         std::erase_if(plan.reference.streams, [](const StreamSignature& s) { return s.kind == StreamKind::Audio; });
+    // Il video voluto dall'utente: il formato di riferimento cambia, quindi ogni pezzo si ricodifica. I parametri di
+    // codifica non ci sono ancora (li dà l'encoder quando parte l'esportazione).
+    if (change != nullptr) {
+        for (StreamSignature& s : plan.reference.streams) {
+            if (s.kind != StreamKind::Video)
+                continue;
+            const std::string codec = change->codec ? (*change->codec == VideoCodec::Hevc ? "hevc" : "h264") : s.codec;
+            const int width = change->width > 0 && change->height > 0 ? change->width : s.width;
+            const int height = change->width > 0 && change->height > 0 ? change->height : s.height;
+            const double fps = change->frameRate > 0 ? change->frameRate : s.frameRate;
+            const bool sameRate = s.frameRate > 0 && std::abs(fps - s.frameRate) <= s.frameRate * 0.001;
+            if (codec != s.codec || width != s.width || height != s.height || !sameRate) {
+                s.codec = codec;
+                s.width = width;
+                s.height = height;
+                s.frameRate = fps;
+                s.profile.clear();
+                s.extradata.clear();
+                plan.videoChanged = true;
+            }
+            break;
+        }
+        if (plan.videoChanged)
+            plan.reencode.assign(clips.size(), true);
+    }
     std::string differences;  // dei file da ricodificare, per il messaggio se non si può
     for (std::size_t c = 0; c < clips.size(); ++c) {
         const ClipFitResult fit = classifyClip(plan.signatures[c], plan.reference, !replaced);
@@ -407,7 +433,7 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
                                            + " su questo PC: sceglierne un altro (vedi Aiuto > Informazioni)."
                                      : "Per ricodificare in " + codecName(codec) + " serve un encoder, ma su questo PC non ce n'è "
                                        "uno funzionante (vedi Aiuto > Informazioni).";
-        } else if (!parameterSetsOf(codecIdOf(video->codec), video->extradata)) {
+        } else if (!plan.videoChanged && !parameterSetsOf(codecIdOf(video->codec), video->extradata)) {
             cannotReencode = "I parametri di codifica del formato del progetto (" + plan.reference.sourceName
                            + ") sono in un formato che non si sa ripetere nel flusso (Annex B).";
         }
@@ -666,7 +692,8 @@ struct ProjectVideoEncoder
         if (par == nullptr)
             throw MediaError(kOutOfMemory);
         encoder.copyParameters(par);
-        const auto sets = parameterNalsOf(par->codec_id, std::vector<std::uint8_t>(par->extradata, par->extradata + par->extradata_size));
+        extradata.assign(par->extradata, par->extradata + std::max(0, par->extradata_size));
+        const auto sets = parameterNalsOf(par->codec_id, extradata);
         avcodec_parameters_free(&par);
         if (!sets)
             throw MediaError("L'encoder " + encoder.info().ffmpegName + " non ha dato i parametri di codifica.");
@@ -675,6 +702,7 @@ struct ProjectVideoEncoder
 
     VideoEncoder encoder;
     ParameterSets parameters;
+    std::vector<std::uint8_t> extradata;  // i parametri di codifica come li dà l'encoder (per il flusso del file)
 
 private:
     static VideoEncoderSettings settingsFor(const StreamSignature& format, AVRational fps, Rational timeBase, const ReencodeOptions& options)
