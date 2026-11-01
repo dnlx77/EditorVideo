@@ -247,6 +247,13 @@ jobs:
           # L'elenco dei gruppi (nodi, oggetti, nodi chiusi) e le tre schede del blocco in alto a sinistra.
           & ci\run-editorvideo.ps1 -Name gruppi -Arguments '--group-test'
 
+      - name: Prova della finestra Esporta
+        shell: pwsh
+        run: |
+          # La finestra "Esporta" con un riepilogo inventato: avviso di sovrascrittura, destinazioni che non vanno e scelte
+          # (encoder, qualità, audio) che arrivano alle opzioni dell'esportazione.
+          & ci\run-editorvideo.ps1 -Name 'finestra Esporta' -Arguments '--export-panel-test'
+
       - name: Prova dell'esportazione dalla finestra
         shell: pwsh
         run: |

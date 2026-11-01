@@ -60,6 +60,7 @@
     <ClInclude Include="TransitionMime.h" />
     <ClInclude Include="TransitionPreview.h" />
     <ClInclude Include="TransitionPreviewWidget.h" />
+    <ClInclude Include="ExportDialog.h" />
     <ClInclude Include="SelfTests.h" />
     <ClInclude Include="SequenceAudio.h" />
     <ClInclude Include="SequenceTimeline.h" />
@@ -88,6 +89,8 @@
     <ClCompile Include="TextEditorPanel.cpp" />
     <ClCompile Include="TextOverlay.cpp" />
     <ClCompile Include="TextSelfTest.cpp" />
+    <ClCompile Include="ExportDialog.cpp" />
+    <ClCompile Include="ExportSelfTest.cpp" />
     <ClCompile Include="GroupListPanel.cpp" />
     <ClCompile Include="GroupSelfTest.cpp" />
     <ClCompile Include="TransitionListPanel.cpp" />

@@ -25,6 +25,10 @@ int runTextTest(const QStringList& arguments, qsizetype at);
 // TransitionSelfTest.cpp).
 int runTransitionTest(const QStringList& arguments, qsizetype at);
 
+// --export-panel-test: la finestra "Esporta" con un riepilogo inventato: avviso di sovrascrittura, destinazioni che non
+// vanno, scelte che arrivano alle opzioni (vedi ExportSelfTest.cpp).
+int runExportPanelTest(const QStringList& arguments, qsizetype at);
+
 // --group-test: la scheda Gruppi del blocco in alto a sinistra: l'elenco dei gruppi (nodi, oggetti, nodi chiusi che
 // restano chiusi) e le tre schede nella finestra (vedi GroupSelfTest.cpp).
 int runGroupTest(const QStringList& arguments, qsizetype at);
@@ -44,9 +48,9 @@ int runDockTest(QApplication& app);
 // mette; codice 0 se l'esportazione riesce, 3 se non finisce entro 5 minuti, 2 se non riesce.
 int runProjectExportTest(QApplication& app, const QString& project, const QString& output);
 
-// --export-dialog-test <progetto.evproj> <destinazione>: come l'utente, dal pulsante Esporta (finestra del riepilogo,
-// finestra di Windows per salvare, messaggio finale), con le finestre guidate da un altro thread. Codice 0 se arriva in
-// fondo e l'esportazione riesce, 3 se si blocca o non riesce.
+// --export-dialog-test <progetto.evproj> <destinazione>: come l'utente, dal pulsante Esporta (finestra "Esporta" con la
+// destinazione, poi il messaggio finale), con la finestra guidata da un timer e il messaggio da un altro thread. Codice 0
+// se arriva in fondo e l'esportazione riesce, 3 se si blocca o non riesce.
 int runExportDialogTest(QApplication& app, const QString& project, const QString& output);
 
 // --smoke-test: scrive le versioni e chiude subito. Con un file (già aperto nella finestra) lo riproduce per 2 secondi,

@@ -117,7 +117,7 @@ const std::vector<EncoderPreset> kAmfPresets = {
 // cursore del CQ funzioni anche con questo encoder.
 int mediaFoundationQuality(int cq)
 {
-    return std::clamp(100 - cq * 3 / 2, 1, 100);
+    return std::clamp(100 - cq * 4 / 5, 1, 100);  // CQ 19 (qualità "Alta") = 85, come prima
 }
 
 // Opzioni di qualità costante per ogni tipo di encoder. Preset e CQ di `s`, se ci sono, valgono più di `s.quality`.
