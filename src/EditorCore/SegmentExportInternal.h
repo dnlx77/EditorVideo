@@ -199,6 +199,115 @@ inline std::vector<std::uint8_t> buildAvcC(const ParameterSets& sets)
     return out;
 }
 
+// Legge i bit di un NAL senza i byte di protezione (00 00 03), per i campi dell'SPS HEVC.
+struct NalBits
+{
+    explicit NalBits(const std::vector<std::uint8_t>& nal)
+    {
+        for (std::size_t i = 0; i < nal.size(); ++i) {
+            if (i >= 2 && nal[i] == 3 && nal[i - 1] == 0 && nal[i - 2] == 0)
+                continue;
+            bytes.push_back(nal[i]);
+        }
+    }
+    unsigned bit()
+    {
+        const std::size_t byte = position >> 3;
+        const unsigned value = byte < bytes.size() ? (bytes[byte] >> (7 - (position & 7))) & 1u : 0u;
+        ++position;
+        return value;
+    }
+    unsigned bits(int count)
+    {
+        unsigned value = 0;
+        for (int i = 0; i < count; ++i)
+            value = value << 1 | bit();
+        return value;
+    }
+    unsigned ue()
+    {
+        int zeros = 0;
+        while (zeros < 31 && bit() == 0)
+            ++zeros;
+        return zeros == 0 ? 0u : (1u << zeros) - 1u + bits(zeros);
+    }
+    std::vector<std::uint8_t> bytes;
+    std::size_t position = 0;
+};
+
+// "Dati extra" hvcC (lunghezze su 4 byte) da VPS, SPS e PPS HEVC senza codici di inizio; vuoto se manca uno dei tre.
+inline std::vector<std::uint8_t> buildHvcC(const ParameterSets& sets)
+{
+    const std::vector<std::uint8_t>* vps = nullptr;
+    const std::vector<std::uint8_t>* sps = nullptr;
+    const std::vector<std::uint8_t>* pps = nullptr;
+    for (const auto& unit : sets.nals) {
+        if (unit.size() < 3)
+            continue;
+        const int type = (unit[0] >> 1) & 0x3f;
+        if (type == 32 && vps == nullptr)
+            vps = &unit;
+        else if (type == 33 && sps == nullptr)
+            sps = &unit;
+        else if (type == 34 && pps == nullptr)
+            pps = &unit;
+    }
+    if (vps == nullptr || sps == nullptr || pps == nullptr)
+        return {};
+    // SPS: 2 byte d'intestazione del NAL, poi VPS id (4 bit), sottolivelli (3), nidificazione (1) e profile_tier_level.
+    NalBits sp(*sps);
+    sp.bits(16);
+    sp.bits(4);
+    const unsigned subLayers = sp.bits(3) + 1;
+    sp.bits(1);
+    const unsigned profileByte = sp.bits(8);
+    const unsigned compatibility = sp.bits(32);
+    const unsigned constraintsHigh = sp.bits(16);  // (in due istruzioni: l'ordine di lettura conta)
+    const unsigned constraintsLow = sp.bits(32);
+    const std::uint64_t constraints = static_cast<std::uint64_t>(constraintsHigh) << 32 | constraintsLow;
+    const unsigned level = sp.bits(8);
+    unsigned chroma = 1, lumaDepth = 8, chromaDepth = 8;
+    if (subLayers == 1) {  // con più sottolivelli il profilo continua con altri campi: si lasciano i valori comuni
+        sp.ue();  // id dell'SPS
+        chroma = sp.ue();
+        if (chroma == 3)
+            sp.bit();
+        sp.ue();  // larghezza
+        sp.ue();  // altezza
+        if (sp.bit() != 0) {  // finestra di ritaglio
+            for (int i = 0; i < 4; ++i)
+                sp.ue();
+        }
+        lumaDepth = sp.ue() + 8;
+        chromaDepth = sp.ue() + 8;
+    }
+    std::vector<std::uint8_t> out{1, static_cast<std::uint8_t>(profileByte)};
+    for (int shift = 24; shift >= 0; shift -= 8)
+        out.push_back(static_cast<std::uint8_t>(compatibility >> shift));
+    for (int shift = 40; shift >= 0; shift -= 8)
+        out.push_back(static_cast<std::uint8_t>(constraints >> shift));
+    out.push_back(static_cast<std::uint8_t>(level));
+    out.push_back(0xF0);  // segmentazione spaziale minima: non detta
+    out.push_back(0x00);
+    out.push_back(0xFC);  // parallelismo: non detto
+    out.push_back(static_cast<std::uint8_t>(0xFC | (chroma & 3)));
+    out.push_back(static_cast<std::uint8_t>(0xF8 | ((lumaDepth - 8) & 7)));
+    out.push_back(static_cast<std::uint8_t>(0xF8 | ((chromaDepth - 8) & 7)));
+    out.push_back(0);  // fotogrammi al secondo medi: non detti
+    out.push_back(0);
+    out.push_back(static_cast<std::uint8_t>((std::min(subLayers, 7u) << 3) | 3));  // sottolivelli, lunghezze su 4 byte
+    out.push_back(3);  // tre gruppi: VPS, SPS, PPS
+    for (const std::vector<std::uint8_t>* unit : {vps, sps, pps}) {
+        out.push_back(static_cast<std::uint8_t>(0x80 | ((*unit)[0] >> 1 & 0x3f)));  // completo + tipo del NAL
+        out.push_back(0);
+        out.push_back(1);
+        out.push_back(static_cast<std::uint8_t>(unit->size() >> 8));
+        out.push_back(static_cast<std::uint8_t>(unit->size() & 0xff));
+        out.insert(out.end(), unit->begin(), unit->end());
+    }
+    return out;
+}
+
 // Pacchetto dell'encoder (Annex B, o già con le lunghezze su 4 byte) con le lunghezze su `toSize` byte e, davanti, i
 // NAL di `prefix`.
 inline bool encodedToLengthPrefixed(AVPacket* pkt, int toSize, const std::vector<std::vector<std::uint8_t>>& prefix)
@@ -763,6 +872,11 @@ struct ProjectVideoEncoder
         if (par_codec == AV_CODEC_ID_H264 && (extradata.empty() || extradata[0] != 1)) {
             if (std::vector<std::uint8_t> avcc = buildAvcC(parameters); !avcc.empty())
                 extradata = std::move(avcc);
+        }
+        // Lo stesso per HEVC: hvcC invece dei VPS/SPS/PPS in Annex B (MKV e MP4 vogliono quello, con i pacchetti a lunghezze).
+        if (par_codec == AV_CODEC_ID_HEVC && (extradata.empty() || extradata[0] != 1)) {
+            if (std::vector<std::uint8_t> hvcc = buildHvcC(parameters); !hvcc.empty())
+                extradata = std::move(hvcc);
         }
     }
 

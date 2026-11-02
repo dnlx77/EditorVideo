@@ -474,6 +474,24 @@ TEST_F(Reencode, ChosenResolutionFrameRateAndCodecChangeEveryPiece)
         EXPECT_EQ(decodeAll(out).errors, 0);
     }
 
+    // HEVC a metà risoluzione, in MKV e in MP4: il video c'è davvero (fotogrammi decodificati, misura giusta).
+    if (preferredVideoEncoder(VideoCodec::Hevc)) {
+        for (const char* extension : {"mkv", "mp4"}) {
+            SCOPED_TRACE(extension);
+            ReencodeOptions options;
+            options.video.codec = VideoCodec::Hevc;
+            options.video.width = 960;
+            options.video.height = 540;
+            const fs::path out = dir_ / (std::string("scelta_hevc_540.") + extension);
+            exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, &format, options);
+            const Decoded decoded = decodeAll(out);
+            EXPECT_EQ(decoded.errors, 0);
+            EXPECT_EQ(decoded.width, 960);
+            EXPECT_EQ(decoded.height, 540);
+            EXPECT_EQ(decoded.centre.size(), 120u);  // 2 s a 60 al secondo
+        }
+    }
+
     // AV1 (se c'è un encoder): MKV e MP4; nella build non c'è un decoder AV1 software, quindi si rilegge solo il file.
     if (preferredVideoEncoder(VideoCodec::Av1)) {
         for (const char* extension : {"mkv", "mp4"}) {
