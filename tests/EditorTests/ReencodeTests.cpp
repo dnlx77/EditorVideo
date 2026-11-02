@@ -475,7 +475,7 @@ TEST_F(Reencode, ChosenResolutionFrameRateAndCodecChangeEveryPiece)
     }
 
     // AV1 (se c'è un encoder): MKV e MP4; nella build non c'è un decoder AV1 software, quindi si rilegge solo il file.
-    if (findVideoEncoder(VideoCodec::Av1)) {
+    if (preferredVideoEncoder(VideoCodec::Av1)) {
         for (const char* extension : {"mkv", "mp4"}) {
             SCOPED_TRACE(extension);
             ReencodeOptions options;
