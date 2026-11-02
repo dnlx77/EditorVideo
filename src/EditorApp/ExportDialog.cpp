@@ -88,6 +88,13 @@ struct Profile
 };
 
 const char* const kProfilesKey = "esportazione/profili";
+QString g_profilesApplication = QStringLiteral("EditorVideo");  // dove si salvano i profili (la prova ne usa un altro)
+
+// Come settings() della finestra principale: senza nome dell'organizzazione QSettings non scrive niente.
+QSettings profileSettings()
+{
+    return QSettings(QSettings::NativeFormat, QSettings::UserScope, QStringLiteral("EditorVideo"), g_profilesApplication);
+}
 
 std::vector<Profile> builtinProfiles()
 {
@@ -158,7 +165,7 @@ Profile fromJson(const QJsonObject& o)
 std::vector<Profile> savedProfiles()
 {
     std::vector<Profile> result;
-    const QJsonDocument doc = QJsonDocument::fromJson(QSettings().value(kProfilesKey).toString().toUtf8());
+    const QJsonDocument doc = QJsonDocument::fromJson(profileSettings().value(kProfilesKey).toString().toUtf8());
     for (const QJsonValue& value : doc.array()) {
         Profile p = fromJson(value.toObject());
         if (!p.name.isEmpty())
@@ -172,7 +179,7 @@ void storeProfiles(const std::vector<Profile>& profiles)
     QJsonArray array;
     for (const Profile& p : profiles)
         array.append(toJson(p));
-    QSettings().setValue(kProfilesKey, QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact)));
+    profileSettings().setValue(kProfilesKey, QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact)));
 }
 
 std::optional<Profile> profileNamed(const QString& name)
@@ -208,6 +215,11 @@ QString sizeLabel(std::int64_t bytes)
 }
 
 }  // namespace
+
+void setExportProfilesStore(const QString& application)
+{
+    g_profilesApplication = application;
+}
 
 ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     : QDialog(parent)
@@ -933,17 +945,25 @@ void ExportDialog::saveProfile()
             return;
         }
     }
+    storeProfileAs(name);
+}
+
+void ExportDialog::storeProfileAs(const QString& name)
+{
     Profile p = currentChoices(*this, includeAudio_->isChecked(), preset_->currentData().toString(), cqCustom_ ? cqSpin_->value() : 0);
     p.name = name;
     p.audioKbps = audioBitRate_->count() > 0 ? audioBitRate_->currentData().toInt() : 0;
     std::vector<Profile> saved = savedProfiles();
     const auto same = std::find_if(saved.begin(), saved.end(), [&](const Profile& s) { return s.name.compare(name, Qt::CaseInsensitive) == 0; });
-    if (same != saved.end())
+    QString stored = name;
+    if (same != saved.end()) {
+        stored = same->name;  // lo stesso nome (anche con maiuscole diverse): si sostituisce
+        p.name = stored;
         *same = p;
-    else
-        saved.push_back(p);
+    } else {
+        saved.push_back(p);  // da qui in poi `same` non vale più
+    }
     storeProfiles(saved);
-    const QString stored = same != saved.end() ? same->name : name;
     fillProfiles(stored);
     appliedKey_ = profileKey(currentChoices(*this, includeAudio_->isChecked(), preset_->currentData().toString(), cqCustom_ ? cqSpin_->value() : 0));
 }
