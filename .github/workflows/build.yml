@@ -230,7 +230,7 @@ jobs:
         run: |
           # Con la finestra vera: la linea del tempo staccata e riagganciata 5 volte per ogni modo (doppio clic sul titolo
           # di Windows, lasciata nella metà bassa, menu), ogni volta in basso, a tutta larghezza e alta abbastanza.
-          & ci\run-editorvideo.ps1 -Name pannelli -Arguments '--dock-test'
+          & ci\run-editorvideo.ps1 -Name pannelli -Arguments '--dock-test' -TimeoutSeconds 180
 
       - name: Prova delle scritte
         shell: pwsh
