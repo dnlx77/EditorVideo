@@ -1,4 +1,5 @@
 #include "EditorCore/Encoder.h"
+#include "EditorCore/ExportEstimate.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/VideoDecoder.h"
@@ -461,6 +462,42 @@ TEST(Encoders, ImpossibleRequestsAreRefusedWithAMessage)
     VideoEncoderSettings settings;
     settings.width = 0;
     EXPECT_THROW(VideoEncoder{settings}, MediaError);
+}
+
+TEST(Encoders, SizeEstimateFollowsQualityAndSize)
+{
+    SizeEstimateInput base;
+    base.width = 1920;
+    base.height = 1080;
+    base.frameRate = 30.0;
+    base.cq = 23;
+    base.recodedSeconds = 60.0;
+    // H.264 a CQ 23, 1080p30: pochi megabit al secondo (circa 6 Mb/s) = 45 MB al minuto, più o meno.
+    const std::int64_t normal = estimateOutputBytes(base);
+    EXPECT_GT(normal, 30'000'000);
+    EXPECT_LT(normal, 60'000'000);
+    // Sei punti di CQ in più dimezzano; metà dei pixel anche.
+    SizeEstimateInput worse = base;
+    worse.cq = 29;
+    EXPECT_NEAR(static_cast<double>(estimateOutputBytes(worse)) / normal, 0.5, 0.01);
+    SizeEstimateInput smaller = base;
+    smaller.width = 960;
+    EXPECT_NEAR(static_cast<double>(estimateOutputBytes(smaller)) / normal, 0.5, 0.01);
+    // I pezzi copiati pesano quanto i file originali; l'audio si aggiunge ai tratti ricodificati.
+    SizeEstimateInput copied;
+    copied.copiedSeconds = 10.0;
+    copied.copiedBitRate = 8'000'000;
+    EXPECT_EQ(estimateOutputBytes(copied), 10'000'000);
+    SizeEstimateInput withAudio = base;
+    withAudio.recodedAudioBitRate = 192'000;
+    EXPECT_NEAR(static_cast<double>(estimateOutputBytes(withAudio) - normal), 60.0 * 192000 / 8, 2.0);
+    // Senza misura non si stima.
+    EXPECT_EQ(estimateOutputBytes(SizeEstimateInput{}), 0);
+    // HEVC e AV1 a parità di qualità "normale" pesano meno di H.264.
+    SizeEstimateInput hevc = base;
+    hevc.codec = VideoCodec::Hevc;
+    hevc.cq = 28;
+    EXPECT_LT(estimateOutputBytes(hevc), normal);
 }
 
 }  // namespace
