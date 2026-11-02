@@ -233,6 +233,10 @@ void MainWindow::loadExportChoices()
     reencodeOptions_.preset = s.value(QStringLiteral("esportazione/preset")).toString().toStdString();
     reencodeOptions_.cq = std::max(0, s.value(QStringLiteral("esportazione/cq"), 0).toInt());
     reencodeOptions_.includeAudio = true;
+    reencodeOptions_.video = {};  // codec, misura e fotogrammi al secondo valgono solo per l'esportazione in corso
+    reencodeOptions_.decoder = s.value(QStringLiteral("esportazione/decoder")).toString() == QLatin1String("gpu")
+                                   ? core::DecoderMode::Hardware
+                                   : core::DecoderMode::Software;
     reencodeOptions_.audioCodec.reset();
     const QString codec = s.value(QStringLiteral("esportazione/codecAudio")).toString();
     for (const core::AudioCodec candidate : core::availableAudioCodecs()) {
@@ -249,6 +253,8 @@ void MainWindow::saveExportChoices()
                reencodeOptions_.backend ? qs(core::backendName(*reencodeOptions_.backend)) : QString());
     s.setValue(QStringLiteral("esportazione/preset"), qs(reencodeOptions_.preset));
     s.setValue(QStringLiteral("esportazione/cq"), reencodeOptions_.cq);
+    s.setValue(QStringLiteral("esportazione/decoder"),
+               reencodeOptions_.decoder == core::DecoderMode::Hardware ? QStringLiteral("gpu") : QStringLiteral("cpu"));
     if (reencodeOptions_.audioCodec) {
         s.setValue(QStringLiteral("esportazione/codecAudio"), qs(core::audioCodecName(*reencodeOptions_.audioCodec)));
         s.setValue(QStringLiteral("esportazione/bitrateAudio"), reencodeOptions_.audioBitRate);

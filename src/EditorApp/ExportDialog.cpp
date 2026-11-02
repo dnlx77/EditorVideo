@@ -106,6 +106,11 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     videoForm->addRow(QStringLiteral("Codec:"), codec_);
     videoForm->addRow(QStringLiteral("Risoluzione:"), resolution_);
     videoForm->addRow(QStringLiteral("Fotogrammi al secondo:"), frameRate_);
+    decoder_ = new QComboBox;
+    decoder_->addItem(QStringLiteral("CPU"), static_cast<int>(core::DecoderMode::Software));
+    decoder_->addItem(QStringLiteral("GPU (se la scheda lo gestisce, altrimenti CPU)"), static_cast<int>(core::DecoderMode::Hardware));
+    decoder_->setCurrentIndex(input_.options.decoder == core::DecoderMode::Hardware ? 1 : 0);
+    videoForm->addRow(QStringLiteral("Decoder:"), decoder_);
     videoForm->addRow(QStringLiteral("Encoder:"), encoder_);
     videoForm->addRow(QStringLiteral("Preset:"), preset_);
     videoForm->addRow(QStringLiteral("Qualità (CQ, meno = migliore):"), cqRow);
@@ -147,7 +152,7 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
-    videoWidgets_ = {encoder_, preset_, cqSlider_, cqSpin_};
+    videoWidgets_ = {encoder_, preset_, cqSlider_, cqSpin_, decoder_};
 
     // --- Formato del file: contenitore, codec, risoluzione e fotogrammi al secondo (la prima voce = come i file)
     const bool canChange = input_.montage && input_.projectCodec.has_value();
@@ -234,6 +239,10 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
         fillEncoders();
         updating_ = false;
         updateEncoder();
+    });
+    connect(decoder_, &QComboBox::currentIndexChanged, this, [this] {
+        if (!updating_)
+            updatePreview();
     });
     connect(resolution_, &QComboBox::currentIndexChanged, this, [this] {
         if (!updating_)
@@ -452,6 +461,7 @@ core::ReencodeOptions ExportDialog::options() const
     o.all = reencodeAll_->isChecked();
     o.closeGaps = closeGaps_->isChecked();
     o.video = videoChange();
+    o.decoder = static_cast<core::DecoderMode>(decoder_->currentData().toInt());
     if (videoChoicesApply()) {
         const int index = encoder_->currentData().toInt();
         o.backend = index >= 0 && index < static_cast<int>(encoders_.size())

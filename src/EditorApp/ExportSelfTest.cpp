@@ -138,6 +138,12 @@ int runExportPanelTest(const QStringList&, qsizetype)
         choose(dialog.frameRateCombo(), 0.0);
         choose(dialog.codecCombo(), -1);
 
+        check(dialog.options().decoder == core::DecoderMode::Software, "di partenza il decoder è la CPU");
+        dialog.decoderCombo()->setCurrentIndex(1);
+        check(dialog.options().decoder == core::DecoderMode::Hardware && asked.back().decoder == core::DecoderMode::Hardware,
+              "il decoder GPU arriva alle opzioni");
+        dialog.decoderCombo()->setCurrentIndex(0);
+
         // Altro codec audio: il bitrate segue (FLAC è senza perdita).
         QComboBox* codecs = dialog.audioCodecCombo();
         for (int i = 0; i < codecs->count(); ++i) {
