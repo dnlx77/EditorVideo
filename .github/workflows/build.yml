@@ -117,8 +117,11 @@ jobs:
           Write-Output "Pacchetti nella cache: $count (prima della compilazione: ${{ steps.before.outputs.count }})"
           "changed=$(if ($count -ne [int]'${{ steps.before.outputs.count }}') { 'si' } else { 'no' })" >> $env:GITHUB_OUTPUT
 
+      # La cache la salva solo main: ogni salvataggio è un file da 2,4 GB e GitHub tiene al massimo 10 GB per repository,
+      # quindi le cache salvate a ogni esecuzione delle PR cancellavano quella di main e la CI ricompilava tutto
+      # (due ore invece di sette minuti). Le PR la leggono soltanto (da main).
       - name: Salva la cache di vcpkg
-        if: always() && steps.after.outputs.changed == 'si'
+        if: always() && steps.after.outputs.changed == 'si' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
