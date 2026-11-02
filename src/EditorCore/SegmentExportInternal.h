@@ -28,6 +28,7 @@
 
 extern "C" {
 #include <libavutil/channel_layout.h>
+#include <libavutil/hwcontext.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/samplefmt.h>
 }
@@ -211,6 +212,34 @@ inline bool encodedToLengthPrefixed(AVPacket* pkt, int toSize, const std::vector
         nal::appendLengthPrefixed(data, unit.data(), unit.size(), toSize);
     replacePacketData(pkt, data.data(), data.size());
     return true;
+}
+
+// Formato dei fotogrammi con cui il codec decodifica su D3D11 (AV_PIX_FMT_NONE: il codec non lo sa fare).
+inline AVPixelFormat d3d11FormatFor(const AVCodec* codec)
+{
+    for (int i = 0;; ++i) {
+        const AVCodecHWConfig* config = avcodec_get_hw_config(codec, i);
+        if (config == nullptr)
+            return AV_PIX_FMT_NONE;
+        if ((config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0 && config->device_type == AV_HWDEVICE_TYPE_D3D11VA)
+            return config->pix_fmt;
+    }
+}
+
+// get_format del decoder con la GPU: il formato D3D11 (in `opaque`) se il decoder lo offre, altrimenti il primo software.
+inline AVPixelFormat pickHardwareFormat(AVCodecContext* context, const AVPixelFormat* formats)
+{
+    const auto wanted = static_cast<AVPixelFormat>(reinterpret_cast<std::intptr_t>(context->opaque));
+    for (const AVPixelFormat* p = formats; *p != AV_PIX_FMT_NONE; ++p) {
+        if (*p == wanted)
+            return *p;
+    }
+    for (const AVPixelFormat* p = formats; *p != AV_PIX_FMT_NONE; ++p) {
+        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(*p);
+        if (desc != nullptr && (desc->flags & AV_PIX_FMT_FLAG_HWACCEL) == 0)
+            return *p;
+    }
+    return AV_PIX_FMT_NONE;
 }
 
 inline AVCodecID codecIdOf(const std::string& name)
@@ -1174,6 +1203,8 @@ private:
     // Stato della scrittura.
     std::map<int, TextImage> textImages_;  // per id di scritta: disegnata una volta sola
     std::unique_ptr<TextFrameBlender> blender_;
+    std::shared_ptr<AVBufferRef> hwDevice_;  // il dispositivo D3D11 per decodificare con la GPU, creato una volta sola
+    bool hwDeviceTried_ = false;
     std::unique_ptr<TransitionRenderer> transitionRenderer_;  // per le parti dentro una transizione
     PacketPtr packet_;
     ExportResult result_;

@@ -425,16 +425,45 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     const PacketSink videoSink = videoSinkFor(video, 1, frameSeconds);
 
     // Decoder del video (e dell'audio, se si ricodifica).
+    AVPixelFormat hardwareFormat = AV_PIX_FMT_NONE;  // formato D3D11 dei fotogrammi, se il video si decodifica con la GPU
     const auto openDecoder = [&](int index) {
         const AVStream* st = input->streams[index];
         const AVCodec* codec = avcodec_find_decoder(st->codecpar->codec_id);
         if (codec == nullptr)
             throw ClipsNotJoinable("Il file " + clips_[c].path + " è in " + avcodec_get_name(st->codecpar->codec_id)
                                    + ": questa versione del programma non sa decodificarlo per ricodificarlo.");
-        CodecContextPtr ctx(avcodec_alloc_context3(codec));
-        avcodec_parameters_to_context(ctx.get(), st->codecpar);
-        ctx->pkt_timebase = st->time_base;
-        ctx->thread_count = 0;
+        const auto create = [&](bool hardware) {
+            CodecContextPtr ctx(avcodec_alloc_context3(codec));
+            avcodec_parameters_to_context(ctx.get(), st->codecpar);
+            ctx->pkt_timebase = st->time_base;
+            ctx->thread_count = 0;
+            if (hardware) {
+                ctx->hw_device_ctx = av_buffer_ref(hwDevice_.get());
+                ctx->get_format = &pickHardwareFormat;
+                ctx->opaque = reinterpret_cast<void*>(static_cast<std::intptr_t>(hardwareFormat));
+                ctx->thread_count = 1;  // con la GPU un solo thread (consigliato da FFmpeg)
+            }
+            return ctx;
+        };
+        // Video con la GPU, se richiesta e se si può: dispositivo D3D11 (uno solo per tutta l'esportazione); se qualcosa non
+        // va si decodifica con la CPU.
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && reencode_.decoder == DecoderMode::Hardware) {
+            const AVPixelFormat format = d3d11FormatFor(codec);
+            if (format != AV_PIX_FMT_NONE && !hwDevice_ && !hwDeviceTried_) {
+                hwDeviceTried_ = true;
+                AVBufferRef* device = nullptr;
+                if (av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0) >= 0)
+                    hwDevice_.reset(device, [](AVBufferRef* ref) { av_buffer_unref(&ref); });
+            }
+            if (format != AV_PIX_FMT_NONE && hwDevice_) {
+                hardwareFormat = format;
+                CodecContextPtr hardware = create(true);
+                if (avcodec_open2(hardware.get(), codec, nullptr) >= 0)
+                    return hardware;
+                hardwareFormat = AV_PIX_FMT_NONE;
+            }
+        }
+        CodecContextPtr ctx = create(false);
         if (const int ret = avcodec_open2(ctx.get(), codec, nullptr); ret < 0)
             throw MediaError("Il decoder di " + clips_[c].path + " non si apre: " + ffmpegError(ret));
         return ctx;
@@ -585,6 +614,22 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     FramePtr frame(av_frame_alloc());
     if (!pkt || !frame)
         throw MediaError(kOutOfMemory);
+    // Fotogrammi decodificati dalla GPU: si copiano in memoria (di solito NV12) prima di usarli.
+    FramePtr downloaded(av_frame_alloc());
+    if (!downloaded)
+        throw MediaError(kOutOfMemory);
+    const auto onDecodedVideo = [&](AVFrame* decoded) {
+        if (hardwareFormat == AV_PIX_FMT_NONE || decoded->format != hardwareFormat) {
+            onVideoFrame(decoded);
+            return;
+        }
+        av_frame_unref(downloaded.get());
+        if (const int ret = av_hwframe_transfer_data(downloaded.get(), decoded, 0); ret < 0)
+            throw MediaError("Il fotogramma decodificato dalla GPU non si legge (" + ffmpegError(ret)
+                             + "): nella finestra Esporta scegli il decoder CPU.");
+        av_frame_copy_props(downloaded.get(), decoded);
+        onVideoFrame(downloaded.get());
+    };
     const auto drain = [&](AVCodecContext* decoder, const auto& onFrame) {
         while (avcodec_receive_frame(decoder, frame.get()) >= 0) {
             onFrame(frame.get());
@@ -600,7 +645,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         const PacketUnref release{pkt.get()};
         if (pkt->stream_index == videoIndex && !videoDone) {
             if (avcodec_send_packet(videoDecoder.get(), pkt.get()) >= 0)  // un pacchetto rovinato si salta
-                drain(videoDecoder.get(), onVideoFrame);
+                drain(videoDecoder.get(), onDecodedVideo);
         } else if (pkt->stream_index == audioIndex && !audioDone) {
             if (copyAudio) {
                 onCopiedAudio(pkt.get());
@@ -612,7 +657,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     // Fine del file: quello che resta nei decoder, poi l'ultimo fotogramma ripetuto fino alla fine del tratto.
     if (!videoDone) {
         avcodec_send_packet(videoDecoder.get(), nullptr);
-        drain(videoDecoder.get(), onVideoFrame);
+        drain(videoDecoder.get(), onDecodedVideo);
     }
     if (audioDecoder && !audioDone) {
         avcodec_send_packet(audioDecoder.get(), nullptr);

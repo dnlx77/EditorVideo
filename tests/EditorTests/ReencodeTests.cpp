@@ -498,4 +498,30 @@ TEST_F(Reencode, ChosenResolutionFrameRateAndCodecChangeEveryPiece)
 }
 
 
+// --- Decoder dei video originali: CPU o GPU (senza GPU si ricade sulla CPU, il risultato è lo stesso)
+
+TEST_F(Reencode, GpuDecoderGivesTheSameVideoAsTheCpuOne)
+{
+    const ProjectFormat format = formatOf(readMediaSignature(file("a_1080p60.mp4")));
+    const std::vector<ClipRanges> plan{{file("a_1080p60.mp4"), {{0.0, 1.0}}}};
+    Decoded results[2];
+    int index = 0;
+    for (const DecoderMode mode : {DecoderMode::Software, DecoderMode::Hardware}) {
+        ReencodeOptions options{QualityPreset::High, true};  // "ricodifica tutto"
+        options.decoder = mode;
+        const fs::path out = dir_ / (index == 0 ? "decoder_cpu.mp4" : "decoder_gpu.mp4");
+        const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, &format, options);
+        EXPECT_EQ(result.reencodedSegments, 1);
+        results[index] = decodeAll(out);
+        EXPECT_EQ(results[index].errors, 0);
+        ++index;
+    }
+    ASSERT_EQ(results[0].centre.size(), results[1].centre.size());
+    EXPECT_EQ(results[0].width, results[1].width);
+    EXPECT_EQ(results[0].height, results[1].height);
+    for (std::size_t i = 0; i < results[0].centre.size(); ++i)
+        EXPECT_NEAR(results[0].centre[i], results[1].centre[i], 4) << "fotogramma " << i;
+}
+
+
 }  // namespace

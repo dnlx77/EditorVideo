@@ -71,6 +71,13 @@ struct VideoChange
     double frameRate = 0; // 0 = quello dei file
 };
 
+// Con che cosa si decodificano i video originali nei tratti da ricodificare.
+enum class DecoderMode
+{
+    Software,  // CPU (come sempre)
+    Hardware,  // GPU (Direct3D 11) se la scheda e il flusso lo permettono, altrimenti CPU
+};
+
 struct ReencodeOptions
 {
     QualityPreset quality = QualityPreset::High;
@@ -101,6 +108,7 @@ struct ReencodeOptions
     int audioBitRate = 0;
     // Codec, misura e fotogrammi al secondo del video, se diversi da quelli dei file (dopo gli altri campi: si inizializza in ordine).
     VideoChange video;
+    DecoderMode decoder = DecoderMode::Software;
 
     const TextTracks* activeTexts() const { return textRenderer != nullptr && texts.endTime() > 0.0 ? &texts : nullptr; }
 };

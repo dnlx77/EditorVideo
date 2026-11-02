@@ -58,6 +58,7 @@ public:
     bool canExport() const;
     QComboBox* encoderCombo() const { return encoder_; }
     QComboBox* codecCombo() const { return codec_; }
+    QComboBox* decoderCombo() const { return decoder_; }
     QComboBox* resolutionCombo() const { return resolution_; }
     QComboBox* frameRateCombo() const { return frameRate_; }
     QComboBox* containerCombo() const { return container_; }
@@ -96,6 +97,7 @@ private:
     QLabel* warning_ = nullptr;
     QLabel* range_ = nullptr;
     QComboBox* codec_ = nullptr;
+    QComboBox* decoder_ = nullptr;
     QComboBox* resolution_ = nullptr;
     QComboBox* frameRate_ = nullptr;
     QComboBox* container_ = nullptr;
