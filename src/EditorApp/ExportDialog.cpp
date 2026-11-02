@@ -159,6 +159,14 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
                     -1);
     codec_->addItem(QStringLiteral("H.264"), static_cast<int>(core::VideoCodec::H264));
     codec_->addItem(QStringLiteral("HEVC (H.265)"), static_cast<int>(core::VideoCodec::Hevc));
+    // AV1 solo se su questo PC c'è un encoder che lo sa fare.
+    {
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        const std::vector<core::VideoEncoderInfo> all = core::availableVideoEncoders();
+        QApplication::restoreOverrideCursor();
+        if (std::any_of(all.begin(), all.end(), [](const core::VideoEncoderInfo& info) { return info.codec == core::VideoCodec::Av1; }))
+            codec_->addItem(QStringLiteral("AV1"), static_cast<int>(core::VideoCodec::Av1));
+    }
     resolution_->addItem(input_.sourceWidth > 0 ? QStringLiteral("Come i file (%1x%2)").arg(input_.sourceWidth).arg(input_.sourceHeight)
                                                 : QStringLiteral("Come i file"),
                          QString());
@@ -511,6 +519,9 @@ void ExportDialog::updateDestination()
                        return QFileInfo(source).absoluteFilePath().compare(file.absoluteFilePath(), Qt::CaseInsensitive) == 0;
                    })) {
             message = QStringLiteral("La destinazione è uno dei file originali: scegli un altro nome.");
+            error = true;
+        } else if (const auto codec = effectiveCodec(); input_.montage && codec && !core::videoCodecFitsContainer(*codec, extension().toStdString())) {
+            message = QStringLiteral("Il contenitore %1 non può contenere questo codec: scegline un altro.").arg(extension().toUpper());
             error = true;
         } else if (file.exists()) {
             message = QStringLiteral("Il file esiste già e verrà sovrascritto.");

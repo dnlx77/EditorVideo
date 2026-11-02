@@ -415,7 +415,7 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
         for (StreamSignature& s : plan.reference.streams) {
             if (s.kind != StreamKind::Video)
                 continue;
-            const std::string codec = change->codec ? (*change->codec == VideoCodec::Hevc ? "hevc" : "h264") : s.codec;
+            const std::string codec = change->codec ? (*change->codec == VideoCodec::Hevc ? "hevc" : *change->codec == VideoCodec::Av1 ? "av1" : "h264") : s.codec;
             const int width = change->width > 0 && change->height > 0 ? change->width : s.width;
             const int height = change->width > 0 && change->height > 0 ? change->height : s.height;
             const double fps = change->frameRate > 0 ? change->frameRate : s.frameRate;
@@ -452,11 +452,11 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
     if (video == nullptr) {
         cannotReencode = "Il formato del progetto (" + plan.reference.sourceName + ") non ha video: la ricodifica per ora "
                          "si fa solo per i video.";
-    } else if (video->codec != "h264" && video->codec != "hevc") {
+    } else if (video->codec != "h264" && video->codec != "hevc" && !(plan.videoChanged && video->codec == "av1")) {
         cannotReencode = "Il formato del progetto (" + plan.reference.sourceName + ") è " + video->codec
                        + ": la ricodifica per ora si fa solo in H.264 e HEVC.";
     } else {
-        const VideoCodec codec = video->codec == "hevc" ? VideoCodec::Hevc : VideoCodec::H264;
+        const VideoCodec codec = video->codec == "hevc" ? VideoCodec::Hevc : video->codec == "av1" ? VideoCodec::Av1 : VideoCodec::H264;
         if (!findVideoEncoder(codec, backend)) {
             cannotReencode = backend ? "L'encoder scelto (" + backendName(*backend) + ") non è disponibile per " + codecName(codec)
                                            + " su questo PC: sceglierne un altro (vedi Aiuto > Informazioni)."
@@ -723,7 +723,9 @@ struct ProjectVideoEncoder
         encoder.copyParameters(par);
         extradata.assign(par->extradata, par->extradata + std::max(0, par->extradata_size));
         const AVCodecID par_codec = par->codec_id;
-        const auto sets = parameterNalsOf(par->codec_id, extradata);
+        // AV1: niente NAL da ripetere, i pacchetti (OBU) vanno nel file così come sono; la sequenza è nei dati extra.
+        lengthPrefixed = par->codec_id != AV_CODEC_ID_AV1;
+        const auto sets = lengthPrefixed ? parameterNalsOf(par->codec_id, extradata) : std::optional<ParameterSets>(ParameterSets{});
         avcodec_parameters_free(&par);
         if (!sets)
             throw MediaError("L'encoder " + encoder.info().ffmpegName + " non ha dato i parametri di codifica.");
@@ -737,13 +739,14 @@ struct ProjectVideoEncoder
 
     VideoEncoder encoder;
     ParameterSets parameters;
+    bool lengthPrefixed = true;           // H.264 / HEVC: NAL con la lunghezza davanti (AV1: pacchetti com'è)
     std::vector<std::uint8_t> extradata;  // i parametri di codifica come li dà l'encoder (per il flusso del file)
 
 private:
     static VideoEncoderSettings settingsFor(const StreamSignature& format, AVRational fps, Rational timeBase, const ReencodeOptions& options)
     {
         VideoEncoderSettings settings;
-        settings.codec = format.codec == "hevc" ? VideoCodec::Hevc : VideoCodec::H264;
+        settings.codec = format.codec == "hevc" ? VideoCodec::Hevc : format.codec == "av1" ? VideoCodec::Av1 : VideoCodec::H264;
         settings.width = format.width;
         settings.height = format.height;
         settings.frameRate = {fps.num, fps.den};

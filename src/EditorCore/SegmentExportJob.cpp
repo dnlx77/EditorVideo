@@ -359,9 +359,9 @@ PacketSink ExportJob::videoSinkFor(ProjectVideoEncoder& video, std::int64_t defa
 {
     const Rational encoderTb = video.encoder.timeBase();
     AVStream* outV = output_->streams[outVideo_];
-    return [&, &parameters = video.parameters, encoderTb, outV, defaultDuration, frameSeconds](AVPacket* p) {
+    return [&, &parameters = video.parameters, prefixed = video.lengthPrefixed, encoderTb, outV, defaultDuration, frameSeconds](AVPacket* p) {
         const bool key = (p->flags & AV_PKT_FLAG_KEY) != 0;
-        if (!encodedToLengthPrefixed(p, outLength_, key ? parameters.nals : std::vector<std::vector<std::uint8_t>>{}))
+        if (prefixed && !encodedToLengthPrefixed(p, outLength_, key ? parameters.nals : std::vector<std::vector<std::uint8_t>>{}))
             throw MediaError("Un pacchetto dell'encoder non si legge.");
         if (p->duration <= 0)
             p->duration = defaultDuration;

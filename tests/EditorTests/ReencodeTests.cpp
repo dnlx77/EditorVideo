@@ -473,6 +473,28 @@ TEST_F(Reencode, ChosenResolutionFrameRateAndCodecChangeEveryPiece)
         EXPECT_EQ(video->codec, "hevc");
         EXPECT_EQ(decodeAll(out).errors, 0);
     }
+
+    // AV1 (se c'è un encoder): MKV e MP4; nella build non c'è un decoder AV1 software, quindi si rilegge solo il file.
+    if (findVideoEncoder(VideoCodec::Av1)) {
+        for (const char* extension : {"mkv", "mp4"}) {
+            SCOPED_TRACE(extension);
+            ReencodeOptions options;
+            options.video.codec = VideoCodec::Av1;
+            options.video.width = 640;
+            options.video.height = 360;
+            const fs::path out = dir_ / (std::string("scelta_av1.") + extension);
+            const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, &format, options);
+            EXPECT_GE(result.durationSeconds, 1.9);
+            const MediaInfo info = probeFile(utf8FromPath(out));
+            const auto video = std::find_if(info.streams.begin(), info.streams.end(),
+                                            [](const StreamInfo& stream) { return stream.kind == StreamKind::Video; });
+            ASSERT_NE(video, info.streams.end());
+            EXPECT_EQ(video->codec, "av1");
+            EXPECT_EQ(video->width, 640);
+            EXPECT_EQ(video->height, 360);
+            EXPECT_GE(fs::file_size(out), 1000u);
+        }
+    }
 }
 
 
