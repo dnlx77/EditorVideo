@@ -40,6 +40,9 @@ struct ExportDialogInput
     std::function<core::ExportPreview(const core::ReencodeOptions&)> preview;
 };
 
+// Con quale nome di programma si salvano i profili (di norma EditorVideo; le prove automatiche ne usano un altro).
+void setExportProfilesStore(const QString& application);
+
 // La finestra "Esporta": destinazione (con l'avviso se il file c'è già), intervallo, video (encoder, preset, qualità CQ),
 // audio (incluso, codec, bitrate) e il riepilogo di quello che si copia e si ricodifica. Si usa con exec(): Accepted =
 // esportare in target() con options().

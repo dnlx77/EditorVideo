@@ -1,7 +1,6 @@
 #include "EditorApp/ExportDialog.h"
 #include "EditorApp/SelfTests.h"
 
-#include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
 #include <QtCore/QSettings>
@@ -192,8 +191,7 @@ int runExportPanelTest(const QStringList&, qsizetype)
         // Salvare un profilo (nuovo, poi con lo stesso nome) e toglierlo; con un nome di programma di prova per non toccare
         // i profili veri.
         {
-            const QString appName = QCoreApplication::applicationName();
-            QCoreApplication::setApplicationName(QStringLiteral("EditorVideoProva"));
+            setExportProfilesStore(QStringLiteral("EditorVideoProva"));
             const int before = profiles->count();
             dialog.storeProfileAs(QStringLiteral("Mio uno"));
             dialog.storeProfileAs(QStringLiteral("Mio due"));
@@ -201,8 +199,8 @@ int runExportPanelTest(const QStringList&, qsizetype)
                   "salvare due profili nuovi li aggiunge");
             dialog.storeProfileAs(QStringLiteral("mio UNO"));
             check(profiles->count() == before + 2, "salvare con lo stesso nome sostituisce");
-            QSettings().remove(QStringLiteral("esportazione/profili"));
-            QCoreApplication::setApplicationName(appName);
+            QSettings(QSettings::NativeFormat, QSettings::UserScope, QStringLiteral("EditorVideo"), QStringLiteral("EditorVideoProva")).clear();
+            setExportProfilesStore(QStringLiteral("EditorVideo"));
         }
         // Il profilo YouTube non ingrandisce: con file da 1080 la misura resta quella dei file.
         profiles->setCurrentIndex(profiles->findData(QStringLiteral("YouTube 1080p")));
