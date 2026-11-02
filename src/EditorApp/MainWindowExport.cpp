@@ -130,7 +130,11 @@ MainWindow::ExportSettings MainWindow::exportSettings(bool drawText) const
     ExportSettings settings{project_.audioEdit(core::GapExport::Black), project_.format(), reencodeOptions_, {}};
     // Le scritte: i tratti sotto una scritta si ricodificano col testo sopra.
     if (project_.textTracks().endTime() > 0.0) {
-        const QSize frame = frameSize();
+        // Alla misura del video esportato: se la risoluzione è ridotta le scritte si disegnano a quella misura.
+        QSize frame = frameSize();
+        const core::VideoChange& chosen = reencodeOptions_.video;
+        if (chosen.width > 0 && chosen.height > 0)
+            frame = QSize(chosen.width, chosen.height);
         settings.textRenderer =
             std::make_shared<PrerenderedTextRenderer>(project_.textTracks(), frame.width(), frame.height(), drawText);
         settings.reencode.texts = project_.textTracks();
