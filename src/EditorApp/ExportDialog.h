@@ -61,6 +61,7 @@ public:
     QComboBox* codecCombo() const { return codec_; }
     QComboBox* decoderCombo() const { return decoder_; }
     QComboBox* profileCombo() const { return profile_; }
+    void storeProfileAs(const QString& name);  // salva le scelte attuali come profilo (sostituisce quello con lo stesso nome)
     QString sizeText() const;  // la stima della dimensione del file, come si legge nel riepilogo
     QComboBox* resolutionCombo() const { return resolution_; }
     QComboBox* frameRateCombo() const { return frameRate_; }

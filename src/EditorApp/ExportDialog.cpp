@@ -933,17 +933,25 @@ void ExportDialog::saveProfile()
             return;
         }
     }
+    storeProfileAs(name);
+}
+
+void ExportDialog::storeProfileAs(const QString& name)
+{
     Profile p = currentChoices(*this, includeAudio_->isChecked(), preset_->currentData().toString(), cqCustom_ ? cqSpin_->value() : 0);
     p.name = name;
     p.audioKbps = audioBitRate_->count() > 0 ? audioBitRate_->currentData().toInt() : 0;
     std::vector<Profile> saved = savedProfiles();
     const auto same = std::find_if(saved.begin(), saved.end(), [&](const Profile& s) { return s.name.compare(name, Qt::CaseInsensitive) == 0; });
-    if (same != saved.end())
+    QString stored = name;
+    if (same != saved.end()) {
+        stored = same->name;  // lo stesso nome (anche con maiuscole diverse): si sostituisce
+        p.name = stored;
         *same = p;
-    else
-        saved.push_back(p);
+    } else {
+        saved.push_back(p);  // da qui in poi `same` non vale più
+    }
     storeProfiles(saved);
-    const QString stored = same != saved.end() ? same->name : name;
     fillProfiles(stored);
     appliedKey_ = profileKey(currentChoices(*this, includeAudio_->isChecked(), preset_->currentData().toString(), cqCustom_ ? cqSpin_->value() : 0));
 }

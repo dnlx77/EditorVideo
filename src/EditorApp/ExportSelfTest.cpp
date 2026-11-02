@@ -1,8 +1,10 @@
 #include "EditorApp/ExportDialog.h"
 #include "EditorApp/SelfTests.h"
 
+#include <QtCore/QCoreApplication>
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QSettings>
 #include <QtCore/QStringList>
 #include <QtCore/QTemporaryDir>
 #include <QtWidgets/QCheckBox>
@@ -187,6 +189,21 @@ int runExportPanelTest(const QStringList&, qsizetype)
         check(dialog.sizeText() != before, "la stima cambia con le scelte");
         dialog.resolutionCombo()->setCurrentIndex(0);
         check(profiles->currentIndex() == 0, "cambiare una scelta riporta a Personalizzato");
+        // Salvare un profilo (nuovo, poi con lo stesso nome) e toglierlo; con un nome di programma di prova per non toccare
+        // i profili veri.
+        {
+            const QString appName = QCoreApplication::applicationName();
+            QCoreApplication::setApplicationName(QStringLiteral("EditorVideoProva"));
+            const int before = profiles->count();
+            dialog.storeProfileAs(QStringLiteral("Mio uno"));
+            dialog.storeProfileAs(QStringLiteral("Mio due"));
+            check(profiles->count() == before + 2 && profiles->currentData().toString() == QStringLiteral("Mio due"),
+                  "salvare due profili nuovi li aggiunge");
+            dialog.storeProfileAs(QStringLiteral("mio UNO"));
+            check(profiles->count() == before + 2, "salvare con lo stesso nome sostituisce");
+            QSettings().remove(QStringLiteral("esportazione/profili"));
+            QCoreApplication::setApplicationName(appName);
+        }
         // Il profilo YouTube non ingrandisce: con file da 1080 la misura resta quella dei file.
         profiles->setCurrentIndex(profiles->findData(QStringLiteral("YouTube 1080p")));
         check(dialog.options().video.width == 0 && dialog.options().video.height == 0, "YouTube 1080p non ingrandisce un video da 1080");
