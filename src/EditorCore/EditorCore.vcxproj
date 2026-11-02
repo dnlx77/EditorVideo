@@ -52,6 +52,7 @@
     <ClInclude Include="CutSegment.h" />
     <ClInclude Include="EditHistory.h" />
     <ClInclude Include="Encoder.h" />
+    <ClInclude Include="ExportEstimate.h" />
     <ClInclude Include="FileDrop.h" />
     <ClInclude Include="FfmpegUtil.h" />
     <ClInclude Include="H264Params.h" />

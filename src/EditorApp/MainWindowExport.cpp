@@ -187,6 +187,18 @@ void MainWindow::exportDialog()
                                                       + input.extension);
     for (const core::ClipRanges& clip : plan)
         input.sources << qs(clip.path);
+    // Bit al secondo medi dei file usati (dimensione / durata): serve alla stima della dimensione dei pezzi copiati.
+    {
+        double bytes = 0.0;
+        double seconds = 0.0;
+        for (const core::Clip& clip : project_.clips()) {
+            if (clip.duration > 0.0 && input.sources.contains(qs(clip.path))) {
+                bytes += static_cast<double>(QFileInfo(qs(clip.path)).size());
+                seconds += clip.duration;
+            }
+        }
+        input.sourceBitRate = seconds > 0.0 ? bytes * 8.0 / seconds : 0.0;
+    }
     input.montage = montage;
     input.gapCount = montage ? static_cast<int>(project_.sequence().gapCount()) : 0;
     if (montage) {

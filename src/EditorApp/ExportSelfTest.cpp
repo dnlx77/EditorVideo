@@ -165,6 +165,33 @@ int runExportPanelTest(const QStringList&, qsizetype)
         check(dialog.options().audioBitRate == 128000, "il bitrate audio ricordato riappare");
     }
 
+    // Profili: quelli pronti mettono le scelte nella finestra; cambiarne una riporta a "Personalizzato"; c'è la stima della dimensione.
+    {
+        input.options = core::ReencodeOptions{};
+        input.sourceBitRate = 8'000'000.0;
+        ExportDialog dialog(input, nullptr);
+        QComboBox* profiles = dialog.profileCombo();
+        check(profiles->count() >= 4 && profiles->currentIndex() == 0, "i profili ci sono, si parte da Personalizzato");
+        check(dialog.sizeText().startsWith(QStringLiteral("circa")), "la dimensione stimata si mostra");
+        const int whatsapp = profiles->findData(QStringLiteral("Piccolo per WhatsApp"));
+        check(whatsapp > 0, "c'è il profilo Piccolo per WhatsApp");
+        const QString before = dialog.sizeText();
+        profiles->setCurrentIndex(whatsapp);
+        const core::ReencodeOptions options = dialog.options();
+        check(options.video.height == 480 && options.video.width == 854, "il profilo mette 480p (854x480)");
+        check(options.video.frameRate == 30.0 && options.cq == 28, "il profilo mette 30 fps e CQ 28");
+        check(dialog.target().endsWith(QStringLiteral(".mp4")), "il profilo cambia il contenitore in MP4");
+        check(dialog.audioCodecCombo()->currentData().toInt() == static_cast<int>(core::AudioCodec::Aac) && options.audioBitRate == 96000,
+              "il profilo mette AAC a 96 kb/s");
+        check(profiles->currentIndex() == whatsapp, "dopo il profilo resta scelto");
+        check(dialog.sizeText() != before, "la stima cambia con le scelte");
+        dialog.resolutionCombo()->setCurrentIndex(0);
+        check(profiles->currentIndex() == 0, "cambiare una scelta riporta a Personalizzato");
+        // Il profilo YouTube non ingrandisce: con file da 1080 la misura resta quella dei file.
+        profiles->setCurrentIndex(profiles->findData(QStringLiteral("YouTube 1080p")));
+        check(dialog.options().video.width == 0 && dialog.options().video.height == 0, "YouTube 1080p non ingrandisce un video da 1080");
+    }
+
     // Senza montaggio (taglio veloce): le scelte del video non si applicano.
     {
         ExportDialogInput quick = input;

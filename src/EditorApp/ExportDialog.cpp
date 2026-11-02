@@ -1,9 +1,15 @@
 #include "EditorApp/ExportDialog.h"
 
 #include "EditorApp/UiText.h"
+#include "EditorCore/ExportEstimate.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
+#include <QtCore/QJsonArray>
+#include <QtCore/QJsonDocument>
+#include <QtCore/QJsonObject>
+#include <QtCore/QSettings>
+#include <QtCore/QSignalBlocker>
 #include <QtGui/QGuiApplication>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QCheckBox>
@@ -12,8 +18,10 @@
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QFormLayout>
 #include <QtWidgets/QHBoxLayout>
+#include <QtWidgets/QInputDialog>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QLineEdit>
+#include <QtWidgets/QMessageBox>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QSlider>
 #include <QtWidgets/QSpinBox>
@@ -21,6 +29,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <optional>
+#include <vector>
 
 namespace editor::app {
 
@@ -59,6 +70,143 @@ QString bitRateText(int kbps)
     return kbps > 0 ? QStringLiteral("%1 kb/s").arg(kbps) : QStringLiteral("senza perdita");
 }
 
+// Un profilo: le scelte della finestra che si possono salvare con un nome. Vuoto / 0 / -1 = "come i file" o "automatico".
+struct Profile
+{
+    QString name;
+    bool builtin = false;
+    QString container;       // "mp4", "mkv", "mov"; vuoto = come i file
+    int codec = -1;          // VideoCodec; -1 = come i file
+    QString resolution;      // "p50", "h1080"...; vuoto = come i file
+    double frameRate = 0.0;  // 0 = come i file
+    int decoder = 0;         // DecoderMode
+    QString preset;          // vuoto = predefinito
+    int cq = 0;              // 0 = la qualità "alta" dell'encoder
+    bool includeAudio = true;
+    int audioCodec = -1;     // AudioCodec; -1 = quello attuale
+    int audioKbps = 0;       // 0 = quello attuale
+};
+
+const char* const kProfilesKey = "esportazione/profili";
+
+std::vector<Profile> builtinProfiles()
+{
+    Profile youtube;
+    youtube.name = QStringLiteral("YouTube 1080p");
+    youtube.builtin = true;
+    youtube.container = QStringLiteral("mp4");
+    youtube.codec = static_cast<int>(core::VideoCodec::H264);
+    youtube.resolution = QStringLiteral("h1080");
+    youtube.audioCodec = static_cast<int>(core::AudioCodec::Aac);
+    youtube.audioKbps = 192;
+
+    Profile small;
+    small.name = QStringLiteral("Piccolo per WhatsApp");
+    small.builtin = true;
+    small.container = QStringLiteral("mp4");
+    small.codec = static_cast<int>(core::VideoCodec::H264);
+    small.resolution = QStringLiteral("h480");
+    small.frameRate = 30.0;
+    small.cq = 28;
+    small.audioCodec = static_cast<int>(core::AudioCodec::Aac);
+    small.audioKbps = 96;
+
+    Profile archive;
+    archive.name = QStringLiteral("Archivio, qualità massima");
+    archive.builtin = true;
+    archive.container = QStringLiteral("mkv");
+    archive.cq = 16;
+    archive.audioCodec = static_cast<int>(core::AudioCodec::Aac);
+    archive.audioKbps = 320;
+    return {youtube, small, archive};
+}
+
+QJsonObject toJson(const Profile& p)
+{
+    QJsonObject o;
+    o[QStringLiteral("nome")] = p.name;
+    o[QStringLiteral("contenitore")] = p.container;
+    o[QStringLiteral("codec")] = p.codec;
+    o[QStringLiteral("risoluzione")] = p.resolution;
+    o[QStringLiteral("fps")] = p.frameRate;
+    o[QStringLiteral("decoder")] = p.decoder;
+    o[QStringLiteral("preset")] = p.preset;
+    o[QStringLiteral("cq")] = p.cq;
+    o[QStringLiteral("audio")] = p.includeAudio;
+    o[QStringLiteral("codecAudio")] = p.audioCodec;
+    o[QStringLiteral("kbpsAudio")] = p.audioKbps;
+    return o;
+}
+
+Profile fromJson(const QJsonObject& o)
+{
+    Profile p;
+    p.name = o.value(QStringLiteral("nome")).toString();
+    p.container = o.value(QStringLiteral("contenitore")).toString();
+    p.codec = o.value(QStringLiteral("codec")).toInt(-1);
+    p.resolution = o.value(QStringLiteral("risoluzione")).toString();
+    p.frameRate = o.value(QStringLiteral("fps")).toDouble();
+    p.decoder = o.value(QStringLiteral("decoder")).toInt();
+    p.preset = o.value(QStringLiteral("preset")).toString();
+    p.cq = o.value(QStringLiteral("cq")).toInt();
+    p.includeAudio = o.value(QStringLiteral("audio")).toBool(true);
+    p.audioCodec = o.value(QStringLiteral("codecAudio")).toInt(-1);
+    p.audioKbps = o.value(QStringLiteral("kbpsAudio")).toInt();
+    return p;
+}
+
+std::vector<Profile> savedProfiles()
+{
+    std::vector<Profile> result;
+    const QJsonDocument doc = QJsonDocument::fromJson(QSettings().value(kProfilesKey).toString().toUtf8());
+    for (const QJsonValue& value : doc.array()) {
+        Profile p = fromJson(value.toObject());
+        if (!p.name.isEmpty())
+            result.push_back(p);
+    }
+    return result;
+}
+
+void storeProfiles(const std::vector<Profile>& profiles)
+{
+    QJsonArray array;
+    for (const Profile& p : profiles)
+        array.append(toJson(p));
+    QSettings().setValue(kProfilesKey, QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact)));
+}
+
+std::optional<Profile> profileNamed(const QString& name)
+{
+    if (name.isEmpty())
+        return std::nullopt;
+    for (const Profile& p : builtinProfiles()) {
+        if (p.name == name)
+            return p;
+    }
+    for (const Profile& p : savedProfiles()) {
+        if (p.name == name)
+            return p;
+    }
+    return std::nullopt;
+}
+
+// Le scelte di un profilo in una riga sola, per sapere se la finestra ne è ancora uguale (il nome non conta).
+QString profileKey(const Profile& p)
+{
+    return QStringList{p.container, QString::number(p.codec), p.resolution, QString::number(p.frameRate), QString::number(p.decoder),
+                       p.preset, QString::number(p.cq), QString::number(p.includeAudio), QString::number(p.audioCodec),
+                       QString::number(p.audioKbps)}
+        .join(QLatin1Char('|'));
+}
+
+QString sizeLabel(std::int64_t bytes)
+{
+    const double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    if (mb >= 1024.0)
+        return QStringLiteral("%1 GB").arg(mb / 1024.0, 0, 'f', 2);
+    return mb >= 10.0 ? QStringLiteral("%1 MB").arg(std::lround(mb)) : QStringLiteral("%1 MB").arg(mb, 0, 'f', 1);
+}
+
 }  // namespace
 
 ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
@@ -81,6 +229,23 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     warning_->setWordWrap(true);
     layout->addWidget(warning_);
     layout->addWidget(separator());
+
+    // --- Profilo: scelte già pronte (o salvate con un nome)
+    {
+        auto* row = new QHBoxLayout;
+        row->addWidget(new QLabel(QStringLiteral("Profilo:")));
+        profile_ = new QComboBox;
+        row->addWidget(profile_, 1);
+        saveProfile_ = new QPushButton(QStringLiteral("Salva..."));
+        deleteProfile_ = new QPushButton(QStringLiteral("Elimina"));
+        row->addWidget(saveProfile_);
+        row->addWidget(deleteProfile_);
+        auto* holder = new QWidget;
+        holder->setLayout(row);
+        row->setContentsMargins(0, 0, 0, 0);
+        holder->setVisible(input_.montage);  // il taglio veloce non ricodifica: niente da scegliere
+        layout->addWidget(holder);
+    }
 
     // --- Intervallo
     layout->addWidget(heading(QStringLiteral("Intervallo")));
@@ -223,6 +388,7 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
         updating_ = true;
         cqSpin_->setValue(value);
         updating_ = false;
+        updateSummary();
     });
     connect(cqSpin_, &QSpinBox::valueChanged, this, [this](int value) {
         if (updating_)
@@ -231,7 +397,11 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
         updating_ = true;
         cqSlider_->setValue(value);
         updating_ = false;
+        updateSummary();
     });
+    connect(profile_, &QComboBox::currentIndexChanged, this, [this] { applyProfile(); });
+    connect(saveProfile_, &QPushButton::clicked, this, [this] { saveProfile(); });
+    connect(deleteProfile_, &QPushButton::clicked, this, [this] { deleteProfile(); });
     connect(codec_, &QComboBox::currentIndexChanged, this, [this] {
         if (updating_)
             return;
@@ -276,6 +446,7 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
             updateSummary();
     });
 
+    fillProfiles();
     updatePreview();
     updateAudio();
     updateDestination();
@@ -556,6 +727,7 @@ void ExportDialog::updatePreview()
 
 void ExportDialog::updateSummary()
 {
+    followProfile();
     const core::ExportPreview& p = preview_;
     range_->setText(input_.montage ? QStringLiteral("Tutto il montaggio (%1)").arg(timeText(p.outputSeconds))
                                    : QStringLiteral("Segmento IN-OUT (%1)").arg(timeText(p.outputSeconds)));
@@ -595,6 +767,8 @@ void ExportDialog::updateSummary()
         text += p.blackGaps == 1 ? QStringLiteral(", <b>1 spazio nero</b> (%1)").arg(timeText(p.blackSeconds))
                                  : QStringLiteral(", <b>%1 spazi neri</b> (%2)").arg(p.blackGaps).arg(timeText(p.blackSeconds));
     text += QStringLiteral(".<br>Durata del file: <b>%1</b>.").arg(timeText(p.outputSeconds));
+    if (const QString size = sizeText(); !size.isEmpty())
+        text += QStringLiteral(" Dimensione stimata: <b>%1</b> (stima molto approssimativa: dipende dal contenuto).").arg(size);
     if (includeAudio_->isChecked() && input_.mixedAudioFiles > 0) {
         const core::AudioCodec codec = selectedAudioCodec();
         text += QStringLiteral("<br>Audio: <b>mixato e ricodificato</b> in %1 %2 (%3 file audio), con livelli, linee del "
@@ -610,6 +784,183 @@ void ExportDialog::updateSummary()
         text += QStringLiteral("<br>I pezzi copiati non perdono niente; quelli ricodificati sono quasi uguali all'originale "
                                "con la qualità alta.");
     summary_->setText(text);
+}
+
+// Stima della dimensione: i pezzi copiati pesano quanto i file originali (bit/s medi), il resto si calcola dal codec, la
+// misura, i fotogrammi al secondo e il CQ scelti, più l'audio.
+QString ExportDialog::sizeText() const
+{
+    const core::ExportPreview& p = preview_;
+    if (!p.problem.empty() || p.outputSeconds <= 0.0)
+        return {};
+    const core::VideoChange change = videoChange();
+    core::SizeEstimateInput in;
+    in.codec = effectiveCodec().value_or(core::VideoCodec::H264);
+    in.width = change.width > 0 ? change.width : input_.sourceWidth;
+    in.height = change.height > 0 ? change.height : input_.sourceHeight;
+    in.frameRate = change.frameRate > 0.0 ? change.frameRate : input_.sourceFrameRate;
+    in.cq = cqSpin_->value();
+    in.copiedSeconds = p.copiedSeconds;
+    in.recodedSeconds = std::max(0.0, p.outputSeconds - p.copiedSeconds);
+    in.copiedBitRate = input_.sourceBitRate;
+    if (includeAudio_->isChecked()) {
+        const bool chosen = input_.mixedAudioFiles > 0 && audioCodec_->count() > 0;
+        in.recodedAudioBitRate = chosen ? (selectedAudioCodec() == core::AudioCodec::Flac ? 800000 : audioBitRate_->currentData().toInt() * 1000)
+                                        : 128000;
+    }
+    const std::int64_t bytes = core::estimateOutputBytes(in);
+    return bytes > 0 ? QStringLiteral("circa %1").arg(sizeLabel(bytes)) : QString();
+}
+
+void ExportDialog::fillProfiles(const QString& select)
+{
+    const QSignalBlocker blocker(profile_);
+    profile_->clear();
+    profile_->addItem(QStringLiteral("Personalizzato"), QString());
+    for (const Profile& p : builtinProfiles())
+        profile_->addItem(p.name, p.name);
+    for (const Profile& p : savedProfiles())
+        profile_->addItem(p.name + QStringLiteral(" (mio)"), p.name);
+    if (const int at = profile_->findData(select); at >= 0 && !select.isEmpty())
+        profile_->setCurrentIndex(at);
+    const std::optional<Profile> chosen = profileNamed(profile_->currentData().toString());
+    deleteProfile_->setEnabled(chosen && !chosen->builtin);
+}
+
+// Le scelte attuali della finestra come profilo (senza nome).
+static Profile currentChoices(const ExportDialog& dialog, bool includeAudio, const QString& preset, int cq)
+{
+    Profile p;
+    p.container = dialog.containerCombo()->currentData().toString();
+    p.codec = dialog.codecCombo()->currentData().toInt();
+    p.resolution = dialog.resolutionCombo()->currentData().toString();
+    p.frameRate = dialog.frameRateCombo()->currentData().toDouble();
+    p.decoder = dialog.decoderCombo()->currentData().toInt();
+    p.preset = preset;
+    p.cq = cq;
+    p.includeAudio = includeAudio;
+    p.audioCodec = dialog.audioCodecCombo()->count() > 0 ? dialog.audioCodecCombo()->currentData().toInt() : -1;
+    return p;
+}
+
+void ExportDialog::applyProfile()
+{
+    const std::optional<Profile> chosen = profileNamed(profile_->currentData().toString());
+    deleteProfile_->setEnabled(chosen && !chosen->builtin);
+    if (!chosen) {
+        appliedKey_.clear();
+        return;
+    }
+    const Profile& p = *chosen;
+    applyingProfile_ = true;
+    updating_ = true;
+    const auto select = [](QComboBox* box, const QVariant& data) {
+        const int at = box->findData(data);
+        if (at >= 0)
+            box->setCurrentIndex(at);
+        return at >= 0;
+    };
+    if (container_->isEnabled())
+        select(container_, p.container);
+    if (codec_->isEnabled())
+        select(codec_, p.codec);
+    if (resolution_->isEnabled()) {
+        // Un'altezza fissa più grande di quella dei file non si usa: ingrandire non migliora niente.
+        QString size = p.resolution;
+        if (size.startsWith(QLatin1Char('h')) && input_.sourceHeight > 0 && size.mid(1).toInt() >= input_.sourceHeight)
+            size.clear();
+        select(resolution_, size);
+    }
+    if (frameRate_->isEnabled())
+        select(frameRate_, p.frameRate);
+    select(decoder_, p.decoder);
+
+    fillEncoders();
+    updateEncoder();
+    if (p.cq > 0) {
+        cqCustom_ = true;
+        cqSpin_->setValue(p.cq);
+        cqSlider_->setValue(cqSpin_->value());
+    } else {
+        cqCustom_ = false;
+        updateEncoder();
+    }
+    select(preset_, p.preset);
+
+    {
+        const QSignalBlocker blocker(includeAudio_);
+        includeAudio_->setChecked(p.includeAudio);
+    }
+    fillAudioCodecs();  // quelli che il contenitore scelto può avere
+    if (p.audioCodec >= 0 && select(audioCodec_, p.audioCodec))
+        fillAudioBitRates();
+    if (p.audioKbps > 0)
+        select(audioBitRate_, p.audioKbps);
+    updating_ = false;
+
+    changeContainer();  // il nome della destinazione segue il contenitore; ricalcola il riepilogo
+    updateAudio();
+    appliedKey_ = profileKey(currentChoices(*this, includeAudio_->isChecked(), preset_->currentData().toString(), cqCustom_ ? cqSpin_->value() : 0));
+    applyingProfile_ = false;
+    updateSummary();
+}
+
+void ExportDialog::followProfile()
+{
+    if (applyingProfile_ || profile_ == nullptr || profile_->currentIndex() <= 0 || cqSpin_ == nullptr || preset_ == nullptr)
+        return;
+    const QString now = profileKey(currentChoices(*this, includeAudio_->isChecked(), preset_->currentData().toString(), cqCustom_ ? cqSpin_->value() : 0));
+    if (now == appliedKey_)
+        return;
+    const QSignalBlocker blocker(profile_);
+    profile_->setCurrentIndex(0);
+    deleteProfile_->setEnabled(false);
+}
+
+void ExportDialog::saveProfile()
+{
+    const std::optional<Profile> current = profileNamed(profile_->currentData().toString());
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, QStringLiteral("Salva profilo"), QStringLiteral("Nome del profilo:"), QLineEdit::Normal,
+                                               current && !current->builtin ? current->name : QString(), &ok)
+                             .trimmed();
+    if (!ok || name.isEmpty())
+        return;
+    for (const Profile& builtin : builtinProfiles()) {
+        if (builtin.name.compare(name, Qt::CaseInsensitive) == 0) {
+            QMessageBox::warning(this, QStringLiteral("Salva profilo"),
+                                 QStringLiteral("«%1» è un profilo pronto e non si può sostituire: scegli un altro nome.").arg(name));
+            return;
+        }
+    }
+    Profile p = currentChoices(*this, includeAudio_->isChecked(), preset_->currentData().toString(), cqCustom_ ? cqSpin_->value() : 0);
+    p.name = name;
+    p.audioKbps = audioBitRate_->count() > 0 ? audioBitRate_->currentData().toInt() : 0;
+    std::vector<Profile> saved = savedProfiles();
+    const auto same = std::find_if(saved.begin(), saved.end(), [&](const Profile& s) { return s.name.compare(name, Qt::CaseInsensitive) == 0; });
+    if (same != saved.end())
+        *same = p;
+    else
+        saved.push_back(p);
+    storeProfiles(saved);
+    const QString stored = same != saved.end() ? same->name : name;
+    fillProfiles(stored);
+    appliedKey_ = profileKey(currentChoices(*this, includeAudio_->isChecked(), preset_->currentData().toString(), cqCustom_ ? cqSpin_->value() : 0));
+}
+
+void ExportDialog::deleteProfile()
+{
+    const std::optional<Profile> current = profileNamed(profile_->currentData().toString());
+    if (!current || current->builtin)
+        return;
+    if (QMessageBox::question(this, QStringLiteral("Elimina profilo"), QStringLiteral("Eliminare il profilo «%1»?").arg(current->name)) !=
+        QMessageBox::Yes)
+        return;
+    std::vector<Profile> saved = savedProfiles();
+    saved.erase(std::remove_if(saved.begin(), saved.end(), [&](const Profile& s) { return s.name == current->name; }), saved.end());
+    storeProfiles(saved);
+    fillProfiles();
+    appliedKey_.clear();
 }
 
 }  // namespace editor::app

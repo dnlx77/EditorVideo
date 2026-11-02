@@ -34,6 +34,7 @@ struct ExportDialogInput
     int sourceWidth = 0;                           // misura e fotogrammi al secondo del formato del progetto
     int sourceHeight = 0;
     double sourceFrameRate = 0.0;
+    double sourceBitRate = 0.0;                    // bit/s medi dei file usati (per stimare la dimensione), 0 = sconosciuto
     core::ReencodeOptions options;                 // le scelte di partenza
     // Il riepilogo di quello che farebbe l'esportazione con queste scelte (copiati, ricodificati, durata, problemi).
     std::function<core::ExportPreview(const core::ReencodeOptions&)> preview;
@@ -59,6 +60,8 @@ public:
     QComboBox* encoderCombo() const { return encoder_; }
     QComboBox* codecCombo() const { return codec_; }
     QComboBox* decoderCombo() const { return decoder_; }
+    QComboBox* profileCombo() const { return profile_; }
+    QString sizeText() const;  // la stima della dimensione del file, come si legge nel riepilogo
     QComboBox* resolutionCombo() const { return resolution_; }
     QComboBox* frameRateCombo() const { return frameRate_; }
     QComboBox* containerCombo() const { return container_; }
@@ -78,6 +81,11 @@ private:
     void fillAudioCodecs();    // quelli che il contenitore scelto può avere
     void changeContainer();    // l'estensione della destinazione segue il contenitore
     void updateAudio();        // quali scelte audio hanno effetto
+    void fillProfiles(const QString& select = QString());  // i profili: quelli pronti e quelli salvati
+    void applyProfile();       // mette nella finestra le scelte del profilo scelto
+    void saveProfile();        // salva le scelte attuali con un nome
+    void deleteProfile();
+    void followProfile();      // se le scelte non sono più quelle del profilo, torna a "Personalizzato"
 
     // L'encoder che si userebbe con la scelta attuale (nessuna scelta = il primo funzionante).
     std::optional<core::VideoEncoderInfo> effectiveEncoder() const;
@@ -92,7 +100,12 @@ private:
     std::vector<core::VideoEncoderInfo> encoders_;  // quelli del codec del progetto, nell'ordine del menu
     bool cqCustom_ = false;
     bool updating_ = false;
+    bool applyingProfile_ = false;
+    QString appliedKey_;  // le scelte del profilo appena applicato (per accorgersi che sono cambiate)
 
+    QComboBox* profile_ = nullptr;
+    QPushButton* saveProfile_ = nullptr;
+    QPushButton* deleteProfile_ = nullptr;
     QLineEdit* destination_ = nullptr;
     QLabel* warning_ = nullptr;
     QLabel* range_ = nullptr;
