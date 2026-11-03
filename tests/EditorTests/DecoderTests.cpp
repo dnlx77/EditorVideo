@@ -3,6 +3,7 @@
 #include "EditorCore/Project.h"
 #include "EditorCore/ProjectFile.h"
 #include "EditorCore/VideoDecoder.h"
+#include "MediaChecks.h"
 #include "SampleMedia.h"
 
 #include <gtest/gtest.h>
@@ -44,14 +45,6 @@ public:
     }
 
 protected:
-    // Luminanza (Y, range TV) del pixel (x, y), ricavata dal grigio BGRA del fotogramma.
-    static double lumaAt(const VideoFrame& frame, int x, int y)
-    {
-        const std::uint8_t* p = frame.pixels.data() + static_cast<std::size_t>(y) * frame.stride + x * 4;
-        const double gray = (p[0] + p[1] + p[2]) / 3.0;
-        return 16.0 + gray * 219.0 / 255.0;
-    }
-
     // Verifica che `frame` sia il fotogramma numero `index` del file di prova (tempo e contenuto).
     static void expectFrame(const std::shared_ptr<VideoFrame>& frame, int index, int sourceWidth, int sourceHeight)
     {
@@ -61,7 +54,7 @@ protected:
         const int y = frame->height / 2;
         const int sx = x * sourceWidth / frame->width;
         const int sy = y * sourceHeight / frame->height;
-        EXPECT_NEAR(lumaAt(*frame, x, y), sampleLuma(sx, sy, index), 2.5) << "contenuto del fotogramma " << index;
+        EXPECT_NEAR(editor::tests::lumaAt(*frame, x, y), sampleLuma(sx, sy, index), 2.5) << "contenuto del fotogramma " << index;
     }
 };
 
