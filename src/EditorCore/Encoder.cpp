@@ -565,10 +565,8 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
     const AVFrame* source = frame;
     if (frame->hw_frames_ctx != nullptr) {
         software.reset(av_frame_alloc());
-        const int ret = av_hwframe_transfer_data(software.get(), frame, 0);
-        if (ret < 0)
+        if (const int ret = downloadHardwareFrame(software.get(), frame); ret < 0)
             throw MediaError("Fotogramma della scheda video non leggibile: " + ffmpegError(ret));
-        av_frame_copy_props(software.get(), frame);
         source = software.get();
     }
 
@@ -584,24 +582,14 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
         // proporzioni dei suoi pixel): se sono diverse da quelle del video codificato, bande nere ai lati o sopra e sotto.
         work = impl_->converted.get();
         prepareBuffer(work, ctx->pix_fmt, ctx->width, ctx->height);
-        const AVRational sar = source->sample_aspect_ratio.num > 0 ? source->sample_aspect_ratio : AVRational{1, 1};
-        const double aspect = static_cast<double>(source->width) * sar.num / (static_cast<double>(source->height) * sar.den);
-        int width = ctx->width;
-        int height = ctx->height;
-        if (aspect > static_cast<double>(ctx->width) / ctx->height + 1e-3)
-            height = std::min(ctx->height, static_cast<int>(std::lround(ctx->width / aspect / 2.0)) * 2);
-        else if (aspect < static_cast<double>(ctx->width) / ctx->height - 1e-3)
-            width = std::min(ctx->width, static_cast<int>(std::lround(ctx->height * aspect / 2.0)) * 2);
-        // I formati "J" (es. yuvj420p, dei video dei telefoni e di alcuni registratori) sono quelli normali a gamma piena:
-        // la conversione va detta così, altrimenti i colori escono un po' sbiaditi o troppo contrastati.
+        const FittedSize fit = fitInto(source, ctx->width, ctx->height);
+        const int width = fit.width;
+        const int height = fit.height;
+        // I formati "J" sono a gamma piena: la conversione va detta così, altrimenti i colori escono un po' sbiaditi o
+        // troppo contrastati.
         AVPixelFormat sourceFormat = static_cast<AVPixelFormat>(source->format);
         bool fullRange = source->color_range == AVCOL_RANGE_JPEG;
-        switch (sourceFormat) {
-        case AV_PIX_FMT_YUVJ420P: sourceFormat = AV_PIX_FMT_YUV420P; fullRange = true; break;
-        case AV_PIX_FMT_YUVJ422P: sourceFormat = AV_PIX_FMT_YUV422P; fullRange = true; break;
-        case AV_PIX_FMT_YUVJ444P: sourceFormat = AV_PIX_FMT_YUV444P; fullRange = true; break;
-        default: break;
-        }
+        normalizeJpegRange(sourceFormat, fullRange);
         impl_->sws.reset(sws_getCachedContext(impl_->sws.release(), source->width, source->height, sourceFormat, width, height,
                                               ctx->pix_fmt, SWS_BICUBIC, nullptr, nullptr, nullptr));
         if (!impl_->sws)
@@ -622,8 +610,8 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
             // Nero dappertutto, poi l'immagine al centro (in posizioni pari, per il colore sottocampionato).
             const std::ptrdiff_t linesizes[4] = {work->linesize[0], work->linesize[1], work->linesize[2], work->linesize[3]};
             av_image_fill_black(work->data, linesizes, ctx->pix_fmt, AVCOL_RANGE_MPEG, ctx->width, ctx->height);
-            const int x = (ctx->width - width) / 2 & ~1;
-            const int y = (ctx->height - height) / 2 & ~1;
+            const int x = fit.x;
+            const int y = fit.y;
             const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(ctx->pix_fmt);
             for (int plane = 0; plane < av_pix_fmt_count_planes(ctx->pix_fmt); ++plane) {
                 const bool chroma = plane == 1 || plane == 2;

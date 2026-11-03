@@ -11,7 +11,9 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -123,6 +125,44 @@ void seekStream(AVFormatContext* fmt, int index, double seconds, double startOff
 
 // Durata in secondi: quella del file, altrimenti quella del flusso; -1 se sconosciuta.
 double durationOf(const AVFormatContext* fmt, const AVStream* stream);
+
+// Misura "pari" (almeno 2) più vicina a `value`: i formati con colore sottocampionato non accettano misure dispari.
+inline int evenSize(double value)
+{
+    return std::max(2, static_cast<int>(std::lround(value / 2.0)) * 2);
+}
+
+// Dove sta un'immagine di `source` dentro un riquadro `boxWidth` x `boxHeight`, mantenendo le sue proporzioni (con le
+// proporzioni dei suoi pixel): se sono diverse da quelle del riquadro, bande nere ai lati o sopra e sotto. Misure e
+// posizione sono pari (per il colore sottocampionato).
+struct FittedSize
+{
+    int width = 0;
+    int height = 0;
+    int x = 0;
+    int y = 0;
+};
+FittedSize fitInto(const AVFrame* source, int boxWidth, int boxHeight);
+
+// I formati "J" (es. yuvj420p, dei video dei telefoni e di alcuni registratori) sono quelli normali a gamma piena: li
+// porta al formato normale e mette `fullRange`, così la conversione dei colori è giusta.
+void normalizeJpegRange(AVPixelFormat& format, bool& fullRange);
+
+// --- Decodifica con la scheda video (D3D11VA)
+
+// Formato dei fotogrammi con cui il codec decodifica su D3D11 (AV_PIX_FMT_NONE: il codec non lo sa fare).
+AVPixelFormat d3d11FormatFor(const AVCodec* codec);
+
+// Crea il dispositivo D3D11 per la decodifica; nullptr se non c'è una scheda compatibile. Da liberare con av_buffer_unref.
+AVBufferRef* createD3d11Device();
+
+// get_format di un decoder con la GPU: `wanted` (il formato D3D11) se il decoder lo offre, altrimenti il primo formato
+// software. `hardware` (se c'è) dice quale dei due. AV_PIX_FMT_NONE se non c'è niente.
+AVPixelFormat chooseDecoderFormat(const AVPixelFormat* formats, AVPixelFormat wanted, bool* hardware = nullptr);
+
+// Copia in memoria normale (di solito NV12) un fotogramma decodificato dalla GPU, con le sue proprietà (tempi, colori).
+// Restituisce un codice di errore FFmpeg negativo se non riesce.
+int downloadHardwareFrame(AVFrame* software, const AVFrame* hardware);
 
 // Disposizione dei canali in testo, es. "stereo", "5.1(side)". Alcuni contenitori (es. PCM in Matroska) non la
 // salvano: in quel caso si usa quella standard per quel numero di canali ("stereo" invece di "2 channels").
