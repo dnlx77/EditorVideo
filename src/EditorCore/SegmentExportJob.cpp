@@ -527,6 +527,14 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
                 throw MediaError(kOutOfMemory);
+        } else if (piece.transformed) {
+            // Tratto trasformato: scala, posizione, rotazione e ritaglio sul fotogramma, poi le scritte (se ci sono).
+            if (!blender_)
+                blender_ = std::make_unique<TextFrameBlender>(format.width, format.height, blendPixelFormat(format));
+            const AVFrame* blended = blender_->blendTransformed(frame, piece.transform, texts);
+            av_frame_unref(emitted.get());
+            if (av_frame_ref(emitted.get(), blended) < 0)
+                throw MediaError(kOutOfMemory);
         } else if (!texts.empty()) {
             // Sotto una scritta: il fotogramma passa dal disegno del testo.
             const AVFrame* blended = withText(frame, texts);
@@ -892,6 +900,8 @@ ExportResult ExportJob::run()
                             ++result_.reencodedSegments;
                         else if (piece.transition >= 0)
                             ++result_.transitionSegments;
+                        else if (piece.transformed)
+                            ++result_.transformSegments;
                         else if (piece.text)
                             ++result_.textSegments;
                         else

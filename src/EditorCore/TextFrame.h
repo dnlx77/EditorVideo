@@ -2,6 +2,7 @@
 
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/TextImage.h"
+#include "EditorCore/Transform.h"
 
 #include <cstdint>
 #include <vector>
@@ -35,6 +36,11 @@ public:
     const AVFrame* blendRaster(const std::uint8_t* bgra, int stride, int width, int height, const std::vector<BlendedText>& texts,
                                const AVFrame* props);
 
+    // Come blend(), ma `source` prima si trasforma (scala, posizione, rotazione, ritaglio: vedi compositeLayer) e si disegna
+    // sul nero a piena risoluzione; poi le scritte sopra. Una trasformazione nulla dà come blend() (le bande nere sono
+    // quelle dell'adattamento al fotogramma del progetto).
+    const AVFrame* blendTransformed(const AVFrame* source, const Transform& transform, const std::vector<BlendedText>& texts);
+
 private:
     const AVFrame* toYuv(const std::vector<BlendedText>& texts, const AVFrame* props);
 
@@ -42,6 +48,7 @@ private:
     int height_;
     AVPixelFormat pixelFormat_;
     std::vector<std::uint8_t> rgba_;
+    std::vector<std::uint8_t> layer_;  // il fotogramma originale in RGBA, per blendTransformed
     detail::FramePtr software_;  // per i fotogrammi della scheda video
     detail::FramePtr output_;
     std::unique_ptr<SwsContext, detail::SwsDeleter> toRgba_;

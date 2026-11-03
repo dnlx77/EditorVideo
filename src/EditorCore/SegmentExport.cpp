@@ -126,6 +126,9 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
                     if (piece.transition >= 0) {
                         ++preview.transitionSegments;
                         preview.transitionSeconds += piece.range.length();
+                    } else if (piece.transformed) {
+                        ++preview.transformSegments;
+                        preview.transformSeconds += piece.range.length();
                     } else if (piece.text) {
                         ++preview.textSegments;
                         preview.textSeconds += piece.range.length();

@@ -157,6 +157,10 @@ struct Piece
     // `transitionEnding` = è la parte che finisce nella giunzione (il tratto prima), altrimenti quella che comincia.
     int transition = -1;
     bool transitionEnding = false;
+    // Ricodificata perché il tratto ha una trasformazione (scala, posizione...): `transform` si applica al fotogramma
+    // prima delle scritte.
+    bool transformed = false;
+    Transform transform;
 };
 
 // Taglio preciso di un tratto copiato (vedi exportClips): ricodificati i bordi fra IN e il primo fotogramma chiave e, con
@@ -204,6 +208,12 @@ struct PlanAnalysis
 inline double gapBefore(const ClipRanges& clip, std::size_t r)
 {
     return r < clip.gapsBefore.size() ? std::max(0.0, clip.gapsBefore[r]) : 0.0;
+}
+
+// Trasformazione del tratto `r` di `clip` (nessuna se il piano non ne ha).
+inline Transform transformOf(const ClipRanges& clip, std::size_t r)
+{
+    return r < clip.transforms.size() ? normalized(clip.transforms[r]) : Transform{};
 }
 
 PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectFormat* format, bool replaced, bool reencodeAll,

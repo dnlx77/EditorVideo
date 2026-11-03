@@ -1,5 +1,6 @@
 #include "EditorCore/TextFrame.h"
 
+#include "EditorCore/Compositor.h"
 #include "EditorCore/MediaError.h"
 
 #include <algorithm>
@@ -66,6 +67,48 @@ const AVFrame* TextFrameBlender::blend(const AVFrame* frame, const std::vector<B
     const int destinationStride[4] = {width_ * 4, 0, 0, 0};
     sws_scale(toRgba_.get(), source->data, source->linesize, 0, source->height, destination, destinationStride);
 
+    return toYuv(texts, frame);
+}
+
+const AVFrame* TextFrameBlender::blendTransformed(const AVFrame* frame, const Transform& transform,
+                                                  const std::vector<BlendedText>& texts)
+{
+    if (transform.isIdentity())
+        return blend(frame, texts);
+    const AVFrame* source = frame;
+    if (frame->hw_frames_ctx != nullptr) {
+        if (const int ret = detail::downloadHardwareFrame(software_.get(), frame); ret < 0)
+            throw MediaError("Fotogramma della scheda video non leggibile: " + detail::ffmpegError(ret));
+        source = software_.get();
+    }
+    const int sourceWidth = source->width;
+    const int sourceHeight = source->height;
+    AVPixelFormat sourceFormat = static_cast<AVPixelFormat>(source->format);
+    bool fullRange = source->color_range == AVCOL_RANGE_JPEG;
+    detail::normalizeJpegRange(sourceFormat, fullRange);
+    // Il fotogramma originale in RGBA alla sua misura (la qualità piena, non quella adattata al progetto).
+    toRgba_.reset(sws_getCachedContext(toRgba_.release(), sourceWidth, sourceHeight, sourceFormat, sourceWidth, sourceHeight,
+                                       AV_PIX_FMT_RGBA, SWS_BICUBIC, nullptr, nullptr, nullptr));
+    toYuv_.reset(sws_getCachedContext(toYuv_.release(), width_, height_, AV_PIX_FMT_RGBA, width_, height_, pixelFormat_,
+                                      SWS_BICUBIC, nullptr, nullptr, nullptr));
+    if (!toRgba_ || !toYuv_)
+        throw MediaError("Conversione del fotogramma da codificare non possibile.");
+    const int* coefficients = sws_getCoefficients(SWS_CS_DEFAULT);
+    sws_setColorspaceDetails(toRgba_.get(), coefficients, fullRange ? 1 : 0, coefficients, 1, 0, 1 << 16, 1 << 16);
+    sws_setColorspaceDetails(toYuv_.get(), coefficients, 1, coefficients, 0, 0, 1 << 16, 1 << 16);
+
+    layer_.resize(static_cast<std::size_t>(sourceWidth) * sourceHeight * 4);
+    std::uint8_t* layerPlanes[4] = {layer_.data(), nullptr, nullptr, nullptr};
+    const int layerStride[4] = {sourceWidth * 4, 0, 0, 0};
+    sws_scale(toRgba_.get(), source->data, source->linesize, 0, sourceHeight, layerPlanes, layerStride);
+
+    for (std::size_t i = 0; i < rgba_.size(); i += 4) {
+        rgba_[i] = rgba_[i + 1] = rgba_[i + 2] = 0;
+        rgba_[i + 3] = 255;
+    }
+    // compositeLayer non guarda i canali: RGBA si comporta come BGRA.
+    compositeLayer(rgba_.data(), width_ * 4, width_, height_, BgraImage{layer_.data(), sourceWidth * 4, sourceWidth, sourceHeight},
+                   transform);
     return toYuv(texts, frame);
 }
 
