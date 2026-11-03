@@ -32,7 +32,7 @@ public:
     // si interrompe solo il proxy di quel file (se era in creazione); gli altri vanno avanti.
     void setDivisor(const QString& original, int divisor);
     int divisor(const QString& original) const;
-    const std::map<QString, int>& divisors() const { return divisors_; }  // solo i file con un proxy (2, 4, 8)
+    bool hasAny() const { return !divisors_.empty(); }  // almeno un file con un proxy (2, 4, 8)
     void clearDivisors();  // tutti i file tornano all'originale (es. nuovo progetto)
 
     // Il file da cui leggere il video di `original`: il suo proxy della qualità scelta se è pronto, altrimenti un suo

@@ -346,8 +346,8 @@ TEST(TextGroups, SplitAndRemoveGroupMembers)
     EXPECT_EQ(m.project.textTracks().find(m.a), nullptr);
     EXPECT_NE(m.project.textTracks().find(m.c), nullptr);
     // Il gruppo perde l'oggetto tolto ma resta valido.
-    for (const auto& group : m.project.validGroups())
-        EXPECT_GE(group.size(), 2u);
+    for (const auto& group : m.project.validGroupList())
+        EXPECT_GE(group.members.size(), 2u);
 }
 
 TEST(TextGroups, UngroupDissolvesWithoutTouchingTheAudioOfPieces)

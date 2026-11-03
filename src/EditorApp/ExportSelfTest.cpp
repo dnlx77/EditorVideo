@@ -24,12 +24,7 @@ namespace core = editor::core;
 // controllo non riesce.
 int runExportPanelTest(const QStringList&, qsizetype)
 {
-    int failures = 0;
-    const auto check = [&](bool ok, const char* what) {
-        std::printf("  %s: %s\n", ok ? "OK" : "NO", what);
-        if (!ok)
-            ++failures;
-    };
+    SelfCheck check;
     std::printf("Prova della finestra Esporta\n");
 
     QTemporaryDir folder;
@@ -220,8 +215,8 @@ int runExportPanelTest(const QStringList&, qsizetype)
         check(dialog.canExport(), "il taglio veloce si esporta");
     }
 
-    std::printf("%s\n", failures == 0 ? "Tutto giusto" : "Qualcosa non va");
-    return failures == 0 ? 0 : 3;
+    std::printf("%s\n", check.failures() == 0 ? "Tutto giusto" : "Qualcosa non va");
+    return check.failures() == 0 ? 0 : 3;
 }
 
 }  // namespace editor::app

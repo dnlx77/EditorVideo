@@ -244,8 +244,7 @@ TEST_F(DecoderTest, Mpeg2DecodesWithGpuWhenAvailable)
     // Con una scheda video compatibile si usa D3D11VA, altrimenti il software: il risultato deve essere lo stesso.
     VideoDecoder decoder(path("mpeg2.mkv"));
     expectFrame(decoder.seek(0.61), 15, 320, 240);
-    std::cout << "[ INFO     ] MPEG-2 decodificato con: " << decoder.decoderDescription()
-              << (hardwareDecodingCompiledIn() ? "" : " (FFmpeg senza D3D11VA)") << '\n';
+    std::cout << "[ INFO     ] MPEG-2 decodificato con: " << decoder.decoderDescription() << '\n';
 
     expectFrame(decoder.seek(0.0), 0, 320, 240);
     int count = 1;

@@ -608,14 +608,4 @@ std::shared_ptr<VideoFrame> VideoDecoder::nextFrame()
     }
 }
 
-bool hardwareDecodingCompiledIn()
-{
-    for (AVHWDeviceType type = av_hwdevice_iterate_types(AV_HWDEVICE_TYPE_NONE); type != AV_HWDEVICE_TYPE_NONE;
-         type = av_hwdevice_iterate_types(type)) {
-        if (type == AV_HWDEVICE_TYPE_D3D11VA)
-            return true;
-    }
-    return false;
-}
-
 }  // namespace editor::core

@@ -30,12 +30,7 @@ namespace core = editor::core;
 // Codice 0 se tutto è giusto, 3 se un controllo non riesce.
 int runTransitionTest(const QStringList&, qsizetype)
 {
-    int failures = 0;
-    const auto check = [&](bool ok, const char* what) {
-        std::printf("  %s: %s\n", ok ? "OK" : "NO", what);
-        if (!ok)
-            ++failures;
-    };
+    SelfCheck check;
     std::printf("Prova dell'elenco delle transizioni\n");
 
     const auto& registry = core::transitionRegistry();
@@ -258,8 +253,8 @@ int runTransitionTest(const QStringList&, qsizetype)
     window.showSourcePlayer();
     check(window.sourceStack()->currentWidget() == window.player(), "scegliendo un file torna il lettore");
 
-    std::printf(failures == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", failures);
-    return failures == 0 ? 0 : 3;
+    std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
+    return check.failures() == 0 ? 0 : 3;
 }
 
 }  // namespace editor::app

@@ -325,7 +325,7 @@ void MainWindow::deleteProxies()
         != QMessageBox::Yes)
         return;
     // Prima le anteprime tornano agli originali (un file aperto non si può cancellare), poi si cancella.
-    if (!proxies_->divisors().empty())
+    if (proxies_->hasAny())
         setModified(true);
     proxies_->clearDivisors();
     syncQualityMenus();

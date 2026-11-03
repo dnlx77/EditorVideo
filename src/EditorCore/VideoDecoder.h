@@ -79,7 +79,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// true se FFmpeg è stato compilato con il supporto D3D11VA.
-bool hardwareDecodingCompiledIn();
-
 }  // namespace editor::core

@@ -76,12 +76,7 @@ core::TextClip clipWith(const char* text)
 int runTextTest(const QStringList&, qsizetype)
 {
     const QtTextRenderer renderer;
-    int failures = 0;
-    const auto check = [&](bool ok, const char* what) {
-        std::printf("%s: %s\n", ok ? "ok" : "ERRORE", what);
-        if (!ok)
-            ++failures;
-    };
+    SelfCheck check;
     constexpr int W = 640;
     constexpr int H = 360;
 
@@ -436,8 +431,8 @@ int runTextTest(const QStringList&, qsizetype)
               "il riquadro della scritta contiene il suo centro e sta dentro il fotogramma");
     }
 
-    std::printf(failures == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", failures);
-    return failures == 0 ? 0 : 3;
+    std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
+    return check.failures() == 0 ? 0 : 3;
 }
 
 }  // namespace editor::app

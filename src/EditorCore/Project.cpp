@@ -384,21 +384,6 @@ std::vector<ObjectGroup> Project::validGroupList() const
     return result;
 }
 
-std::vector<std::vector<ObjectRef>> Project::validGroups() const
-{
-    std::vector<std::vector<ObjectRef>> result;
-    for (const ObjectGroup& g : groups_.all()) {
-        std::vector<ObjectRef> members;
-        for (const ObjectRef& o : g.members) {
-            if (objectExists(o))
-                members.push_back(o);
-        }
-        if (members.size() >= 2)
-            result.push_back(std::move(members));
-    }
-    return result;
-}
-
 int Project::unlinkAudio(int fragmentId, int* track)
 {
     const Fragment* f = sequence_.find(fragmentId);
