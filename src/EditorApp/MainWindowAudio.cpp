@@ -22,6 +22,7 @@
 #include "EditorCore/TimeUtil.h"
 #include "EditorCore/Waveform.h"
 
+#include <unordered_map>
 #include <QtCore/QAbstractNativeEventFilter>
 #include <QtCore/QDir>
 #include <QtCore/QElapsedTimer>
@@ -495,6 +496,12 @@ void MainWindow::refreshGroups()
         return;
     using Kind = core::ObjectRef::Kind;
     const core::Sequence& sequence = project_.sequence();
+    // L'inizio di ogni pezzo, calcolato una volta sola (startOf per ogni riga sarebbe quadratico).
+    const std::vector<double> starts = sequence.starts();
+    std::unordered_map<int, double> startOfPiece;
+    startOfPiece.reserve(starts.size());
+    for (std::size_t i = 0; i < starts.size(); ++i)
+        startOfPiece.emplace(sequence.fragments()[i].id, starts[i]);
     const auto entryFor = [&](core::ObjectRef ref) {
         GroupEntry entry;
         entry.ref = ref;
@@ -503,7 +510,8 @@ void MainWindow::refreshGroups()
             const core::Clip* clip = f != nullptr ? project_.find(f->clipId) : nullptr;
             entry.kind = ref.kind == Kind::Piece ? QStringLiteral("Video") : QStringLiteral("Audio del video");
             entry.name = clip != nullptr ? fileNameOf(clip->path) : QString();
-            entry.start = sequence.startOf(sequence.indexOf(ref.id));
+            if (const auto found = startOfPiece.find(ref.id); found != startOfPiece.end())
+                entry.start = found->second;
         } else if (ref.kind == Kind::AudioClip) {
             const core::AudioClip* clip = project_.audioTracks().find(ref.id);
             entry.kind = QStringLiteral("Audio");

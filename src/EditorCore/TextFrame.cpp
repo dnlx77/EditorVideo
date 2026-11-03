@@ -9,16 +9,17 @@ namespace editor::core {
 
 using detail::FramePtr;
 
-TextFrameBlender::TextFrameBlender(int width, int height)
+TextFrameBlender::TextFrameBlender(int width, int height, AVPixelFormat pixelFormat)
     : width_(width)
     , height_(height)
+    , pixelFormat_(pixelFormat)
     , rgba_(static_cast<std::size_t>(width) * height * 4)
     , software_(av_frame_alloc())
     , output_(av_frame_alloc())
 {
     if (!software_ || !output_)
         throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
-    output_->format = AV_PIX_FMT_YUV420P;
+    output_->format = pixelFormat_;
     output_->width = width;
     output_->height = height;
     if (av_frame_get_buffer(output_.get(), 0) < 0)
@@ -48,7 +49,7 @@ const AVFrame* TextFrameBlender::blend(const AVFrame* frame, const std::vector<B
     detail::normalizeJpegRange(sourceFormat, fullRange);
     toRgba_.reset(sws_getCachedContext(toRgba_.release(), source->width, source->height, sourceFormat, width, height,
                                        AV_PIX_FMT_RGBA, SWS_BICUBIC, nullptr, nullptr, nullptr));
-    toYuv_.reset(sws_getCachedContext(toYuv_.release(), width_, height_, AV_PIX_FMT_RGBA, width_, height_, AV_PIX_FMT_YUV420P,
+    toYuv_.reset(sws_getCachedContext(toYuv_.release(), width_, height_, AV_PIX_FMT_RGBA, width_, height_, pixelFormat_,
                                       SWS_BICUBIC, nullptr, nullptr, nullptr));
     if (!toRgba_ || !toYuv_)
         throw MediaError("Conversione del fotogramma da codificare non possibile.");
@@ -83,7 +84,7 @@ const AVFrame* TextFrameBlender::blendRaster(const std::uint8_t* bgra, int strid
             out[3] = 255;
         }
     }
-    toYuv_.reset(sws_getCachedContext(toYuv_.release(), width_, height_, AV_PIX_FMT_RGBA, width_, height_, AV_PIX_FMT_YUV420P,
+    toYuv_.reset(sws_getCachedContext(toYuv_.release(), width_, height_, AV_PIX_FMT_RGBA, width_, height_, pixelFormat_,
                                       SWS_BICUBIC, nullptr, nullptr, nullptr));
     if (!toYuv_)
         throw MediaError("Conversione del fotogramma da codificare non possibile.");

@@ -9,7 +9,7 @@
 namespace editor::core {
 
 // Mette le scritte su un fotogramma da ricodificare (esportazione). Il fotogramma dell'originale diventa un fotogramma
-// YUV 4:2:0 della misura del progetto, con le stesse bande nere che metterebbe l'encoder se le proporzioni sono diverse,
+// YUV della misura del progetto, con le stesse bande nere che metterebbe l'encoder se le proporzioni sono diverse,
 // e le scritte fuse sopra (passando per RGBA). Serve solo per i fotogrammi con una scritta: gli altri vanno all'encoder
 // come sono.
 // Una scritta già disegnata e quanto si vede (0..1: le dissolvenze).
@@ -22,7 +22,9 @@ struct BlendedText
 class TextFrameBlender
 {
 public:
-    TextFrameBlender(int width, int height);
+    // `pixelFormat`: il formato dei fotogrammi che escono (di solito quello del progetto); le scritte si fondono in RGBA
+    // a 8 bit e poi si convertono, quindi in un formato a più bit cambia solo il formato di uscita.
+    TextFrameBlender(int width, int height, AVPixelFormat pixelFormat = AV_PIX_FMT_YUV420P);
 
     // `source` con `texts` sopra (nell'ordine dato: l'ultima è la più alta). Il risultato resta valido fino alla
     // prossima chiamata; ha i tempi (pts) e le proprietà di `source`.
@@ -38,6 +40,7 @@ private:
 
     int width_;
     int height_;
+    AVPixelFormat pixelFormat_;
     std::vector<std::uint8_t> rgba_;
     detail::FramePtr software_;  // per i fotogrammi della scheda video
     detail::FramePtr output_;

@@ -885,19 +885,30 @@ private:
     }
 };
 
+// Il formato dei pixel in cui si fondono scritte e transizioni: quello del progetto (così un progetto a 10 bit non
+// perde bit nei tratti con una scritta); se è sconosciuto o non si può produrre, YUV 4:2:0 a 8 bit.
+inline AVPixelFormat blendPixelFormat(const StreamSignature& format)
+{
+    const AVPixelFormat wanted = av_get_pix_fmt(format.pixelFormat.c_str());
+    if (wanted == AV_PIX_FMT_NONE || (av_pix_fmt_desc_get(wanted)->flags & AV_PIX_FMT_FLAG_HWACCEL) != 0 ||
+        sws_isSupportedOutput(wanted) == 0)
+        return AV_PIX_FMT_YUV420P;
+    return wanted;
+}
+
 // Fotogramma nero (gamma TV: luminanza 16, colore 128) della misura data.
-inline FramePtr makeBlackFrame(int width, int height)
+inline FramePtr makeBlackFrame(int width, int height, AVPixelFormat pixelFormat = AV_PIX_FMT_YUV420P)
 {
     FramePtr black(av_frame_alloc());
     if (!black)
         throw MediaError(kOutOfMemory);
-    black->format = AV_PIX_FMT_YUV420P;
+    black->format = pixelFormat;
     black->width = width;
     black->height = height;
     if (av_frame_get_buffer(black.get(), 0) < 0)
         throw MediaError(kOutOfMemory);
     const std::ptrdiff_t linesizes[4] = {black->linesize[0], black->linesize[1], black->linesize[2], black->linesize[3]};
-    av_image_fill_black(black->data, linesizes, AV_PIX_FMT_YUV420P, AVCOL_RANGE_MPEG, width, height);
+    av_image_fill_black(black->data, linesizes, pixelFormat, AVCOL_RANGE_MPEG, width, height);
     return black;
 }
 

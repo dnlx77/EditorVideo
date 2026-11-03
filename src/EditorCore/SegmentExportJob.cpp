@@ -522,7 +522,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             if (!mixed)
                 throw MediaError("La transizione non si riesce a fare: i file dei due pezzi non si leggono.");
             if (!blender_)
-                blender_ = std::make_unique<TextFrameBlender>(format.width, format.height);
+                blender_ = std::make_unique<TextFrameBlender>(format.width, format.height, blendPixelFormat(format));
             const AVFrame* blended = blender_->blendRaster(mixed->pixels.data(), mixed->stride, mixed->width, mixed->height, texts, frame);
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
@@ -683,7 +683,15 @@ std::vector<BlendedText> ExportJob::textsAt(double sequenceTime)
     if (reencode_.textRenderer == nullptr || plan_.reference.video() == nullptr)
         return images;
     const StreamSignature& format = *plan_.reference.video();
-    for (const TextClip* clip : reencode_.texts.visibleAt(sequenceTime)) {
+    const std::vector<const TextClip*> visible = reencode_.texts.visibleAt(sequenceTime);
+    // L'esportazione avanza nel tempo: le immagini delle scritte non più visibili si liberano (con molte scritte
+    // in un progetto lungo, altrimenti resterebbero tutte in memoria fino alla fine).
+    for (auto it = textImages_.begin(); it != textImages_.end();) {
+        const bool stillVisible = std::any_of(visible.begin(), visible.end(),
+                                              [&](const TextClip* clip) { return clip->id == it->first; });
+        it = stillVisible ? std::next(it) : textImages_.erase(it);
+    }
+    for (const TextClip* clip : visible) {
         auto found = textImages_.find(clip->id);
         if (found == textImages_.end())
             found = textImages_.emplace(clip->id, reencode_.textRenderer->render(*clip, format.width, format.height)).first;
@@ -699,7 +707,7 @@ const AVFrame* ExportJob::withText(const AVFrame* frame, const std::vector<Blend
 {
     if (!blender_) {
         const StreamSignature& format = *plan_.reference.video();
-        blender_ = std::make_unique<TextFrameBlender>(format.width, format.height);
+        blender_ = std::make_unique<TextFrameBlender>(format.width, format.height, blendPixelFormat(format));
     }
     return blender_->blend(frame, texts);
 }
@@ -721,7 +729,7 @@ std::pair<double, double> ExportJob::writeBlack(double seconds)
     ProjectVideoEncoder video(format, fps, Rational{1, kTicks}, reencode_);
     const PacketSink videoSink = videoSinkFor(video, std::llround(frameSeconds * kTicks), frameSeconds);
     // Il fotogramma nero è sempre lo stesso, cambia solo il tempo.
-    const FramePtr black = makeBlackFrame(format.width, format.height);
+    const FramePtr black = makeBlackFrame(format.width, format.height, blendPixelFormat(format));
     for (int k = 0; k < frames; ++k) {
         black->pts = std::llround((outputPosition_ + k * frameSeconds) * kTicks);
         const AVFrame* shown = black.get();

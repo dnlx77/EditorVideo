@@ -2,6 +2,7 @@
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/SegmentExport.h"
+#include "EditorCore/TextFrame.h"
 #include "EditorCore/TextImage.h"
 
 extern "C" {
@@ -44,6 +45,18 @@ public:
         image.rgba.assign(static_cast<std::size_t>(kBoxW) * kBoxH * 4, 255);
         return image;
     }
+};
+
+// Come WhiteBox, ma conta quante volte la scritta viene disegnata.
+class CountingBox : public WhiteBox
+{
+public:
+    TextImage render(const TextClip& clip, int w, int h) const override
+    {
+        ++renders;
+        return WhiteBox::render(clip, w, h);
+    }
+    mutable int renders = 0;
 };
 
 bool writeClip(const fs::path& path)
@@ -232,6 +245,53 @@ TEST_F(TextExport, OnlyTheFramesUnderTheTextAreReencodedWithTheTextOnTop)
             EXPECT_GT(d.inside[static_cast<std::size_t>(i)], 200);  // bianco (TV: 235)
         else if (i <= 34 || i >= 80)
             EXPECT_NEAR(d.inside[static_cast<std::size_t>(i)], 100, 6);
+    }
+}
+
+TEST_F(TextExport, ManyTextsAreEachDrawnOnceAndFreedAfterwards)
+{
+    // Tante scritte una dopo l'altra: ognuna si disegna una volta sola (le immagini già usate si liberano senza
+    // doverle rifare) e l'esportazione resta corretta.
+    TextTracks tracks;
+    const int layer = tracks.addLayer();
+    constexpr int kTexts = 6;
+    for (int i = 0; i < kTexts; ++i) {
+        TextClip clip;
+        clip.position = 0.1 + i * 0.6;
+        clip.length = 0.4;
+        clip.text = "A";
+        tracks.add(layer, clip);
+    }
+    const CountingBox renderer;
+    ReencodeOptions options;
+    options.texts = tracks;
+    options.textRenderer = &renderer;
+    const std::vector<ClipRanges> plan{{file("grigio.mp4"), {{0.0, 4.0}}}};
+    const fs::path out = dir_ / "tante.mp4";
+    const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
+    EXPECT_EQ(result.textSegments, kTexts);
+    EXPECT_EQ(renderer.renders, kTexts);
+    EXPECT_EQ(sample(out).errors, 0);
+}
+
+TEST(TextBlender, KeepsTheRequestedPixelFormat)
+{
+    // Il formato di uscita è quello chiesto (per esempio a 10 bit), non sempre YUV 4:2:0 a 8 bit.
+    constexpr int w = 64;
+    constexpr int h = 36;
+    for (const AVPixelFormat format : {AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV420P10LE}) {
+        SCOPED_TRACE(av_get_pix_fmt_name(format));
+        TextFrameBlender blender(w, h, format);
+        std::vector<std::uint8_t> bgra(static_cast<std::size_t>(w) * h * 4, 0);
+        for (std::size_t i = 3; i < bgra.size(); i += 4)
+            bgra[i] = 255;
+        AVFrame* props = av_frame_alloc();
+        props->pts = 7;
+        const AVFrame* out = blender.blendRaster(bgra.data(), w * 4, w, h, {}, props);
+        EXPECT_EQ(out->format, format);
+        EXPECT_EQ(out->width, w);
+        EXPECT_EQ(out->pts, 7);
+        av_frame_free(&props);
     }
 }
 
