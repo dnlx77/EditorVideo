@@ -109,6 +109,7 @@
     <ClCompile Include="Project.cpp" />
     <ClCompile Include="ProjectFile.cpp" />
     <ClCompile Include="Proxy.cpp" />
+    <ClCompile Include="SegmentExportInternal.cpp" />
     <ClCompile Include="SegmentExport.cpp" />
     <ClCompile Include="SegmentExportJob.cpp" />
     <ClCompile Include="Sequence.cpp" />

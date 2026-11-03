@@ -235,13 +235,44 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     setMinimumWidth(540);
     auto* layout = new QVBoxLayout(this);
 
+    buildDestination(layout);
+    buildVideo(layout);
+    buildAudio(layout);
+    buildButtons(layout);
+    videoWidgets_ = {encoder_, preset_, cqSlider_, cqSpin_, decoder_};
+    fillFormatChoices();
+
+    // --- Valori di partenza
+    reencodeAll_->setChecked(input_.options.all);
+    closeGaps_->setChecked(input_.options.closeGaps);
+    cqCustom_ = input_.options.cq > 0;
+    updating_ = true;
+    fillEncoders();
+    updateEncoder();
+    if (cqCustom_) {
+        cqSpin_->setValue(input_.options.cq);
+        cqSlider_->setValue(cqSpin_->value());
+    }
+    fillAudioCodecs();
+    updating_ = false;
+
+    connectSignals();
+
+    fillProfiles();
+    updatePreview();
+    updateAudio();
+    updateDestination();
+}
+
+void ExportDialog::buildDestination(QVBoxLayout* layout)
+{
     // --- Destinazione
     layout->addWidget(heading(QStringLiteral("Destinazione")));
     auto* destinationRow = new QHBoxLayout;
     destination_ = new QLineEdit(QDir::toNativeSeparators(input_.suggestedPath));
     destinationRow->addWidget(destination_, 1);
-    auto* browse = new QPushButton(QStringLiteral("Sfoglia..."));
-    destinationRow->addWidget(browse);
+    browse_ = new QPushButton(QStringLiteral("Sfoglia..."));
+    destinationRow->addWidget(browse_);
     layout->addLayout(destinationRow);
     warning_ = new QLabel;
     warning_->setWordWrap(true);
@@ -270,7 +301,10 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     range_ = new QLabel;
     layout->addWidget(range_);
     layout->addWidget(separator());
+}
 
+void ExportDialog::buildVideo(QVBoxLayout* layout)
+{
     // --- Video
     layout->addWidget(heading(QStringLiteral("Video")));
     auto* videoForm = new QFormLayout;
@@ -304,7 +338,10 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     closeGaps_->setVisible(input_.gapCount > 0);
     layout->addWidget(closeGaps_);
     layout->addWidget(separator());
+}
 
+void ExportDialog::buildAudio(QVBoxLayout* layout)
+{
     // --- Audio
     layout->addWidget(heading(QStringLiteral("Audio")));
     includeAudio_ = new QCheckBox(QStringLiteral("Includi audio"));
@@ -321,7 +358,10 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     audioNote_->setStyleSheet(QLatin1String(kNoteStyle));
     layout->addWidget(audioNote_);
     layout->addWidget(separator());
+}
 
+void ExportDialog::buildButtons(QVBoxLayout* layout)
+{
     // --- Riepilogo e pulsanti
     summary_ = new QLabel;
     summary_->setWordWrap(true);
@@ -334,9 +374,10 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+}
 
-    videoWidgets_ = {encoder_, preset_, cqSlider_, cqSpin_, decoder_};
-
+void ExportDialog::fillFormatChoices()
+{
     // --- Formato del file: contenitore, codec, risoluzione e fotogrammi al secondo (la prima voce = come i file)
     const bool canChange = input_.montage && input_.projectCodec.has_value();
     container_->addItem(QStringLiteral("Come i file (%1)").arg(input_.extension.toUpper()), QString());
@@ -375,23 +416,12 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
         if (v.frameRate > 0)
             frameRate_->setCurrentIndex(std::max(0, frameRate_->findData(v.frameRate)));
     }
+}
 
-    // --- Valori di partenza
-    reencodeAll_->setChecked(input_.options.all);
-    closeGaps_->setChecked(input_.options.closeGaps);
-    cqCustom_ = input_.options.cq > 0;
-    updating_ = true;
-    fillEncoders();
-    updateEncoder();
-    if (cqCustom_) {
-        cqSpin_->setValue(input_.options.cq);
-        cqSlider_->setValue(cqSpin_->value());
-    }
-    fillAudioCodecs();
-    updating_ = false;
-
+void ExportDialog::connectSignals()
+{
     // --- Collegamenti
-    connect(browse, &QPushButton::clicked, this, [this] { chooseDestination(); });
+    connect(browse_, &QPushButton::clicked, this, [this] { chooseDestination(); });
     connect(destination_, &QLineEdit::textChanged, this, [this] { updateDestination(); });
     connect(encoder_, &QComboBox::currentIndexChanged, this, [this] {
         if (!updating_)
@@ -461,11 +491,6 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
         if (!updating_)
             updateSummary();
     });
-
-    fillProfiles();
-    updatePreview();
-    updateAudio();
-    updateDestination();
 }
 
 void ExportDialog::fillAudioCodecs()
