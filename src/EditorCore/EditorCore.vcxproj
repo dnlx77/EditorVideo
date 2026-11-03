@@ -43,6 +43,7 @@
     <ClInclude Include="AudioTracks.h" />
     <ClInclude Include="TextTracks.h" />
     <ClInclude Include="Transform.h" />
+    <ClInclude Include="Compositor.h" />
     <ClInclude Include="TextFrame.h" />
     <ClInclude Include="TextImage.h" />
     <ClInclude Include="TransitionPlayback.h" />
@@ -88,6 +89,7 @@
     <ClCompile Include="AudioTracks.cpp" />
     <ClCompile Include="TextTracks.cpp" />
     <ClCompile Include="Transform.cpp" />
+    <ClCompile Include="Compositor.cpp" />
     <ClCompile Include="TextFrame.cpp" />
     <ClCompile Include="TextImage.cpp" />
     <ClCompile Include="TransitionPlayback.cpp" />
