@@ -5,6 +5,7 @@
 #include <QtCore/QString>
 #include <QtCore/QStringList>
 
+#include <cstdio>
 #include <optional>
 
 class QApplication;
@@ -12,6 +13,22 @@ class QApplication;
 namespace editor::app {
 
 class MainWindow;
+
+// Un controllo di una prova: stampa "OK" o "NO" con la descrizione e conta quelli falliti.
+class SelfCheck
+{
+public:
+    void operator()(bool ok, const char* what)
+    {
+        std::printf("  %s: %s\n", ok ? "OK" : "NO", what);
+        if (!ok)
+            ++failures_;
+    }
+    int failures() const { return failures_; }
+
+private:
+    int failures_ = 0;
+};
 
 // Se gli argomenti contengono una prova (--export-test, --join-test, --sequence-test, --audio-test, --project-test,
 // --thumbnail-test, --codec-info), la esegue senza aprire la finestra e restituisce il codice di uscita; altrimenti

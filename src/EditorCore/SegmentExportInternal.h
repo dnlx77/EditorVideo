@@ -417,15 +417,7 @@ inline std::vector<TimeRange> textCoverage(const TextTracks* texts)
                 spans.push_back({clip.position, clip.position + clip.length});
         }
     }
-    std::sort(spans.begin(), spans.end(), [](const TimeRange& a, const TimeRange& b) { return a.start < b.start; });
-    std::vector<TimeRange> merged;
-    for (const TimeRange& span : spans) {
-        if (!merged.empty() && span.start <= merged.back().end + kTimeEpsilon)
-            merged.back().end = std::max(merged.back().end, span.end);
-        else
-            merged.push_back(span);
-    }
-    return merged;
+    return mergeRanges(std::move(spans));
 }
 
 // Un tratto (il numero `index` del piano) diviso nelle parti dentro una transizione e nelle altre: l'ultima parte del tratto

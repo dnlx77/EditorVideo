@@ -255,10 +255,8 @@ public:
     // Trascinare oggetti (che esistono) nell'elenco dei gruppi: con groupId > 0 passano in quel gruppo; con 0 (spazio
     // vuoto) uno solo esce dal suo gruppo e due o più ne formano uno nuovo. false (e nessuna modifica) se non cambia niente.
     bool dropOnGroup(const std::vector<ObjectRef>& objects, int groupId);
-    // Come validGroups, con id e nome (per salvarli).
+    // I gruppi dell'utente senza gli oggetti che non esistono più, con almeno due oggetti, con id e nome (per salvarli).
     std::vector<ObjectGroup> validGroupList() const;
-    // I gruppi dell'utente senza gli oggetti che non esistono più, con almeno due oggetti (per salvarli).
-    std::vector<std::vector<ObjectRef>> validGroups() const;
 
     // Giunzioni audio: due clip audio attaccate sulla stessa traccia, o due pezzi video attaccati (la loro audio su A1).
     // Su una giunzione c'è un pallino del livello comune: un punto sul bordo finale del primo e uno sul bordo iniziale

@@ -109,7 +109,7 @@ TEST(Groups, GonePiecesLeaveTheGroups)
     EXPECT_EQ(m.project.groupMembers({Kind::Piece, m.a}).size(), 3u);  // A, il suo audio, la musica
     ASSERT_TRUE(m.project.audioTracks().remove(m.music));
     EXPECT_EQ(m.project.groupMembers({Kind::Piece, m.a}).size(), 2u);  // di gruppo dell'utente non resta niente
-    EXPECT_TRUE(m.project.validGroups().empty());
+    EXPECT_TRUE(m.project.validGroupList().empty());
 }
 
 TEST(Groups, UndoAndRedoKeepTheGroups)
@@ -139,7 +139,7 @@ TEST(Groups, AreSavedAndReopened)
     ASSERT_EQ(again.sequence().fragments().size(), 3u);
     const int b = again.sequence().fragments()[1].id;
     const int c = again.sequence().fragments()[2].id;
-    ASSERT_EQ(again.validGroups().size(), 1u);
+    ASSERT_EQ(again.validGroupList().size(), 1u);
     const auto members = again.groupMembers({Kind::Piece, b});
     EXPECT_EQ(members.size(), 3u);  // B, il suo audio, la musica
     EXPECT_TRUE(again.sequence().find(c)->detached);

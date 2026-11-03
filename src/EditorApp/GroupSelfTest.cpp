@@ -19,12 +19,7 @@ namespace core = editor::core;
 // schede del blocco in alto a sinistra. Codice 0 se tutto è giusto, 3 se un controllo non riesce.
 int runGroupTest(const QStringList&, qsizetype)
 {
-    int failures = 0;
-    const auto check = [&](bool ok, const char* what) {
-        std::printf("  %s: %s\n", ok ? "OK" : "NO", what);
-        if (!ok)
-            ++failures;
-    };
+    SelfCheck check;
     std::printf("Prova dell'elenco dei gruppi\n");
 
     using Kind = core::ObjectRef::Kind;
@@ -209,8 +204,8 @@ int runGroupTest(const QStringList&, qsizetype)
         check(again.leftTabs()->currentIndex() == 0, "tornando a File del progetto si riapre quella");
     }
 
-    std::printf(failures == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", failures);
-    return failures == 0 ? 0 : 3;
+    std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
+    return check.failures() == 0 ? 0 : 3;
 }
 
 }  // namespace editor::app

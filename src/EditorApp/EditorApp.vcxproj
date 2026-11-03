@@ -56,6 +56,7 @@
     <ClInclude Include="TextEditorPanel.h" />
     <ClInclude Include="TextOverlay.h" />
     <ClInclude Include="GroupListPanel.h" />
+    <ClInclude Include="GroupMime.h" />
     <ClInclude Include="TransitionListPanel.h" />
     <ClInclude Include="TransitionMime.h" />
     <ClInclude Include="TransitionPreview.h" />
