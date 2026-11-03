@@ -18,6 +18,7 @@ class QLineEdit;
 class QPushButton;
 class QSlider;
 class QSpinBox;
+class QVBoxLayout;
 
 namespace editor::app {
 
@@ -75,6 +76,14 @@ public:
     QSlider* cqSlider() const { return cqSlider_; }
 
 private:
+    // La costruzione, a pezzi (nell'ordine in cui compaiono nella finestra).
+    void buildDestination(QVBoxLayout* layout);  // destinazione, profilo, intervallo
+    void buildVideo(QVBoxLayout* layout);
+    void buildAudio(QVBoxLayout* layout);
+    void buildButtons(QVBoxLayout* layout);       // riepilogo, Esporta e Annulla
+    void fillFormatChoices();                     // contenitore, codec, risoluzione, fotogrammi al secondo
+    void connectSignals();
+
     void chooseDestination();
     void updateDestination();  // avviso e pulsante Esporta
     void updatePreview();      // ricalcola il riepilogo (cambiano i tratti da ricodificare)
@@ -108,6 +117,7 @@ private:
     QString appliedKey_;  // le scelte del profilo appena applicato (per accorgersi che sono cambiate)
 
     QComboBox* profile_ = nullptr;
+    QPushButton* browse_ = nullptr;
     QPushButton* saveProfile_ = nullptr;
     QPushButton* deleteProfile_ = nullptr;
     QLineEdit* destination_ = nullptr;
