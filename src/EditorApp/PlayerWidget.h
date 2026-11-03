@@ -3,6 +3,7 @@
 #include "EditorApp/AudioOutput.h"
 #include "EditorCore/CutSegment.h"
 #include "EditorCore/TimeUtil.h"
+#include "EditorCore/Transform.h"
 
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QPointF>
@@ -100,6 +101,11 @@ public:
     // Mostra un fotogramma fatto da altri (la transizione del montaggio) al posto di quello del file; a riproduzione
     // ferma. Il prossimo fotogramma decodificato lo sostituisce.
     void showExternalFrame(std::shared_ptr<core::VideoFrame> frame);
+    // Trasformazione (scala, posizione, rotazione, ritaglio, specchio, opacità) con cui si disegna il fotogramma del file:
+    // l'immagine va nel fotogramma del progetto (`projectSize`, che ha le sue proporzioni e il resto resta nero). Quella di
+    // base (o una misura nulla) = disegno normale, adattato alla finestra. Vale solo per i fotogrammi del file, non per
+    // quelli fatti da altri (showExternalFrame).
+    void setFrameTransform(const core::Transform& transform, QSize projectSize);
     void updateOverlay();
     // Il mouse sull'immagine, in frazioni del fotogramma (0..1): `press` dice se si afferra qualcosa (allora arrivano
     // `move` e `release`).

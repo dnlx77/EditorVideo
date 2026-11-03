@@ -45,6 +45,7 @@ class ProxyManager;
 class WaveformStore;
 class ProgramMonitor;
 class TextEditorPanel;
+class PropertiesPanel;
 class TransitionListPanel;
 class GroupListPanel;
 class TransitionPreviewWidget;
@@ -107,6 +108,7 @@ public:
     QDockWidget* programDock() const { return programDock_; }
     QDockWidget* filesDock() const { return filesDock_; }
     QDockWidget* timelineDock() const { return timelineDock_; }
+    QDockWidget* propertiesDock() const { return propertiesDock_; }
     QString currentFile() const { return currentPath_; }
     const core::Project& project() const { return project_; }
     int currentClipId() const { return currentClipId_; }
@@ -160,6 +162,14 @@ public:
     void showTextPanel(int clipId, bool focusText);  // la scheda "Scritta" del pannello Sorgente, con questa scritta
     void refreshTextPanel();                          // la rimette in pari con la scritta scelta e col progetto
     TextEditorPanel* textPanel() const { return textPanel_; }
+    // Pannello Proprietà (a destra): il contenuto segue l'oggetto scelto. Per i pezzi video sono le trasformazioni.
+    void refreshPropertiesPanel();
+    PropertiesPanel* propertiesPanel() const { return propertiesPanel_; }
+    // Cambia la trasformazione dei pezzi video scelti con `edit` (un campo alla volta: `field` unisce le modifiche di
+    // seguito dello stesso campo in una voce di Annulla). false se nessun pezzo è cambiato.
+    bool applyTransformEdit(const std::function<void(core::Transform&)>& edit, const std::string& field);
+    // "Adatta" / "Riempi" sui pezzi scelti.
+    void fitSelectedPieces(bool fill);
     QTabWidget* leftTabs() const { return leftTabs_; }
     TransitionListPanel* transitionPanel() const { return transitionPanel_; }
     GroupListPanel* groupPanel() const { return groupPanel_; }
@@ -305,7 +315,7 @@ private:
             action(*player_);
     }
     // I quattro pannelli, per i cicli che li trattano tutti.
-    std::array<QDockWidget*, 4> docks() const { return {filesDock_, sourceDock_, programDock_, timelineDock_}; }
+    std::array<QDockWidget*, 5> docks() const { return {filesDock_, sourceDock_, programDock_, propertiesDock_, timelineDock_}; }
     // Audio, formato e ricodifica con cui si esporta o si calcola l'anteprima dell'esportazione.
     struct ExportSettings
     {
@@ -369,8 +379,12 @@ private:
     QDockWidget* sourceDock_ = nullptr;
     QDockWidget* programDock_ = nullptr;
     QDockWidget* timelineDock_ = nullptr;
+    QDockWidget* propertiesDock_ = nullptr;
     QTabWidget* sourceTabs_ = nullptr;      // il pannello Sorgente ha due schede: Sorgente e Scritta (l'editor delle scritte)
     TextEditorPanel* textPanel_ = nullptr;
+    PropertiesPanel* propertiesPanel_ = nullptr;
+    std::string transformMergeKey_;          // campo e pezzi dell'ultima modifica delle trasformazioni, per unire quelle di fila
+    std::size_t transformMergeCount_ = 0;
     QTabWidget* leftTabs_ = nullptr;        // il blocco in alto a sinistra ha tre schede: File del progetto, Transizioni e Gruppi
     TransitionListPanel* transitionPanel_ = nullptr;
     GroupListPanel* groupPanel_ = nullptr;  // terza scheda del blocco a sinistra

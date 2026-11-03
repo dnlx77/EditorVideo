@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EditorCore/Project.h"
+#include "EditorCore/Transform.h"
 #include "EditorCore/VideoDecoder.h"
 
 #include <functional>
@@ -26,6 +27,9 @@ struct TransitionJob
     double sequenceStartB = 0.0;
     double start = 0.0;  // il tratto della transizione nella sequenza
     double end = 0.0;
+    // Trasformazioni dei due pezzi (scala, posizione, rotazione, ritaglio...): si applicano a ognuno prima della fusione.
+    Transform transformA;
+    Transform transformB;
 };
 
 // std::nullopt se la transizione, i pezzi o i file non ci sono.

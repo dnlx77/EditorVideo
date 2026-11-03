@@ -54,6 +54,7 @@
     <ClInclude Include="ProxyManager.h" />
     <ClInclude Include="QtTextRenderer.h" />
     <ClInclude Include="TextEditorPanel.h" />
+    <ClInclude Include="PropertiesPanel.h" />
     <ClInclude Include="TextOverlay.h" />
     <ClInclude Include="GroupListPanel.h" />
     <ClInclude Include="GroupMime.h" />
@@ -88,8 +89,11 @@
     <ClCompile Include="ProxyManager.cpp" />
     <ClCompile Include="QtTextRenderer.cpp" />
     <ClCompile Include="TextEditorPanel.cpp" />
+    <ClCompile Include="PropertiesPanel.cpp" />
+    <ClCompile Include="MainWindowTransform.cpp" />
     <ClCompile Include="TextOverlay.cpp" />
     <ClCompile Include="TextSelfTest.cpp" />
+    <ClCompile Include="TransformSelfTest.cpp" />
     <ClCompile Include="ExportDialog.cpp" />
     <ClCompile Include="ExportSelfTest.cpp" />
     <ClCompile Include="GroupListPanel.cpp" />

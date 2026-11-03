@@ -1,5 +1,6 @@
 #include "EditorCore/TransitionRender.h"
 
+#include "EditorCore/Compositor.h"
 #include "EditorCore/Transitions.h"
 
 #include <algorithm>
@@ -123,6 +124,25 @@ std::shared_ptr<VideoFrame> onCanvas(const VideoFrame& frame, int boxWidth, int 
     return canvas;
 }
 
+// Come onCanvas, ma con la trasformazione del pezzo: l'immagine (che ha già la misura giusta, adattata al riquadro) va sul
+// nero con scala, posizione, rotazione, ritaglio, specchio e opacità. Senza trasformazione è onCanvas.
+std::shared_ptr<VideoFrame> onCanvasTransformed(const VideoFrame& frame, int boxWidth, int boxHeight, const Transform& transform)
+{
+    if (transform.isIdentity())
+        return onCanvas(frame, boxWidth, boxHeight);
+    auto canvas = std::make_shared<VideoFrame>();
+    canvas->time = frame.time;
+    canvas->width = boxWidth;
+    canvas->height = boxHeight;
+    canvas->stride = boxWidth * 4;
+    canvas->pixels.assign(static_cast<std::size_t>(canvas->stride) * boxHeight, 0);
+    for (std::size_t i = 3; i < canvas->pixels.size(); i += 4)
+        canvas->pixels[i] = 255;
+    compositeLayer(canvas->pixels.data(), canvas->stride, boxWidth, boxHeight,
+                   BgraImage{frame.pixels.data(), frame.stride, frame.width, frame.height}, transform);
+    return canvas;
+}
+
 }  // namespace
 
 std::optional<TransitionJob> makeTransitionJob(const Project& project, const TransitionPlacement& placement)
@@ -146,6 +166,8 @@ std::optional<TransitionJob> makeTransitionJob(const Project& project, const Tra
     job.durationB = clipB->duration;
     job.fragmentStartA = a->start;
     job.fragmentStartB = b->start;
+    job.transformA = a->transform;
+    job.transformB = b->transform;
     job.sequenceStartA = sequence.startOf(sequence.indexOf(a->id));
     job.sequenceStartB = sequence.startOf(sequence.indexOf(b->id));
     job.start = placement.start();
@@ -221,8 +243,8 @@ std::shared_ptr<VideoFrame> TransitionRenderer::render(const TransitionJob& job,
 
     // Se un lato ha un fotogramma più piccolo del riquadro (o di altre proporzioni) sta al centro, con i bordi neri.
     const auto blendBegin = now();
-    std::shared_ptr<VideoFrame> out = onCanvas(*frameA, boxWidth_, boxHeight_);
-    const std::shared_ptr<VideoFrame> second = onCanvas(*frameB, boxWidth_, boxHeight_);
+    std::shared_ptr<VideoFrame> out = onCanvasTransformed(*frameA, boxWidth_, boxHeight_, job.transformA);
+    const std::shared_ptr<VideoFrame> second = onCanvasTransformed(*frameB, boxWidth_, boxHeight_, job.transformB);
     const double duration = job.end - job.start;
     const double progress = duration > 0 ? (t - job.start) / duration : 1.0;
     effect->blend({out->pixels.data(), out->width, out->height, out->stride},

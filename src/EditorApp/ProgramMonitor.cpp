@@ -140,6 +140,7 @@ void ProgramMonitor::load(int index, double offset)
     primedTransitionId_ = 0;
     transitionFrame_.reset();
     player_->setBlank(false);
+    player_->setFrameTransform(f.transform, frameSize());  // scala, posizione, rotazione... del pezzo
     if (f.clipId != loadedClipId_) {
         player_->openFile(QString::fromStdString(clip->path));
         loadedClipId_ = f.clipId;
@@ -248,6 +249,7 @@ void ProgramMonitor::enterTransition(const core::TransitionPlacement& placement,
     if (player_->isPlaying())
         player_->pause();
     player_->setBlank(false);
+    player_->setFrameTransform({}, {});  // i fotogrammi della transizione sono già fatti (con le trasformazioni dei due pezzi)
     index_ = -1;
     gapIndex_ = -1;
     transitionId_ = placement.id;
@@ -369,6 +371,7 @@ void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QStrin
     showingSource_ = true;
     updateTextOverlay();
     player_->setBlank(false);
+    player_->setFrameTransform({}, {});  // un fotogramma del file, com'è
     if (clipId != loadedClipId_) {
         player_->openFile(QString::fromStdString(clip->path));
         loadedClipId_ = clipId;
