@@ -97,10 +97,11 @@ void MainWindow::resetLayout()
     addDockWidget(Qt::TopDockWidgetArea, filesDock_);
     splitDockWidget(filesDock_, sourceDock_, Qt::Horizontal);
     splitDockWidget(sourceDock_, programDock_, Qt::Horizontal);
+    splitDockWidget(programDock_, propertiesDock_, Qt::Horizontal);  // le proprietà all'estremo destro
     addDockWidget(Qt::BottomDockWidgetArea, timelineDock_);
     for (QDockWidget* dock : docks())
         dock->show();
-    resizeDocks({filesDock_, sourceDock_, programDock_}, {320, 590, 590}, Qt::Horizontal);
+    resizeDocks({filesDock_, sourceDock_, programDock_, propertiesDock_}, {300, 500, 500, 280}, Qt::Horizontal);
     resizeDocks({sourceDock_, timelineDock_}, {620, 230}, Qt::Vertical);
     // La linea del tempo alta quella iniziale anche se la finestra non ha posto per 620 + 230 (il resto va sopra).
     timelineHeight_ = 230;
@@ -113,6 +114,7 @@ void MainWindow::saveLayout()
     QSettings s = settings();
     s.setValue(QStringLiteral("finestra/geometria"), saveGeometry());
     s.setValue(QStringLiteral("finestra/disposizione"), saveState());
+    s.setValue(QStringLiteral("finestra/conProprieta"), true);
     s.setValue(QStringLiteral("finestra/altezzaLineaDelTempo"), timelineHeight_);
 }
 
@@ -126,6 +128,13 @@ void MainWindow::restoreLayout()
         restoreGeometry(geometry);
     if (!state.isEmpty() && !restoreState(state))
         resetLayout();
+    // Una disposizione salvata prima del pannello Proprietà non lo conosce: lo si mette all'estremo destro.
+    else if (!state.isEmpty() && !s.value(QStringLiteral("finestra/conProprieta"), false).toBool()) {
+        propertiesDock_->setFloating(false);
+        splitDockWidget(programDock_, propertiesDock_, Qt::Horizontal);
+        propertiesDock_->show();
+        resizeDocks({programDock_, propertiesDock_}, {500, 280}, Qt::Horizontal);
+    }
     // Una disposizione salvata prima che la linea del tempo potesse stare solo in basso: la si rimette lì.
     if (!timelineDock_->isFloating() && dockWidgetArea(timelineDock_) != Qt::BottomDockWidgetArea)
         redockTimeline();

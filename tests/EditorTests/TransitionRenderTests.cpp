@@ -1,3 +1,4 @@
+#include "EditorCore/Compositor.h"
 #include "EditorCore/Project.h"
 #include "EditorCore/TransitionPlayback.h"
 #include "EditorCore/TransitionRender.h"
@@ -318,4 +319,57 @@ TEST_F(TransitionRenderTest, StreamGoesBackwardAndSkipsWhenTheClockJumps)
     const auto last = waitFrame(playback, 2.5, true, 1e-6);
     ASSERT_NE(last, nullptr);
     EXPECT_NEAR(last->time, 2.5, 1e-6);
+}
+
+TEST_F(TransitionRenderTest, PiecesAreTransformedBeforeTheyAreBlended)
+{
+    auto setup = makeSetup();
+    // Il primo pezzo rimpicciolito a metà e spostato, il secondo ruotato di 90°.
+    Transform small;
+    small.scaleX = small.scaleY = 0.5;
+    small.posX = 8;
+    Transform turned;
+    turned.rotation = 90.0;
+    const auto fragments = setup->project.sequence().fragments();
+    ASSERT_EQ(fragments.size(), 2u);
+    ASSERT_EQ(setup->project.setTransform({fragments[0].id}, small), 1);
+    ASSERT_EQ(setup->project.setTransform({fragments[1].id}, turned), 1);
+    setup->placement = setup->project.transitionPlacement(setup->transition).value();
+    const auto job = makeTransitionJob(setup->project, setup->placement);
+    ASSERT_TRUE(job.has_value());
+    EXPECT_EQ(job->transformA, small);
+    EXPECT_EQ(job->transformB, turned);
+
+    // All'inizio della transizione si vede solo il primo pezzo, come lo farebbe il compositore da solo.
+    auto renderer = makeRenderer();
+    const auto first = renderer->render(setup->project, setup->placement, setup->placement.start());
+    ASSERT_NE(first, nullptr);
+    const auto a = decode("a.mkv", 1.5);
+    ASSERT_NE(a, nullptr);
+    std::vector<std::uint8_t> expected(static_cast<std::size_t>(kWidth) * kHeight * 4, 0);
+    for (std::size_t i = 3; i < expected.size(); i += 4)
+        expected[i] = 255;
+    compositeLayer(expected.data(), kWidth * 4, kWidth, kHeight, BgraImage{a->pixels.data(), a->stride, a->width, a->height}, small);
+    int maxDiff = 0;
+    for (std::size_t i = 0; i < expected.size(); ++i)
+        maxDiff = std::max(maxDiff, std::abs(static_cast<int>(first->pixels[i]) - static_cast<int>(expected[i])));
+    EXPECT_LE(maxDiff, 12);
+    // Gli angoli restano neri: il pezzo è più piccolo del fotogramma.
+    EXPECT_LE(first->pixels[0], 12);
+    EXPECT_LE(first->pixels[1], 12);
+    EXPECT_LE(first->pixels[2], 12);
+
+    // Alla fine solo il secondo, ruotato.
+    const auto last = renderer->render(setup->project, setup->placement, setup->placement.end());
+    ASSERT_NE(last, nullptr);
+    const auto b = decode("b.mkv", 1.5);
+    ASSERT_NE(b, nullptr);
+    std::fill(expected.begin(), expected.end(), 0);
+    for (std::size_t i = 3; i < expected.size(); i += 4)
+        expected[i] = 255;
+    compositeLayer(expected.data(), kWidth * 4, kWidth, kHeight, BgraImage{b->pixels.data(), b->stride, b->width, b->height}, turned);
+    maxDiff = 0;
+    for (std::size_t i = 0; i < expected.size(); ++i)
+        maxDiff = std::max(maxDiff, std::abs(static_cast<int>(last->pixels[i]) - static_cast<int>(expected[i])));
+    EXPECT_LE(maxDiff, 12);
 }

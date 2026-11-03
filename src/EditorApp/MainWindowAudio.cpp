@@ -556,6 +556,7 @@ void MainWindow::showGroupSelection()
 {
     if (groupPanel_ != nullptr && timeline_ != nullptr)
         groupPanel_->showSelection(timeline_->allSelectedObjects());
+    refreshPropertiesPanel();
 }
 
 void MainWindow::showGroupStatus()

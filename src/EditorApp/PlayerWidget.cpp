@@ -14,6 +14,8 @@
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QPainter>
+#include <QtGui/QPainterPath>
+#include <QtGui/QTransform>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QStyle>
@@ -69,6 +71,44 @@ public:
             blank_ = blank;
             update();
         }
+    }
+
+    // Vedi PlayerWidget::setFrameTransform.
+    void setFrameTransform(const core::Transform& transform, QSize projectSize)
+    {
+        const bool use = !transform.isIdentity() && projectSize.width() > 0 && projectSize.height() > 0;
+        if (use == transformed_ && (!use || (transform == transform_ && projectSize == projectSize_)))
+            return;
+        transformed_ = use;
+        transform_ = transform;
+        projectSize_ = projectSize;
+        update();
+    }
+    // Disegna il fotogramma trasformato dentro il fotogramma del progetto; restituisce quest'ultimo.
+    QRectF paintTransformed(QPainter& painter) const
+    {
+        const QSizeF fitted = QSizeF(projectSize_).scaled(QSizeF(size()), Qt::KeepAspectRatio);
+        const QRectF canvas(QPointF((width() - fitted.width()) / 2, (height() - fitted.height()) / 2), fitted);
+        painter.save();
+        painter.setClipRect(canvas);
+        painter.fillRect(canvas, Qt::black);
+        const core::TransformGeometry g = core::computeGeometry(transform_, frame_->width, frame_->height, projectSize_.width(),
+                                                                projectSize_.height());
+        const QTransform toProject(g.toProject.a, g.toProject.b, g.toProject.c, g.toProject.d, g.toProject.tx, g.toProject.ty);
+        QTransform toCanvas;
+        toCanvas.translate(canvas.left(), canvas.top());
+        toCanvas.scale(canvas.width() / projectSize_.width(), canvas.height() / projectSize_.height());
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setTransform(toProject * toCanvas, true);  // sopra il resto: l'origine è quella del fotogramma del file
+        QPainterPath visible;
+        visible.addRect(QRectF(QPointF(g.sourceLeft, g.sourceTop), QPointF(g.sourceRight, g.sourceBottom)));
+        painter.setClipPath(visible, Qt::IntersectClip);
+        painter.setOpacity(g.opacity);
+        const QImage image(frame_->pixels.data(), frame_->width, frame_->height, frame_->stride, QImage::Format_RGB32);
+        painter.drawImage(QRectF(0, 0, frame_->width, frame_->height), image);
+        painter.restore();
+        return canvas;
     }
 
     // Dimensione dell'area in pixel fisici (con lo zoom di Windows applicato).
@@ -156,7 +196,12 @@ protected:
             }
             return;
         }
-        if (frame_) {
+        if (frame_ && transformed_) {
+            const QRectF canvas = paintTransformed(painter);
+            imageRect_ = canvas;
+            if (overlay_)
+                overlay_(painter, canvas);
+        } else if (frame_) {
             // Di solito il decoder produce già fotogrammi della misura giusta e il disegno è 1:1, senza scalare.
             // Subito dopo un ridimensionamento della finestra può arrivare ancora qualche fotogramma della misura
             // precedente: lo adattiamo al volo.
@@ -183,6 +228,9 @@ private:
     std::shared_ptr<core::VideoFrame> frame_;
     QString message_;
     bool blank_ = false;
+    bool transformed_ = false;  // si disegna con transform_ dentro il fotogramma del progetto (projectSize_)
+    core::Transform transform_;
+    QSize projectSize_;
     std::function<void(QPainter&, const QRectF&)> overlay_;
     QSize blankSize_;
     QRectF imageRect_;  // dove sta l'immagine, all'ultimo disegno
@@ -451,6 +499,11 @@ void PlayerWidget::setBlank(bool blank)
 void PlayerWidget::setOverlay(std::function<void(QPainter&, const QRectF&)> overlay, QSize blankSize)
 {
     view_->setOverlay(std::move(overlay), blankSize);
+}
+
+void PlayerWidget::setFrameTransform(const core::Transform& transform, QSize projectSize)
+{
+    view_->setFrameTransform(transform, projectSize);
 }
 
 void PlayerWidget::showExternalFrame(std::shared_ptr<core::VideoFrame> frame)

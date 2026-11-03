@@ -3,6 +3,7 @@
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
+#include "EditorApp/PropertiesPanel.h"
 #include "EditorApp/ProxyManager.h"
 #include "EditorApp/UiText.h"
 #include "EditorApp/SequenceTimeline.h"
@@ -476,6 +477,13 @@ MainWindow::MainWindow(QWidget* parent)
     sourceTabs_->addTab(textPanel_, QStringLiteral("Scritta"));
     sourceDock_ = makeDock(QStringLiteral("Sorgente"), QStringLiteral("pannelloSorgente"), sourceTabs_);
     programDock_ = makeDock(QStringLiteral("Montaggio"), QStringLiteral("pannelloMontaggio"), program_);
+    // Pannello Proprietà: a destra, il contenuto dipende da ciò che è scelto sulla linea del tempo.
+    propertiesPanel_ = new PropertiesPanel;
+    propertiesPanel_->onTransformEdit = [this](const std::function<void(core::Transform&)>& edit, const std::string& field) {
+        applyTransformEdit(edit, field);
+    };
+    propertiesPanel_->onFit = [this](bool fill) { fitSelectedPieces(fill); };
+    propertiesDock_ = makeDock(QStringLiteral("Proprietà"), QStringLiteral("pannelloProprieta"), propertiesPanel_);
     timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),
                              sequencePanel);
     // Spiegazioni, nel suggerimento sul titolo del pannello (vedi eventFilter).
@@ -484,6 +492,7 @@ MainWindow::MainWindow(QWidget* parent)
                                                           "Nella scheda Transizioni, le transizioni disponibili"));
     sourceDock_->setProperty("spiegazione", QStringLiteral("Il file scelto: segna I e O, poi A per metterlo nel montaggio"));
     programDock_->setProperty("spiegazione", QStringLiteral("Il risultato: i pezzi del montaggio uno dopo l'altro"));
+    propertiesDock_->setProperty("spiegazione", QStringLiteral("Le proprietà dell'oggetto scelto sulla linea del tempo: per un pezzo video scala, posizione, rotazione e ritaglio"));
     auto* center = new QWidget(this);
     center->hide();
     setCentralWidget(center);
@@ -567,7 +576,7 @@ MainWindow::MainWindow(QWidget* parent)
                 applyTimelineHeight();
         });
     });
-    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_})
+    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, propertiesDock_})
         dock->setAllowedAreas(Qt::TopDockWidgetArea | Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     // Il titolo di un pannello agganciato si evidenzia con il mouse sopra (cursore a mano: da lì si trascina). I pannelli
     // staccati tengono il titolo di Windows, con la sua cornice (e il ridimensionamento dagli angoli).
@@ -1020,6 +1029,7 @@ void MainWindow::sequenceChanged()
     refreshClipList();
     updateExportAction();
     refreshTextPanel();
+    refreshPropertiesPanel();
 }
 
 const core::MediaSignature* MainWindow::signatureFor(const std::string& path)

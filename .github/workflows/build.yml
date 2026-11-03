@@ -244,6 +244,13 @@ jobs:
           # L'elenco delle transizioni (voci, miniature, scelta) e le due schede del blocco in alto a sinistra.
           & ci\run-editorvideo.ps1 -Name transizioni -Arguments '--transition-test'
 
+      - name: Prova del pannello Proprietà e delle trasformazioni
+        shell: pwsh
+        run: |
+          # Il pannello Proprietà (campi, cursori, Adatta/Riempi, ripristino), il fotogramma trasformato a pixel nel
+          # monitor e il pannello a destra nella finestra.
+          & ci\run-editorvideo.ps1 -Name trasformazioni -Arguments '--transform-test'
+
       - name: Prova della scheda Gruppi
         shell: pwsh
         run: |
