@@ -96,19 +96,16 @@ GroupListPanel::GroupListPanel(QWidget* parent) : QWidget(parent)
     tree->canDrop = [this](const QTreeWidgetItem* target, bool external) {
         if (!external && draggableSelection().empty())
             return false;
-        if (target == nullptr)
-            return true;
-        const int row = tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(target));
-        return row >= 0 && row < static_cast<int>(rows_.size());
+        return target == nullptr || rowIndexOf(target) >= 0;
     };
     // Il cambiamento si fa dopo la fine del trascinamento: l'elenco si rifà e le voci trascinate spariscono.
     tree->dropped = [this](const QTreeWidgetItem* target, std::vector<editor::core::ObjectRef> external) {
         std::vector<editor::core::ObjectRef> dragged = external.empty() ? draggableSelection() : std::move(external);
-        const int row = target == nullptr ? -1 : tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(target));
-        int groupId = row >= 0 && row < static_cast<int>(rows_.size()) ? rows_[static_cast<std::size_t>(row)].id : 0;
+        const GroupRow* row = rowOf(target);
+        int groupId = row != nullptr ? row->id : 0;
         // Su un video con il suo audio: i due, già legati, si uniscono agli oggetti trascinati in un gruppo nuovo.
-        if (row >= 0 && row < static_cast<int>(rows_.size()) && rows_[static_cast<std::size_t>(row)].natural) {
-            for (const GroupEntry& e : rows_[static_cast<std::size_t>(row)].entries)
+        if (row != nullptr && row->natural) {
+            for (const GroupEntry& e : row->entries)
                 dragged.push_back(e.ref);
             groupId = 0;
         }
@@ -204,10 +201,10 @@ void GroupListPanel::choose(const QTreeWidgetItem* item)
     if (showing_ || item == nullptr || !onChosen)
         return;
     const QTreeWidgetItem* top = item->parent() != nullptr ? item->parent() : item;
-    const int row = tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(top));
-    if (row < 0 || row >= static_cast<int>(rows_.size()))
+    const GroupRow* group = rowOf(item);
+    if (group == nullptr)
         return;
-    const std::vector<GroupEntry>& entries = rows_[static_cast<std::size_t>(row)].entries;
+    const std::vector<GroupEntry>& entries = group->entries;
     std::vector<editor::core::ObjectRef> refs;
     double start = 0.0;
     const auto add = [&](const GroupEntry& e) {
@@ -264,12 +261,11 @@ std::vector<editor::core::ObjectRef> GroupListPanel::draggableSelection() const
         const QTreeWidgetItem* top = item->parent();
         if (top == nullptr)
             continue;
-        const int row = tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(top));
+        const GroupRow* group = rowOf(top);
         const int index = top->indexOfChild(const_cast<QTreeWidgetItem*>(item));
-        if (row < 0 || row >= static_cast<int>(rows_.size()) || rows_[static_cast<std::size_t>(row)].natural || index < 0
-            || index >= static_cast<int>(rows_[static_cast<std::size_t>(row)].entries.size()))
+        if (group == nullptr || group->natural || index < 0 || index >= static_cast<int>(group->entries.size()))
             continue;
-        refs.push_back(rows_[static_cast<std::size_t>(row)].entries[static_cast<std::size_t>(index)].ref);
+        refs.push_back(group->entries[static_cast<std::size_t>(index)].ref);
     }
     return refs;
 }
@@ -280,7 +276,7 @@ void GroupListPanel::dropEntries(const std::vector<editor::core::ObjectRef>& dra
         return;
     // Quello che non cambierebbe niente non si segnala: tutti già nel gruppo di arrivo, o (nello spazio vuoto) tutto un
     // gruppo che si rifarebbe uguale.
-    const auto rowOf = [&](const editor::core::ObjectRef& ref) {
+    const auto rowContaining = [&](const editor::core::ObjectRef& ref) {
         for (const GroupRow& row : rows_) {
             if (std::any_of(row.entries.begin(), row.entries.end(), [&](const GroupEntry& e) { return e.ref == ref; }))
                 return &row;
@@ -288,26 +284,32 @@ void GroupListPanel::dropEntries(const std::vector<editor::core::ObjectRef>& dra
         return static_cast<const GroupRow*>(nullptr);
     };
     if (groupId > 0 && std::all_of(dragged.begin(), dragged.end(), [&](const editor::core::ObjectRef& r) {
-            const GroupRow* row = rowOf(r);
+            const GroupRow* row = rowContaining(r);
             return row != nullptr && row->id == groupId;
         }))
         return;
     if (groupId == 0 && dragged.size() >= 2) {
-        const GroupRow* first = rowOf(dragged.front());
+        const GroupRow* first = rowContaining(dragged.front());
         if (first != nullptr && first->entries.size() == dragged.size()
-            && std::all_of(dragged.begin(), dragged.end(), [&](const editor::core::ObjectRef& r) { return rowOf(r) == first; }))
+            && std::all_of(dragged.begin(), dragged.end(), [&](const editor::core::ObjectRef& r) { return rowContaining(r) == first; }))
             return;
     }
     onDropped(dragged, groupId);
 }
 
-const GroupRow* GroupListPanel::rowOf(const QTreeWidgetItem* item) const
+int GroupListPanel::rowIndexOf(const QTreeWidgetItem* item) const
 {
     if (item == nullptr)
-        return nullptr;
+        return -1;
     const QTreeWidgetItem* top = item->parent() != nullptr ? item->parent() : item;
     const int row = tree_->indexOfTopLevelItem(const_cast<QTreeWidgetItem*>(top));
-    return row >= 0 && row < static_cast<int>(rows_.size()) ? &rows_[static_cast<std::size_t>(row)] : nullptr;
+    return row >= 0 && row < static_cast<int>(rows_.size()) ? row : -1;
+}
+
+const GroupRow* GroupListPanel::rowOf(const QTreeWidgetItem* item) const
+{
+    const int row = rowIndexOf(item);
+    return row >= 0 ? &rows_[static_cast<std::size_t>(row)] : nullptr;
 }
 
 void GroupListPanel::renameGroup(int groupId, const QString& name)

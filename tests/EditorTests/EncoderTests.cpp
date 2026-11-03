@@ -159,6 +159,18 @@ fs::path testDir()
     return dir;
 }
 
+TEST(Encoders, VideoCodecNamesRoundTrip)
+{
+    for (const VideoCodec codec : {VideoCodec::H264, VideoCodec::Hevc, VideoCodec::Av1}) {
+        const auto back = videoCodecFromName(videoCodecId(codec));
+        ASSERT_TRUE(back.has_value());
+        EXPECT_EQ(*back, codec);
+    }
+    EXPECT_STREQ(videoCodecId(VideoCodec::Hevc), "hevc");
+    EXPECT_FALSE(videoCodecFromName("mpeg4").has_value());
+    EXPECT_FALSE(videoCodecFromName("").has_value());
+}
+
 TEST(Encoders, ListOfWorkingEncoders)
 {
     const auto& encoders = availableVideoEncoders();

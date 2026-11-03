@@ -325,6 +325,28 @@ std::string codecName(VideoCodec codec)
     return {};
 }
 
+const char* videoCodecId(VideoCodec codec)
+{
+    switch (codec) {
+    case VideoCodec::H264:
+        return "h264";
+    case VideoCodec::Hevc:
+        return "hevc";
+    case VideoCodec::Av1:
+        return "av1";
+    }
+    return "";
+}
+
+std::optional<VideoCodec> videoCodecFromName(const std::string& ffmpegName)
+{
+    for (const VideoCodec codec : {VideoCodec::H264, VideoCodec::Hevc, VideoCodec::Av1}) {
+        if (ffmpegName == videoCodecId(codec))
+            return codec;
+    }
+    return std::nullopt;
+}
+
 std::string backendName(EncoderBackend backend)
 {
     switch (backend) {

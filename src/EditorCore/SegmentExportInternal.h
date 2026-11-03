@@ -523,7 +523,7 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
         for (StreamSignature& s : plan.reference.streams) {
             if (s.kind != StreamKind::Video)
                 continue;
-            const std::string codec = change->codec ? (*change->codec == VideoCodec::Hevc ? "hevc" : *change->codec == VideoCodec::Av1 ? "av1" : "h264") : s.codec;
+            const std::string codec = change->codec ? videoCodecId(*change->codec) : s.codec;
             const int width = change->width > 0 && change->height > 0 ? change->width : s.width;
             const int height = change->width > 0 && change->height > 0 ? change->height : s.height;
             const double fps = change->frameRate > 0 ? change->frameRate : s.frameRate;
@@ -541,6 +541,19 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
         }
         if (plan.videoChanged)
             plan.reencode.assign(clips.size(), true);
+    }
+    // Un formato AV1 non ripete i parametri nel flusso: pezzi copiati e pezzi ricodificati non si possono mescolare. Con
+    // "Ricodifica tutto" si ricodifica tutto, come per un cambio di video (parametri dati dall'encoder).
+    if (reencodeAll && !plan.videoChanged) {
+        for (StreamSignature& s : plan.reference.streams) {
+            if (s.kind == StreamKind::Video && s.codec == videoCodecId(VideoCodec::Av1)) {
+                s.profile.clear();
+                s.extradata.clear();
+                plan.videoChanged = true;
+            }
+            if (s.kind == StreamKind::Video)
+                break;
+        }
     }
     std::string differences;  // dei file da ricodificare, per il messaggio se non si può
     for (std::size_t c = 0; c < clips.size(); ++c) {
@@ -562,9 +575,9 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
                          "si fa solo per i video.";
     } else if (video->codec != "h264" && video->codec != "hevc" && !(plan.videoChanged && video->codec == "av1")) {
         cannotReencode = "Il formato del progetto (" + plan.reference.sourceName + ") è " + video->codec
-                       + ": la ricodifica per ora si fa solo in H.264 e HEVC.";
+                       + ": la ricodifica per ora si fa solo in H.264 e HEVC (con AV1 solo con «Ricodifica tutto»).";
     } else {
-        const VideoCodec codec = video->codec == "hevc" ? VideoCodec::Hevc : video->codec == "av1" ? VideoCodec::Av1 : VideoCodec::H264;
+        const VideoCodec codec = videoCodecFromName(video->codec).value_or(VideoCodec::H264);
         if (!findVideoEncoder(codec, backend)) {
             cannotReencode = backend ? "L'encoder scelto (" + backendName(*backend) + ") non è disponibile per " + codecName(codec)
                                            + " su questo PC: sceglierne un altro (vedi Aiuto > Informazioni)."
@@ -661,8 +674,8 @@ inline PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const Proj
         if (anyReencoded) {
             plan.problem = cannotReencode;
             if (!plan.problem.empty() && video != nullptr && video->codec != "h264" && video->codec != "hevc")
-                plan.problem += " Scegli come formato un file H.264 o HEVC (Montaggio > Impostazioni del progetto) oppure togli i "
-                                "pezzi segnati con R.";
+                plan.problem += " Scegli come formato un file H.264 o HEVC (Montaggio > Impostazioni del progetto), oppure togli i "
+                                "pezzi segnati con R, oppure spunta «Ricodifica tutto» nella finestra Esporta.";
         }
         const StreamSignature* audio = plan.reference.audio();
         for (std::size_t c = 0; c < clips.size() && plan.problem.empty(); ++c) {
@@ -859,7 +872,7 @@ private:
     static VideoEncoderSettings settingsFor(const StreamSignature& format, AVRational fps, Rational timeBase, const ReencodeOptions& options)
     {
         VideoEncoderSettings settings;
-        settings.codec = format.codec == "hevc" ? VideoCodec::Hevc : format.codec == "av1" ? VideoCodec::Av1 : VideoCodec::H264;
+        settings.codec = videoCodecFromName(format.codec).value_or(VideoCodec::H264);
         settings.width = format.width;
         settings.height = format.height;
         settings.frameRate = {fps.num, fps.den};
