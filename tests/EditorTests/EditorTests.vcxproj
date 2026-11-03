@@ -80,6 +80,7 @@
   <ItemGroup>
     <ClInclude Include="SampleMedia.h" />
     <ClInclude Include="MediaChecks.h" />
+    <ClInclude Include="ProjectFixtures.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\EditorCore\EditorCore.vcxproj">

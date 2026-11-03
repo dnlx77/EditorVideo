@@ -1,5 +1,6 @@
 #include "EditorCore/Project.h"
 #include "EditorCore/ProjectFile.h"
+#include "ProjectFixtures.h"
 
 #include <gtest/gtest.h>
 
@@ -11,30 +12,7 @@ using namespace editor::core;
 namespace {
 
 using Kind = ObjectRef::Kind;
-
-struct Montage
-{
-    Project project;
-    int a = 0;  // tre pezzi video di 2 s: 0 .. 2, 2 .. 4, 4 .. 6
-    int b = 0;
-    int c = 0;
-    int music = 0;  // una clip audio su A2
-
-    Montage()
-    {
-        const int file = project.add("video.mp4");
-        project.setAnalysis(file, {0.0}, 30.0);
-        a = project.sequence().insert(-1, file, 0.0, 2.0);
-        b = project.sequence().insert(-1, file, 4.0, 6.0);
-        c = project.sequence().insert(-1, file, 8.0, 10.0);
-        AudioClip clip;
-        clip.path = "musica.mp3";
-        clip.end = 3.0;
-        clip.position = 1.0;
-        clip.sourceDuration = 100.0;
-        music = project.audioTracks().add(project.audioTracks().addTrack(), clip);
-    }
-};
+using editor::tests::Montage;
 
 }  // namespace
 

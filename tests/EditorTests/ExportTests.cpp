@@ -57,12 +57,6 @@ protected:
         return {{segment.in(), segment.out()}};
     }
 
-    static double lumaAt(const VideoFrame& frame, int x, int y)
-    {
-        const std::uint8_t* p = frame.pixels.data() + static_cast<std::size_t>(y) * frame.stride + x * 4;
-        return 16.0 + (p[0] + p[1] + p[2]) / 3.0 * 219.0 / 255.0;
-    }
-
     // Il file esportato: stessi codec e contenitore, durata giusta, parte da un fotogramma chiave a 0,
     // il primo fotogramma è quello in IN, ci sono esattamente i fotogrammi del segmento.
     static void checkExportedVideo(const std::string& source, const std::string& exported, const char* format)
@@ -88,7 +82,7 @@ protected:
             const int x = frame->width / 2;
             const int y = frame->height / 2;
             EXPECT_NEAR(frame->time, count * kFrame, 0.001);
-            EXPECT_NEAR(lumaAt(*frame, x, y), sampleLuma(x, y, kFirstFrame + count), 2.5)
+            EXPECT_NEAR(editor::tests::lumaAt(*frame, x, y), sampleLuma(x, y, kFirstFrame + count), 2.5)
                 << "il fotogramma " << count << " dovrebbe essere il " << kFirstFrame + count << " dell'originale";
             ++count;
             frame = video.nextFrame();
