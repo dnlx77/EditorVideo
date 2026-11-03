@@ -184,6 +184,10 @@ public:
     // pezzo in A1 viene silenziato. Restituisce l'id della clip, 0 se non si può (pezzo inesistente o con l'audio già
     // tutto silenziato). *track riceve l'id della traccia.
     int unlinkAudio(int fragmentId, int* track = nullptr);
+
+    // Cambia la trasformazione (scala, posizione, rotazione, ritaglio...) dei pezzi indicati; gli id che non esistono si
+    // saltano. Restituisce quanti pezzi sono cambiati davvero (0 = niente da annullare). Fa parte delle modifiche.
+    int setTransform(const std::vector<int>& fragmentIds, const Transform& transform);
     // Il contrario, se la clip è ancora allineata al pezzo (stesso file, stesso sincronismo): toglie dalle tracce le
     // clip di quel file nel tratto del pezzo e rimette l'audio del pezzo (con la linea della clip, se era una sola).
     // false se non ce n'è nessuna allineata.

@@ -138,6 +138,66 @@ JsonValue mixToJson(const AudioMix& mix)
 }
 
 // La linea del livello di un pezzo o di una clip: coppie [tempo nel file in tick, dB].
+JsonValue transformToJson(const Transform& t)
+{
+    // Solo i valori diversi da quelli di base.
+    const Transform base;
+    JsonValue::Object o;
+    if (t.scaleX != base.scaleX)
+        o["scalaX"] = t.scaleX;
+    if (t.scaleY != base.scaleY)
+        o["scalaY"] = t.scaleY;
+    if (t.posX != base.posX)
+        o["posizioneX"] = t.posX;
+    if (t.posY != base.posY)
+        o["posizioneY"] = t.posY;
+    if (t.rotation != base.rotation)
+        o["rotazione"] = t.rotation;
+    if (t.cropLeft != base.cropLeft)
+        o["ritaglioSinistra"] = t.cropLeft;
+    if (t.cropRight != base.cropRight)
+        o["ritaglioDestra"] = t.cropRight;
+    if (t.cropTop != base.cropTop)
+        o["ritaglioAlto"] = t.cropTop;
+    if (t.cropBottom != base.cropBottom)
+        o["ritaglioBasso"] = t.cropBottom;
+    if (t.flipHorizontal)
+        o["specchioOrizzontale"] = true;
+    if (t.flipVertical)
+        o["specchioVerticale"] = true;
+    if (t.opacity != base.opacity)
+        o["opacita"] = t.opacity;
+    return o;
+}
+
+Transform transformFromJson(const JsonValue& v)
+{
+    Transform t;  // i campi mancanti restano al valore di base
+    if (!v.isObject())
+        return t;
+    const auto number = [&](const char* key, double& target) {
+        if (v[key].isNumber() && std::isfinite(v[key].asNumber()))
+            target = v[key].asNumber();
+    };
+    const auto flag = [&](const char* key, bool& target) {
+        if (v[key].isBool())
+            target = v[key].asBool();
+    };
+    number("scalaX", t.scaleX);
+    number("scalaY", t.scaleY);
+    number("posizioneX", t.posX);
+    number("posizioneY", t.posY);
+    number("rotazione", t.rotation);
+    number("ritaglioSinistra", t.cropLeft);
+    number("ritaglioDestra", t.cropRight);
+    number("ritaglioAlto", t.cropTop);
+    number("ritaglioBasso", t.cropBottom);
+    flag("specchioOrizzontale", t.flipHorizontal);
+    flag("specchioVerticale", t.flipVertical);
+    number("opacita", t.opacity);
+    return normalized(t);
+}
+
 JsonValue envelopeToJson(const std::vector<LevelPoint>& points)
 {
     JsonValue::Array line;
@@ -429,6 +489,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
             piece["linea"] = envelopeToJson(f.envelope);
         if (f.detached)
             piece["audioScollegato"] = true;
+        if (!f.transform.isIdentity())
+            piece["trasformazione"] = transformToJson(f.transform);
         sequence.emplace_back(std::move(piece));
     }
 
@@ -492,7 +554,9 @@ std::string projectToJson(const std::string& projectPath, const Project& project
     }
     const JsonValue transitions = transitionsToJson(project);
     const bool hasText = !project.textTracks().layers().empty() || !project.textStyles().empty();
-    const int version = !transitions.asArray().empty() ? 5 : hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
+    const bool pieceTransforms = std::any_of(project.sequence().fragments().begin(), project.sequence().fragments().end(),
+                                             [](const Fragment& f) { return !f.transform.isIdentity(); });
+    const int version = pieceTransforms ? 6 : !transitions.asArray().empty() ? 5 : hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
     JsonValue::Object root{
         {"formato", kFormatName},
         {"versione", version},
@@ -621,6 +685,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
             }
             f.envelope = envelopeFromJson(piece["linea"]);
             f.detached = piece["audioScollegato"].isBool() && piece["audioScollegato"].asBool();
+            f.transform = transformFromJson(piece["trasformazione"]);
             if (piece["spazioPrima"].isInteger()) {
                 f.gap = seconds(piece["spazioPrima"], "spazioPrima");
                 if (f.gap < 0.0)
