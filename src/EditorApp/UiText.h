@@ -7,6 +7,7 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QFileInfo>
+#include <QtCore/QSettings>
 #include <QtCore/QString>
 
 #include <string>
@@ -17,6 +18,13 @@ namespace editor::app {
 inline QString timeText(double seconds)
 {
     return QString::fromStdString(core::formatDuration(seconds));
+}
+
+// Le impostazioni dell'utente. Senza il nome dell'organizzazione QSettings non scrive niente; `application` serve alle
+// prove, che usano un nome diverso per non toccare le impostazioni vere.
+inline QSettings settings(const QString& application = QStringLiteral("EditorVideo"))
+{
+    return QSettings(QSettings::NativeFormat, QSettings::UserScope, QStringLiteral("EditorVideo"), application);
 }
 
 // Da testo UTF-8 a QString.

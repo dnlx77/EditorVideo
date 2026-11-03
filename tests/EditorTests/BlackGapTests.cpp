@@ -286,4 +286,30 @@ TEST_F(ClosedGapsTest, WithoutAnEncoderForTheFormatGapsAreClosed)
     EXPECT_NEAR(probeFile(out).durationSeconds, 2.0, 0.1);
 }
 
+// Un formato del progetto AV1 non ripete i parametri nel flusso: copia e ricodifica non si mescolano. Con "Ricodifica tutto"
+// invece si ricodifica tutto (come per un cambio di video): il messaggio "solo in H.264 e HEVC" non deve comparire.
+// Non serve la scheda video né un encoder AV1: il piano si valuta soltanto.
+TEST_F(ClosedGapsTest, Av1ProjectFormatNeedsReencodeAllToReencode)
+{
+    const std::vector<ClipRanges> plan{{path("sorgente.mkv"), {{0.0, 1.0}}, {}, {0.4, 1.0}}};
+    ProjectFormat av1;
+    av1.sourceName = "prova.mkv";
+    StreamSignature video;
+    video.kind = StreamKind::Video;
+    video.codec = "av1";
+    video.width = 320;
+    video.height = 240;
+    video.pixelFormat = "yuv420p";
+    video.frameRate = 25.0;
+    av1.streams.push_back(video);
+
+    const ExportPreview plain = previewExport(plan, AudioEdit{}, &av1);
+    EXPECT_NE(plain.problem.find("solo in H.264 e HEVC"), std::string::npos) << plain.problem;
+
+    ReencodeOptions all;
+    all.all = true;
+    const ExportPreview recoded = previewExport(plan, AudioEdit{}, &av1, all);
+    EXPECT_EQ(recoded.problem.find("solo in H.264 e HEVC"), std::string::npos) << recoded.problem;
+}
+
 }  // namespace

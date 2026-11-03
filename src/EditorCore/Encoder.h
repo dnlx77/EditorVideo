@@ -60,6 +60,10 @@ struct VideoEncoderInfo
 };
 
 std::string codecName(VideoCodec codec);        // "H.264", "HEVC", "AV1"
+// Il nome del codec per FFmpeg e nelle firme dei file ("h264", "hevc", "av1") e il contrario; nullopt se non è uno di quelli
+// che si sanno codificare.
+const char* videoCodecId(VideoCodec codec);
+std::optional<VideoCodec> videoCodecFromName(const std::string& ffmpegName);
 std::string backendName(EncoderBackend backend);  // "NVIDIA NVENC", "Media Foundation"...
 // es. "H.264 - NVIDIA NVENC (h264_nvenc)"
 std::string describe(const VideoEncoderInfo& info);

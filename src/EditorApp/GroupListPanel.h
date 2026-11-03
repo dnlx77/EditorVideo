@@ -88,6 +88,7 @@ private:
     bool choosing_ = false;  // onChosen è in corso
     bool showing_ = false;  // showSelection sta cambiando la scelta: non è un clic dell'utente
     void choose(const QTreeWidgetItem* item);
+    int rowIndexOf(const QTreeWidgetItem* item) const;  // la riga del gruppo del nodo (o del nodo padre); -1 se non c'è
     const GroupRow* rowOf(const QTreeWidgetItem* item) const;  // il gruppo del nodo (o del nodo padre)
     std::vector<int> collapsed_;  // id dei gruppi chiusi dall'utente (restano chiusi quando l'elenco si rifà)
 };

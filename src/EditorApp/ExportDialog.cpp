@@ -41,6 +41,13 @@ constexpr const char* kWarningStyle = "color: #d9b700;";
 constexpr const char* kErrorStyle = "color: #e06060;";
 constexpr const char* kNoteStyle = "color: #d08a1a;";
 
+// I contenitori che si scelgono nella finestra (l'estensione del file).
+const QStringList& exportContainers()
+{
+    static const QStringList containers{QStringLiteral("mp4"), QStringLiteral("mkv"), QStringLiteral("mov")};
+    return containers;
+}
+
 QLabel* heading(const QString& text)
 {
     auto* label = new QLabel(text);
@@ -90,10 +97,9 @@ struct Profile
 const char* const kProfilesKey = "esportazione/profili";
 QString g_profilesApplication = QStringLiteral("EditorVideo");  // dove si salvano i profili (la prova ne usa un altro)
 
-// Come settings() della finestra principale: senza nome dell'organizzazione QSettings non scrive niente.
 QSettings profileSettings()
 {
-    return QSettings(QSettings::NativeFormat, QSettings::UserScope, QStringLiteral("EditorVideo"), g_profilesApplication);
+    return settings(g_profilesApplication);
 }
 
 std::vector<Profile> builtinProfiles()
@@ -334,11 +340,9 @@ ExportDialog::ExportDialog(const ExportDialogInput& input, QWidget* parent)
     // --- Formato del file: contenitore, codec, risoluzione e fotogrammi al secondo (la prima voce = come i file)
     const bool canChange = input_.montage && input_.projectCodec.has_value();
     container_->addItem(QStringLiteral("Come i file (%1)").arg(input_.extension.toUpper()), QString());
-    for (const QString& ext : {QStringLiteral("mp4"), QStringLiteral("mkv"), QStringLiteral("mov")})
+    for (const QString& ext : exportContainers())
         container_->addItem(ext.toUpper(), ext);
-    codec_->addItem(QStringLiteral("Come i file (%1)").arg(input_.projectCodec == core::VideoCodec::Hevc ? QStringLiteral("HEVC")
-                                                                                                         : QStringLiteral("H.264")),
-                    -1);
+    codec_->addItem(QStringLiteral("Come i file (%1)").arg(qs(core::codecName(input_.projectCodec.value_or(core::VideoCodec::H264)))), -1);
     codec_->addItem(QStringLiteral("H.264"), static_cast<int>(core::VideoCodec::H264));
     codec_->addItem(QStringLiteral("HEVC (H.265)"), static_cast<int>(core::VideoCodec::Hevc));
     // AV1 solo se su questo PC c'è un encoder che lo sa fare.
@@ -588,8 +592,7 @@ void ExportDialog::changeContainer()
     // L'estensione del nome segue il contenitore (se il nome ne ha una dei contenitori che si scelgono).
     QString path = destination_->text().trimmed();
     const QString suffix = QFileInfo(path).suffix().toLower();
-    if (!path.isEmpty() && (suffix == QLatin1String("mp4") || suffix == QLatin1String("mkv") || suffix == QLatin1String("mov")
-                            || suffix == input_.extension.toLower())) {
+    if (!path.isEmpty() && (exportContainers().contains(suffix) || suffix == input_.extension.toLower())) {
         path.chop(suffix.size());
         destination_->setText(path + extension());
     }

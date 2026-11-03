@@ -208,10 +208,7 @@ void MainWindow::exportDialog()
             input.sourceWidth = video->width;
             input.sourceHeight = video->height;
             input.sourceFrameRate = video->frameRate;
-            if (video->codec == "h264")
-                input.projectCodec = core::VideoCodec::H264;
-            else if (video->codec == "hevc")
-                input.projectCodec = core::VideoCodec::Hevc;
+            input.projectCodec = core::videoCodecFromName(video->codec);
         }
     }
     loadExportChoices();

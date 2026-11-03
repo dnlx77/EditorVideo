@@ -164,11 +164,6 @@ inline QString previewTitle(const QString& name, bool active)
     return active ? QStringLiteral("▶ ") + name : name;
 }
 
-inline QSettings settings()
-{
-    return QSettings(QSettings::NativeFormat, QSettings::UserScope, QStringLiteral("EditorVideo"), QStringLiteral("EditorVideo"));
-}
-
 // Cartella di lavoro: lì si aprono il salvataggio dei progetti e dell'esportazione e vanno i proxy dei progetti mai
 // salvati. Di solito "Documenti\Editor video project"; si cambia da File > Cartella di lavoro. Si crea se manca.
 inline QString workFolder()
