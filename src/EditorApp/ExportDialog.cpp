@@ -774,7 +774,7 @@ void ExportDialog::updateSummary()
 
     // Le scelte del video valgono se c'è qualcosa da ricodificare.
     const bool recoding = reencodeAll_->isChecked() || p.reencodedSegments > 0 || p.preciseCuts > 0 || p.blackGaps > 0
-                          || p.textSegments > 0 || p.transitionSegments > 0;
+                          || p.textSegments > 0 || p.transitionSegments > 0 || p.transformSegments > 0;
     const bool apply = videoChoicesApply();
     for (QWidget* widget : videoWidgets_)
         widget->setEnabled(apply && recoding);
@@ -799,6 +799,10 @@ void ExportDialog::updateSummary()
         text += QStringLiteral(", <b>%1 con scritte</b> (%2 ricodificati col testo sopra)")
                     .arg(p.textSegments)
                     .arg(timeText(p.textSeconds));
+    if (p.transformSegments > 0)
+        text += QStringLiteral(", <b>%1 trasformati</b> (%2 ricodificati con scala, posizione, rotazione o ritaglio)")
+                    .arg(p.transformSegments)
+                    .arg(timeText(p.transformSeconds));
     if (p.transitionSegments > 0)
         text += QStringLiteral(", <b>%1 con transizioni</b> (%2 ricodificati con i due pezzi fusi)")
                     .arg(p.transitionSegments)

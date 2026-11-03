@@ -41,6 +41,9 @@ struct ClipRanges
     std::vector<double> keyframes;
     // Spazio vuoto nel montaggio prima di ogni tratto, in secondi (stesso ordine di `ranges`; vuoto = nessuno).
     std::vector<double> gapsBefore;
+    // Trasformazione (scala, posizione, rotazione, ritaglio...) di ogni tratto, nello stesso ordine di `ranges`; vuoto =
+    // nessuna. I tratti con una trasformazione si ricodificano (vedi transformOf).
+    std::vector<Transform> transforms;
     // Caratteristiche dei flussi già lette (per le anteprime, che altrimenti riaprono ogni file); nullptr = da leggere
     // dal file, come fa sempre l'esportazione vera.
     std::shared_ptr<const MediaSignature> signature;

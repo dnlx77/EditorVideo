@@ -421,6 +421,7 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
     const std::vector<TimeRange> coverage = textCoverage(texts);
     bool textNeeded = false;
     bool transitionNeeded = false;
+    bool transformNeeded = false;
     int rangeIndex = -1;  // posizione del tratto nel piano (tutti i file, in ordine)
     double sequence = 0.0;  // dove cade il tratto nel montaggio (spazi vuoti compresi)
     plan.pieces.resize(clips.size());
@@ -440,6 +441,7 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
             sequence += gapBefore(clips[c], r);
             const double sequenceStart = sequence;
             sequence += range.length();
+            const Transform transform = transformOf(clips[c], r);
             std::vector<Piece> all;
             for (const TransitionPart& part : splitByTransition(range, rangeIndex, transitions)) {
                 if (part.transition >= 0) {
@@ -454,6 +456,16 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
                 }
                 const TimeRange partRange = part.range;
                 const double partStart = sequenceStart + (partRange.start - range.start);
+                if (!transform.isIdentity()) {
+                    // Un tratto trasformato si ricodifica tutto: la trasformazione si applica al fotogramma decodificato.
+                    Piece piece{partRange, true};
+                    piece.transformed = true;
+                    piece.transform = transform;
+                    all.push_back(piece);
+                    transformNeeded = true;
+                    preciseNeeded = preciseNeeded || cannotReencode.empty();
+                    continue;
+                }
                 if (plan.reencode[c] || own == nullptr || keyframes.empty()) {
                     all.push_back({partRange, plan.reencode[c]});
                     continue;
@@ -535,6 +547,9 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
     }
     if (textNeeded && !cannotReencode.empty() && plan.problem.empty())
         plan.problem = "Le scritte si disegnano sul video, quindi i tratti sotto le scritte vanno ricodificati, ma non si può: "
+                     + cannotReencode;
+    if (transformNeeded && !cannotReencode.empty() && plan.problem.empty())
+        plan.problem = "Scala, posizione, rotazione e ritaglio si applicano ricodificando i tratti trasformati, ma non si può: "
                      + cannotReencode;
     if (transitionNeeded && !cannotReencode.empty() && plan.problem.empty())
         plan.problem = "Le transizioni si fondono ricodificando i tratti che toccano, ma non si può: " + cannotReencode;

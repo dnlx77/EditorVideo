@@ -43,6 +43,7 @@ struct ExportResult
     int preciseCuts = 0;        // bordi ricodificati per il taglio preciso (da IN al fotogramma chiave, ...)
     int blackGaps = 0;          // spazi vuoti diventati nero e silenzio
     int textSegments = 0;       // parti ricodificate perché sotto una scritta
+    int transformSegments = 0;   // parti ricodificate perché trasformate (scala, posizione, rotazione, ritaglio)
     int transitionSegments = 0;  // parti ricodificate perché dentro una transizione
     int mixedAudioFiles = 0;    // file audio mixati e ricodificati in AAC (AudioEdit::mix); 0 = audio copiato
 };
@@ -134,6 +135,9 @@ struct ExportPreview
     // bordi del taglio preciso.
     int transitionSegments = 0;
     double transitionSeconds = 0.0;
+    // Parti trasformate (scala, posizione, rotazione, ritaglio: ricodificate), come sopra non contano nei bordi precisi.
+    int transformSegments = 0;
+    double transformSeconds = 0.0;
     // Spazi vuoti del montaggio (ClipRanges::gapsBefore) che diventano nero e silenzio, e quanto durano.
     int blackGaps = 0;
     double blackSeconds = 0.0;
