@@ -38,19 +38,6 @@ struct BufferRefDeleter
 };
 using BufferRefPtr = std::unique_ptr<AVBufferRef, BufferRefDeleter>;
 
-// Formato pixel con cui il decoder restituisce le superfici D3D11, se il codec supporta D3D11VA.
-AVPixelFormat d3d11PixelFormat(const AVCodec* codec)
-{
-    for (int i = 0;; ++i) {
-        const AVCodecHWConfig* config = avcodec_get_hw_config(codec, i);
-        if (config == nullptr)
-            return AV_PIX_FMT_NONE;
-        if (config->device_type == AV_HWDEVICE_TYPE_D3D11VA
-            && (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0)
-            return config->pix_fmt;
-    }
-}
-
 // Fotogrammi già allocati, da riusare: alla risoluzione di un video ogni fotogramma è grande (8 MB in 1080p).
 // Un fotogramma torna qui solo quando nessuno lo usa più (l'ultimo shared_ptr, anche nel thread dell'interfaccia),
 // quindi il riuso non tocca mai un'immagine ancora in coda o sullo schermo.
@@ -163,20 +150,10 @@ struct VideoDecoder::Impl : OpenedStream
     static AVPixelFormat getFormat(AVCodecContext* c, const AVPixelFormat* formats)
     {
         auto* self = static_cast<Impl*>(c->opaque);
-        for (const AVPixelFormat* p = formats; *p != AV_PIX_FMT_NONE; ++p) {
-            if (*p == self->hwPixelFormat) {
-                self->hardwareActive = true;
-                return *p;
-            }
-        }
-        // La GPU non gestisce questo flusso (es. profilo non supportato): primo formato software disponibile.
-        self->hardwareActive = false;
-        for (const AVPixelFormat* p = formats; *p != AV_PIX_FMT_NONE; ++p) {
-            const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(*p);
-            if (desc != nullptr && (desc->flags & AV_PIX_FMT_FLAG_HWACCEL) == 0)
-                return *p;
-        }
-        return AV_PIX_FMT_NONE;
+        bool hardware = false;
+        const AVPixelFormat format = chooseDecoderFormat(formats, self->hwPixelFormat, &hardware);
+        self->hardwareActive = hardware;
+        return format;
     }
 
     void openCodec()
@@ -193,8 +170,7 @@ struct VideoDecoder::Impl : OpenedStream
         bool hardware = false;
         if (hardwareAllowed && hwPixelFormat != AV_PIX_FMT_NONE) {
             if (!hwDevice) {
-                AVBufferRef* device = nullptr;
-                if (av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0) >= 0)
+                if (AVBufferRef* device = createD3d11Device())
                     hwDevice.reset(device);
                 else
                     hardwareAllowed = false;  // niente scheda video compatibile: inutile riprovare
@@ -388,9 +364,8 @@ struct VideoDecoder::Impl : OpenedStream
         double scale = std::min(boxWidth / displayWidth, boxHeight / displayHeight);
         if (!allowUpscale)
             scale = std::min(scale, 1.0);
-        const auto even = [](double v) { return std::max(2, static_cast<int>(std::lround(v / 2)) * 2); };
-        const std::uint64_t width = even(displayWidth * scale);
-        const std::uint64_t height = even(displayHeight * scale);
+        const std::uint64_t width = evenSize(displayWidth * scale);
+        const std::uint64_t height = evenSize(displayHeight * scale);
         outSize = width << 32 | height;
     }
 
@@ -524,7 +499,7 @@ VideoDecoder::VideoDecoder(const std::string& utf8Path, const Options& options)
     // Proxy (vedi Proxy.h): i tempi partono dall'inizio dell'originale, non da quello del proxy.
     if (const AVDictionaryEntry* start = av_dict_get(d.fmt->metadata, kProxyStartTag, nullptr, 0))
         d.startOffset = std::strtod(start->value, nullptr);
-    d.hwPixelFormat = d3d11PixelFormat(d.codec);
+    d.hwPixelFormat = d3d11FormatFor(d.codec);
 
     d.fps = guessFrameRate(d.fmt.get(), d.stream);
 

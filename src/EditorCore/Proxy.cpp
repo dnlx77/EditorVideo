@@ -56,12 +56,7 @@ struct GpuFailure
 // ridotti, dalla GPU.
 AVPixelFormat softwareFormat(AVCodecContext*, const AVPixelFormat* formats)
 {
-    for (const AVPixelFormat* p = formats; *p != AV_PIX_FMT_NONE; ++p) {
-        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(*p);
-        if (desc != nullptr && (desc->flags & AV_PIX_FMT_FLAG_HWACCEL) == 0)
-            return *p;
-    }
-    return AV_PIX_FMT_NONE;
+    return chooseDecoderFormat(formats, AV_PIX_FMT_NONE);
 }
 
 // Decoder della scheda video NVIDIA (NVDEC, "<codec>_cuvid") che riduce i fotogrammi alle misure del proxy già sulla
@@ -118,8 +113,8 @@ std::string proxyFileName(const std::string& originalUtf8Path, int divisor)
 
 std::pair<int, int> proxySize(double displayWidth, double displayHeight, int divisor)
 {
-    const auto even = [&](double v) { return std::max(2, static_cast<int>(std::lround(v / std::max(1, divisor) / 2)) * 2); };
-    return {even(displayWidth), even(displayHeight)};
+    const int by = std::max(1, divisor);
+    return {evenSize(displayWidth / by), evenSize(displayHeight / by)};
 }
 
 ProxyInfo buildProxy(const std::string& originalUtf8Path, const std::string& proxyUtf8Path, int divisor,

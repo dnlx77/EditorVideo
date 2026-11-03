@@ -10,6 +10,7 @@
 
 extern "C" {
 #include <libavutil/channel_layout.h>
+#include <libavutil/hwcontext.h>
 }
 
 namespace editor::core::detail {
@@ -33,6 +34,79 @@ std::string ffmpegError(int code)
     char buffer[AV_ERROR_MAX_STRING_SIZE] = {};
     av_strerror(code, buffer, sizeof(buffer));
     return buffer;
+}
+
+FittedSize fitInto(const AVFrame* source, int boxWidth, int boxHeight)
+{
+    const AVRational sar = source->sample_aspect_ratio.num > 0 ? source->sample_aspect_ratio : AVRational{1, 1};
+    const double aspect = static_cast<double>(source->width) * sar.num / (static_cast<double>(source->height) * sar.den);
+    const double boxAspect = static_cast<double>(boxWidth) / boxHeight;
+    FittedSize fit;
+    fit.width = boxWidth;
+    fit.height = boxHeight;
+    if (aspect > boxAspect + 1e-3)
+        fit.height = std::min(boxHeight, static_cast<int>(std::lround(boxWidth / aspect / 2.0)) * 2);
+    else if (aspect < boxAspect - 1e-3)
+        fit.width = std::min(boxWidth, static_cast<int>(std::lround(boxHeight * aspect / 2.0)) * 2);
+    fit.x = (boxWidth - fit.width) / 2 & ~1;
+    fit.y = (boxHeight - fit.height) / 2 & ~1;
+    return fit;
+}
+
+void normalizeJpegRange(AVPixelFormat& format, bool& fullRange)
+{
+    switch (format) {
+    case AV_PIX_FMT_YUVJ420P: format = AV_PIX_FMT_YUV420P; fullRange = true; break;
+    case AV_PIX_FMT_YUVJ422P: format = AV_PIX_FMT_YUV422P; fullRange = true; break;
+    case AV_PIX_FMT_YUVJ444P: format = AV_PIX_FMT_YUV444P; fullRange = true; break;
+    default: break;
+    }
+}
+
+AVPixelFormat d3d11FormatFor(const AVCodec* codec)
+{
+    for (int i = 0;; ++i) {
+        const AVCodecHWConfig* config = avcodec_get_hw_config(codec, i);
+        if (config == nullptr)
+            return AV_PIX_FMT_NONE;
+        if ((config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0 && config->device_type == AV_HWDEVICE_TYPE_D3D11VA)
+            return config->pix_fmt;
+    }
+}
+
+AVBufferRef* createD3d11Device()
+{
+    AVBufferRef* device = nullptr;
+    return av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0) >= 0 ? device : nullptr;
+}
+
+AVPixelFormat chooseDecoderFormat(const AVPixelFormat* formats, AVPixelFormat wanted, bool* hardware)
+{
+    for (const AVPixelFormat* p = formats; *p != AV_PIX_FMT_NONE; ++p) {
+        if (*p == wanted) {
+            if (hardware != nullptr)
+                *hardware = true;
+            return *p;
+        }
+    }
+    // La GPU non gestisce questo flusso (es. profilo non supportato): primo formato software disponibile.
+    if (hardware != nullptr)
+        *hardware = false;
+    for (const AVPixelFormat* p = formats; *p != AV_PIX_FMT_NONE; ++p) {
+        const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(*p);
+        if (desc != nullptr && (desc->flags & AV_PIX_FMT_FLAG_HWACCEL) == 0)
+            return *p;
+    }
+    return AV_PIX_FMT_NONE;
+}
+
+int downloadHardwareFrame(AVFrame* software, const AVFrame* hardware)
+{
+    av_frame_unref(software);
+    const int ret = av_hwframe_transfer_data(software, const_cast<AVFrame*>(hardware), 0);
+    if (ret >= 0)
+        av_frame_copy_props(software, hardware);
+    return ret;
 }
 
 FormatContextPtr openInput(const std::string& utf8Path, const std::atomic<bool>* cancel)

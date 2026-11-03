@@ -451,8 +451,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             const AVPixelFormat format = d3d11FormatFor(codec);
             if (format != AV_PIX_FMT_NONE && !hwDevice_ && !hwDeviceTried_) {
                 hwDeviceTried_ = true;
-                AVBufferRef* device = nullptr;
-                if (av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0) >= 0)
+                if (AVBufferRef* device = createD3d11Device())
                     hwDevice_.reset(device, [](AVBufferRef* ref) { av_buffer_unref(&ref); });
             }
             if (format != AV_PIX_FMT_NONE && hwDevice_) {
@@ -623,11 +622,9 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             onVideoFrame(decoded);
             return;
         }
-        av_frame_unref(downloaded.get());
-        if (const int ret = av_hwframe_transfer_data(downloaded.get(), decoded, 0); ret < 0)
+        if (const int ret = downloadHardwareFrame(downloaded.get(), decoded); ret < 0)
             throw MediaError("Il fotogramma decodificato dalla GPU non si legge (" + ffmpegError(ret)
                              + "): nella finestra Esporta scegli il decoder CPU.");
-        av_frame_copy_props(downloaded.get(), decoded);
         onVideoFrame(downloaded.get());
     };
     const auto drain = [&](AVCodecContext* decoder, const auto& onFrame) {
