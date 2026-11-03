@@ -422,6 +422,14 @@ int Project::unlinkAudio(int fragmentId, int* track)
     return id;
 }
 
+int Project::setTransform(const std::vector<int>& fragmentIds, const Transform& transform)
+{
+    int changed = 0;
+    for (int id : fragmentIds)
+        changed += sequence_.setTransform(id, transform) ? 1 : 0;
+    return changed;
+}
+
 bool Project::relinkAudio(int fragmentId)
 {
     const Fragment* f = sequence_.find(fragmentId);

@@ -39,6 +39,7 @@
     <ClCompile Include="MixExportTests.cpp" />
     <ClCompile Include="AudioTracksTests.cpp" />
     <ClCompile Include="TextTracksTests.cpp" />
+    <ClCompile Include="TransformTests.cpp" />
     <ClCompile Include="TextImageTests.cpp" />
     <ClCompile Include="TransitionsTests.cpp" />
     <ClCompile Include="TransitionRenderTests.cpp" />

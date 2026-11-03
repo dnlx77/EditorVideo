@@ -2,6 +2,7 @@
 
 #include "EditorCore/LevelEnvelope.h"
 #include "EditorCore/TimeUtil.h"
+#include "EditorCore/Transform.h"
 
 #include <utility>
 #include <vector>
@@ -25,6 +26,8 @@ struct Fragment
     // L'audio del pezzo è stato scollegato (Project::unlinkAudio): è tutto silenziato perché ora è una clip a parte, e
     // sul pezzo non si scrive "senza audio".
     bool detached = false;
+    // Scala, posizione, rotazione, ritaglio, specchio e opacità del video del pezzo (vedi Transform). Segue il pezzo.
+    Transform transform;
 
     double length() const { return end - start; }
 };
@@ -46,6 +49,8 @@ public:
     // La linea del livello del pezzo (normalizzata); false se il pezzo non c'è o non cambia nulla.
     bool setEnvelope(int fragmentId, std::vector<LevelPoint> points);
     bool setDetached(int fragmentId, bool detached);
+    // La trasformazione del pezzo (normalizzata); false se il pezzo non c'è o non cambia nulla.
+    bool setTransform(int fragmentId, const Transform& transform);
     // Toglie il pezzo; quelli dopo scorrono indietro della sua durata (lo spazio vuoto prima di lui resta).
     bool remove(int fragmentId);
     void removeClip(int clipId);  // tutti i pezzi di un file (quando il file esce dal progetto)
