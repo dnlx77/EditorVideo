@@ -377,9 +377,9 @@ MainWindow::MainWindow(QWidget* parent)
         refreshTextPanel();
     };
     timeline_->textFreePosition = [this](int clipId, int layerId, double desired) {
-        if (project_.textTracks().findPiece(clipId) != nullptr)  // un pezzo di video su un livello: senza spinta né gruppi
-            return project_.textTracks().nearestFreeStart(clipId, layerId, desired);
-        return project_.freeSpotFor({core::ObjectRef::Kind::TextClip, clipId}, layerId, desired, pushPieces_);
+        const bool isPiece = project_.textTracks().findPiece(clipId) != nullptr;  // un pezzo di video su un livello
+        return project_.freeSpotFor({isPiece ? core::ObjectRef::Kind::LayerPiece : core::ObjectRef::Kind::TextClip, clipId}, layerId,
+                                    desired, pushPieces_);
     };
     timeline_->onTextClipMoveTo = [this](int clipId, int layerId, double position) { moveTextClip(clipId, layerId, position); };
     timeline_->textTrimLimit = [this](int clipId, bool atStart, double desired) {
@@ -870,7 +870,7 @@ void MainWindow::splitAtPlayhead()
     // un gruppo nuovo.
     core::ObjectRef anchor;
     if (const int text = timeline_->selectedTextClip(); text != 0)
-        anchor = {core::ObjectRef::Kind::TextClip, text};
+        anchor = {project_.textTracks().findPiece(text) != nullptr ? core::ObjectRef::Kind::LayerPiece : core::ObjectRef::Kind::TextClip, text};
     else if (const int clip = timeline_->selectedAudioClip(); clip != 0)
         anchor = {core::ObjectRef::Kind::AudioClip, clip};
     else if (const int index = project_.sequence().indexAt(at); index >= 0)
@@ -886,7 +886,7 @@ void MainWindow::splitAtPlayhead()
                 continue;
             if (part.kind == core::ObjectRef::Kind::AudioClip)
                 timeline_->setSelectedAudioClip(part.id);
-            else if (part.kind == core::ObjectRef::Kind::TextClip)
+            else if (part.kind == core::ObjectRef::Kind::TextClip || part.kind == core::ObjectRef::Kind::LayerPiece)
                 timeline_->setSelectedTextClip(part.id);
             else
                 timeline_->setSelected(part.id);

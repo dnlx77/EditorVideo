@@ -554,3 +554,52 @@ TEST(TextTracks, UndoSnapshotsAndRestoreKeepPieces)
     ASSERT_EQ(reopened.layers().size(), 1u);
     EXPECT_EQ(reopened.layers()[0].pieces.size(), 1u);
 }
+
+TEST(LayerPieceGroups, MoveSplitRemoveAndSaveTogether)
+{
+    Project project;
+    const int file = project.add("video.mp4");
+    project.setAnalysis(file, {0.0}, 30.0);
+    const int layer = project.textTracks().addLayer();
+    const int a = project.textTracks().addPiece(layer, piece(file, 1.0, 0.0, 2.0));   // [1, 3)
+    const int layer2 = project.textTracks().addLayer();
+    const int b = project.textTracks().addPiece(layer2, piece(file, 2.0, 0.0, 2.0));  // [2, 4)
+    const int text = project.textTracks().add(layer, title(5.0, 1.0, "T"));          // [5, 6) accanto ad A
+    ASSERT_TRUE(a != 0 && b != 0 && text != 0);
+    EXPECT_TRUE(project.objectExists({Kind::LayerPiece, a}));
+    ASSERT_NE(project.groupObjects({{Kind::LayerPiece, a}, {Kind::LayerPiece, b}}), 0);
+    EXPECT_EQ(project.groupMembers({Kind::LayerPiece, a}).size(), 2u);
+
+    // Il gruppo si sposta insieme.
+    const Project::MoveResult moved = project.moveObject({Kind::LayerPiece, a}, layer, 1.5, true);
+    EXPECT_TRUE(moved.moved);
+    EXPECT_TRUE(moved.group);
+    EXPECT_NEAR(project.textTracks().findPiece(a)->position, 1.5, 1e-9);
+    EXPECT_NEAR(project.textTracks().findPiece(b)->position, 2.5, 1e-9);
+    // Con la spinta la scritta T (sul livello di A, a 5) viene spinta avanti dal gruppo.
+    EXPECT_TRUE(project.moveObject({Kind::LayerPiece, a}, layer, 4.5, true).moved);
+    EXPECT_LE(project.textTracks().findPiece(a)->endPosition(), project.textTracks().find(text)->position + 1e-9);
+    EXPECT_NEAR(project.textTracks().findPiece(b)->position - project.textTracks().findPiece(a)->position, 1.0, 1e-9);
+
+    // Un pezzo da solo (non nel gruppo) si muove da solo.
+    const int c = project.textTracks().addPiece(layer2, piece(file, 8.0, 0.0, 1.0));
+    EXPECT_FALSE(project.moveObject({Kind::LayerPiece, c}, layer2, 9.0, true).group);
+
+    // Dividere il gruppo divide i due pezzi e le seconde parti formano un gruppo nuovo.
+    const double cut = project.textTracks().findPiece(b)->position + 0.5;  // dentro tutti e due
+    const auto parts = project.splitGroup({Kind::LayerPiece, a}, cut);
+    EXPECT_EQ(parts.size(), 2u);
+
+    // Salvataggio e riapertura: il gruppo resta.
+    const std::string json = projectToJson("C:/prova/p.evproj", project, ProjectView{});
+    const LoadedProject loaded = projectFromJson("C:/prova/p.evproj", json);
+    const TextTracks& text2 = loaded.project.textTracks();
+    ASSERT_EQ(text2.layers().size(), 2u);
+    const int first = text2.layers()[0].pieces[0].id;
+    EXPECT_EQ(loaded.project.groupMembers({Kind::LayerPiece, first}).size(), 2u);
+
+    // Si tolgono i pezzi indicati.
+    EXPECT_EQ(project.removeObjects({{Kind::LayerPiece, a}, {Kind::LayerPiece, b}}), 2);
+    EXPECT_EQ(project.textTracks().findPiece(a), nullptr);
+    EXPECT_FALSE(project.objectExists({Kind::LayerPiece, b}));
+}

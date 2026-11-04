@@ -46,7 +46,7 @@ void MainWindow::refreshPropertiesPanel()
             return;
         }
     }
-    if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::TextClip) {
+    if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::LayerPiece) {
         if (const core::LayerPiece* layerPiece = project_.textTracks().findPiece(objects.front().id)) {  // un pezzo di un livello
             propertiesPanel_->showTransform(layerPiece->transform, 1);
             return;

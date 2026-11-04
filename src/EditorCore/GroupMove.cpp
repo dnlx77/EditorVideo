@@ -78,6 +78,16 @@ Scene sceneOf(const Project& project, ObjectRef anchor)
             item.length = clip.length;
             scene.items.push_back(item);
         }
+        // I pezzi di video del livello: stessa corsia delle scritte (non si sovrappongono fra loro).
+        for (const LayerPiece& piece : layer.pieces) {
+            Item item;
+            item.ref = {ObjectRef::Kind::LayerPiece, piece.id};
+            item.lane = kTextLaneBase - layer.id;
+            item.track = layer.id;
+            item.start = piece.position;
+            item.length = piece.length();
+            scene.items.push_back(item);
+        }
     }
     // Le componenti: oggetti legati fra loro (gruppi dell'utente, pezzo e suo audio).
     std::map<ObjectRef, std::size_t> indexOf;
@@ -274,7 +284,8 @@ bool applyMove(Project& project, const Scene& scene, double delta, bool push)
         double position;
     };
     std::vector<ClipMove> clips;
-    std::vector<ClipMove> texts;
+    std::vector<ClipMove> texts;       // scritte
+    std::vector<ClipMove> layerPieces;  // pezzi di video dei livelli
     for (const Item& item : scene.items) {
         const double d = shift.count(item.component) ? shift[item.component] : 0.0;
         if (std::abs(d) <= kTimeEpsilon)
@@ -285,6 +296,8 @@ bool applyMove(Project& project, const Scene& scene, double delta, bool push)
             clips.push_back({item.ref.id, item.track, item.start + d});
         else if (item.ref.kind == ObjectRef::Kind::TextClip)
             texts.push_back({item.ref.id, item.track, item.start + d});
+        else if (item.ref.kind == ObjectRef::Kind::LayerPiece)
+            layerPieces.push_back({item.ref.id, item.track, item.start + d});
     }
     Sequence sequence = project.sequence();
     if (!pieces.empty() && !sequence.shiftPieces(pieces))
@@ -301,8 +314,13 @@ bool applyMove(Project& project, const Scene& scene, double delta, bool push)
     std::stable_sort(texts.begin(), texts.end(), [&](const ClipMove& a, const ClipMove& b) {
         return delta > 0.0 ? a.position > b.position : a.position < b.position;
     });
+    // Scritte e pezzi dei livelli si spostano insieme, dall'ultimo al primo nel verso del movimento.
+    texts.insert(texts.end(), layerPieces.begin(), layerPieces.end());
+    std::stable_sort(texts.begin(), texts.end(), [&](const ClipMove& a, const ClipMove& b) {
+        return delta > 0.0 ? a.position > b.position : a.position < b.position;
+    });
     for (const ClipMove& m : texts) {
-        if (!text.moveTo(m.clip, m.track, m.position))
+        if (!text.moveTo(m.clip, m.track, m.position))  // (moveTo vale anche per i pezzi dei livelli)
             return false;
     }
     project.sequence() = std::move(sequence);
@@ -353,6 +371,11 @@ double Project::freeSpotFor(ObjectRef object, int track, double desired, bool pu
         if (clip == nullptr)
             return -1.0;
         now = clip->position;
+    } else if (object.kind == ObjectRef::Kind::LayerPiece) {
+        const LayerPiece* piece = text_.findPiece(object.id);
+        if (piece == nullptr)
+            return -1.0;
+        now = piece->position;
     } else {
         const int index = sequence_.indexOf(object.id);
         if (index < 0)
@@ -362,7 +385,7 @@ double Project::freeSpotFor(ObjectRef object, int track, double desired, bool pu
     const Scene scene = sceneOf(*this, object);
     if (movesAsScene(scene, object, push))
         return now + limitDelta(scene, desired - now, push);
-    if (object.kind == ObjectRef::Kind::TextClip)
+    if (object.kind == ObjectRef::Kind::TextClip || object.kind == ObjectRef::Kind::LayerPiece)
         return text_.nearestFreeStart(object.id, track, desired);
     return object.kind == ObjectRef::Kind::AudioClip
                ? audio_.nearestFreePosition(object.id, track, desired, track == AudioTracks::kOriginalTrack ? linkedAudioRanges() : std::vector<TimeRange>{})
@@ -372,17 +395,20 @@ double Project::freeSpotFor(ObjectRef object, int track, double desired, bool pu
 Project::MoveResult Project::moveObject(ObjectRef object, int track, double start, bool push)
 {
     MoveResult result;
-    const bool isText = object.kind == ObjectRef::Kind::TextClip;
+    const bool isLayerPiece = object.kind == ObjectRef::Kind::LayerPiece;
+    const LayerPiece* layerPiece = isLayerPiece ? text_.findPiece(object.id) : nullptr;
+    const bool isText = object.kind == ObjectRef::Kind::TextClip || isLayerPiece;  // (le scritte e i pezzi dei livelli stanno sugli stessi livelli)
     const bool isClip = object.kind == ObjectRef::Kind::AudioClip;
     const AudioClip* clip = isClip ? audio_.find(object.id) : nullptr;
-    const TextClip* textClip = isText ? text_.find(object.id) : nullptr;
+    const TextClip* textClip = object.kind == ObjectRef::Kind::TextClip ? text_.find(object.id) : nullptr;
     const int index = isClip || isText ? -1 : sequence_.indexOf(object.id);
-    if ((isClip && clip == nullptr) || (isText && textClip == nullptr) || (!isClip && !isText && index < 0))
+    if ((isClip && clip == nullptr) || (object.kind == ObjectRef::Kind::TextClip && textClip == nullptr)
+        || (isLayerPiece && layerPiece == nullptr) || (!isClip && !isText && index < 0))
         return result;
     const Scene scene = sceneOf(*this, object);
     if (movesAsScene(scene, object, push)) {
         // Nel gruppo si muove tutto insieme, ognuno sulla sua traccia.
-        const double now = isClip ? clip->position : isText ? textClip->position : sequence_.startOf(index);
+        const double now = isClip ? clip->position : isLayerPiece ? layerPiece->position : isText ? textClip->position : sequence_.startOf(index);
         const double delta = limitDelta(scene, start - now, push);
         result.group = moverCount(scene) > 1;
         result.moved = std::abs(delta) >= 0.0005 && applyMove(*this, scene, delta, push);

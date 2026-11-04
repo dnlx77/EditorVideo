@@ -536,8 +536,8 @@ void SequenceTimeline::paintText(QPainter& p)
             p.setPen(Qt::NoPen);
             p.setBrush(fill);
             p.drawRoundedRect(r, 3, 3);
-            p.setPen(isMate(Object::Kind::TextClip, c.clipId)   ? matePen()
-                     : isSelected(Object::Kind::TextClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3)
+            p.setPen(isMate(c.piece ? Object::Kind::LayerPiece : Object::Kind::TextClip, c.clipId)   ? matePen()
+                     : isSelected(c.piece ? Object::Kind::LayerPiece : Object::Kind::TextClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3)
                                                                     : QPen(base.darker(140), 1));
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(p.pen().widthF() > 1.5 ? r.adjusted(1.5, 1.5, -1.5, -1.5) : r, 3, 3);
@@ -583,7 +583,7 @@ void SequenceTimeline::paintText(QPainter& p)
             QColor fill = base;
             fill.setAlpha(150);
             p.setBrush(fill);
-            p.setPen(isMate(Object::Kind::TextClip, c->clipId) ? matePen() : QPen(pal.color(QPalette::Highlight), 3));
+            p.setPen(isMate(c->piece ? Object::Kind::LayerPiece : Object::Kind::TextClip, c->clipId) ? matePen() : QPen(pal.color(QPalette::Highlight), 3));
             p.drawRoundedRect(visiblePart(target), 3, 3);
             if (target.width() > 30) {
                 p.setPen(Qt::white);

@@ -5,13 +5,14 @@
 #include <QtCore/QStringList>
 #include <QtGui/QMouseEvent>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
 namespace editor::app {
 
 // --layer-test: i pezzi di video sui livelli sopra V1 (V2, V3...) sulla linea del tempo: si vedono come blocchi, si prendono
-// con il mouse (spostamento fra livelli, bordi), con Ctrl+clic non entrano nelle selezioni multiple e non hanno le
+// con il mouse (spostamento fra livelli, bordi), con Ctrl+clic entrano nelle selezioni multiple e non hanno le
 // dissolvenze delle scritte. Codice 0 se tutto è giusto, 3 se un controllo non riesce.
 int runLayerTest(const QStringList&, qsizetype)
 {
@@ -85,11 +86,19 @@ int runLayerTest(const QStringList&, qsizetype)
     mouse(QEvent::MouseButtonRelease, {grabX + perSecond, yHigh});
     check(movedClip == 11 && movedLayer == 2 && std::abs(movedTo - 5.0) < 0.1, "trascinato sul livello V3, da 5 secondi");
 
-    // Ctrl+clic: il pezzo si sceglie da solo, niente selezione multipla.
-    selectedText = 0;
-    mouse(QEvent::MouseButtonPress, {grabX, yLow}, Qt::ControlModifier);
-    mouse(QEvent::MouseButtonRelease, {grabX, yLow}, Qt::ControlModifier);
-    check(line.selectedObjects().empty() && line.selectedTextClip() == 11, "Ctrl+clic non lo mette in una selezione multipla");
+    // Ctrl+clic: il pezzo entra nella selezione multipla insieme a una scritta.
+    const double titleX = line.xForSequenceTime(2.0);
+    mouse(QEvent::MouseButtonPress, {titleX, yLow}, Qt::ControlModifier);
+    mouse(QEvent::MouseButtonRelease, {titleX, yLow}, Qt::ControlModifier);
+    const auto picked = line.selectedObjects();
+    check(picked.size() == 2
+              && std::find(picked.begin(), picked.end(), core::ObjectRef{core::ObjectRef::Kind::LayerPiece, 11}) != picked.end()
+              && std::find(picked.begin(), picked.end(), core::ObjectRef{core::ObjectRef::Kind::TextClip, 10}) != picked.end(),
+          "Ctrl+clic mette il pezzo e la scritta nella selezione multipla");
+    // Un clic semplice sul pezzo torna alla selezione singola.
+    mouse(QEvent::MouseButtonPress, {grabX, yLow});
+    mouse(QEvent::MouseButtonRelease, {grabX, yLow});
+    check(line.selectedObjects().empty() && line.selectedTextClip() == 11, "un clic semplice torna al pezzo da solo");
 
     // Il bordo sinistro, 1 secondo più avanti: si accorcia l'inizio.
     const double edgeX = line.xForSequenceTime(4.0) + 1;

@@ -180,6 +180,8 @@ bool Project::objectExists(ObjectRef object) const
         return audio_.find(object.id) != nullptr;
     case ObjectRef::Kind::TextClip:
         return text_.find(object.id) != nullptr;
+    case ObjectRef::Kind::LayerPiece:
+        return text_.findPiece(object.id) != nullptr;
     }
     return false;
 }
@@ -277,6 +279,12 @@ std::vector<ObjectRef> Project::splitGroup(ObjectRef anchor, double seconds)
         if (const int id = text_.split(m.id, seconds); id != 0)
             created.push_back({ObjectRef::Kind::TextClip, id});
     }
+    for (const ObjectRef& m : members) {
+        if (m.kind != ObjectRef::Kind::LayerPiece)
+            continue;
+        if (const int id = text_.splitPiece(m.id, seconds); id != 0)
+            created.push_back({ObjectRef::Kind::LayerPiece, id});
+    }
     if (created.size() >= 2)
         groups_.create(created);
     return created;
@@ -289,6 +297,8 @@ int Project::removeObjects(const std::vector<ObjectRef>& objects)
         if (o.kind == ObjectRef::Kind::AudioClip && audio_.remove(o.id))
             ++removed;
         else if (o.kind == ObjectRef::Kind::TextClip && text_.remove(o.id))
+            ++removed;
+        else if (o.kind == ObjectRef::Kind::LayerPiece && text_.removePiece(o.id))
             ++removed;
     }
     for (const ObjectRef& o : objects) {

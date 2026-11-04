@@ -310,6 +310,7 @@ private:
     bool textClipAt(const QPointF& pos, int& lane, int& clip) const;
     bool textEdgeAt(const QPointF& pos, int& lane, int& clip, bool& atStart) const;
     const TextBlock* findTextClip(int clipId, int* lane = nullptr) const;
+    Object::Kind textObjectKind(int clipId) const;  // TextClip o LayerPiece (gli id sono condivisi)
     // Dissolvenze di una scritta come si vedono ora (quella trascinata è quella provvisoria).
     void textFadesOf(const TextBlock& c, double& fadeIn, double& fadeOut) const;
     QPointF textFadeHandle(const QRectF& lane, const TextBlock& c, bool isIn) const;
