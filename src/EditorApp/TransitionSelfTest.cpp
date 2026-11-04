@@ -225,6 +225,28 @@ int runTransitionTest(const QStringList&, qsizetype)
         line.setSelectedTransition(5);
         line.setTransitions({});
         check(line.selectedTransition() == 0, "se la transizione sparisce, la selezione sparisce");
+
+        // Il badge «fx» dei pezzi trasformati: solo dove c'è una trasformazione; un clic sceglie il pezzo e lo dice.
+        SequenceTimeline::Block fx = a;
+        fx.transformNote = QStringLiteral("Scala 150%");
+        line.setBlocks({fx, b});
+        QCoreApplication::processEvents();
+        check(!line.transformBadgeRectForTest(11).isEmpty() && line.transformBadgeRectForTest(12).isEmpty(),
+              "il badge c'è solo sul pezzo con una trasformazione");
+        int badgeClicked = 0;
+        int badgeSelected = 0;
+        line.onTransformBadge = [&](int id) { badgeClicked = id; };
+        line.onSelect = [&](int id) { badgeSelected = id; };
+        const QPointF badgeCenter = line.transformBadgeRectForTest(11).center();
+        {
+            QMouseEvent press(QEvent::MouseButtonPress, badgeCenter, line.mapToGlobal(badgeCenter), Qt::LeftButton, Qt::LeftButton,
+                              Qt::NoModifier);
+            QCoreApplication::sendEvent(&line, &press);
+            QMouseEvent release(QEvent::MouseButtonRelease, badgeCenter, line.mapToGlobal(badgeCenter), Qt::LeftButton, Qt::NoButton,
+                                Qt::NoModifier);
+            QCoreApplication::sendEvent(&line, &release);
+        }
+        check(badgeClicked == 11 && badgeSelected == 11 && line.selected() == 11, "un clic sul badge sceglie il pezzo e mostra la sua trasformazione");
     }
 
     // Le due schede nella finestra.

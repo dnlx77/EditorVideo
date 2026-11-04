@@ -55,6 +55,7 @@ public:
         QString fitNote;
         int proxyDivisor = 1;  // l'anteprima legge il video da un proxy a 1/proxyDivisor (1 = dall'originale)
         std::vector<core::LevelPoint> envelope;  // linea del livello dell'audio del pezzo (tempi del file)
+        QString transformNote;  // i valori della trasformazione del pezzo, uno per riga; vuoto = nessuna (badge «fx»)
         bool audioDetached = false;  // l'audio è una clip a parte: sotto il pezzo, su A1, non si vede niente
     };
 
@@ -192,6 +193,7 @@ public:
     std::function<void(int fragmentId, bool atStart, double value)> onTrimPreview;
     std::function<void(int fragmentId, bool atStart, double value, bool ripple)> onTrim;
     std::function<void(int)> onActivate;              // doppio clic
+    std::function<void(int fragmentId)> onTransformBadge;  // clic sul badge della trasformazione (il pezzo è già scelto)
     std::function<void(double from, double to)> onAudioSelection;  // tratto selezionato (vuoto = tolto)
     // File trascinati da Esplora file e lasciati qui: vanno nella sequenza a partire dalla posizione `index`.
     std::function<void(const QStringList& paths, int index)> onFilesDropped;
@@ -268,6 +270,7 @@ public:
     double xForBlockEdge(int index, bool atStart) const;  // dove sta il bordo del blocco `index`
     // Solo per le prove: il riquadro di una transizione e dove sta la giunzione, in coordinate del widget.
     QRectF transitionRectForTest(int id) const;
+    QRectF transformBadgeRectForTest(int fragmentId) const;  // il badge «fx» del pezzo (vuoto se non c'è)
     double xForJunction(int blockIndex) const;  // fine del blocco `blockIndex`
     int transitionDropBlock() const { return transDropIndex_; }
     double textLaneCenter(int layerIndex) const { return textLane(layerIndex).center().y(); }  // 0 = il livello più basso
@@ -370,6 +373,10 @@ private:
     double total() const { return total_; }
     // La parte visibile di `r` (con un po' di margine): con lo zoom un blocco può essere largo milioni di pixel.
     QRectF visiblePart(const QRectF& r) const;
+    // Il badge «fx» di un pezzo con una trasformazione, in alto a sinistra sul blocco (visibile); vuoto se non c'è posto.
+    QRectF transformBadgeRect(const Block& block, const QRectF& visible) const;
+    // Il pezzo (indice in blocks_) il cui badge è sotto `pos`, o -1.
+    int transformBadgeAt(const QPointF& pos) const;
     int blockAt(double x) const;     // indice del blocco sotto x, -1 se nessuno (o in uno spazio vuoto)
     int gapAt(double x) const;       // indice del blocco che ha subito prima lo spazio vuoto sotto x, -1 se nessuno
     int dropIndexAt(double x) const;  // dove finirebbero i file trascinati

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace editor::core {
 
@@ -99,6 +100,64 @@ TransformGeometry computeGeometry(const Transform& transform, int sourceWidth, i
     g.fullCorners = {g.toProject.apply(0, 0), g.toProject.apply(sw, 0), g.toProject.apply(sw, sh), g.toProject.apply(0, sh)};
     g.opacity = t.opacity;
     return g;
+}
+
+namespace {
+
+// Un numero senza zeri inutili: 150, 12,5 (virgola all'italiana).
+std::string number(double value, int decimals)
+{
+    char text[32];
+    std::snprintf(text, sizeof text, "%.*f", decimals, value);
+    std::string out = text;
+    if (out.find('.') != std::string::npos) {
+        while (out.back() == '0')
+            out.pop_back();
+        if (out.back() == '.')
+            out.pop_back();
+    }
+    const std::size_t dot = out.find('.');
+    if (dot != std::string::npos)
+        out[dot] = ',';
+    return out == "-0" ? "0" : out;
+}
+
+}  // namespace
+
+std::vector<std::string> describeTransform(const Transform& input)
+{
+    const Transform t = normalized(input);
+    const Transform base;
+    std::vector<std::string> lines;
+    if (t.scaleX != base.scaleX || t.scaleY != base.scaleY) {
+        if (std::abs(t.scaleX - t.scaleY) < 1e-9)
+            lines.push_back("Scala " + number(t.scaleX * 100.0, 1) + "%");
+        else
+            lines.push_back("Scala " + number(t.scaleX * 100.0, 1) + "% × " + number(t.scaleY * 100.0, 1) + "%");
+    }
+    if (t.posX != base.posX || t.posY != base.posY)
+        lines.push_back("Posizione " + number(t.posX, 1) + ", " + number(t.posY, 1) + " px");
+    if (t.rotation != base.rotation)
+        lines.push_back("Rotazione " + number(t.rotation, 1) + "°");
+    if (t.cropLeft != 0.0 || t.cropRight != 0.0 || t.cropTop != 0.0 || t.cropBottom != 0.0) {
+        std::string crop = "Ritaglio";
+        const auto side = [&](const char* name, double value) {
+            if (value != 0.0)
+                crop += std::string(" ") + name + " " + number(value * 100.0, 1) + "%";
+        };
+        side("sinistra", t.cropLeft);
+        side("destra", t.cropRight);
+        side("alto", t.cropTop);
+        side("basso", t.cropBottom);
+        lines.push_back(crop);
+    }
+    if (t.flipHorizontal)
+        lines.push_back("Specchiato in orizzontale");
+    if (t.flipVertical)
+        lines.push_back("Specchiato in verticale");
+    if (t.opacity != base.opacity)
+        lines.push_back("Opacità " + number(t.opacity * 100.0, 1) + "%");
+    return lines;
 }
 
 }  // namespace editor::core

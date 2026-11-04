@@ -378,6 +378,13 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->canDropTransition = [this](int beforeFragment) { return canDropTransition(beforeFragment); };
     timeline_->onTransitionDropped = [this](const QString& type, int beforeFragment) { addTransition(type, beforeFragment); };
     timeline_->onTransitionDropRefused = [this](int beforeFragment) { refuseTransition(beforeFragment); };
+    timeline_->onTransformBadge = [this](int) {
+        if (fullScreenDock_ != nullptr)
+            exitFullScreen();
+        propertiesDock_->show();
+        propertiesDock_->raise();
+        refreshPropertiesPanel();
+    };
     timeline_->onTransitionSelected = [this](int) {
         setProgramActive(true);
         refreshPropertiesPanel();
@@ -1109,6 +1116,8 @@ void MainWindow::refreshTimeline()
         if (clip != nullptr)
             blocks.back().proxyDivisor = proxies_->sourceDivisor(qs(clip->path));
         blocks.back().audioDetached = f.detached;
+        for (const std::string& line : core::describeTransform(f.transform))
+            blocks.back().transformNote += (blocks.back().transformNote.isEmpty() ? QString() : QStringLiteral("\n")) + qs(line);
         if (withAudio)
             blocks.back().envelope = f.envelope;
         // Come entra nel file esportato, rispetto al formato del progetto: segno sul blocco e spiegazione.

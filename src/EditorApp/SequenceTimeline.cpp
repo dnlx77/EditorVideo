@@ -672,6 +672,26 @@ double SequenceTimeline::dragTarget(double x) const
     return freeStart ? freeStart(dragged.fragmentId, desired) : desired;
 }
 
+QRectF SequenceTimeline::transformBadgeRect(const Block& block, const QRectF& visible) const
+{
+    if (block.transformNote.isEmpty() || visible.width() < 44)
+        return {};
+    return QRectF(QPointF(visible.left() + 3, visible.top() + 3), QSizeF(20, 14));
+}
+
+int SequenceTimeline::transformBadgeAt(const QPointF& pos) const
+{
+    const QRectF lane = videoLane();
+    if (!lane.contains(pos))
+        return -1;
+    const int index = blockAt(pos.x());
+    if (index < 0)
+        return -1;
+    const std::vector<QRectF> rects = blockRects(lane);
+    const Block& b = blocks_[static_cast<std::size_t>(index)];
+    return transformBadgeRect(b, visiblePart(rects[static_cast<std::size_t>(index)])).contains(pos) ? index : -1;
+}
+
 bool SequenceTimeline::event(QEvent* event)
 {
     // Sul blocco di un pezzo con un segno, su una clip audio o sui pulsanti di una corsia: la spiegazione; altrove il
@@ -688,10 +708,14 @@ bool SequenceTimeline::event(QEvent* event)
         if (index >= 0) {
             const std::vector<QRectF> rects = blockRects(lane);
             const Block& b = blocks_[static_cast<std::size_t>(index)];
+            if (transformBadgeAt(pos) == index)
+                return show(QStringLiteral("%1\nTrasformazione:\n%2\nClic: la mostra nel pannello Proprietà").arg(b.label, b.transformNote));
             QString note = b.fitNote;
             if (b.proxyDivisor > 1)
                 note = QStringLiteral("Anteprima dal proxy 1/%1 (l'esportazione usa l'originale)").arg(b.proxyDivisor)
                      + (note.isEmpty() ? QString() : QStringLiteral("\n") + note);
+            if (!b.transformNote.isEmpty())
+                note = QStringLiteral("Trasformazione:\n") + b.transformNote + (note.isEmpty() ? QString() : QStringLiteral("\n") + note);
             if (!note.isEmpty() && rects[static_cast<std::size_t>(index)].contains(pos))
                 return show(QStringLiteral("%1\n%2").arg(b.label, note));
         }
@@ -1159,6 +1183,16 @@ QRectF SequenceTimeline::transitionRectForTest(int id) const
 {
     const auto it = std::find_if(transitions_.begin(), transitions_.end(), [id](const TransitionBlock& t) { return t.id == id; });
     return it == transitions_.end() ? QRectF() : transitionRect(*it);
+}
+
+QRectF SequenceTimeline::transformBadgeRectForTest(int fragmentId) const
+{
+    const std::vector<QRectF> rects = blockRects(videoLane());
+    for (std::size_t i = 0; i < blocks_.size(); ++i) {
+        if (blocks_[i].fragmentId == fragmentId)
+            return transformBadgeRect(blocks_[i], visiblePart(rects[i]));
+    }
+    return {};
 }
 
 double SequenceTimeline::xForJunction(int blockIndex) const
