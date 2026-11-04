@@ -604,7 +604,7 @@ TEST(LayerPieceGroups, MoveSplitRemoveAndSaveTogether)
     EXPECT_FALSE(project.objectExists({Kind::LayerPiece, b}));
 }
 
-TEST(LayerPieceAudio, ComesWithAGroupedAudioClipOnTheFirstFreeTrack)
+TEST(LayerPieceAudio, ComesWithAGroupedAudioClipOnTheTrackOfItsLayer)
 {
     Project project;
     const int file = project.add("gita.mp4");
@@ -620,13 +620,17 @@ TEST(LayerPieceAudio, ComesWithAGroupedAudioClipOnTheFirstFreeTrack)
     EXPECT_NEAR(clip->start, 5.0, 1e-9);
     EXPECT_NEAR(clip->end, 9.0, 1e-9);
     EXPECT_NEAR(clip->position, 2.0, 1e-9);
-    EXPECT_EQ(project.audioTracks().trackOf(audio), AudioTracks::kOriginalTrack);
+    // V2 con A2: la prima traccia aggiunta.
+    ASSERT_EQ(project.audioTracks().addedTrackCount(), 1);
+    EXPECT_EQ(project.audioTracks().trackOf(audio), project.audioTracks().tracks().back().id);
     EXPECT_EQ(project.groupMembers({Kind::LayerPiece, first}).size(), 2u);
-    // Un secondo pezzo sopra l'audio già su A1: l'audio va su una traccia nuova.
+    // Un pezzo su V3: l'audio va su A3.
     const int layer2 = project.textTracks().addLayer();
     int audio2 = 0;
     ASSERT_NE(project.addLayerPiece(layer2, piece(file, 3.0, 0.0, 2.0), true, &audio2), 0);
-    EXPECT_NE(project.audioTracks().trackOf(audio2), AudioTracks::kOriginalTrack);
+    EXPECT_EQ(project.audioTracks().addedTrackCount(), 2);
+    EXPECT_EQ(project.audioTracks().trackOf(audio2), project.audioTracks().tracks().back().id);
+    EXPECT_NE(project.audioTracks().trackOf(audio2), project.audioTracks().trackOf(audio));
     // Senza audio: solo il pezzo.
     int none = 7;
     const int silent = project.addLayerPiece(layer2, piece(file, 10.0, 0.0, 1.0), false, &none);
@@ -670,21 +674,32 @@ TEST(LayerPieceMoves, LiftFromV1AndLowerBack)
     ASSERT_NE(audio, 0);
     EXPECT_EQ(project.groupMembers({Kind::LayerPiece, piece}).size(), 2u);
 
-    // Di nuovo in V1: la clip audio resta, il pezzo ha l'audio scollegato.
-    int audio2 = 0;
+    // L'audio collegato è andato su A2 (V2 con A2).
+    EXPECT_NE(project.audioTracks().trackOf(audio), AudioTracks::kOriginalTrack);
+    EXPECT_EQ(project.audioTracks().addedTrackCount(), 1);
+
+    // Di nuovo in V1: l'audio torna collegato (la clip sparisce) e il pezzo non è più scollegato.
+    int audio2 = 7;
     const int back = project.lowerToV1(piece, 0.0, true, &audio2);
     ASSERT_NE(back, 0);
     EXPECT_EQ(project.textTracks().findPiece(piece), nullptr);
-    EXPECT_EQ(audio2, audio);
+    EXPECT_EQ(audio2, 0);
+    EXPECT_EQ(project.audioTracks().find(audio), nullptr);
     const Fragment* f = project.sequence().find(back);
     ASSERT_NE(f, nullptr);
-    EXPECT_TRUE(f->detached);
+    EXPECT_FALSE(f->detached);
     EXPECT_NEAR(f->transform.scaleX, 0.5, 1e-9);
     EXPECT_NEAR(project.sequence().startOf(project.sequence().indexOf(back)), 0.0, 1e-9);
-    // Un pezzo già con l'audio scollegato passa sul livello senza una seconda clip audio.
+
+    // Un pezzo con l'audio scollegato passa sul livello senza portarsi l'audio: ognuno per conto suo.
+    int unlinkedTrack = 0;
+    const int freeClip = project.unlinkAudio(back, &unlinkedTrack);
+    ASSERT_NE(freeClip, 0);
     audio2 = 7;
-    EXPECT_NE(project.liftToLayer(back, layer, 20.0, &audio2), 0);
+    const int lifted2 = project.liftToLayer(back, layer, 20.0, &audio2);
+    EXPECT_NE(lifted2, 0);
     EXPECT_EQ(audio2, 0);
+    EXPECT_NE(project.audioTracks().find(freeClip), nullptr);
     // Livello che non c'è: nessuna modifica.
     const Project before = project;
     EXPECT_EQ(project.liftToLayer(b, 999, 0.0), 0);

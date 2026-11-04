@@ -433,16 +433,37 @@ int Project::unlinkAudio(int fragmentId, int* track)
     return id;
 }
 
-int Project::placeAudioClip(AudioClip clip)
+int Project::audioTrackForLayer(int layerId)
+{
+    const int index = text_.layerIndex(layerId);
+    if (index < 0)
+        return -1;
+    std::vector<int> added;
+    for (const AudioTrack& t : audio_.tracks()) {
+        if (!t.host)
+            added.push_back(t.id);
+    }
+    while (static_cast<int>(added.size()) <= index)
+        added.push_back(audio_.addTrack());
+    return added[static_cast<std::size_t>(index)];
+}
+
+int Project::placeAudioClip(AudioClip clip, int layerId)
 {
     const double length = clip.length();
-    // A1: libera e fuori dall'audio dei pezzi di V1; poi le tracce aggiunte; poi una traccia nuova.
+    // La traccia che corrisponde al livello (V2 con A2, V3 con A3...) se lì c'è posto; altrimenti A1 se libera e fuori
+    // dall'audio dei pezzi di V1; poi le altre tracce aggiunte; poi una traccia nuova.
+    int track = -1;
+    if (layerId > 0) {
+        const int own = audioTrackForLayer(layerId);
+        if (own >= 0 && std::abs(audio_.freePosition(own, length, clip.position) - clip.position) <= kTimeEpsilon)
+            track = own;
+    }
     const std::vector<TimeRange> blocked = linkedAudioRanges();
     const auto overlapsLinked = [&](double from) {
         return std::any_of(blocked.begin(), blocked.end(), [&](const TimeRange& r) { return from < r.end - kTimeEpsilon && from + length > r.start + kTimeEpsilon; });
     };
-    int track = -1;
-    if (std::abs(audio_.freePosition(AudioTracks::kOriginalTrack, length, clip.position) - clip.position) <= kTimeEpsilon
+    if (track < 0 && std::abs(audio_.freePosition(AudioTracks::kOriginalTrack, length, clip.position) - clip.position) <= kTimeEpsilon
         && !overlapsLinked(clip.position))
         track = AudioTracks::kOriginalTrack;
     for (std::size_t i = 0; track < 0 && i < audio_.tracks().size(); ++i) {
@@ -469,7 +490,7 @@ int Project::addLayerPiece(int layerId, const LayerPiece& piece, bool withAudio,
     clip.end = piece.end;
     clip.position = piece.position;
     clip.sourceDuration = source->duration;
-    const int clipId = placeAudioClip(clip);
+    const int clipId = placeAudioClip(clip, layerId);
     if (clipId == 0)
         return id;
     if (audioClip != nullptr)
@@ -514,7 +535,7 @@ int Project::liftToLayer(int fragmentId, int layerId, double position, int* audi
         clip.position = where;
         clip.sourceDuration = source->duration;
         clip.envelope = fragment.envelope;
-        clipId = placeAudioClip(clip);
+        clipId = placeAudioClip(clip, layerId);
         if (clipId != 0) {
             // I tratti senza audio restano senza audio.
             const int track = audio_.trackOf(clipId);
@@ -551,12 +572,22 @@ int Project::lowerToV1(int pieceId, double position, bool push, int* audioClip)
     text_.removePiece(pieceId);
     sequence_.setTransform(id, piece.transform);
     if (clipId != 0) {
-        const double from = sequence_.startOf(sequence_.indexOf(id));
-        sequence_.muteRange(from, from + piece.length());
-        sequence_.setDetached(id, true);
-        groups_.create({{ObjectRef::Kind::Piece, id}, {ObjectRef::Kind::AudioClip, clipId}});
-        if (audioClip != nullptr)
-            *audioClip = clipId;
+        const AudioClip* clip = audio_.find(clipId);
+        const Clip* source = find(piece.clipId);
+        const bool sameAudio = clip != nullptr && source != nullptr && clip->path == source->path
+                               && std::abs(clip->start - piece.start) < 1e-6 && std::abs(clip->end - piece.end) < 1e-6;
+        if (sameAudio) {
+            // L'audio è quello del video com'era: torna collegato su A1 (con la sua linea del livello) e la clip sparisce.
+            sequence_.setEnvelope(id, clip->envelope);
+            audio_.remove(clipId);
+        } else {
+            const double from = sequence_.startOf(sequence_.indexOf(id));
+            sequence_.muteRange(from, from + piece.length());
+            sequence_.setDetached(id, true);
+            groups_.create({{ObjectRef::Kind::Piece, id}, {ObjectRef::Kind::AudioClip, clipId}});
+            if (audioClip != nullptr)
+                *audioClip = clipId;
+        }
     }
     pruneTransitions();
     return id;
