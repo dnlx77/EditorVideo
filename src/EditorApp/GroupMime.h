@@ -30,7 +30,7 @@ inline std::vector<editor::core::ObjectRef> decodeGroupObjects(const QByteArray&
         bool okId = false;
         const int kind = parts.size() == 2 ? parts[0].toInt(&okKind) : 0;
         const int id = parts.size() == 2 ? parts[1].toInt(&okId) : 0;
-        if (okKind && okId && kind >= 0 && kind <= static_cast<int>(editor::core::ObjectRef::Kind::TextClip))
+        if (okKind && okId && kind >= 0 && kind <= static_cast<int>(editor::core::ObjectRef::Kind::LayerPiece))
             objects.push_back({static_cast<editor::core::ObjectRef::Kind>(kind), id});
     }
     return objects;

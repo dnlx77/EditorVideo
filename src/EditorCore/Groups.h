@@ -15,6 +15,7 @@ struct ObjectRef
         PieceAudio,  // id del pezzo a cui appartiene l'audio
         AudioClip,   // id di una clip audio (AudioClip)
         TextClip,    // id di una scritta (TextClip)
+        LayerPiece,  // id di un pezzo di video su un livello sopra V1 (LayerPiece)
     };
     Kind kind = Kind::Piece;
     int id = 0;

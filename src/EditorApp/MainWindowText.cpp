@@ -228,21 +228,17 @@ bool MainWindow::moveTextOnScreen(int clipId, double centerX, double centerY)
 
 bool MainWindow::moveTextClip(int clipId, int layerId, double position)
 {
-    if (project_.textTracks().findPiece(clipId) != nullptr) {  // un pezzo di video su un livello
-        const core::Project before = project_;
-        if (!project_.textTracks().movePieceTo(clipId, layerId, position))
-            return false;
-        recordEdit(QStringLiteral("Sposta pezzo del livello"), before);
-        return true;
-    }
-    if (project_.textTracks().find(clipId) == nullptr)
+    const bool isPiece = project_.textTracks().findPiece(clipId) != nullptr;  // un pezzo di video su un livello
+    if (!isPiece && project_.textTracks().find(clipId) == nullptr)
         return false;
     const core::Project before = project_;
-    const core::Project::MoveResult moved =
-        project_.moveObject({core::ObjectRef::Kind::TextClip, clipId}, layerId, position, pushPieces_);
+    const core::Project::MoveResult moved = project_.moveObject(
+        {isPiece ? core::ObjectRef::Kind::LayerPiece : core::ObjectRef::Kind::TextClip, clipId}, layerId, position, pushPieces_);
     if (!moved.moved)
         return false;
-    recordEdit(moved.group ? QStringLiteral("Sposta gruppo") : QStringLiteral("Sposta scritta"), before);
+    recordEdit(moved.group ? QStringLiteral("Sposta gruppo")
+                           : isPiece ? QStringLiteral("Sposta pezzo del livello") : QStringLiteral("Sposta scritta"),
+               before);
     return true;
 }
 

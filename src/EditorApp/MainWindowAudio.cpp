@@ -517,6 +517,12 @@ void MainWindow::refreshGroups()
             entry.kind = QStringLiteral("Audio");
             entry.name = clip != nullptr ? fileNameOf(clip->path) : QString();
             entry.start = clip != nullptr ? clip->position : 0.0;
+        } else if (ref.kind == Kind::LayerPiece) {
+            const core::LayerPiece* piece = project_.textTracks().findPiece(ref.id);
+            const core::Clip* file = piece != nullptr ? project_.find(piece->clipId) : nullptr;
+            entry.kind = QStringLiteral("Video sul livello");
+            entry.name = file != nullptr ? fileNameOf(file->path) : QString();
+            entry.start = piece != nullptr ? piece->position : 0.0;
         } else {
             const core::TextClip* clip = project_.textTracks().find(ref.id);
             entry.kind = QStringLiteral("Scritta");

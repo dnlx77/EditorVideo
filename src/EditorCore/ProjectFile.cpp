@@ -546,6 +546,19 @@ std::string projectToJson(const std::string& projectPath, const Project& project
                     }
                 }
                 items.emplace_back(JsonValue::Object{{"tipo", "scritta"}, {"traccia", layerIndex}, {"posizione", clipIndex}});
+            } else if (o.kind == ObjectRef::Kind::LayerPiece) {
+                int layerIndex = -1;
+                int pieceIndex = -1;
+                for (std::size_t l = 0; l < project.textTracks().layers().size(); ++l) {
+                    const auto& pieces = project.textTracks().layers()[l].pieces;
+                    for (std::size_t c = 0; c < pieces.size(); ++c) {
+                        if (pieces[c].id == o.id) {
+                            layerIndex = static_cast<int>(l);
+                            pieceIndex = static_cast<int>(c);
+                        }
+                    }
+                }
+                items.emplace_back(JsonValue::Object{{"tipo", "pezzoLivello"}, {"traccia", layerIndex}, {"posizione", pieceIndex}});
             } else if (o.kind == ObjectRef::Kind::AudioClip) {
                 int trackIndex = -1;
                 int clipIndex = -1;
@@ -811,6 +824,12 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                         if (l >= 0 && l < static_cast<std::int64_t>(layers.size()) && at >= 0
                             && at < static_cast<std::int64_t>(layers[static_cast<std::size_t>(l)].clips.size()))
                             members.push_back({ObjectRef::Kind::TextClip, layers[static_cast<std::size_t>(l)].clips[static_cast<std::size_t>(at)].id});
+                    } else if (kind == "pezzoLivello") {
+                        const std::int64_t l = item["traccia"].isInteger() ? item["traccia"].asInteger() : -1;
+                        const auto& layers = built.textTracks().layers();
+                        if (l >= 0 && l < static_cast<std::int64_t>(layers.size()) && at >= 0
+                            && at < static_cast<std::int64_t>(layers[static_cast<std::size_t>(l)].pieces.size()))
+                            members.push_back({ObjectRef::Kind::LayerPiece, layers[static_cast<std::size_t>(l)].pieces[static_cast<std::size_t>(at)].id});
                     } else if (kind == "clip") {
                         const std::int64_t t = item["traccia"].isInteger() ? item["traccia"].asInteger() : -1;
                         const auto& tracks = built.audioTracks().tracks();

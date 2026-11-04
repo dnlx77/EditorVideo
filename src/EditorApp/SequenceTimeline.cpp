@@ -311,7 +311,7 @@ std::vector<SequenceTimeline::Object> SequenceTimeline::allSelectedObjects() con
     if (selectedAudioClip_ != 0)
         one.push_back({Object::Kind::AudioClip, selectedAudioClip_});
     if (selectedTextClip_ != 0)
-        one.push_back({Object::Kind::TextClip, selectedTextClip_});
+        one.push_back({textObjectKind(selectedTextClip_), selectedTextClip_});
     return one;
 }
 
@@ -320,7 +320,7 @@ bool SequenceTimeline::isSelected(Object::Kind kind, int id) const
     if (!multi_.empty())
         return std::find(multi_.begin(), multi_.end(), Object{kind, id}) != multi_.end();
     return (kind == Object::Kind::Piece && id == selected_) || (kind == Object::Kind::AudioClip && id == selectedAudioClip_)
-           || (kind == Object::Kind::TextClip && id == selectedTextClip_);
+           || ((kind == Object::Kind::TextClip || kind == Object::Kind::LayerPiece) && id == selectedTextClip_);
 }
 
 bool SequenceTimeline::isMate(Object::Kind kind, int id) const
@@ -344,9 +344,8 @@ bool SequenceTimeline::objectAt(const QPointF& pos, Object& target)
         int clip = 0;
         if (!textClipAt(pos, clipLane, clip))
             return false;
-        if (textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)].piece)
-            return false;  // i pezzi dei livelli non entrano ancora nelle selezioni multiple e nei gruppi
-        target = {Object::Kind::TextClip, textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)].clipId};
+        const TextBlock& hit = textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)];
+        target = {hit.piece ? Object::Kind::LayerPiece : Object::Kind::TextClip, hit.clipId};
     } else if (const int lane = laneAt(pos.y()); lane >= 0) {
         int clipLane = 0;
         int clip = 0;
@@ -389,7 +388,7 @@ void SequenceTimeline::applySelection(const std::vector<Object>& set, Object pri
     multi_ = set.size() >= 2 ? set : std::vector<Object>{};
     selected_ = primary.kind == Object::Kind::Piece ? primary.id : 0;
     selectedAudioClip_ = primary.kind == Object::Kind::AudioClip ? primary.id : 0;
-    selectedTextClip_ = primary.kind == Object::Kind::TextClip ? primary.id : 0;
+    selectedTextClip_ = primary.kind == Object::Kind::TextClip || primary.kind == Object::Kind::LayerPiece ? primary.id : 0;
     selectedTextLayer_ = 0;
     selectedGap_ = 0;
     selectedTransition_ = 0;
@@ -422,7 +421,8 @@ void SequenceTimeline::selectObjects(const std::vector<Object>& objects)
             exists = findAudioClip(o.id) != nullptr;
             break;
         case Object::Kind::TextClip:
-            exists = findTextClip(o.id) != nullptr;
+        case Object::Kind::LayerPiece:
+            exists = findTextClip(o.id) != nullptr && textObjectKind(o.id) == o.kind;
             break;
         }
         if (exists && std::find(set.begin(), set.end(), o) == set.end())
@@ -824,6 +824,12 @@ bool SequenceTimeline::textEdgeAt(const QPointF& pos, int& lane, int& clip, bool
     return found;
 }
 
+SequenceTimeline::Object::Kind SequenceTimeline::textObjectKind(int clipId) const
+{
+    const TextBlock* c = findTextClip(clipId);
+    return c != nullptr && c->piece ? Object::Kind::LayerPiece : Object::Kind::TextClip;
+}
+
 const SequenceTimeline::TextBlock* SequenceTimeline::findTextClip(int clipId, int* lane) const
 {
     for (std::size_t i = 0; i < textLanes_.size(); ++i) {
@@ -961,7 +967,7 @@ void SequenceTimeline::setTextLanes(std::vector<TextLane> lanes)
     if (selectedTextLayer_ != 0
         && std::none_of(textLanes_.begin(), textLanes_.end(), [this](const TextLane& l) { return l.layerId == selectedTextLayer_; }))
         selectedTextLayer_ = 0;
-    std::erase_if(multi_, [this](const Object& o) { return o.kind == Object::Kind::TextClip && findTextClip(o.id) == nullptr; });
+    std::erase_if(multi_, [this](const Object& o) { return (o.kind == Object::Kind::TextClip || o.kind == Object::Kind::LayerPiece) && findTextClip(o.id) == nullptr; });
     if (multi_.size() < 2)
         multi_.clear();
     if (textDragClip_ != 0 && findTextClip(textDragClip_) == nullptr) {
@@ -995,7 +1001,7 @@ std::vector<double> SequenceTimeline::snapMarks(int ignoredBlock, int ignoredCli
     }
     for (const TextLane& lane : textLanes_) {
         for (const TextBlock& c : lane.clips) {
-            if (c.clipId != ignoredText && !isMoving(Object::Kind::TextClip, c.clipId)) {
+            if (c.clipId != ignoredText && !isMoving(c.piece ? Object::Kind::LayerPiece : Object::Kind::TextClip, c.clipId)) {
                 marks.push_back(c.position);
                 marks.push_back(c.position + c.length);
             }
