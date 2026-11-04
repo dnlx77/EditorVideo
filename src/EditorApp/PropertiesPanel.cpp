@@ -2,7 +2,9 @@
 
 #include <QtCore/QSignalBlocker>
 #include <QtWidgets/QCheckBox>
+#include <QtWidgets/QComboBox>
 #include <QtWidgets/QDoubleSpinBox>
+#include <QtWidgets/QFormLayout>
 #include <QtWidgets/QGroupBox>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -33,6 +35,8 @@ PropertiesPanel::PropertiesPanel(QWidget* parent)
     scroll->setWidget(buildTransformPage());
     stack_->addWidget(scroll);
     transformPage_ = scroll;
+    transitionPage_ = buildTransitionPage();
+    stack_->addWidget(transitionPage_);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(stack_);
@@ -140,6 +144,7 @@ QWidget* PropertiesPanel::buildTransformPage()
     scaleX_ = addRow(scale, QStringLiteral("Larghezza"), core::kMinScale * 100.0, core::kMaxScale * 100.0, 1.0, 1,
                      QStringLiteral(" %"), 1, 400, 1.0, "scalaX");
     linked_ = new QCheckBox(QStringLiteral("Proporzionale"));
+    linked_->setObjectName(QStringLiteral("proporzionale"));
     linked_->setChecked(true);
     linked_->setToolTip(QStringLiteral("Larghezza e altezza cambiano insieme"));
     scale->addWidget(linked_);
@@ -217,6 +222,96 @@ QWidget* PropertiesPanel::buildTransformPage()
 
     root->addStretch(1);
     return page;
+}
+
+QWidget* PropertiesPanel::buildTransitionPage()
+{
+    auto* page = new QWidget;
+    auto* root = new QVBoxLayout(page);
+    auto* title = new QLabel(QStringLiteral("<b>Transizione</b>"));
+    root->addWidget(title);
+    auto* form = new QFormLayout;
+    root->addLayout(form);
+    transitionType_ = new QComboBox;
+    transitionType_->setObjectName(QStringLiteral("transizioneTipo"));
+    for (const core::Transition* transition : core::transitionRegistry())
+        transitionType_->addItem(QString::fromUtf8(transition->name()), QString::fromUtf8(transition->id()));
+    form->addRow(QStringLiteral("Tipo"), transitionType_);
+    transitionDirection_ = new QComboBox;
+    transitionDirection_->setObjectName(QStringLiteral("transizioneDirezione"));
+    transitionDirection_->addItem(QStringLiteral("Verso sinistra"), static_cast<int>(core::TransitionDirection::Left));
+    transitionDirection_->addItem(QStringLiteral("Verso destra"), static_cast<int>(core::TransitionDirection::Right));
+    transitionDirection_->addItem(QStringLiteral("Verso l'alto"), static_cast<int>(core::TransitionDirection::Up));
+    transitionDirection_->addItem(QStringLiteral("Verso il basso"), static_cast<int>(core::TransitionDirection::Down));
+    form->addRow(QStringLiteral("Direzione"), transitionDirection_);
+    transitionDuration_ = new QDoubleSpinBox;
+    transitionDuration_->setObjectName(QStringLiteral("transizioneDurata"));
+    transitionDuration_->setDecimals(2);
+    transitionDuration_->setSingleStep(0.1);
+    transitionDuration_->setSuffix(QStringLiteral(" s"));
+    transitionDuration_->setToolTip(QStringLiteral("Al massimo quanto permettono i due pezzi e il video che c'è oltre i loro bordi"));
+    form->addRow(QStringLiteral("Durata"), transitionDuration_);
+    transitionAudio_ = new QCheckBox(QStringLiteral("Dissolvenza incrociata anche dell'audio"));
+    transitionAudio_->setObjectName(QStringLiteral("transizioneAudio"));
+    root->addWidget(transitionAudio_);
+    transitionHint_ = new QLabel;
+    transitionHint_->setWordWrap(true);
+    root->addWidget(transitionHint_);
+    root->addStretch(1);
+
+    connect(transitionType_, &QComboBox::currentIndexChanged, this, [this](int) {
+        const core::Transition* chosen = core::findTransition(transitionType_->currentData().toString().toStdString());
+        transitionDirection_->setEnabled(chosen != nullptr && chosen->usesDirection());
+        transitionEdited("tipo");
+    });
+    connect(transitionDirection_, &QComboBox::currentIndexChanged, this, [this](int) { transitionEdited("direzione"); });
+    connect(transitionDuration_, &QDoubleSpinBox::valueChanged, this, [this](double) { transitionEdited("durata"); });
+    connect(transitionAudio_, &QCheckBox::toggled, this, [this](bool) { transitionEdited("audio"); });
+    return page;
+}
+
+void PropertiesPanel::transitionEdited(const std::string& field)
+{
+    if (updating_ || !onTransitionEdit)
+        return;
+    core::TransitionParams params;
+    params.direction = static_cast<core::TransitionDirection>(transitionDirection_->currentData().toInt());
+    onTransitionEdit(transitionType_->currentData().toString().toStdString(), params, transitionDuration_->value(),
+                     transitionAudio_->isChecked(), field);
+}
+
+void PropertiesPanel::showTransitionClip(const core::TransitionClip& clip, double minDuration, double maxDuration)
+{
+    updating_ = true;
+    {
+        const QSignalBlocker a(transitionType_);
+        const QSignalBlocker b(transitionDirection_);
+        const QSignalBlocker c(transitionDuration_);
+        const QSignalBlocker d(transitionAudio_);
+        const int type = transitionType_->findData(QString::fromUtf8(clip.type.c_str()));
+        if (type >= 0 && transitionType_->currentIndex() != type)
+            transitionType_->setCurrentIndex(type);
+        const int direction = transitionDirection_->findData(static_cast<int>(clip.params.direction));
+        if (direction >= 0 && transitionDirection_->currentIndex() != direction)
+            transitionDirection_->setCurrentIndex(direction);
+        const core::Transition* chosen = core::findTransition(clip.type);
+        transitionDirection_->setEnabled(chosen != nullptr && chosen->usesDirection());
+        maxDuration = std::max(minDuration, maxDuration);
+        if (std::abs(transitionDuration_->minimum() - minDuration) > 1e-9 || std::abs(transitionDuration_->maximum() - maxDuration) > 1e-9)
+            transitionDuration_->setRange(minDuration, maxDuration);
+        const double duration = std::min(clip.duration, maxDuration);
+        if (std::abs(transitionDuration_->value() - duration) > 1e-9)
+            transitionDuration_->setValue(duration);
+        if (transitionAudio_->isChecked() != clip.crossfadeAudio)
+            transitionAudio_->setChecked(clip.crossfadeAudio);
+    }
+    updating_ = false;
+    stack_->setCurrentWidget(transitionPage_);
+}
+
+bool PropertiesPanel::showingTransitionClip() const
+{
+    return stack_->currentWidget() == transitionPage_;
 }
 
 void PropertiesPanel::showNothing(const QString& message)

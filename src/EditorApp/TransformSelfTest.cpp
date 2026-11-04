@@ -122,7 +122,7 @@ int runTransformTest(const QStringList&, qsizetype)
         scaleX->setValue(50.0);
         check(edits == 1 && lastField == "scala" && std::abs(applied.scaleX - 0.5) < 1e-9 && std::abs(applied.scaleY - 0.5) < 1e-9,
               "la scala proporzionale cambia larghezza e altezza insieme");
-        auto* linked = panel.findChild<QCheckBox*>();
+        auto* linked = panel.findChild<QCheckBox*>(QStringLiteral("proporzionale"));
         check(linked != nullptr && linked->isChecked(), "la catenella è chiusa all'inizio");
         if (linked != nullptr)
             linked->setChecked(false);
@@ -203,6 +203,39 @@ int runTransformTest(const QStringList&, qsizetype)
         check(textEdits > 0, "scrivere nell'editor nel pannello arriva a chi ascolta");
         panel.showTransform(other, 1);
         check(panel.showingTransform() && !panel.showingText(), "con un pezzo scelto torna la pagina delle trasformazioni");
+
+        // La pagina delle transizioni: i controlli mostrano i valori e ogni modifica porta tutti i valori a chi ascolta.
+        core::TransitionClip transition;
+        transition.id = 7;
+        transition.type = "dissolvenza";
+        transition.duration = 1.5;
+        transition.crossfadeAudio = false;
+        int transitionEdits = 0;
+        std::string transitionField;
+        double lastDuration = 0.0;
+        bool lastAudio = false;
+        panel.onTransitionEdit = [&](const std::string&, const core::TransitionParams&, double duration, bool audio,
+                                     const std::string& field) {
+            ++transitionEdits;
+            transitionField = field;
+            lastDuration = duration;
+            lastAudio = audio;
+        };
+        panel.showTransitionClip(transition, 0.1, 3.0);
+        auto* durationBox = child<QDoubleSpinBox>(panel, "transizioneDurata");
+        auto* audioBox = child<QCheckBox>(panel, "transizioneAudio");
+        check(panel.showingTransitionClip() && !panel.showingTransform() && transitionEdits == 0,
+              "scegliendo una transizione il pannello mostra la sua pagina (senza contare come modifica)");
+        check(std::abs(durationBox->value() - 1.5) < 1e-9 && !audioBox->isChecked() && durationBox->maximum() == 3.0,
+              "la pagina mostra durata, audio e limite della transizione");
+        durationBox->setValue(2.25);
+        check(transitionEdits == 1 && transitionField == "durata" && std::abs(lastDuration - 2.25) < 1e-9 && !lastAudio,
+              "cambiare la durata arriva a chi ascolta");
+        audioBox->setChecked(true);
+        check(transitionEdits == 2 && transitionField == "audio" && lastAudio && std::abs(lastDuration - 2.25) < 1e-9,
+              "la dissolvenza incrociata dell'audio arriva a chi ascolta");
+        panel.showTransform(other, 1);
+        check(panel.showingTransform() && !panel.showingTransitionClip(), "da una transizione si torna alle trasformazioni");
     }
 
     // --- Il fotogramma disegnato con la trasformazione (a pixel).

@@ -189,7 +189,10 @@ public:
     double clampTransitionDuration(int id, double desired) const;
     bool changeTransitionDuration(int id, double duration);
     bool removeTransition(int id);
-    void editTransition(int id);
+    void editTransition(int id);  // mostra le sue proprietà nel pannello Proprietà
+    // Un controllo della pagina delle transizioni del pannello Proprietà è cambiato (vedi PropertiesPanel::onTransitionEdit).
+    bool applyTransitionEdit(const std::string& type, const core::TransitionParams& params, double duration, bool crossfadeAudio,
+                             const std::string& field);
     bool moveTextClip(int clipId, int layerId, double position);
     bool trimTextClip(int clipId, bool atStart, double value);
     bool fadeTextClip(int clipId, double fadeIn, double fadeOut);  // le maniglie sulla linea del tempo
@@ -381,6 +384,8 @@ private:
     QDockWidget* propertiesDock_ = nullptr;
     TextEditorPanel* textPanel_ = nullptr;
     PropertiesPanel* propertiesPanel_ = nullptr;
+    std::string transitionMergeKey_;         // come transformMergeKey_, per le modifiche delle transizioni
+    std::size_t transitionMergeCount_ = 0;
     std::string transformMergeKey_;          // campo e pezzi dell'ultima modifica delle trasformazioni, per unire quelle di fila
     std::size_t transformMergeCount_ = 0;
     QTabWidget* leftTabs_ = nullptr;        // il blocco in alto a sinistra ha tre schede: File del progetto, Transizioni e Gruppi
