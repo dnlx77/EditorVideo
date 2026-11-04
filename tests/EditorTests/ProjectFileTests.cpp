@@ -273,13 +273,13 @@ TEST_F(ProjectFileTest, NewerFormatIsRefused)
     std::string json = projectToJson(projectPath(), sample(view), view);
     const auto at = json.find("\"versione\": 1");
     ASSERT_NE(at, std::string::npos);
-    json.replace(at, 13, "\"versione\": 7");
+    json.replace(at, 13, "\"versione\": 8");
     try {
         projectFromJson(projectPath(), json);
         ADD_FAILURE() << "doveva essere rifiutato";
     } catch (const ProjectFileError& e) {
         EXPECT_NE(std::string(e.what()).find("versione più recente"), std::string::npos) << e.what();
-        EXPECT_NE(std::string(e.what()).find("formato 7"), std::string::npos) << e.what();
+        EXPECT_NE(std::string(e.what()).find("formato 8"), std::string::npos) << e.what();
     }
 }
 
@@ -593,3 +593,41 @@ TEST_F(ProjectFileTest, TransitionsOnJunctionsThatAreGoneOrNonsenseAreDropped)
     EXPECT_EQ(projectToJson(projectPath(), plain, view).find("transizioni"), std::string::npos);
 }
 
+
+TEST_F(ProjectFileTest, LayerPiecesRoundTripAsVersionSeven)
+{
+    ProjectView view;
+    Project project = sample(view);
+    const int layer = project.textTracks().addLayer();
+    TextClip text;
+    text.position = 0.0;
+    text.length = 1.5;
+    text.text = "Ciao";
+    ASSERT_NE(project.textTracks().add(layer, text), 0);
+    LayerPiece piece;
+    piece.clipId = project.clips().front().id;
+    piece.start = 1.0;
+    piece.end = 3.5;
+    piece.position = 2.0;
+    piece.transform.scaleX = piece.transform.scaleY = 0.5;
+    piece.transform.posX = 120.0;
+    ASSERT_NE(project.textTracks().addPiece(layer, piece), 0);
+    const std::string json = projectToJson(projectPath(), project, view);
+    EXPECT_NE(json.find("\"versione\": 7"), std::string::npos);
+    const LoadedProject loaded = projectFromJson(projectPath(), json);
+    ASSERT_EQ(loaded.project.textTracks().layers().size(), 1u);
+    const TextLayer& back = loaded.project.textTracks().layers()[0];
+    ASSERT_EQ(back.clips.size(), 1u);
+    ASSERT_EQ(back.pieces.size(), 1u);
+    EXPECT_NEAR(back.pieces[0].position, 2.0, 1e-6);
+    EXPECT_NEAR(back.pieces[0].start, 1.0, 1e-6);
+    EXPECT_NEAR(back.pieces[0].end, 3.5, 1e-6);
+    EXPECT_NEAR(back.pieces[0].transform.posX, 120.0, 1e-6);
+    EXPECT_EQ(loaded.project.clips()[0].path, project.clips()[0].path);
+    EXPECT_EQ(back.pieces[0].clipId, loaded.project.clips()[0].id);
+    // Senza pezzi nei livelli, il progetto resta com'era (versione 4 con le sole scritte).
+    Project plain = sample(view);
+    const int l2 = plain.textTracks().addLayer();
+    plain.textTracks().add(l2, text);
+    EXPECT_NE(projectToJson(projectPath(), plain, view).find("\"versione\": 4"), std::string::npos);
+}

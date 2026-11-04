@@ -97,11 +97,11 @@ public:
         double fadeOut = 0.0;  // dissolvenza in uscita (secondi)
     };
 
-    // Un livello di scritte (T1, T2...), disegnato sopra la corsia video: il livello più alto sta più in alto.
+    // Un livello di scritte (V2, V3...), disegnato sopra la corsia video: il livello più alto sta più in alto.
     struct TextLane
     {
         int layerId = 0;
-        QString name;  // "T1", "T2"...
+        QString name;  // "V2", "V3"...
         std::vector<TextBlock> clips;
     };
 

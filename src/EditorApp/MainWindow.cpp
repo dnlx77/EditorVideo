@@ -1725,7 +1725,7 @@ void MainWindow::createMenus()
     editTextAction_->setEnabled(false);
     textMenu->addSeparator();
     textMenu->addAction(QStringLiteral("&Aggiungi livello di scritte"), this, [this] { addTextLayer(); })
-        ->setStatusTip(QStringLiteral("Un livello T1, T2... sopra il video: un livello più alto copre quelli sotto"));
+        ->setStatusTip(QStringLiteral("Un livello V2, V3... sopra il video: un livello più alto copre quelli sotto"));
     removeTextLayerAction_ = textMenu->addAction(QStringLiteral("&Togli livello di scritte"), this, [this] { removeSelectedTextLayer(); });
     removeTextLayerAction_->setStatusTip(QStringLiteral("Il livello scelto sulla linea del tempo, altrimenti l'ultimo, con le sue scritte"));
     removeTextLayerAction_->setEnabled(false);
