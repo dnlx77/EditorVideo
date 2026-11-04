@@ -817,14 +817,16 @@ void MainWindow::addToLayer()
     }
     if (layerId == 0)
         layerId = layers.addLayer();
-    const int id = layers.addPiece(layerId, piece);
+    int audioClip = 0;
+    const int id = project_.addLayerPiece(layerId, piece, true, &audioClip);
     if (id == 0)
         return;
     player_->clearSegment();
     timeline_->setSelectedTextClip(id);
     recordEdit(QStringLiteral("Aggiungi pezzo su un livello"), before);
-    statusBar()->showMessage(QStringLiteral("Aggiunto il pezzo al livello %1, da %2: trascinalo per spostarlo, S lo divide, Canc lo toglie.")
-                                 .arg(qs(layers.layerName(layerId)), timeText(piece.position)),
+    statusBar()->showMessage(QStringLiteral("Aggiunto il pezzo al livello %1, da %2%3: trascinalo per spostarlo, S lo divide, Canc lo toglie.")
+                                 .arg(qs(layers.layerName(layerId)), timeText(piece.position),
+                                      audioClip != 0 ? QStringLiteral(", con il suo audio in gruppo") : QString()),
                              8000);
 }
 
