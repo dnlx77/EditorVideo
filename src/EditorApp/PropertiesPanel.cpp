@@ -5,6 +5,7 @@
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QFormLayout>
+#include <QtWidgets/QFrame>
 #include <QtWidgets/QGroupBox>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -56,10 +57,15 @@ PropertiesPanel::Row PropertiesPanel::addRow(QVBoxLayout* into, const QString& l
     row.spin->setSuffix(suffix);
     row.spin->setObjectName(QString::fromLatin1(name));
     row.spin->setKeyboardTracking(false);  // si applica con Invio o uscendo dal campo, non a ogni cifra
-    row.spin->setMinimumWidth(90);
+    // Stile minimale: caselle strette e basse, senza frecce.
+    row.spin->setFixedWidth(70);
+    row.spin->setFixedHeight(20);
+    row.spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    row.spin->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     auto* line = new QHBoxLayout;
+    line->setSpacing(4);
     auto* caption = new QLabel(label);
-    caption->setMinimumWidth(70);
+    caption->setFixedWidth(60);
     line->addWidget(caption);
     line->addWidget(row.spin);
     if (sliderMax > sliderMin) {
@@ -75,6 +81,8 @@ PropertiesPanel::Row PropertiesPanel::addRow(QVBoxLayout* into, const QString& l
             slider->setValue(static_cast<int>(std::lround(v * sliderScale)));
         });
     }
+    else
+        line->addStretch(1);
     into->addLayout(line);
     return row;
 }
@@ -92,6 +100,7 @@ QToolButton* PropertiesPanel::resetButton(const QString& tip, const std::string&
     button->setText(QStringLiteral("↺"));
     button->setToolTip(tip);
     button->setAutoRaise(true);
+    button->setFixedSize(18, 18);
     connect(button, &QToolButton::clicked, this, [this, field, reset] { edited(field + "_ripristina", reset); });
     return button;
 }
@@ -100,7 +109,14 @@ QWidget* PropertiesPanel::buildTransformPage()
 {
     auto* page = new QWidget;
     auto* root = new QVBoxLayout(page);
-    root->setContentsMargins(8, 8, 8, 8);
+    root->setContentsMargins(6, 4, 6, 4);
+    root->setSpacing(2);
+    // Testo un po' più piccolo in tutta la pagina.
+    {
+        QFont small = page->font();
+        small.setPointSizeF(std::max(7.0, small.pointSizeF() - 1.0));
+        page->setFont(small);
+    }
 
     countNote_ = new QLabel;
     countNote_->setWordWrap(true);
@@ -113,6 +129,8 @@ QWidget* PropertiesPanel::buildTransformPage()
     auto* fill = new QPushButton(QStringLiteral("Riempi"));
     fill->setToolTip(QStringLiteral("Ingrandisce l'immagine fino a riempire il fotogramma (i bordi in eccesso restano fuori)"));
     auto* all = new QPushButton(QStringLiteral("Ripristina tutto"));
+    for (QPushButton* button : {fit, fill, all})
+        button->setFixedHeight(22);
     quick->addWidget(fit);
     quick->addWidget(fill);
     quick->addWidget(all);
@@ -128,14 +146,27 @@ QWidget* PropertiesPanel::buildTransformPage()
     connect(all, &QPushButton::clicked, this, [this] { edited("tutto", [](core::Transform& t) { t = core::Transform{}; }); });
 
     const auto group = [&](const QString& title, const std::string& field, std::function<void(core::Transform&)> reset) {
-        auto* box = new QGroupBox(title);
-        auto* v = new QVBoxLayout(box);
-        v->setContentsMargins(8, 4, 8, 8);
+        // Una sezione senza riquadro: una riga sottile sopra, poi il titolo (con il ripristino a destra) e i campi.
+        auto* separator = new QFrame;
+        separator->setFrameShape(QFrame::HLine);
+        separator->setFrameShadow(QFrame::Plain);
+        separator->setEnabled(false);
+        root->addSpacing(2);
+        root->addWidget(separator);
+        auto* section = new QWidget;
+        auto* v = new QVBoxLayout(section);
+        v->setContentsMargins(0, 0, 0, 0);
+        v->setSpacing(2);
         auto* header = new QHBoxLayout;
+        auto* heading = new QLabel(title);
+        QFont bold = heading->font();
+        bold.setBold(true);
+        heading->setFont(bold);
+        header->addWidget(heading);
         header->addStretch(1);
         header->addWidget(resetButton(QStringLiteral("Ripristina %1").arg(title.toLower()), field, std::move(reset)));
         v->addLayout(header);
-        root->addWidget(box);
+        root->addWidget(section);
         return v;
     };
 
@@ -228,6 +259,8 @@ QWidget* PropertiesPanel::buildTransitionPage()
 {
     auto* page = new QWidget;
     auto* root = new QVBoxLayout(page);
+    root->setContentsMargins(6, 4, 6, 4);
+    root->setSpacing(2);
     auto* title = new QLabel(QStringLiteral("<b>Transizione</b>"));
     root->addWidget(title);
     auto* form = new QFormLayout;
@@ -247,6 +280,10 @@ QWidget* PropertiesPanel::buildTransitionPage()
     transitionDuration_ = new QDoubleSpinBox;
     transitionDuration_->setObjectName(QStringLiteral("transizioneDurata"));
     transitionDuration_->setDecimals(2);
+    transitionDuration_->setFixedWidth(70);
+    transitionDuration_->setFixedHeight(20);
+    transitionDuration_->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    transitionDuration_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     transitionDuration_->setSingleStep(0.1);
     transitionDuration_->setSuffix(QStringLiteral(" s"));
     transitionDuration_->setToolTip(QStringLiteral("Al massimo quanto permettono i due pezzi e il video che c'è oltre i loro bordi"));
