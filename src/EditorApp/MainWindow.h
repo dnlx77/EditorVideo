@@ -168,6 +168,9 @@ public:
     // Cambia la trasformazione dei pezzi video scelti con `edit` (un campo alla volta: `field` unisce le modifiche di
     // seguito dello stesso campo in una voce di Annulla). false se nessun pezzo è cambiato.
     bool applyTransformEdit(const std::function<void(core::Transform&)>& edit, const std::string& field);
+    // Un gesto dei manipolatori sul monitor (rilasciato): il pezzo `fragmentId` prende `transform`; un passo di Annulla.
+    bool commitMonitorTransform(int fragmentId, const core::Transform& transform);
+    QAction* transformModeAction() const { return transformAction_; }
     // "Adatta" / "Riempi" sui pezzi scelti.
     void fitSelectedPieces(bool fill);
     QTabWidget* leftTabs() const { return leftTabs_; }
@@ -440,6 +443,7 @@ private:
     QAction* removeTrackAction_ = nullptr;
     QAction* removeTextLayerAction_ = nullptr;
     QAction* editTextAction_ = nullptr;
+    QAction* transformAction_ = nullptr;  // «Trasforma sul monitor» (Q): i manipolatori del monitor
     QMenu* recentMenu_ = nullptr;
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;

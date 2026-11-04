@@ -8,6 +8,7 @@
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QPointF>
 #include <QtCore/QRect>
+#include <QtCore/QRectF>
 #include <QtCore/QSize>
 #include <QtWidgets/QWidget>
 
@@ -106,6 +107,13 @@ public:
     // base (o una misura nulla) = disegno normale, adattato alla finestra. Vale solo per i fotogrammi del file, non per
     // quelli fatti da altri (showExternalFrame).
     void setFrameTransform(const core::Transform& transform, QSize projectSize);
+    // true: il fotogramma si disegna sempre dentro il fotogramma del progetto (con le sue proporzioni), anche senza
+    // trasformazione: serve ai manipolatori, che stanno sul fotogramma del progetto. Poi si richiama setFrameTransform.
+    void setTransformCanvas(bool force);
+    // Dove sta il fotogramma del progetto (o l'immagine) nel lettore, in coordinate del lettore, com'era all'ultimo disegno.
+    QRectF imageRect() const;
+    // Misura del fotogramma decodificato mostrato (vuota se non c'è); conta solo la forma.
+    QSize currentFrameSize() const;
     void updateOverlay();
     // Il mouse sull'immagine, in frazioni del fotogramma (0..1): `press` dice se si afferra qualcosa (allora arrivano
     // `move` e `release`).

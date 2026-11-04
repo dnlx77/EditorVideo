@@ -73,10 +73,24 @@ public:
         }
     }
 
+    // Vedi PlayerWidget::setTransformCanvas.
+    void setForceCanvas(bool force)
+    {
+        if (force == forceCanvas_)
+            return;
+        forceCanvas_ = force;
+        transformed_ = false;  // la prossima setFrameTransform ricalcola come disegnare
+        transform_ = core::Transform{};
+        projectSize_ = QSize();
+        update();
+    }
+    QRectF imageRect() const { return imageRect_; }
+    QSize frameSize() const { return frame_ ? QSize(frame_->width, frame_->height) : QSize(); }
+
     // Vedi PlayerWidget::setFrameTransform.
     void setFrameTransform(const core::Transform& transform, QSize projectSize)
     {
-        const bool use = !transform.isIdentity() && projectSize.width() > 0 && projectSize.height() > 0;
+        const bool use = (!transform.isIdentity() || forceCanvas_) && projectSize.width() > 0 && projectSize.height() > 0;
         if (use == transformed_ && (!use || (transform == transform_ && projectSize == projectSize_)))
             return;
         transformed_ = use;
@@ -142,7 +156,8 @@ protected:
 
     void mousePressEvent(QMouseEvent* event) override
     {
-        if (event->button() == Qt::LeftButton && onImagePress && imageRect_.contains(event->position())
+        // (anche appena fuori dall'immagine: la maniglia di rotazione dei manipolatori sta fuori dal riquadro)
+        if (event->button() == Qt::LeftButton && onImagePress && !imageRect_.isEmpty()
             && onImagePress(fractionOf(event->position().toPoint()))) {
             grabbing_ = true;
             event->accept();
@@ -228,6 +243,7 @@ private:
     std::shared_ptr<core::VideoFrame> frame_;
     QString message_;
     bool blank_ = false;
+    bool forceCanvas_ = false;  // si disegna sempre nel fotogramma del progetto, anche con la trasformazione di base
     bool transformed_ = false;  // si disegna con transform_ dentro il fotogramma del progetto (projectSize_)
     core::Transform transform_;
     QSize projectSize_;
@@ -517,6 +533,21 @@ void PlayerWidget::setImageMouse(std::function<bool(QPointF)> press, std::functi
     view_->onImagePress = std::move(press);
     view_->onImageMove = std::move(move);
     view_->onImageRelease = std::move(release);
+}
+
+void PlayerWidget::setTransformCanvas(bool force)
+{
+    view_->setForceCanvas(force);
+}
+
+QRectF PlayerWidget::imageRect() const
+{
+    return view_->imageRect();
+}
+
+QSize PlayerWidget::currentFrameSize() const
+{
+    return view_->frameSize();
 }
 
 void PlayerWidget::updateOverlay()

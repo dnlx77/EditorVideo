@@ -144,8 +144,7 @@ TEST(Manip, RotateAddsTheAngleAroundTheCenterAndSnaps)
     started.rotation = 10.0;
     const Transform snapped = manipRotate(started, kSize, {pivot.x + 200, 540}, {pivot.x + 200, 540 + 31}, true);
     EXPECT_NEAR(std::fmod(snapped.rotation, 15.0), 0.0, 1e-9);
-    // Un giro oltre i 180°: l'angolo non salta.
+    // Attraverso il lato sinistro (±180°): l'angolo cambia di pochi gradi, non di quasi 360.
     const Transform across = manipRotate(t, kSize, {pivot.x - 200, pivot.y + 10}, {pivot.x - 200, pivot.y - 10}, false);
-    EXPECT_NEAR(across.rotation, 180.0 - 2 * std::atan2(10.0, 200.0) * 180.0 / 3.14159265358979323846 - 180.0 + 0.0 + (2 * std::atan2(10.0, 200.0) * 180.0 / 3.14159265358979323846 - 0.0) - (2 * std::atan2(10.0, 200.0) * 180.0 / 3.14159265358979323846), 1e-6)
-        << "gira di pochi gradi, non di quasi 360";
+    EXPECT_NEAR(across.rotation, 2.0 * std::atan2(10.0, 200.0) * 180.0 / 3.14159265358979323846, 1e-6);
 }

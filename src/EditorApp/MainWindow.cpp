@@ -204,6 +204,13 @@ MainWindow::MainWindow(QWidget* parent)
     program_->onVideoDoubleClicked = [this] { toggleFullScreen(programDock_); };
     program_->onTextGrabbed = [this](int clipId) { timeline_->setSelectedTextClip(clipId); };
     program_->onTextDragged = [this](int clipId, double x, double y) { moveTextOnScreen(clipId, x, y); };
+    program_->onTransformEdited = [this](int fragmentId, const core::Transform& transform) {
+        commitMonitorTransform(fragmentId, transform);
+    };
+    program_->onTransformModeChanged = [this](bool on) {
+        if (transformAction_ != nullptr && transformAction_->isChecked() != on)
+            transformAction_->setChecked(on);
+    };
 
     // Proxy: le due anteprime leggono il video dal proxy quando è pronto. Ogni file ha la sua qualità: il menu della
     // Sorgente cambia quella del file nella Sorgente, quello del Montaggio quella del file del pezzo mostrato.
@@ -1628,6 +1635,19 @@ void MainWindow::createMenus()
         statusBar()->showMessage(pushPieces_ ? QStringLiteral("Spinta dei pezzi successivi: attiva.")
                                              : QStringLiteral("Spinta dei pezzi successivi: spenta."),
                                  6000);
+    });
+    editMenu->addSeparator();
+    transformAction_ = editMenu->addAction(QStringLiteral("&Trasforma sul monitor"));
+    transformAction_->setCheckable(true);
+    transformAction_->setShortcut(QKeySequence(Qt::Key_Q));
+    transformAction_->setStatusTip(QStringLiteral("Manipolatori sul monitor: trascina il pezzo per spostarlo, gli angoli per scalarlo, il cerchio sopra per ruotarlo (a monitor fermo)"));
+    connect(transformAction_, &QAction::toggled, this, [this](bool on) {
+        if (program_ != nullptr)
+            program_->setTransformMode(on);
+        if (on)
+            statusBar()->showMessage(QStringLiteral("Trasforma: trascina il pezzo (posizione), gli angoli (scala: Maiusc = proporzioni libere, "
+                                                    "Alt = dal centro), il cerchio sopra (rotazione: Maiusc = scatti di 15°). Q per uscire."),
+                                     10000);
     });
     editMenu->addSeparator();
     QAction* group = editMenu->addAction(QStringLiteral("Crea &gruppo"), this, [this] { groupSelection(); });

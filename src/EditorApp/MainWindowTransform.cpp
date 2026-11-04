@@ -93,6 +93,18 @@ bool MainWindow::applyTransformEdit(const std::function<void(core::Transform&)>&
     return true;
 }
 
+bool MainWindow::commitMonitorTransform(int fragmentId, const core::Transform& transform)
+{
+    if (project_.sequence().find(fragmentId) == nullptr)
+        return false;
+    const core::Project before = project_;
+    if (project_.setTransform({fragmentId}, transform) == 0)
+        return false;
+    transformMergeKey_.clear();  // un gesto è una voce di Annulla a sé: non si unisce alle modifiche del pannello
+    recordEdit(QStringLiteral("Trasforma sul monitor"), before);
+    return true;
+}
+
 void MainWindow::fitSelectedPieces(bool fill)
 {
     const core::StreamSignature* target = project_.format().video();

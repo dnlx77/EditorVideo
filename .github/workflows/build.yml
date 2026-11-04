@@ -251,6 +251,13 @@ jobs:
           # monitor e il pannello a destra nella finestra.
           & ci\run-editorvideo.ps1 -Name trasformazioni -Arguments '--transform-test'
 
+      - name: Prova dei manipolatori sul monitor
+        shell: pwsh
+        run: |
+          # Maniglie sul monitor del Montaggio (tasto Q): corpo, angolo e rotazione danno una modifica per gesto.
+          $demo = "$env:TEMP\EditorVideoDemo"
+          & ci\run-editorvideo.ps1 -Name manipolatori -Arguments @('--manip-test', "`"$demo\demo_mpeg2_gpu.mkv`"")
+
       - name: Prova della scheda Gruppi
         shell: pwsh
         run: |

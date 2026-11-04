@@ -13,9 +13,16 @@
 #include <QtGui/QPainter>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QToolButton>
 #include <QtWidgets/QVBoxLayout>
 
+#include <QtCore/QSignalBlocker>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QPainter>
+#include <QtGui/QPolygonF>
+
 #include <algorithm>
+#include <cmath>
 
 namespace editor::app {
 
@@ -25,8 +32,8 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
 {
     player_ = new PlayerWidget;
     updateOverlayFrame();
-    player_->setImageMouse([this](QPointF at) { return grabText(at); }, [this](QPointF at) { dragText(at); },
-                           [this](QPointF at) { dropText(at); });
+    player_->setImageMouse([this](QPointF at) { return grabImage(at); }, [this](QPointF at) { dragImage(at); },
+                           [this](QPointF at) { dropImage(at); });
     player_->setChromeVisible(false);
     player_->setAudioEnabled(false);  // l'audio del montaggio lo suona il mixer della sequenza (SequenceAudio)
     player_->onVideoDoubleClicked = [this] {
@@ -74,7 +81,27 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     layout->setSizeConstraint(QLayout::SetNoConstraint);  // la misura minima la decide minimumSizeHint
     layout->addWidget(player_, 1);
     layout->addWidget(transport_);
-    layout->addWidget(fragmentLabel_);
+    // Sotto i comandi: il nome del pezzo e il pulsante dei manipolatori.
+    transformButton_ = new QToolButton;
+    transformButton_->setText(QStringLiteral("Trasforma"));
+    transformButton_->setObjectName(QStringLiteral("pulsanteTrasforma"));
+    transformButton_->setCheckable(true);
+    transformButton_->setAutoRaise(true);
+    transformButton_->setToolTip(QStringLiteral("Manipolatori sul monitor (Q): trascina il pezzo per spostarlo, gli angoli per "
+                                                "scalarlo (Maiusc = proporzioni libere, Alt = dal centro), il cerchio sopra "
+                                                "per ruotarlo (Maiusc = scatti di 15°). A monitor fermo."));
+    connect(transformButton_, &QToolButton::toggled, this, [this](bool on) {
+        if (on == transformMode_)
+            return;
+        setTransformMode(on);
+        if (onTransformModeChanged)
+            onTransformModeChanged(on);
+    });
+    auto* bottom = new QHBoxLayout;
+    bottom->setContentsMargins(0, 0, 4, 0);
+    bottom->addWidget(fragmentLabel_, 1);
+    bottom->addWidget(transformButton_);
+    layout->addLayout(bottom);
 
     poll_ = new QTimer(this);
     poll_->setInterval(40);
@@ -140,6 +167,7 @@ void ProgramMonitor::load(int index, double offset)
     primedTransitionId_ = 0;
     transitionFrame_.reset();
     player_->setBlank(false);
+    player_->setTransformCanvas(transformMode_);
     player_->setFrameTransform(f.transform, frameSize());  // scala, posizione, rotazione... del pezzo
     if (f.clipId != loadedClipId_) {
         player_->openFile(QString::fromStdString(clip->path));
@@ -169,10 +197,175 @@ std::vector<core::TextClip> ProgramMonitor::visibleText() const
     return clips;
 }
 
-bool ProgramMonitor::grabText(QPointF at)
+// ---- Manipolatori
+
+bool ProgramMonitor::manipulatorsVisible() const
+{
+    return transformMode_ && !playing_ && !showingSource_ && transitionId_ == 0 && gapIndex_ < 0 && index_ >= 0
+           && index_ < static_cast<int>(project_.sequence().fragments().size());
+}
+
+core::Transform ProgramMonitor::shownTransform() const
+{
+    if (manipDrag_)
+        return manipDrag_->current;
+    if (index_ < 0 || index_ >= static_cast<int>(project_.sequence().fragments().size()))
+        return {};
+    return project_.sequence().fragments()[static_cast<std::size_t>(index_)].transform;
+}
+
+std::optional<core::ManipSize> ProgramMonitor::manipSize() const
+{
+    if (!manipulatorsVisible())
+        return std::nullopt;
+    const QSize source = player_->currentFrameSize();
+    const QSize project = frameSize();
+    if (source.isEmpty() || project.isEmpty())
+        return std::nullopt;
+    return core::ManipSize{static_cast<double>(source.width()), static_cast<double>(source.height()),
+                           static_cast<double>(project.width()), static_cast<double>(project.height())};
+}
+
+double ProgramMonitor::manipScreenScale() const
+{
+    const QSize project = frameSize();
+    const QRectF canvas = player_->imageRect();
+    return project.width() > 0 && !canvas.isEmpty() ? canvas.width() / project.width() : 1.0;
+}
+
+void ProgramMonitor::setTransformMode(bool on)
+{
+    if (on == transformMode_)
+        return;
+    transformMode_ = on;
+    manipDrag_.reset();
+    if (transformButton_ != nullptr && transformButton_->isChecked() != on) {
+        const QSignalBlocker block(transformButton_);
+        transformButton_->setChecked(on);
+    }
+    applyShownTransform();
+}
+
+void ProgramMonitor::applyShownTransform()
+{
+    player_->setTransformCanvas(transformMode_);
+    player_->setFrameTransform(shownTransform(), frameSize());
+    player_->updateOverlay();
+}
+
+void ProgramMonitor::paintManipulators(QPainter& painter, const QRectF& target)
+{
+    const std::optional<core::ManipSize> size = manipSize();
+    if (!size || target.isEmpty())
+        return;
+    const core::Transform t = shownTransform();
+    const core::TransformGeometry g = core::computeGeometry(core::normalized(t), size->srcW, size->srcH, size->projW, size->projH);
+    const double scale = target.width() / size->projW;
+    const auto toWidget = [&](core::Point2 p) { return QPointF(target.left() + p.x * scale, target.top() + p.y * scale); };
+    QPolygonF quad;
+    for (const core::Point2& corner : g.corners)
+        quad << toWidget(corner);
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    // Il riquadro: una linea chiara con un'ombra scura sotto, per vedersi su qualsiasi immagine.
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(QColor(0, 0, 0, 160), 3));
+    painter.drawPolygon(quad);
+    painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5));
+    painter.drawPolygon(quad);
+    // La maniglia di rotazione, collegata al lato alto.
+    const QPointF top = (quad[0] + quad[1]) / 2.0;
+    const QPointF rotate = toWidget(core::manipRotationHandle(t, *size, scale));
+    painter.setPen(QPen(QColor(0, 0, 0, 160), 3));
+    painter.drawLine(top, rotate);
+    painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5));
+    painter.drawLine(top, rotate);
+    const auto handle = [&](const QPointF& at, bool round) {
+        const double r = core::kManipHandleRadius * 0.7;
+        painter.setPen(QPen(QColor(0, 0, 0, 200), 1.5));
+        painter.setBrush(QColor(255, 255, 255));
+        if (round)
+            painter.drawEllipse(at, r, r);
+        else
+            painter.drawRect(QRectF(at.x() - r, at.y() - r, 2 * r, 2 * r));
+    };
+    for (const QPointF& corner : quad)
+        handle(corner, false);
+    handle(rotate, true);
+    painter.restore();
+}
+
+bool ProgramMonitor::grabImage(QPointF at)
 {
     if (onActivated)
         onActivated();
+    const std::optional<core::ManipSize> size = manipSize();
+    if (!size)
+        return grabText(at);
+    const core::Point2 p{at.x() * size->projW, at.y() * size->projH};
+    const core::Transform start = shownTransform();
+    const core::ManipHit hit = core::manipHitTest(start, *size, p, manipScreenScale());
+    const auto startDrag = [&] {
+        manipDrag_ = ManipDrag{project_.sequence().fragments()[static_cast<std::size_t>(index_)].id, hit, start, start, p};
+        return true;
+    };
+    // Prima le maniglie, poi le scritte (stanno sopra l'immagine), poi il resto del pezzo.
+    if (hit.part == core::ManipPart::Corner || hit.part == core::ManipPart::Rotate)
+        return startDrag();
+    if (grabText(at))
+        return true;
+    if (hit.part == core::ManipPart::Move)
+        return startDrag();
+    return false;
+}
+
+void ProgramMonitor::dragImage(QPointF at)
+{
+    if (!manipDrag_) {
+        dragText(at);
+        return;
+    }
+    const std::optional<core::ManipSize> size = manipSize();
+    if (!size)
+        return;
+    const core::Point2 p{at.x() * size->projW, at.y() * size->projH};
+    const Qt::KeyboardModifiers keys = QGuiApplication::keyboardModifiers();
+    const bool shift = keys.testFlag(Qt::ShiftModifier);
+    const bool alt = keys.testFlag(Qt::AltModifier);
+    switch (manipDrag_->hit.part) {
+    case core::ManipPart::Move:
+        manipDrag_->current = core::manipMove(manipDrag_->start, manipDrag_->from, p);
+        break;
+    case core::ManipPart::Corner:
+        manipDrag_->current = core::manipScale(manipDrag_->start, *size, manipDrag_->hit.corner, p, shift, alt);
+        break;
+    case core::ManipPart::Rotate:
+        manipDrag_->current = core::manipRotate(manipDrag_->start, *size, manipDrag_->from, p, shift);
+        break;
+    case core::ManipPart::None:
+        break;
+    }
+    player_->setFrameTransform(manipDrag_->current, frameSize());
+    player_->updateOverlay();
+}
+
+void ProgramMonitor::dropImage(QPointF at)
+{
+    if (!manipDrag_) {
+        dropText(at);
+        return;
+    }
+    dragImage(at);
+    const ManipDrag done = *manipDrag_;
+    manipDrag_.reset();
+    if (!(done.current == done.start) && onTransformEdited)
+        onTransformEdited(done.fragmentId, done.current);
+    // Se il progetto non ha cambiato il pezzo, il monitor torna com'era.
+    applyShownTransform();
+}
+
+bool ProgramMonitor::grabText(QPointF at)
+{
     if (playing_ || showingSource_ || shownText_.empty())
         return false;
     // La più alta (l'ultima disegnata) che contiene il punto.
@@ -336,6 +529,7 @@ void ProgramMonitor::updateOverlayFrame()
     player_->setOverlay(
         [this](QPainter& painter, const QRectF& target) {
             overlay_.paint(painter, target, painter.device()->devicePixelRatioF(), shownText_, shownTime_);
+            paintManipulators(painter, target);
         },
         frame);
 }
