@@ -165,6 +165,8 @@ PrerenderedTextRenderer::PrerenderedTextRenderer(const core::TextTracks& tracks,
     if (!draw)
         return;
     const QtTextRenderer renderer;
+    for (const core::TextClip& clip : tracks.baseLayer().clips)  // le scritte su V1
+        images_[clip.id] = renderer.render(clip, frameWidth, frameHeight);
     for (const core::TextLayer& layer : tracks.layers()) {
         for (const core::TextClip& clip : layer.clips)
             images_[clip.id] = renderer.render(clip, frameWidth, frameHeight);

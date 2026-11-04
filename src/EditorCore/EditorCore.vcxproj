@@ -47,6 +47,7 @@
     <ClInclude Include="Compositor.h" />
     <ClInclude Include="TextFrame.h" />
     <ClInclude Include="TextImage.h" />
+    <ClInclude Include="LayerFrames.h" />
     <ClInclude Include="LayerPlayback.h" />
     <ClInclude Include="TransitionPlayback.h" />
     <ClInclude Include="TransitionRender.h" />
@@ -95,6 +96,7 @@
     <ClCompile Include="Compositor.cpp" />
     <ClCompile Include="TextFrame.cpp" />
     <ClCompile Include="TextImage.cpp" />
+    <ClCompile Include="LayerFrames.cpp" />
     <ClCompile Include="LayerPlayback.cpp" />
     <ClCompile Include="TransitionPlayback.cpp" />
     <ClCompile Include="TransitionRender.cpp" />

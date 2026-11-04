@@ -8,6 +8,7 @@
 #include "EditorCore/TransitionRender.h"
 
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -89,6 +90,10 @@ struct ReencodeOptions
     // degli spazi vuoti; gli altri si copiano come sempre. Senza `textRenderer` le scritte non si esportano.
     TextTracks texts;
     const TextRenderer* textRenderer = nullptr;
+    // I pezzi di video dei livelli sopra V1 (in `texts`, insieme alle scritte) si compongono sopra V1 a ogni fotogramma dei
+    // tratti che coprono: `layerFiles` dà il file originale di ogni clip del progetto (per id, come LayerPiece::clipId).
+    // Un pezzo il cui file manca non si vede. Oltre la fine di V1 non si esporta niente.
+    std::map<int, std::string> layerFiles;
 
     // Transizioni: la parte dei due tratti dentro la transizione si ricodifica, con i due pezzi decodificati e fusi
     // dall'effetto (alla misura del fotogramma del progetto, bande nere comprese); il resto come sempre. Il video
@@ -111,7 +116,7 @@ struct ReencodeOptions
     VideoChange video;
     DecoderMode decoder = DecoderMode::Software;
 
-    const TextTracks* activeTexts() const { return textRenderer != nullptr && texts.endTime() > 0.0 ? &texts : nullptr; }
+    const TextTracks* activeTexts() const { return (textRenderer != nullptr || !layerFiles.empty()) && texts.endTime() > 0.0 ? &texts : nullptr; }
 };
 
 // Che cosa farà l'esportazione, senza farla: quanti tratti si copiano e quanti si ricodificano (e quanto durano), o

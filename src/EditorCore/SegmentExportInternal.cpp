@@ -248,10 +248,18 @@ std::vector<TimeRange> textCoverage(const TextTracks* texts)
     std::vector<TimeRange> spans;
     if (texts == nullptr)
         return spans;
+    for (const TextClip& clip : texts->baseLayer().clips) {  // le scritte su V1
+        if (!clip.text.empty() && clip.length > kTimeEpsilon)
+            spans.push_back({clip.position, clip.position + clip.length});
+    }
     for (const TextLayer& layer : texts->layers()) {
         for (const TextClip& clip : layer.clips) {
             if (!clip.text.empty() && clip.length > kTimeEpsilon)
                 spans.push_back({clip.position, clip.position + clip.length});
+        }
+        for (const LayerPiece& piece : layer.pieces) {  // i pezzi di video dei livelli, composti sopra V1
+            if (piece.length() > kTimeEpsilon)
+                spans.push_back({piece.position, piece.endPosition()});
         }
     }
     return mergeRanges(std::move(spans));

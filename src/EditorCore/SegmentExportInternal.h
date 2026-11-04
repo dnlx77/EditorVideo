@@ -10,6 +10,7 @@
 #include "EditorCore/MixExport.h"
 #include "EditorCore/NalUnits.h"
 #include "EditorCore/PathUtil.h"
+#include "EditorCore/LayerFrames.h"
 #include "EditorCore/TextFrame.h"
 #include "EditorCore/TimeUtil.h"
 
@@ -464,6 +465,9 @@ private:
     // Le scritte che si vedono al tempo `sequenceTime` del montaggio, già disegnate alla misura del fotogramma del progetto
     // (dal livello più basso al più alto); vuoto se non ce ne sono.
     std::vector<BlendedText> textsAt(double sequenceTime);
+    // I pezzi dei livelli sopra V1 che si vedono al tempo `sequenceTime`: li passa al blender, che li compone sopra il
+    // fotogramma della prossima chiamata. true se ce n'è almeno uno (e quindi il fotogramma deve passare dal blender).
+    bool prepareLayers(double sequenceTime);
     // Il fotogramma con le scritte sopra (alla misura del progetto), da dare all'encoder al posto di `frame`.
     const AVFrame* withText(const AVFrame* frame, const std::vector<BlendedText>& texts);
 
@@ -491,6 +495,8 @@ private:
     // Stato della scrittura.
     std::map<int, TextImage> textImages_;  // per id di scritta: disegnata una volta sola
     std::unique_ptr<TextFrameBlender> blender_;
+    std::unique_ptr<LayerFrameSource> layerSource_;  // i fotogrammi dei pezzi dei livelli (vedi ReencodeOptions::layerFiles)
+    std::vector<LayerFrameSource::Visible> layerFrames_;  // quelli del fotogramma in corso, tenuti vivi finché il blender li usa
     std::shared_ptr<AVBufferRef> hwDevice_;  // il dispositivo D3D11 per decodificare con la GPU, creato una volta sola
     bool hwDeviceTried_ = false;
     std::unique_ptr<TransitionRenderer> transitionRenderer_;  // per le parti dentro una transizione

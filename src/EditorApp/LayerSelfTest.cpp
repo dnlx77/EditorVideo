@@ -259,6 +259,27 @@ int runLayerMonitorTest(const QStringList& args, qsizetype at)
     monitor.setPlaying(false);
     check(best >= 1, "in riproduzione il fotogramma del livello arriva quando il pezzo inizia");
 
+    // Un pezzo di livello oltre la fine di V1: il monitor ci arriva, lo mostra e si ferma solo alla sua fine.
+    piece.position = length + 0.5;
+    check(project.textTracks().addPiece(low, piece) != 0, "un pezzo dopo la fine del video principale");
+    monitor.sequenceChanged();
+    const double programEnd = length + 1.5;
+    check(std::abs(monitor.programEnd() - programEnd) < 1e-6, "la fine del programma è la fine del pezzo oltre V1");
+    monitor.seekTo(length + 1.0);
+    QCoreApplication::processEvents();
+    check(std::abs(monitor.position() - (length + 1.0)) < 0.05, "ci si può posizionare dopo la fine di V1");
+    check(monitor.layerFramesShown() == 1, "dopo la fine di V1 si vede il pezzo del livello");
+    monitor.seekTo(length - 0.3);
+    monitor.setPlaying(true);
+    double reached = 0.0;
+    for (int i = 0; i < 400 && monitor.isPlaying(); ++i) {
+        QThread::msleep(20);
+        QCoreApplication::processEvents();
+        reached = std::max(reached, monitor.position());
+    }
+    check(reached > length + 1.2, "la riproduzione continua oltre la fine di V1");
+    check(!monitor.isPlaying(), "la riproduzione si ferma alla fine del programma");
+
     std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
     return check.failures() == 0 ? 0 : 3;
 }
