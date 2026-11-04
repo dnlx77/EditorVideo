@@ -144,6 +144,7 @@ QWidget* PropertiesPanel::buildTransformPage()
     scaleX_ = addRow(scale, QStringLiteral("Larghezza"), core::kMinScale * 100.0, core::kMaxScale * 100.0, 1.0, 1,
                      QStringLiteral(" %"), 1, 400, 1.0, "scalaX");
     linked_ = new QCheckBox(QStringLiteral("Proporzionale"));
+    linked_->setObjectName(QStringLiteral("proporzionale"));
     linked_->setChecked(true);
     linked_->setToolTip(QStringLiteral("Larghezza e altezza cambiano insieme"));
     scale->addWidget(linked_);

@@ -122,7 +122,7 @@ int runTransformTest(const QStringList&, qsizetype)
         scaleX->setValue(50.0);
         check(edits == 1 && lastField == "scala" && std::abs(applied.scaleX - 0.5) < 1e-9 && std::abs(applied.scaleY - 0.5) < 1e-9,
               "la scala proporzionale cambia larghezza e altezza insieme");
-        auto* linked = panel.findChild<QCheckBox*>();
+        auto* linked = panel.findChild<QCheckBox*>(QStringLiteral("proporzionale"));
         check(linked != nullptr && linked->isChecked(), "la catenella è chiusa all'inizio");
         if (linked != nullptr)
             linked->setChecked(false);
