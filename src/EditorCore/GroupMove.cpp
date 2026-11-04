@@ -68,6 +68,16 @@ Scene sceneOf(const Project& project, ObjectRef anchor)
             scene.items.push_back(item);
         }
     }
+    // Le scritte di V1 stanno sulla corsia dei pezzi video (non si sovrappongono a loro).
+    for (const TextClip& clip : project.textTracks().baseLayer().clips) {
+        Item item;
+        item.ref = {ObjectRef::Kind::TextClip, clip.id};
+        item.lane = kVideoLane;
+        item.track = TextTracks::kBaseLayerId;
+        item.start = clip.position;
+        item.length = clip.length;
+        scene.items.push_back(item);
+    }
     for (const TextLayer& layer : project.textTracks().layers()) {
         for (const TextClip& clip : layer.clips) {
             Item item;
@@ -114,6 +124,12 @@ Scene sceneOf(const Project& project, ObjectRef anchor)
             scene.anchorComponent = item.component;
     }
     return scene;
+}
+
+bool textIsOnV1(const Scene& scene, ObjectRef object)
+{
+    return object.kind == ObjectRef::Kind::TextClip
+           && std::any_of(scene.items.begin(), scene.items.end(), [&](const Item& i) { return i.ref == object && i.lane == kVideoLane; });
 }
 
 int moverCount(const Scene& scene)
@@ -165,8 +181,8 @@ double freeDelta(const Scene& scene, double delta)
         for (const Item& other : scene.items) {
             if (other.component == scene.anchorComponent || other.lane != mover.lane)
                 continue;
-            if (mover.lane == kVideoLane) {
-                // I pezzi video non si scambiano di posto: ci si ferma contro.
+            if (mover.lane == kVideoLane && mover.ref.kind == ObjectRef::Kind::Piece && other.ref.kind == ObjectRef::Kind::Piece) {
+                // I pezzi video non si scambiano di posto: ci si ferma contro (le scritte di V1 invece si scavalcano).
                 if (other.start >= mover.end() - kTimeEpsilon)
                     forbidden.emplace_back(other.start - mover.end(), std::numeric_limits<double>::infinity());
                 else
@@ -214,6 +230,12 @@ double limitDelta(const Scene& scene, double delta, bool push)
 bool movesAsScene(const Scene& scene, ObjectRef object, bool push)
 {
     if (moverCount(scene) > 1)
+        return true;
+    // Con scritte su V1 un pezzo video, o una scritta di V1, si muove fra gli altri oggetti della corsia: serve la scena.
+    const bool v1Texts = std::any_of(scene.items.begin(), scene.items.end(), [](const Item& i) {
+        return i.ref.kind == ObjectRef::Kind::TextClip && i.lane == kVideoLane;
+    });
+    if (v1Texts && (object.kind == ObjectRef::Kind::Piece || object.kind == ObjectRef::Kind::PieceAudio || textIsOnV1(scene, object)))
         return true;
     if (!push)
         return false;  // senza spinta un pezzo da solo salta dove c'è posto (Sequence), evitando le clip libere di A1
@@ -311,6 +333,7 @@ bool applyMove(Project& project, const Scene& scene, double delta, bool push)
             return false;
     }
     TextTracks text = project.textTracks();
+    text.setBaseBlocked(sequence.spans());  // le scritte di V1 vanno dove i pezzi sono già arrivati
     std::stable_sort(texts.begin(), texts.end(), [&](const ClipMove& a, const ClipMove& b) {
         return delta > 0.0 ? a.position > b.position : a.position < b.position;
     });
@@ -360,6 +383,7 @@ bool Project::moveGroup(ObjectRef anchor, double delta, bool push)
 
 double Project::freeSpotFor(ObjectRef object, int track, double desired, bool push) const
 {
+    syncBaseBlocked();
     double now = 0.0;
     if (object.kind == ObjectRef::Kind::AudioClip) {
         const AudioClip* clip = audio_.find(object.id);
@@ -395,6 +419,7 @@ double Project::freeSpotFor(ObjectRef object, int track, double desired, bool pu
 Project::MoveResult Project::moveObject(ObjectRef object, int track, double start, bool push)
 {
     MoveResult result;
+    syncBaseBlocked();
     const bool isLayerPiece = object.kind == ObjectRef::Kind::LayerPiece;
     const LayerPiece* layerPiece = isLayerPiece ? text_.findPiece(object.id) : nullptr;
     const bool isText = object.kind == ObjectRef::Kind::TextClip || isLayerPiece;  // (le scritte e i pezzi dei livelli stanno sugli stessi livelli)
@@ -405,6 +430,39 @@ Project::MoveResult Project::moveObject(ObjectRef object, int track, double star
     if ((isClip && clip == nullptr) || (object.kind == ObjectRef::Kind::TextClip && textClip == nullptr)
         || (isLayerPiece && layerPiece == nullptr) || (!isClip && !isText && index < 0))
         return result;
+    // Una scritta che cambia livello si sposta da sola (gli altri del gruppo restano dove sono).
+    if (textClip != nullptr && track != text_.layerOf(object.id)) {
+        result.moved = text_.moveTo(object.id, track, start);
+        return result;
+    }
+    // Un pezzo di livello che passa a un altro livello (V2 -> V3...) porta con sé l'audio che è il suo, sulla traccia del
+    // nuovo livello, restando nel gruppo: il passaggio di livello non è uno spostamento di gruppo.
+    if (isLayerPiece && track != text_.layerOfPiece(object.id)) {
+        const Project backup = *this;
+        const Clip* source = find(layerPiece->clipId);
+        std::vector<int> ownAudio;
+        for (const ObjectRef& m : groupMembers(object)) {
+            const AudioClip* a = m.kind == ObjectRef::Kind::AudioClip ? audio_.find(m.id) : nullptr;
+            if (a != nullptr && source != nullptr && a->path == source->path && std::abs(a->start - layerPiece->start) < 1e-6
+                && std::abs(a->end - layerPiece->end) < 1e-6)
+                ownAudio.push_back(m.id);
+        }
+        const double offset = start - layerPiece->position;
+        std::vector<std::pair<int, double>> audioTo;  // (clip, nuova posizione)
+        for (int id : ownAudio)
+            audioTo.emplace_back(id, audio_.find(id)->position + offset);
+        bool ok = text_.movePieceTo(object.id, track, start);
+        const int audioTrack = ok && !ownAudio.empty() ? audioTrackForLayer(track) : -1;
+        for (const auto& [id, position] : audioTo) {
+            ok = ok && audioTrack >= 0 && audio_.moveTo(id, audioTrack, std::max(position, 0.0));
+        }
+        if (!ok) {
+            *this = backup;
+            return result;
+        }
+        result.moved = true;
+        return result;
+    }
     const Scene scene = sceneOf(*this, object);
     if (movesAsScene(scene, object, push)) {
         // Nel gruppo si muove tutto insieme, ognuno sulla sua traccia.

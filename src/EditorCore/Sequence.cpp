@@ -579,6 +579,19 @@ std::vector<double> Sequence::starts() const
     return result;
 }
 
+std::vector<std::pair<double, double>> Sequence::spans() const
+{
+    std::vector<std::pair<double, double>> result;
+    result.reserve(fragments_.size());
+    double start = 0.0;
+    for (const Fragment& f : fragments_) {
+        start += f.gap;
+        result.emplace_back(start, start + f.length());
+        start += f.length();
+    }
+    return result;
+}
+
 int Sequence::indexAt(double seconds) const
 {
     double start = 0.0;

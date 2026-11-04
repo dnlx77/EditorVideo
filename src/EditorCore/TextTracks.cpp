@@ -27,6 +27,8 @@ bool TextTracks::removeLayer(int layerId)
 
 const TextLayer* TextTracks::layer(int layerId) const
 {
+    if (layerId == kBaseLayerId)
+        return &base_;
     const int index = layerIndex(layerId);
     return index < 0 ? nullptr : &layers_[static_cast<std::size_t>(index)];
 }
@@ -42,13 +44,16 @@ int TextTracks::layerIndex(int layerId) const
 
 std::string TextTracks::layerName(int layerId) const
 {
+    if (layerId == kBaseLayerId)
+        return "V1";
     const int index = layerIndex(layerId);
     return index < 0 ? std::string() : "V" + std::to_string(index + 2);
 }
 
 bool TextTracks::empty() const
 {
-    return std::all_of(layers_.begin(), layers_.end(), [](const TextLayer& l) { return l.clips.empty() && l.pieces.empty(); });
+    return base_.clips.empty()
+           && std::all_of(layers_.begin(), layers_.end(), [](const TextLayer& l) { return l.clips.empty() && l.pieces.empty(); });
 }
 
 bool TextTracks::isFree(const TextLayer& layer, double start, double end, int ignoreId) const
@@ -71,6 +76,8 @@ std::vector<std::pair<double, double>> TextTracks::occupied(const TextLayer& lay
         if (p.id != ignoreId)
             spans.emplace_back(p.position, p.endPosition());
     }
+    if (&layer == &base_)
+        spans.insert(spans.end(), baseBlocked_.begin(), baseBlocked_.end());
     std::sort(spans.begin(), spans.end());
     return spans;
 }
@@ -104,10 +111,34 @@ void TextTracks::sortLayer(TextLayer& layer) const
                      [](const LayerPiece& a, const LayerPiece& b) { return a.position < b.position; });
 }
 
+TextLayer* TextTracks::layerMutable(int layerId)
+{
+    if (layerId == kBaseLayerId)
+        return &base_;
+    const int index = layerIndex(layerId);
+    return index < 0 ? nullptr : &layers_[static_cast<std::size_t>(index)];
+}
+
+std::vector<TextLayer*> TextTracks::allLayers()
+{
+    std::vector<TextLayer*> all{&base_};
+    for (TextLayer& l : layers_)
+        all.push_back(&l);
+    return all;
+}
+
+std::vector<const TextLayer*> TextTracks::allLayers() const
+{
+    std::vector<const TextLayer*> all{&base_};
+    for (const TextLayer& l : layers_)
+        all.push_back(&l);
+    return all;
+}
+
 TextClip* TextTracks::findMutable(int clipId)
 {
-    for (TextLayer& l : layers_) {
-        for (TextClip& c : l.clips) {
+    for (TextLayer* l : allLayers()) {
+        for (TextClip& c : l->clips) {
             if (c.id == clipId)
                 return &c;
         }
@@ -117,10 +148,10 @@ TextClip* TextTracks::findMutable(int clipId)
 
 int TextTracks::add(int layerId, TextClip clip)
 {
-    const int index = layerIndex(layerId);
-    if (index < 0 || !(clip.length >= kMinLength) || !(clip.position >= 0.0))
+    TextLayer* found = layerMutable(layerId);
+    if (found == nullptr || !(clip.length >= kMinLength) || !(clip.position >= 0.0))
         return 0;
-    TextLayer& target = layers_[static_cast<std::size_t>(index)];
+    TextLayer& target = *found;
     if (!isFree(target, clip.position, clip.endPosition(), 0))
         return 0;
     clip.id = nextClipId_++;
@@ -131,8 +162,8 @@ int TextTracks::add(int layerId, TextClip clip)
 
 bool TextTracks::remove(int clipId)
 {
-    for (TextLayer& l : layers_) {
-        if (std::erase_if(l.clips, [clipId](const TextClip& c) { return c.id == clipId; }) > 0)
+    for (TextLayer* l : allLayers()) {
+        if (std::erase_if(l->clips, [clipId](const TextClip& c) { return c.id == clipId; }) > 0)
             return true;
     }
     return false;
@@ -140,8 +171,8 @@ bool TextTracks::remove(int clipId)
 
 const TextClip* TextTracks::find(int clipId) const
 {
-    for (const TextLayer& l : layers_) {
-        for (const TextClip& c : l.clips) {
+    for (const TextLayer* l : allLayers()) {
+        for (const TextClip& c : l->clips) {
             if (c.id == clipId)
                 return &c;
         }
@@ -151,10 +182,10 @@ const TextClip* TextTracks::find(int clipId) const
 
 int TextTracks::layerOf(int clipId) const
 {
-    for (const TextLayer& l : layers_) {
-        for (const TextClip& c : l.clips) {
+    for (const TextLayer* l : allLayers()) {
+        for (const TextClip& c : l->clips) {
             if (c.id == clipId)
-                return l.id;
+                return l->id;
         }
     }
     return -1;
@@ -205,10 +236,10 @@ bool TextTracks::moveTo(int clipId, int layerId, double start)
     if (findPiece(clipId) != nullptr)
         return movePieceTo(clipId, layerId, start);
     TextClip* clip = findMutable(clipId);
-    const int toIndex = layerIndex(layerId);
-    if (clip == nullptr || toIndex < 0 || !(start >= 0.0))
+    TextLayer* toLayer = layerMutable(layerId);
+    if (clip == nullptr || toLayer == nullptr || !(start >= 0.0))
         return false;
-    TextLayer& to = layers_[static_cast<std::size_t>(toIndex)];
+    TextLayer& to = *toLayer;
     if (!isFree(to, start, start + clip->length, clipId))
         return false;
     if (layerOf(clipId) == layerId) {
@@ -258,7 +289,7 @@ bool TextTracks::setStart(int clipId, double start)
     const double end = clip->endPosition();
     if (end - start < kMinLength - kEps)
         return false;
-    const TextLayer& l = layers_[static_cast<std::size_t>(layerIndex(layerOf(clipId)))];
+    const TextLayer& l = *layer(layerOf(clipId));
     if (!isFree(l, start, end, clipId))
         return false;
     clip->length = end - start;
@@ -271,7 +302,7 @@ bool TextTracks::setEnd(int clipId, double end)
     TextClip* clip = findMutable(clipId);
     if (clip == nullptr || end - clip->position < kMinLength - kEps)
         return false;
-    const TextLayer& l = layers_[static_cast<std::size_t>(layerIndex(layerOf(clipId)))];
+    const TextLayer& l = *layer(layerOf(clipId));
     if (!isFree(l, clip->position, end, clipId))
         return false;
     clip->length = end - clip->position;
@@ -296,7 +327,7 @@ int TextTracks::split(int clipId, double seconds)
     second.fadeIn = 0.0;  // la dissolvenza in entrata resta alla prima parte, quella in uscita alla seconda
     clip->fadeOut = 0.0;
     clip->length = seconds - clip->position;
-    TextLayer& l = layers_[static_cast<std::size_t>(layerIndex(layerOf(clipId)))];
+    TextLayer& l = *layerMutable(layerOf(clipId));
     l.clips.push_back(std::move(second));
     sortLayer(l);
     return nextClipId_ - 1;
@@ -371,7 +402,7 @@ int TextTracks::layerOfPiece(int pieceId) const
 
 int TextTracks::addPiece(int layerId, LayerPiece piece)
 {
-    const int index = layerIndex(layerId);
+    const int index = layerIndex(layerId);  // (V1 non ha pezzi: -1)
     if (index < 0 || !(piece.length() >= kMinLength) || !(piece.position >= 0.0) || !(piece.start >= 0.0))
         return 0;
     TextLayer& target = layers_[static_cast<std::size_t>(index)];
@@ -395,7 +426,7 @@ bool TextTracks::removePiece(int pieceId)
 bool TextTracks::movePieceTo(int pieceId, int layerId, double start)
 {
     LayerPiece* piece = findPieceMutable(pieceId);
-    const int toIndex = layerIndex(layerId);
+    const int toIndex = layerIndex(layerId);  // (V1 non ha pezzi: -1)
     if (piece == nullptr || toIndex < 0 || !(start >= 0.0))
         return false;
     TextLayer& to = layers_[static_cast<std::size_t>(toIndex)];
@@ -469,8 +500,8 @@ std::vector<const LayerPiece*> TextTracks::piecesVisibleAt(double seconds) const
 std::vector<const TextClip*> TextTracks::visibleAt(double seconds) const
 {
     std::vector<const TextClip*> visible;
-    for (const TextLayer& l : layers_) {
-        for (const TextClip& c : l.clips) {
+    for (const TextLayer* l : allLayers()) {
+        for (const TextClip& c : l->clips) {
             if (seconds >= c.position && seconds < c.endPosition())
                 visible.push_back(&c);
         }
@@ -481,10 +512,10 @@ std::vector<const TextClip*> TextTracks::visibleAt(double seconds) const
 double TextTracks::endTime() const
 {
     double end = 0.0;
-    for (const TextLayer& l : layers_) {
-        for (const TextClip& c : l.clips)
+    for (const TextLayer* l : allLayers()) {
+        for (const TextClip& c : l->clips)
             end = std::max(end, c.endPosition());
-        for (const LayerPiece& p : l.pieces)
+        for (const LayerPiece& p : l->pieces)
             end = std::max(end, p.endPosition());
     }
     return end;
@@ -493,11 +524,15 @@ double TextTracks::endTime() const
 void TextTracks::clear()
 {
     layers_.clear();
+    base_.clips.clear();
 }
 
-void TextTracks::restore(std::vector<TextLayer> layers)
+void TextTracks::restore(std::vector<TextLayer> layers, std::vector<TextClip> baseClips)
 {
     layers_.clear();
+    base_.clips.clear();
+    for (TextClip& clip : baseClips)
+        add(kBaseLayerId, std::move(clip));
     for (TextLayer& in : layers) {
         const int layerId = addLayer();
         for (TextClip& clip : in.clips)

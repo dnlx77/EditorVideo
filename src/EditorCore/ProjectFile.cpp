@@ -394,22 +394,51 @@ JsonValue transitionsToJson(const Project& project)
     return list;
 }
 
+JsonValue textClipsToJson(const std::vector<TextClip>& list)
+{
+    JsonValue::Array clips;
+    for (const TextClip& c : list) {
+        JsonValue::Object clip{{"posizione", ticks(c.position)},
+                               {"durata", ticks(c.length)},
+                               {"testo", c.text},
+                               {"stile", textStyleToJson(c.style)}};
+        if (c.fadeIn > 0.0)
+            clip["dissolvenzaIn"] = ticks(c.fadeIn);
+        if (c.fadeOut > 0.0)
+            clip["dissolvenzaOut"] = ticks(c.fadeOut);
+        clips.emplace_back(std::move(clip));
+    }
+    return clips;
+}
+
+// Le scritte di un elenco ("clip" di un livello, "scrittePrincipale" di V1); vuoto se `value` non è un elenco.
+std::vector<TextClip> textClipsFromJson(const JsonValue& value)
+{
+    std::vector<TextClip> list;
+    if (!value.isArray())
+        return list;
+    for (const JsonValue& c : value.asArray()) {
+        TextClip clip;
+        clip.position = seconds(c["posizione"], "posizione");
+        clip.length = seconds(c["durata"], "durata");
+        clip.text = text(c["testo"]);
+        clip.style = textStyleFromJson(c["stile"]);
+        if (c["dissolvenzaIn"].isInteger())
+            clip.fadeIn = std::clamp(ticksToSeconds(c["dissolvenzaIn"].asInteger()), 0.0, clip.length);
+        if (c["dissolvenzaOut"].isInteger())
+            clip.fadeOut = std::clamp(ticksToSeconds(c["dissolvenzaOut"].asInteger()), 0.0, clip.length);
+        if (!(clip.length >= TextTracks::kMinLength) || clip.position < 0.0)
+            throw ProjectFileError("Il progetto è rovinato: una scritta non è valida.");
+        list.push_back(std::move(clip));
+    }
+    return list;
+}
+
 JsonValue textTracksToJson(const TextTracks& text)
 {
     JsonValue::Array layers;
     for (const TextLayer& layer : text.layers()) {
-        JsonValue::Array clips;
-        for (const TextClip& c : layer.clips) {
-            JsonValue::Object clip{{"posizione", ticks(c.position)},
-                                   {"durata", ticks(c.length)},
-                                   {"testo", c.text},
-                                   {"stile", textStyleToJson(c.style)}};
-            if (c.fadeIn > 0.0)
-                clip["dissolvenzaIn"] = ticks(c.fadeIn);
-            if (c.fadeOut > 0.0)
-                clip["dissolvenzaOut"] = ticks(c.fadeOut);
-            clips.emplace_back(std::move(clip));
-        }
+        JsonValue clips = textClipsToJson(layer.clips);
         JsonValue::Object layerJson{{"clip", std::move(clips)}};
         if (!layer.pieces.empty()) {
             JsonValue::Array pieces;
@@ -536,6 +565,13 @@ std::string projectToJson(const std::string& projectPath, const Project& project
             if (o.kind == ObjectRef::Kind::TextClip) {
                 int layerIndex = -1;
                 int clipIndex = -1;
+                const auto& baseClips = project.textTracks().baseLayer().clips;  // V1: traccia -2
+                for (std::size_t c = 0; c < baseClips.size(); ++c) {
+                    if (baseClips[c].id == o.id) {
+                        layerIndex = -2;
+                        clipIndex = static_cast<int>(c);
+                    }
+                }
                 for (std::size_t l = 0; l < project.textTracks().layers().size(); ++l) {
                     const auto& clips = project.textTracks().layers()[l].clips;
                     for (std::size_t c = 0; c < clips.size(); ++c) {
@@ -609,6 +645,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         root["nomiGruppi"] = std::move(groupNames);
     if (!project.textTracks().layers().empty())
         root["scritte"] = textTracksToJson(project.textTracks());
+        if (!project.textTracks().baseLayer().clips.empty())
+            root["scrittePrincipale"] = textClipsToJson(project.textTracks().baseLayer().clips);
     if (!project.textStyles().empty())
         root["stiliScritte"] = textStylesToJson(project.textStyles());
     if (!transitions.asArray().empty())
@@ -770,20 +808,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
             std::vector<TextLayer> layers;
             for (const JsonValue& l : t.asArray()) {
                 TextLayer layer;
-                for (const JsonValue& c : l["clip"].asArray()) {
-                    TextClip clip;
-                    clip.position = seconds(c["posizione"], "posizione");
-                    clip.length = seconds(c["durata"], "durata");
-                    clip.text = text(c["testo"]);
-                    clip.style = textStyleFromJson(c["stile"]);
-                    if (c["dissolvenzaIn"].isInteger())
-                        clip.fadeIn = std::clamp(ticksToSeconds(c["dissolvenzaIn"].asInteger()), 0.0, clip.length);
-                    if (c["dissolvenzaOut"].isInteger())
-                        clip.fadeOut = std::clamp(ticksToSeconds(c["dissolvenzaOut"].asInteger()), 0.0, clip.length);
-                    if (!(clip.length >= TextTracks::kMinLength) || clip.position < 0.0)
-                        throw ProjectFileError(name + " è rovinato: una scritta non è valida.");
-                    layer.clips.push_back(std::move(clip));
-                }
+                layer.clips = textClipsFromJson(l["clip"]);
                 // Pezzi di video del livello (versione 7): il file deve esserci, durata e posizione valide.
                 if (l["pezzi"].isArray()) {
                     for (const JsonValue& p : l["pezzi"].asArray()) {
@@ -803,7 +828,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                 }
                 layers.push_back(std::move(layer));
             }
-            loaded.project.textTracks().restore(std::move(layers));
+            loaded.project.textTracks().restore(std::move(layers), textClipsFromJson(root["scrittePrincipale"]));
         }
 
         loaded.project.textStyles() = textStylesFromJsonValue(root["stiliScritte"]);
@@ -821,7 +846,11 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                     if (kind == "scritta") {
                         const std::int64_t l = item["traccia"].isInteger() ? item["traccia"].asInteger() : -1;
                         const auto& layers = built.textTracks().layers();
-                        if (l >= 0 && l < static_cast<std::int64_t>(layers.size()) && at >= 0
+                        if (l == -2) {
+                            const auto& baseClips = built.textTracks().baseLayer().clips;
+                            if (at >= 0 && at < static_cast<std::int64_t>(baseClips.size()))
+                                members.push_back({ObjectRef::Kind::TextClip, baseClips[static_cast<std::size_t>(at)].id});
+                        } else if (l >= 0 && l < static_cast<std::int64_t>(layers.size()) && at >= 0
                             && at < static_cast<std::int64_t>(layers[static_cast<std::size_t>(l)].clips.size()))
                             members.push_back({ObjectRef::Kind::TextClip, layers[static_cast<std::size_t>(l)].clips[static_cast<std::size_t>(at)].id});
                     } else if (kind == "pezzoLivello") {
