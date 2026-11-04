@@ -33,6 +33,8 @@ void MainWindow::refreshPropertiesPanel()
 {
     if (propertiesPanel_ == nullptr || timeline_ == nullptr)
         return;
+    if (program_ != nullptr)
+        program_->refreshManipulators();  // le maniglie del monitor seguono la scelta
     const std::vector<core::ObjectRef> objects = timeline_->allSelectedObjects();
     if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::TextClip
         && project_.textTracks().find(objects.front().id) != nullptr) {
@@ -125,6 +127,18 @@ bool MainWindow::commitMonitorTransform(int fragmentId, const core::Transform& t
     if (project_.setTransform({fragmentId}, transform) == 0)
         return false;
     transformMergeKey_.clear();  // un gesto è una voce di Annulla a sé: non si unisce alle modifiche del pannello
+    recordEdit(QStringLiteral("Trasforma sul monitor"), before);
+    return true;
+}
+
+bool MainWindow::commitMonitorLayerTransform(int pieceId, const core::Transform& transform)
+{
+    if (project_.textTracks().findPiece(pieceId) == nullptr)
+        return false;
+    const core::Project before = project_;
+    if (!project_.textTracks().setPieceTransform(pieceId, transform))
+        return false;
+    transformMergeKey_.clear();
     recordEdit(QStringLiteral("Trasforma sul monitor"), before);
     return true;
 }

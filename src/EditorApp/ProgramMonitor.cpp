@@ -216,26 +216,65 @@ std::vector<core::TextClip> ProgramMonitor::visibleText() const
 
 // ---- Manipolatori
 
-bool ProgramMonitor::manipulatorsVisible() const
+const core::LayerPiece* ProgramMonitor::manipPiece() const
 {
-    return (transformMode_ || cropMode_) && !playing_ && !showingSource_ && transitionId_ == 0 && gapIndex_ < 0 && index_ >= 0
-           && index_ < static_cast<int>(project_.sequence().fragments().size());
+    // Il pezzo di un livello (V2, V3...) scelto sulla linea del tempo, se è sotto il cursore.
+    if (!selectedLayerPiece || showingSource_ || playing_)
+        return nullptr;
+    const int id = selectedLayerPiece();
+    if (id == 0)
+        return nullptr;
+    const core::LayerPiece* piece = project_.textTracks().findPiece(id);
+    if (piece == nullptr || position_ < piece->position - 1e-9 || position_ >= piece->endPosition() - 1e-9)
+        return nullptr;
+    return piece;
 }
 
-core::Transform ProgramMonitor::shownTransform() const
+bool ProgramMonitor::manipulatorsVisible() const
 {
-    if (manipDrag_)
+    if (!(transformMode_ || cropMode_) || playing_ || showingSource_)
+        return false;
+    if (manipPiece() != nullptr)
+        return true;
+    return transitionId_ == 0 && gapIndex_ < 0 && index_ >= 0 && index_ < static_cast<int>(project_.sequence().fragments().size());
+}
+
+core::Transform ProgramMonitor::v1Transform() const
+{
+    if (manipDrag_ && !manipDrag_->layer)
         return manipDrag_->current;
     if (index_ < 0 || index_ >= static_cast<int>(project_.sequence().fragments().size()))
         return {};
     return project_.sequence().fragments()[static_cast<std::size_t>(index_)].transform;
 }
 
+core::Transform ProgramMonitor::shownTransform() const
+{
+    if (manipDrag_)
+        return manipDrag_->current;
+    if (const core::LayerPiece* piece = manipPiece())
+        return piece->transform;
+    return v1Transform();
+}
+
+void ProgramMonitor::refreshManipulators()
+{
+    applyShownTransform();
+}
+
 std::optional<core::ManipSize> ProgramMonitor::manipSize() const
 {
     if (!manipulatorsVisible())
         return std::nullopt;
-    const QSize source = player_->currentFrameSize();
+    QSize source = player_->currentFrameSize();
+    if (const core::LayerPiece* piece = manipPiece()) {
+        // Il pezzo di un livello: la forma del suo fotogramma (conta solo quella).
+        source = QSize();
+        for (std::size_t i = 0; i < lastLayerIds_.size(); ++i) {
+            if (lastLayerIds_[i] == piece->id && lastLayers_[i].frame != nullptr)
+                source = QSize(lastLayers_[i].frame->width, lastLayers_[i].frame->height);
+        }
+    }
     const QSize project = frameSize();
     if (source.isEmpty() || project.isEmpty())
         return std::nullopt;
@@ -297,8 +336,21 @@ void ProgramMonitor::setThirdsGrid(bool on)
 void ProgramMonitor::applyShownTransform()
 {
     player_->setTransformCanvas(transformMode_ || cropMode_);
-    player_->setFrameTransform(shownTransform(), frameSize());
+    player_->setFrameTransform(v1Transform(), frameSize());
+    if (manipDrag_ && manipDrag_->layer)
+        showDraggedLayer();
     player_->updateOverlay();
+}
+
+void ProgramMonitor::showDraggedLayer()
+{
+    // Durante il gesto sul pezzo di un livello: gli stessi fotogrammi, con la trasformazione in corso.
+    std::vector<PlayerWidget::LayerFrame> layers = lastLayers_;
+    for (std::size_t i = 0; i < layers.size() && i < lastLayerIds_.size(); ++i) {
+        if (lastLayerIds_[i] == manipDrag_->fragmentId)
+            layers[i].transform = manipDrag_->current;
+    }
+    player_->setLayers(std::move(layers), frameSize());
 }
 
 void ProgramMonitor::paintManipulators(QPainter& painter, const QRectF& target)
@@ -374,16 +426,18 @@ bool ProgramMonitor::grabImage(QPointF at)
     const core::Transform start = shownTransform();
     snapGuides_ = {};
     rotationSnapped_ = false;
+    const core::LayerPiece* layerPiece = manipPiece();
+    const int targetId = layerPiece != nullptr ? layerPiece->id : project_.sequence().fragments()[static_cast<std::size_t>(index_)].id;
     if (cropMode_) {
         const int edges = core::cropHitTest(start, *size, p, manipScreenScale());
         if (edges == 0)
             return grabText(at);
-        manipDrag_ = ManipDrag{project_.sequence().fragments()[static_cast<std::size_t>(index_)].id, {}, start, start, p, edges};
+        manipDrag_ = ManipDrag{targetId, {}, start, start, p, edges, layerPiece != nullptr};
         return true;
     }
     const core::ManipHit hit = core::manipHitTest(start, *size, p, manipScreenScale());
     const auto startDrag = [&] {
-        manipDrag_ = ManipDrag{project_.sequence().fragments()[static_cast<std::size_t>(index_)].id, hit, start, start, p};
+        manipDrag_ = ManipDrag{targetId, hit, start, start, p, 0, layerPiece != nullptr};
         return true;
     };
     // Prima le maniglie, poi le scritte (stanno sopra l'immagine), poi il resto del pezzo.
@@ -435,7 +489,10 @@ void ProgramMonitor::dragImage(QPointF at)
             break;
         }
     }
-    player_->setFrameTransform(manipDrag_->current, frameSize());
+    if (manipDrag_->layer)
+        showDraggedLayer();
+    else
+        player_->setFrameTransform(manipDrag_->current, frameSize());
     player_->updateOverlay();
 }
 
@@ -450,9 +507,15 @@ void ProgramMonitor::dropImage(QPointF at)
     manipDrag_.reset();
     snapGuides_ = {};
     rotationSnapped_ = false;
-    if (!(done.current == done.start) && onTransformEdited)
-        onTransformEdited(done.fragmentId, done.current);
+    if (!(done.current == done.start)) {
+        if (done.layer && onLayerTransformEdited)
+            onLayerTransformEdited(done.fragmentId, done.current);
+        else if (!done.layer && onTransformEdited)
+            onTransformEdited(done.fragmentId, done.current);
+    }
     // Se il progetto non ha cambiato il pezzo, il monitor torna com'era.
+    if (done.layer)
+        player_->setLayers(lastLayers_, frameSize());
     applyShownTransform();
 }
 
@@ -516,6 +579,7 @@ void ProgramMonitor::updateLayers()
     constexpr double kPrime = 1.0;  // quanto prima si apre il file di un pezzo che sta per iniziare, in riproduzione
     std::vector<PlayerWidget::LayerFrame> shown;
     std::vector<int> wanted;
+    std::vector<int> shownIds;
     if (!showingSource_) {
         const QSize project = frameSize();
         const QSizeF fitted = QSizeF(project).scaled(QSizeF(1280, 720), Qt::KeepAspectRatio);
@@ -549,6 +613,7 @@ void ProgramMonitor::updateLayers()
                 } else {
                     frame = slot->waitFrame(fileTime, 800);
                 }
+                shownIds.push_back(piece.id);
                 shown.push_back({std::move(frame), piece.transform});
             }
         }
@@ -558,6 +623,8 @@ void ProgramMonitor::updateLayers()
     }
     const bool any = !shown.empty();
     layerFramesShown_ = static_cast<int>(std::count_if(shown.begin(), shown.end(), [](const PlayerWidget::LayerFrame& l) { return l.frame != nullptr; }));
+    lastLayers_ = shown;
+    lastLayerIds_ = std::move(shownIds);
     player_->setLayers(std::move(shown), frameSize());
     if (any != layersShown_) {
         layersShown_ = any;
@@ -736,6 +803,11 @@ void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QStrin
     fragmentLabel_->setText(note);
 }
 
+bool ProgramMonitor::hasProgram() const
+{
+    return !project_.sequence().empty() || project_.textTracks().endTime() > 0.0;
+}
+
 double ProgramMonitor::programEnd() const
 {
     return std::max(project_.sequence().totalLength(), project_.textTracks().endTime());
@@ -745,7 +817,7 @@ void ProgramMonitor::seekTo(double seconds)
 {
     showingSource_ = false;
     const core::Sequence& sequence = project_.sequence();
-    if (sequence.empty())
+    if (!hasProgram())
         return;
     const double t = std::clamp(seconds, 0.0, programEnd());
     if (const auto placement = transitionAt(t)) {
@@ -771,7 +843,7 @@ void ProgramMonitor::seekTo(double seconds)
             enterGap(gap, t);
             return;
         }
-        if (t > sequence.totalLength() + 1e-6) {
+        if (sequence.fragments().empty() || t > sequence.totalLength() + 1e-6) {
             // Oltre l'ultimo pezzo ma dentro scritte o livelli: coda nera.
             if (playing_) {
                 player_->pause();
@@ -818,7 +890,7 @@ void ProgramMonitor::seekRelative(double deltaSeconds)
 void ProgramMonitor::togglePlayPause()
 {
     const core::Sequence& sequence = project_.sequence();
-    if (sequence.empty())
+    if (!hasProgram())
         return;
     if (playing_) {
         updatePosition();  // nello spazio vuoto: il tempo arrivato fin qui
@@ -838,7 +910,7 @@ void ProgramMonitor::togglePlayPause()
 void ProgramMonitor::start()
 {
     const core::Sequence& sequence = project_.sequence();
-    if (sequence.empty() || playing_)
+    if (!hasProgram() || playing_)
         return;
     if (speed_ < 0) {
         if (position_ <= 0.0005) {
@@ -875,7 +947,7 @@ void ProgramMonitor::setPlaying(bool playing)
 
 void ProgramMonitor::stop()
 {
-    if (project_.sequence().empty())
+    if (!hasProgram())
         return;
     if (playing_)
         togglePlayPause();
@@ -920,7 +992,7 @@ void ProgramMonitor::setCurrentSpeed(double speed)
 
 void ProgramMonitor::shuttle(int direction)
 {
-    if (project_.sequence().empty())
+    if (!hasProgram())
         return;
     setCurrentSpeed(core::shuttleSpeed(speed_, playing_, direction));
     if (!playing_) {
@@ -954,7 +1026,7 @@ void ProgramMonitor::setMuted(bool muted)
 
 void ProgramMonitor::stepFrame(int direction)
 {
-    if (project_.sequence().empty())
+    if (!hasProgram())
         return;
     setPlaying(false);
     // Un fotogramma del file mostrato; a cavallo di una giunzione seekTo() passa al pezzo giusto.
@@ -964,7 +1036,7 @@ void ProgramMonitor::stepFrame(int direction)
 void ProgramMonitor::stepToCut(int direction)
 {
     const core::Sequence& sequence = project_.sequence();
-    if (sequence.empty())
+    if (!hasProgram())
         return;
     setPlaying(false);
     const std::vector<double> starts = sequence.starts();
@@ -995,7 +1067,7 @@ void ProgramMonitor::stepToCut(int direction)
 void ProgramMonitor::seekToEnd()
 {
     const core::Sequence& sequence = project_.sequence();
-    if (sequence.empty())
+    if (!hasProgram())
         return;
     setPlaying(false);
     seekTo(std::max(0.0, programEnd() - player_->frameDuration()));
@@ -1045,7 +1117,7 @@ void ProgramMonitor::fragmentEnded()
 void ProgramMonitor::reachedEdge()
 {
     const core::Sequence& sequence = project_.sequence();
-    if (loop_ && !sequence.empty()) {
+    if (loop_ && hasProgram()) {
         // Ripetizione: si riparte dall'altro capo del montaggio, senza fermarsi.
         seekTo(speed_ < 0 ? std::max(0.0, programEnd() - player_->frameDuration()) : 0.0);
         if (gapIndex_ >= 0) {
@@ -1084,7 +1156,7 @@ void ProgramMonitor::sequenceChanged()
     setCurrentSpeed(baseSpeed_);
     if (loadedClipId_ != 0 && project_.find(loadedClipId_) == nullptr)
         loadedClipId_ = 0;
-    if (sequence.empty()) {
+    if (!hasProgram()) {
         index_ = -1;
         gapIndex_ = -1;
         player_->setBlank(false);
@@ -1093,6 +1165,12 @@ void ProgramMonitor::sequenceChanged()
         player_->closeFile();
         updatePosition();
         return;
+    }
+    if (sequence.empty()) {
+        // Niente su V1, ma ci sono scritte o livelli: si parte da una coda nera.
+        index_ = -1;
+        loadedClipId_ = 0;
+        player_->closeFile();
     }
     seekTo(std::min(position_, programEnd()));
 }
@@ -1205,7 +1283,7 @@ bool ProgramMonitor::startAudio(double from)
 {
     stopAudio();
     const core::Sequence& sequence = project_.sequence();
-    if (sequence.empty() || !core::audibleAtSpeed(speed_)) {
+    if (!hasProgram() || !core::audibleAtSpeed(speed_)) {
         player_->setAudioNote(QString());
         return false;
     }
@@ -1237,7 +1315,7 @@ void ProgramMonitor::audioMixChanged()
 void ProgramMonitor::updateLabels()
 {
     const core::Sequence& sequence = project_.sequence();
-    transport_->setMediaEnabled(!sequence.empty());
+    transport_->setMediaEnabled(hasProgram());
     transport_->setPlaying(playing_);
     transport_->setSpeed(speed_);
     transport_->setLoop(loop_);
