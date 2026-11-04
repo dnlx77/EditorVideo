@@ -377,15 +377,33 @@ MainWindow::MainWindow(QWidget* parent)
         refreshTextPanel();
     };
     timeline_->textFreePosition = [this](int clipId, int layerId, double desired) {
+        if (project_.textTracks().findPiece(clipId) != nullptr)  // un pezzo di video su un livello: senza spinta né gruppi
+            return project_.textTracks().nearestFreeStart(clipId, layerId, desired);
         return project_.freeSpotFor({core::ObjectRef::Kind::TextClip, clipId}, layerId, desired, pushPieces_);
     };
     timeline_->onTextClipMoveTo = [this](int clipId, int layerId, double position) { moveTextClip(clipId, layerId, position); };
     timeline_->textTrimLimit = [this](int clipId, bool atStart, double desired) {
-        return project_.textTracks().edgeLimit(clipId, atStart, desired);
+        const double limit = project_.textTracks().edgeLimit(clipId, atStart, desired);
+        const core::LayerPiece* piece = project_.textTracks().findPiece(clipId);
+        const core::Clip* file = piece != nullptr ? project_.find(piece->clipId) : nullptr;
+        if (piece == nullptr || file == nullptr)
+            return limit;
+        // Il pezzo non può andare prima dell'inizio del file né oltre la sua fine.
+        return atStart ? std::max(limit, piece->position - piece->start)
+                       : std::min(limit, piece->endPosition() + std::max(0.0, file->duration - piece->end));
     };
     timeline_->onTextTrim = [this](int clipId, bool atStart, double value) { trimTextClip(clipId, atStart, value); };
     timeline_->onTextFades = [this](int clipId, double fadeIn, double fadeOut) { fadeTextClip(clipId, fadeIn, fadeOut); };
-    timeline_->onTextActivate = [this](int clipId) { editTextClip(clipId); };
+    timeline_->onTextActivate = [this](int clipId) {
+        if (project_.textTracks().findPiece(clipId) != nullptr) {  // un pezzo di video: si regola nel pannello Proprietà
+            if (fullScreenDock_ != nullptr)
+                exitFullScreen();
+            propertiesDock_->show();
+            propertiesDock_->raise();
+            return;
+        }
+        editTextClip(clipId);
+    };
     // Transizioni (step X5).
     timeline_->canDropTransition = [this](int beforeFragment) { return canDropTransition(beforeFragment); };
     timeline_->onTransitionDropped = [this](const QString& type, int beforeFragment) { addTransition(type, beforeFragment); };
@@ -759,6 +777,57 @@ void MainWindow::addToSequence()
     program_->seekTo(sequence.startOf(sequence.indexOf(id)));
 }
 
+void MainWindow::addToLayer()
+{
+    const core::Clip* clip = project_.find(currentClipId_);
+    if (clip == nullptr)
+        return;
+    if (!clip->analyzed) {
+        player_->showNote(QStringLiteral("Attendi la fine dell'analisi del file, poi riprova."));
+        return;
+    }
+    if (core::isAudioOnly(clip->path)) {
+        player_->showNote(QStringLiteral("Un file solo audio non va su un livello video: usa A per metterlo su una traccia audio."));
+        return;
+    }
+    const core::CutSegment& segment = player_->segment();
+    core::LayerPiece piece;
+    piece.clipId = clip->id;
+    piece.start = segment.hasIn() ? segment.in() : 0.0;
+    piece.end = segment.hasOut() ? segment.out() : clip->duration;
+    piece.position = std::max(0.0, program_->position());
+    if (!(piece.length() >= core::TextTracks::kMinLength)) {
+        player_->showNote(QStringLiteral("Pezzo vuoto: OUT deve stare dopo IN."));
+        return;
+    }
+    core::TextTracks& layers = project_.textTracks();
+    const core::Project before = project_;
+    // Il livello scelto se lì c'è posto, altrimenti il primo dove ci sta; se non ci sta da nessuna parte, un livello nuovo.
+    std::vector<int> candidates;
+    if (layers.layer(timeline_->selectedTextLayer()) != nullptr)
+        candidates.push_back(timeline_->selectedTextLayer());
+    for (const core::TextLayer& layer : layers.layers())
+        candidates.push_back(layer.id);
+    int layerId = 0;
+    for (const int candidate : candidates) {
+        if (layers.canPlace(candidate, piece.position, piece.length())) {
+            layerId = candidate;
+            break;
+        }
+    }
+    if (layerId == 0)
+        layerId = layers.addLayer();
+    const int id = layers.addPiece(layerId, piece);
+    if (id == 0)
+        return;
+    player_->clearSegment();
+    timeline_->setSelectedTextClip(id);
+    recordEdit(QStringLiteral("Aggiungi pezzo su un livello"), before);
+    statusBar()->showMessage(QStringLiteral("Aggiunto il pezzo al livello %1, da %2: trascinalo per spostarlo, S lo divide, Canc lo toglie.")
+                                 .arg(qs(layers.layerName(layerId)), timeText(piece.position)),
+                             8000);
+}
+
 void MainWindow::cutFromSequence()
 {
     const core::Clip* clip = project_.find(currentClipId_);
@@ -829,6 +898,17 @@ void MainWindow::splitAtPlayhead()
                                  8000);
         return;
     }
+    // Pezzo di video di un livello selezionato: si divide al cursore.
+    if (const int piece = timeline_->selectedTextClip(); piece != 0 && project_.textTracks().findPiece(piece) != nullptr) {
+        if (const int id = project_.textTracks().splitPiece(piece, at); id != 0) {
+            timeline_->setSelectedTextClip(id);
+            recordEdit(QStringLiteral("Dividi pezzo del livello"), before);
+            statusBar()->showMessage(QStringLiteral("Pezzo diviso a %1.").arg(timeText(at)), 8000);
+        } else {
+            statusBar()->showMessage(QStringLiteral("Qui non si può dividere: porta il cursore dentro il pezzo, non su un suo bordo."), 8000);
+        }
+        return;
+    }
     // Scritta selezionata: si divide al cursore.
     if (const int text = timeline_->selectedTextClip(); text != 0) {
         if (const int id = project_.textTracks().split(text, at); id != 0) {
@@ -887,6 +967,14 @@ void MainWindow::deleteSelection()
         if (project_.removeObjects(selectedRefs()) > 0) {
             timeline_->setSelected(0);
             recordEdit(QStringLiteral("Elimina oggetti"), before);
+        }
+        return;
+    }
+    if (const int piece = timeline_->selectedTextClip(); piece != 0 && project_.textTracks().findPiece(piece) != nullptr) {
+        // Pezzo di video di un livello: si toglie.
+        if (project_.textTracks().removePiece(piece)) {
+            timeline_->setSelectedTextClip(0);
+            recordEdit(QStringLiteral("Togli pezzo del livello"), before);
         }
         return;
     }
@@ -1205,6 +1293,16 @@ void MainWindow::refreshTimeline()
                 label = label.left(newline) + QStringLiteral("…");
             lane.clips.push_back({c.id, label, c.position, c.length, c.fadeIn, c.fadeOut});
         }
+        // I pezzi di video del livello (blu), con il nome del file.
+        for (const core::LayerPiece& piece : layer.pieces) {
+            const core::Clip* file = project_.find(piece.clipId);
+            const QString name = file != nullptr ? QFileInfo(QString::fromStdString(file->path)).fileName() : QString();
+            SequenceTimeline::TextBlock block{piece.id, name, piece.position, piece.length(), 0.0, 0.0};
+            block.piece = true;
+            lane.clips.push_back(std::move(block));
+        }
+        std::stable_sort(lane.clips.begin(), lane.clips.end(),
+                         [](const SequenceTimeline::TextBlock& a, const SequenceTimeline::TextBlock& b) { return a.position < b.position; });
         textLanes.push_back(std::move(lane));
     }
     timeline_->setTextLanes(std::move(textLanes));
@@ -1606,6 +1704,9 @@ void MainWindow::createMenus()
     QAction* add = editMenu->addAction(QStringLiteral("&Aggiungi IN-OUT al montaggio"), this, [this] { addToSequence(); });
     add->setShortcut(QKeySequence(Qt::Key_A));
     add->setStatusTip(QStringLiteral("Dopo il pezzo selezionato, o in fondo; senza IN e OUT tutto il file"));
+    QAction* addLayer = editMenu->addAction(QStringLiteral("Aggiungi IN-OUT su un &livello video"), this, [this] { addToLayer(); });
+    addLayer->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_A));
+    addLayer->setStatusTip(QStringLiteral("Il pezzo della Sorgente come pezzo sopra il video (V2, V3...), al cursore del Montaggio, sul livello scelto o sul primo dove ci sta"));
     QAction* cut = editMenu->addAction(QStringLiteral("&Togli IN-OUT dal montaggio"), this, [this] { cutFromSequence(); });
     cut->setShortcut(QKeySequence(Qt::Key_X));
     QAction* split = editMenu->addAction(QStringLiteral("&Dividi il pezzo al cursore"), this, [this] { splitAtPlayhead(); });
@@ -1724,10 +1825,10 @@ void MainWindow::createMenus()
     editTextAction_->setStatusTip(QStringLiteral("Testo, font, colore, contorno, ombra, sfondo e posizione della scritta scelta (anche con doppio clic)"));
     editTextAction_->setEnabled(false);
     textMenu->addSeparator();
-    textMenu->addAction(QStringLiteral("&Aggiungi livello di scritte"), this, [this] { addTextLayer(); })
-        ->setStatusTip(QStringLiteral("Un livello V2, V3... sopra il video: un livello più alto copre quelli sotto"));
-    removeTextLayerAction_ = textMenu->addAction(QStringLiteral("&Togli livello di scritte"), this, [this] { removeSelectedTextLayer(); });
-    removeTextLayerAction_->setStatusTip(QStringLiteral("Il livello scelto sulla linea del tempo, altrimenti l'ultimo, con le sue scritte"));
+    textMenu->addAction(QStringLiteral("&Aggiungi livello video"), this, [this] { addTextLayer(); })
+        ->setStatusTip(QStringLiteral("Un livello V2, V3... sopra il video per scritte e pezzi di video: un livello più alto copre quelli sotto"));
+    removeTextLayerAction_ = textMenu->addAction(QStringLiteral("&Togli livello video"), this, [this] { removeSelectedTextLayer(); });
+    removeTextLayerAction_->setStatusTip(QStringLiteral("Il livello scelto sulla linea del tempo, altrimenti l'ultimo, con tutto quello che contiene"));
     removeTextLayerAction_->setEnabled(false);
 
     QMenu* windowMenu = menuBar()->addMenu(QStringLiteral("Fi&nestra"));

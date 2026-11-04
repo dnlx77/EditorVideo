@@ -517,7 +517,8 @@ void SequenceTimeline::paintHeaders(QPainter& p)
 void SequenceTimeline::paintText(QPainter& p)
 {
     const QPalette pal = palette();
-    const QColor base(150, 104, 205);
+    const QColor textBase(150, 104, 205);
+    const QColor pieceBase(62, 128, 196);  // i pezzi di video dei livelli: blu
     p.save();
     for (int laneIndex = 0; laneIndex < static_cast<int>(textLanes_.size()); ++laneIndex) {
         const QRectF lane = textLane(laneIndex);
@@ -528,6 +529,7 @@ void SequenceTimeline::paintText(QPainter& p)
                 continue;
             const QRectF r = visiblePart(full);
             const bool dragged = textDragging_ && c.clipId == textDragClip_;
+            const QColor base = c.piece ? pieceBase : textBase;
             QColor fill = base;
             if (dragged)
                 fill.setAlpha(110);
@@ -544,7 +546,7 @@ void SequenceTimeline::paintText(QPainter& p)
                 p.drawText(r.adjusted(5, 0, -4, 0), Qt::AlignLeft | Qt::AlignVCenter,
                            p.fontMetrics().elidedText(c.label, Qt::ElideRight, static_cast<int>(r.width() - 9)));
             }
-            if (full.width() >= kTextFadeMinWidth) {
+            if (!c.piece && full.width() >= kTextFadeMinWidth) {
                 // La linea dell'opacità: in basso (trasparente) ai bordi, in alto (piena) dopo le dissolvenze, con una
                 // maniglia a ogni angolo in alto da trascinare.
                 const double bottom = lane.bottom() - kTextFadeBottom;
@@ -575,6 +577,7 @@ void SequenceTimeline::paintText(QPainter& p)
     // Dove andrà la scritta trascinata: il suo contorno sul livello di arrivo.
     if (textDragging_ && textDragLane_ >= 0) {
         if (const TextBlock* c = findTextClip(textDragClip_)) {
+            const QColor base = c->piece ? pieceBase : textBase;
             const QRectF lane = textLane(textDragLane_);
             const QRectF target(QPointF(xForTime(textDragStart_) + 1, lane.top() + 1), QPointF(xForTime(textDragStart_ + c->length) - 1, lane.bottom() - 1));
             QColor fill = base;

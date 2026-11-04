@@ -30,8 +30,8 @@ int MainWindow::addTextLayer()
     const core::Project before = project_;
     const int id = project_.textTracks().addLayer();
     timeline_->setSelectedTextLayer(id);
-    recordEdit(QStringLiteral("Aggiungi livello di scritte"), before);
-    statusBar()->showMessage(QStringLiteral("Aggiunto il livello di scritte %1: premi T per metterci una scritta al cursore.")
+    recordEdit(QStringLiteral("Aggiungi livello video"), before);
+    statusBar()->showMessage(QStringLiteral("Aggiunto il livello %1: premi T per metterci una scritta, Maiusc+A un pezzo della Sorgente, al cursore.")
                                  .arg(qs(project_.textTracks().layerName(id))),
                              8000);
     return id;
@@ -43,12 +43,12 @@ bool MainWindow::removeTextLayer(int layerId)
     if (layer == nullptr)
         return false;
     const QString name = qs(project_.textTracks().layerName(layerId));
-    const std::size_t clips = layer->clips.size();
+    const std::size_t clips = layer->clips.size() + layer->pieces.size();
     const core::Project before = project_;
     project_.textTracks().removeLayer(layerId);
-    recordEdit(QStringLiteral("Togli livello di scritte"), before);
-    statusBar()->showMessage(clips == 0 ? QStringLiteral("Tolto il livello di scritte %1.").arg(name)
-                                        : QStringLiteral("Tolto il livello di scritte %1 con %2 scritte (Ctrl+Z lo rimette).").arg(name).arg(clips),
+    recordEdit(QStringLiteral("Togli livello video"), before);
+    statusBar()->showMessage(clips == 0 ? QStringLiteral("Tolto il livello %1.").arg(name)
+                                        : QStringLiteral("Tolto il livello %1 con %2 oggetti (Ctrl+Z lo rimette).").arg(name).arg(clips),
                              8000);
     return true;
 }
@@ -228,6 +228,13 @@ bool MainWindow::moveTextOnScreen(int clipId, double centerX, double centerY)
 
 bool MainWindow::moveTextClip(int clipId, int layerId, double position)
 {
+    if (project_.textTracks().findPiece(clipId) != nullptr) {  // un pezzo di video su un livello
+        const core::Project before = project_;
+        if (!project_.textTracks().movePieceTo(clipId, layerId, position))
+            return false;
+        recordEdit(QStringLiteral("Sposta pezzo del livello"), before);
+        return true;
+    }
     if (project_.textTracks().find(clipId) == nullptr)
         return false;
     const core::Project before = project_;
@@ -243,6 +250,16 @@ bool MainWindow::trimTextClip(int clipId, bool atStart, double value)
 {
     const core::Project before = project_;
     core::TextTracks& text = project_.textTracks();
+    if (const core::LayerPiece* piece = text.findPiece(clipId)) {
+        // Il bordo si sposta anche nel file: l'inizio e la posizione cambiano insieme, la fine resta dove è.
+        const double delta = value - (atStart ? piece->position : piece->endPosition());
+        const bool done = atStart ? text.trimPiece(clipId, value, piece->start + delta, piece->end)
+                                  : text.trimPiece(clipId, piece->position, piece->start, piece->end + delta);
+        if (!done)
+            return false;
+        recordEdit(atStart ? QStringLiteral("Sposta inizio del pezzo") : QStringLiteral("Sposta fine del pezzo"), before);
+        return true;
+    }
     if (!(atStart ? text.setStart(clipId, value) : text.setEnd(clipId, value)))
         return false;
     recordEdit(atStart ? QStringLiteral("Sposta inizio della scritta") : QStringLiteral("Sposta fine della scritta"), before);

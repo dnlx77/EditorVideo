@@ -344,6 +344,8 @@ bool SequenceTimeline::objectAt(const QPointF& pos, Object& target)
         int clip = 0;
         if (!textClipAt(pos, clipLane, clip))
             return false;
+        if (textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)].piece)
+            return false;  // i pezzi dei livelli non entrano ancora nelle selezioni multiple e nei gruppi
         target = {Object::Kind::TextClip, textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)].clipId};
     } else if (const int lane = laneAt(pos.y()); lane >= 0) {
         int clipLane = 0;
@@ -873,8 +875,8 @@ bool SequenceTimeline::textFadeHandleAt(const QPointF& pos, int& lane, int& clip
     double best = kTextFadeNear + 1;
     bool found = false;
     for (std::size_t i = 0; i < clips.size(); ++i) {
-        if (xForTime(clips[i].position + clips[i].length) - xForTime(clips[i].position) < kTextFadeMinWidth)
-            continue;  // scritta troppo stretta per le maniglie
+        if (clips[i].piece || xForTime(clips[i].position + clips[i].length) - xForTime(clips[i].position) < kTextFadeMinWidth)
+            continue;  // un pezzo di video, o una scritta troppo stretta per le maniglie
         for (const bool in : {true, false}) {
             const QPointF at = textFadeHandle(rect, clips[i], in);
             // Zona stretta in verticale: sotto la maniglia il bordo della scritta resta libero per accorciarla.
