@@ -257,3 +257,32 @@ TEST(TransformFile, BrokenValuesFallBackToBase)
     EXPECT_DOUBLE_EQ(r.rotation, kMaxRotation);  // fuori dai limiti: si limita
     EXPECT_DOUBLE_EQ(r.cropTop, kMaxCrop);
 }
+
+TEST(Transform, DescribeListsOnlyWhatChanged)
+{
+    EXPECT_TRUE(describeTransform(Transform{}).empty());
+
+    Transform t;
+    t.scaleX = t.scaleY = 1.5;
+    t.posX = 120.0;
+    t.rotation = -12.5;
+    t.cropLeft = 0.1;
+    t.cropBottom = 0.25;
+    t.flipHorizontal = true;
+    t.opacity = 0.5;
+    const std::vector<std::string> lines = describeTransform(t);
+    ASSERT_EQ(lines.size(), 6u);
+    EXPECT_EQ(lines[0], "Scala 150%");
+    EXPECT_EQ(lines[1], "Posizione 120, 0 px");
+    EXPECT_EQ(lines[2], "Rotazione -12,5°");
+    EXPECT_EQ(lines[3], "Ritaglio sinistra 10% basso 25%");
+    EXPECT_EQ(lines[4], "Specchiato in orizzontale");
+    EXPECT_EQ(lines[5], "Opacità 50%");
+
+    Transform stretched;
+    stretched.scaleX = 2.0;
+    EXPECT_EQ(describeTransform(stretched).at(0), "Scala 200% × 100%");
+    Transform opacityOnly;
+    opacityOnly.opacity = 0.4;
+    EXPECT_EQ(describeTransform(opacityOnly), std::vector<std::string>{"Opacità 40%"});
+}

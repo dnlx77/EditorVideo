@@ -379,6 +379,20 @@ void SequenceTimeline::paintVideo(QPainter& p)
         p.setBrush(Qt::NoBrush);
         // Il contorno spesso (scelto o di gruppo) sta tutto dentro il blocco, come quello delle clip audio.
         p.drawRoundedRect(p.pen().widthF() > 1.5 ? r.adjusted(1.5, 1.5, -1.5, -1.5) : r, 3, 3);
+        // Badge «fx» in alto a sinistra: il pezzo ha una trasformazione (il suggerimento ne dà i valori, un clic la mostra).
+        if (const QRectF fx = transformBadgeRect(b, r); !fx.isEmpty()) {
+            QFont bold = p.font();
+            bold.setBold(true);
+            bold.setPointSizeF(bold.pointSizeF() * 0.9);
+            p.save();
+            p.setFont(bold);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(160, 110, 235));
+            p.drawRoundedRect(fx, 3, 3);
+            p.setPen(Qt::white);
+            p.drawText(fx, Qt::AlignCenter, QStringLiteral("fx"));
+            p.restore();
+        }
         // Segno in alto a destra: P = si copia con i suoi parametri, R = si ricodifica.
         if (b.fit != 0 && r.width() > 22) {
             const QRectF badge(QPointF(r.right() - 17, r.top() + 3), QSizeF(14, 14));

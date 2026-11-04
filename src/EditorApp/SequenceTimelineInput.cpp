@@ -184,6 +184,16 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
             return;
         }
     }
+    if (const int badge = transformBadgeAt(pos); badge >= 0) {
+        // Il badge «fx» di un pezzo: lo sceglie e mostra la sua trasformazione (niente trascinamento).
+        const int id = blocks_[static_cast<std::size_t>(badge)].fragmentId;
+        setSelected(id);
+        if (onSelect)
+            onSelect(id);
+        if (onTransformBadge)
+            onTransformBadge(id);
+        return;
+    }
     if (const int lane = laneAt(pos.y()); lane >= 0) {
         // Corsie audio: la linea del livello, le clip delle tracce aggiunte (bordi o spostamento), altrimenti la
         // selezione di un tratto.

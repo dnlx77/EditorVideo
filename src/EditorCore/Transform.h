@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <string>
+#include <vector>
 
 namespace editor::core {
 
@@ -48,6 +50,10 @@ inline constexpr double kMaxCrop = 0.99;  // dopo il ritaglio resta almeno l'1% 
 // I valori nei loro limiti: non finiti tornano al valore di base, scala/posizione/rotazione/opacità sono limitate,
 // i ritagli sono in [0, kMaxCrop] e la somma dei due lati opposti non supera kMaxCrop (si riducono in proporzione).
 Transform normalized(Transform t);
+
+// I valori cambiati rispetto a quelli di base, uno per riga e in italiano (es. "Scala 150%", "Rotazione 15°"), per il
+// suggerimento del badge sul pezzo. Vuoto se non cambia niente.
+std::vector<std::string> describeTransform(const Transform& transform);
 
 struct Point2
 {
