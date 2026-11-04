@@ -86,14 +86,14 @@ SequenceTimeline::SequenceTimeline(QWidget* parent)
 
 QSize SequenceTimeline::sizeHint() const
 {
-    const int extra = static_cast<int>(lanes_.size() - 1) * static_cast<int>(kAudioLaneHeight) + static_cast<int>(textBand());
+    const int extra = static_cast<int>(lanes_.size() - 1 + textLanes_.size()) * static_cast<int>(kAudioLaneHeight);
     return {800, 132 + kRulerHeight + kControlsHeight + extra};
 }
 
 QSize SequenceTimeline::minimumSizeHint() const
 {
     return {100 + static_cast<int>(kHeaderWidth),
-            48 + kRulerHeight + kControlsHeight + static_cast<int>(lanes_.size() - 1) * 18 + static_cast<int>(textBand())};
+            48 + kRulerHeight + kControlsHeight + static_cast<int>(lanes_.size() - 1 + textLanes_.size()) * 18};
 }
 
 void SequenceTimeline::syncTrackButtons()
@@ -470,11 +470,12 @@ const SequenceTimeline::AudioBlock* SequenceTimeline::findAudioClip(int clipId, 
 
 double SequenceTimeline::videoHeight() const
 {
-    // La corsia video e le corsie audio si dividono lo spazio in parti uguali (le corsie delle scritte, più basse, hanno
-    // una misura fissa): quando la finestra cresce, crescono tutte insieme.
+    // Tutte le corsie, video (V1 e i livelli V2, V3...) e audio, hanno la stessa altezza e si dividono lo spazio in parti
+    // uguali: quando la finestra cresce, crescono tutte insieme.
     const double n = static_cast<double>(lanes_.size());
-    const double lanes = height() - kRulerHeight - kTop - 6 - kControlsHeight - n * kLaneGap - textBand();
-    return std::max(lanes / (n + 1), 18.0);
+    const double t = static_cast<double>(textLanes_.size());
+    const double lanes = height() - kRulerHeight - kTop - 6 - kControlsHeight - (n + t) * kLaneGap;
+    return std::max(lanes / (n + 1 + t), 18.0);
 }
 
 bool SequenceTimeline::videoLaneSelected() const
@@ -758,15 +759,15 @@ bool SequenceTimeline::event(QEvent* event)
 
 double SequenceTimeline::textBand() const
 {
-    return textLanes_.empty() ? 0.0 : static_cast<double>(textLanes_.size()) * (kTextLaneHeight + kLaneGap);
+    return textLanes_.empty() ? 0.0 : static_cast<double>(textLanes_.size()) * (videoHeight() + kLaneGap);
 }
 
 QRectF SequenceTimeline::textLane(int layerIndex) const
 {
     // Il livello più alto sta più in alto: il primo (T1) è subito sopra la corsia video.
     const int row = static_cast<int>(textLanes_.size()) - 1 - layerIndex;
-    return QRectF(6 + kHeaderWidth, lanesTop() + row * (kTextLaneHeight + kLaneGap), std::max(1.0, width() - 12 - kHeaderWidth),
-                  kTextLaneHeight);
+    return QRectF(6 + kHeaderWidth, lanesTop() + row * (videoHeight() + kLaneGap), std::max(1.0, width() - 12 - kHeaderWidth),
+                  videoHeight());
 }
 
 int SequenceTimeline::textLaneAt(double y) const

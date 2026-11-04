@@ -15,7 +15,6 @@ namespace editor::app::detail {
 inline constexpr double kTop = 6;           // spazio fra il righello e la corsia video
 inline constexpr double kLaneGap = 4;
 inline constexpr double kHeaderWidth = 118;  // a sinistra delle corsie: nome, muto, solo, livello
-inline constexpr double kTextLaneHeight = 28;   // una corsia di scritte (sopra la corsia video)
 inline constexpr double kTextFadeTop = 8;       // la linea dell'opacità di una scritta: in alto = piena (sotto il bordo della corsia)
 inline constexpr double kTextFadeBottom = 5;    // in basso = trasparente (sopra il bordo in basso)
 inline constexpr double kTextFadeNear = 8;      // distanza orizzontale (pixel) entro cui si prende una maniglia
