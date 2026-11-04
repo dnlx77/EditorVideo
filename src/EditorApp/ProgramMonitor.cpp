@@ -736,13 +736,18 @@ void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QStrin
     fragmentLabel_->setText(note);
 }
 
+double ProgramMonitor::programEnd() const
+{
+    return std::max(project_.sequence().totalLength(), project_.textTracks().endTime());
+}
+
 void ProgramMonitor::seekTo(double seconds)
 {
     showingSource_ = false;
     const core::Sequence& sequence = project_.sequence();
     if (sequence.empty())
         return;
-    const double t = std::clamp(seconds, 0.0, sequence.totalLength());
+    const double t = std::clamp(seconds, 0.0, programEnd());
     if (const auto placement = transitionAt(t)) {
         // Nel tratto di una transizione si vedono i due pezzi fusi: li fa il monitor, non il lettore.
         const bool wasPlaying = playing_;
@@ -764,6 +769,15 @@ void ProgramMonitor::seekTo(double seconds)
                 startAudio(t);  // l'audio continua anche nello spazio vuoto
             }
             enterGap(gap, t);
+            return;
+        }
+        if (t > sequence.totalLength() + 1e-6) {
+            // Oltre l'ultimo pezzo ma dentro scritte o livelli: coda nera.
+            if (playing_) {
+                player_->pause();
+                startAudio(t);
+            }
+            enterGap(static_cast<int>(sequence.fragments().size()), t);
             return;
         }
         index = static_cast<int>(sequence.fragments().size()) - 1;  // alla fine: ultimo pezzo
@@ -833,7 +847,7 @@ void ProgramMonitor::start()
         }
         if (index_ < 0 && gapIndex_ < 0)
             seekTo(position_);
-    } else if (position_ >= sequence.totalLength() - 0.05) {
+    } else if (position_ >= programEnd() - 0.05) {
         seekTo(0.0);  // alla fine: si ricomincia
     } else if (index_ < 0) {
         seekTo(position_);
@@ -957,14 +971,14 @@ void ProgramMonitor::stepToCut(int direction)
     const int count = static_cast<int>(starts.size());
     double target = position_;
     if (direction > 0) {
-        target = sequence.totalLength();
+        target = programEnd();
         for (int i = 0; i < count; ++i) {
             if (starts[static_cast<std::size_t>(i)] > position_ + 0.001) {
                 target = starts[static_cast<std::size_t>(i)];
                 break;
             }
         }
-        if (target >= sequence.totalLength())
+        if (target >= programEnd())
             return seekToEnd();
     } else {
         target = 0.0;
@@ -984,7 +998,7 @@ void ProgramMonitor::seekToEnd()
     if (sequence.empty())
         return;
     setPlaying(false);
-    seekTo(std::max(0.0, sequence.totalLength() - player_->frameDuration()));
+    seekTo(std::max(0.0, programEnd() - player_->frameDuration()));
 }
 
 void ProgramMonitor::fragmentEnded()
@@ -1019,6 +1033,9 @@ void ProgramMonitor::fragmentEnded()
         }
         load(next, 0.0);
         player_->play();
+    } else if (programEnd() > sequence.totalLength() + 1e-6) {
+        enterGap(static_cast<int>(fragments.size()), sequence.totalLength());  // coda con scritte o livelli
+        return;
     } else {
         return reachedEdge();
     }
@@ -1030,7 +1047,7 @@ void ProgramMonitor::reachedEdge()
     const core::Sequence& sequence = project_.sequence();
     if (loop_ && !sequence.empty()) {
         // Ripetizione: si riparte dall'altro capo del montaggio, senza fermarsi.
-        seekTo(speed_ < 0 ? std::max(0.0, sequence.totalLength() - player_->frameDuration()) : 0.0);
+        seekTo(speed_ < 0 ? std::max(0.0, programEnd() - player_->frameDuration()) : 0.0);
         if (gapIndex_ >= 0) {
             gapBase_ = position_;
             gapClock_.restart();
@@ -1077,7 +1094,7 @@ void ProgramMonitor::sequenceChanged()
         updatePosition();
         return;
     }
-    seekTo(std::min(position_, sequence.totalLength()));
+    seekTo(std::min(position_, programEnd()));
 }
 
 void ProgramMonitor::updatePosition()
@@ -1114,6 +1131,23 @@ void ProgramMonitor::updatePosition()
                     player_->play();
                 }
             }
+        }
+    } else if (gapIndex_ >= 0 && gapIndex_ == static_cast<int>(sequence.fragments().size())) {
+        // Coda dopo l'ultimo pezzo: nera, con le scritte e i livelli che arrivano più in là.
+        const double gapStart = sequence.totalLength();
+        const double gapEnd = programEnd();
+        if (playing_ && sequenceAudio_.running())
+            position_ = std::clamp(sequenceAudio_.position(), gapStart, gapEnd);
+        else if (playing_)
+            position_ = std::clamp(gapBase_ + speed_ * static_cast<double>(gapClock_.nsecsElapsed()) / 1e9, gapStart, gapEnd);
+        if (playing_ && speed_ > 0 && position_ >= gapEnd - 1e-6) {
+            position_ = gapEnd;
+            reachedEdge();
+            return;
+        } else if (playing_ && speed_ < 0 && position_ <= gapStart + 1e-6 && gapIndex_ > 0) {
+            const int previous = gapIndex_ - 1;
+            load(previous, sequence.fragments()[static_cast<std::size_t>(previous)].length() - 0.001);
+            player_->play();
         }
     } else if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
         const double gapEnd = sequence.startOf(gapIndex_);
@@ -1177,7 +1211,7 @@ bool ProgramMonitor::startAudio(double from)
     }
     applyVolume();
     core::AudioMixer mixer(core::mixSegmentsOf(project_), core::trackGainsOf(project_.audioTracks()));
-    const bool started = sequenceAudio_.start(std::move(mixer), from, sequence.totalLength(), speed_);
+    const bool started = sequenceAudio_.start(std::move(mixer), from, programEnd(), speed_);
     player_->setAudioNote(started ? QString() : QStringLiteral("audio non disponibile"));
     return started;
 }
@@ -1208,7 +1242,11 @@ void ProgramMonitor::updateLabels()
     transport_->setSpeed(speed_);
     transport_->setLoop(loop_);
     transport_->setVolume(volume_, muted_);
-    timeLabel_->setText(QStringLiteral("%1 / %2").arg(timeText(position_), timeText(sequence.totalLength())));
+    timeLabel_->setText(QStringLiteral("%1 / %2").arg(timeText(position_), timeText(programEnd())));
+    if (gapIndex_ == static_cast<int>(sequence.fragments().size())) {
+        fragmentLabel_->setText(QStringLiteral("Dopo l'ultimo pezzo (nero) · scritte e livelli"));
+        return;
+    }
     if (gapIndex_ >= 0 && gapIndex_ < static_cast<int>(sequence.fragments().size())) {
         fragmentLabel_->setText(QStringLiteral("Spazio vuoto (nero) prima del pezzo %1").arg(gapIndex_ + 1));
         return;
