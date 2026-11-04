@@ -433,6 +433,46 @@ int Project::unlinkAudio(int fragmentId, int* track)
     return id;
 }
 
+int Project::addLayerPiece(int layerId, const LayerPiece& piece, bool withAudio, int* audioClip)
+{
+    if (audioClip != nullptr)
+        *audioClip = 0;
+    const Clip* source = find(piece.clipId);
+    const int id = text_.addPiece(layerId, piece);
+    if (id == 0 || !withAudio || source == nullptr)
+        return id;
+    AudioClip clip;
+    clip.path = source->path;
+    clip.start = piece.start;
+    clip.end = piece.end;
+    clip.position = piece.position;
+    clip.sourceDuration = source->duration;
+    const double length = clip.length();
+    // A1: libera e fuori dall'audio dei pezzi di V1; poi le tracce aggiunte; poi una traccia nuova.
+    const std::vector<TimeRange> blocked = linkedAudioRanges();
+    const auto overlapsLinked = [&](double from) {
+        return std::any_of(blocked.begin(), blocked.end(), [&](const TimeRange& r) { return from < r.end - kTimeEpsilon && from + length > r.start + kTimeEpsilon; });
+    };
+    int track = -1;
+    if (std::abs(audio_.freePosition(AudioTracks::kOriginalTrack, length, piece.position) - piece.position) <= kTimeEpsilon
+        && !overlapsLinked(piece.position))
+        track = AudioTracks::kOriginalTrack;
+    for (std::size_t i = 0; track < 0 && i < audio_.tracks().size(); ++i) {
+        const AudioTrack& t = audio_.tracks()[i];
+        if (!t.host && std::abs(audio_.freePosition(t.id, length, piece.position) - piece.position) <= kTimeEpsilon)
+            track = t.id;
+    }
+    if (track < 0)
+        track = audio_.addTrack();
+    const int clipId = audio_.add(track, clip);
+    if (clipId == 0)
+        return id;
+    if (audioClip != nullptr)
+        *audioClip = clipId;
+    groups_.create({{ObjectRef::Kind::LayerPiece, id}, {ObjectRef::Kind::AudioClip, clipId}});
+    return id;
+}
+
 int Project::setTransform(const std::vector<int>& fragmentIds, const Transform& transform)
 {
     int changed = 0;

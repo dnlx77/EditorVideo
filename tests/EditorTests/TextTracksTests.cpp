@@ -603,3 +603,42 @@ TEST(LayerPieceGroups, MoveSplitRemoveAndSaveTogether)
     EXPECT_EQ(project.textTracks().findPiece(a), nullptr);
     EXPECT_FALSE(project.objectExists({Kind::LayerPiece, b}));
 }
+
+TEST(LayerPieceAudio, ComesWithAGroupedAudioClipOnTheFirstFreeTrack)
+{
+    Project project;
+    const int file = project.add("gita.mp4");
+    project.setAnalysis(file, {0.0}, 30.0);
+    const int layer = project.textTracks().addLayer();
+    int audio = 0;
+    const int first = project.addLayerPiece(layer, piece(file, 2.0, 5.0, 9.0), true, &audio);  // [2, 6)
+    ASSERT_NE(first, 0);
+    ASSERT_NE(audio, 0);
+    const AudioClip* clip = project.audioTracks().find(audio);
+    ASSERT_NE(clip, nullptr);
+    EXPECT_EQ(clip->path, "gita.mp4");
+    EXPECT_NEAR(clip->start, 5.0, 1e-9);
+    EXPECT_NEAR(clip->end, 9.0, 1e-9);
+    EXPECT_NEAR(clip->position, 2.0, 1e-9);
+    EXPECT_EQ(project.audioTracks().trackOf(audio), AudioTracks::kOriginalTrack);
+    EXPECT_EQ(project.groupMembers({Kind::LayerPiece, first}).size(), 2u);
+    // Un secondo pezzo sopra l'audio già su A1: l'audio va su una traccia nuova.
+    const int layer2 = project.textTracks().addLayer();
+    int audio2 = 0;
+    ASSERT_NE(project.addLayerPiece(layer2, piece(file, 3.0, 0.0, 2.0), true, &audio2), 0);
+    EXPECT_NE(project.audioTracks().trackOf(audio2), AudioTracks::kOriginalTrack);
+    // Senza audio: solo il pezzo.
+    int none = 7;
+    const int silent = project.addLayerPiece(layer2, piece(file, 10.0, 0.0, 1.0), false, &none);
+    EXPECT_NE(silent, 0);
+    EXPECT_EQ(none, 0);
+    EXPECT_EQ(project.groupMembers({Kind::LayerPiece, silent}).size(), 1u);
+    // Il gruppo si sposta insieme: pezzo e audio.
+    project.moveObject({Kind::LayerPiece, first}, layer, 7.0, true);
+    EXPECT_NEAR(project.textTracks().findPiece(first)->position, 7.0, 1e-9);
+    EXPECT_NEAR(project.audioTracks().find(audio)->position, 7.0, 1e-9);
+    // Se il pezzo non ci sta sul livello, niente audio.
+    int rejected = 5;
+    EXPECT_EQ(project.addLayerPiece(layer, piece(file, 7.5, 0.0, 1.0), true, &rejected), 0);
+    EXPECT_EQ(rejected, 0);
+}

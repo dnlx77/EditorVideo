@@ -188,6 +188,12 @@ public:
     // tutto silenziato). *track riceve l'id della traccia.
     int unlinkAudio(int fragmentId, int* track = nullptr);
 
+    // Mette un pezzo di video su un livello (V2, V3...) con il suo audio: una clip dello stesso tratto del file, nello stesso
+    // punto, su A1 se lì c'è posto (fuori dall'audio dei pezzi di V1 e dalle altre clip), altrimenti sulla prima traccia
+    // aggiunta dove ci sta, altrimenti su una traccia nuova; pezzo e clip formano un gruppo. Restituisce l'id del pezzo
+    // (0 se non ci sta); *audioClip riceve l'id della clip audio (0 se `withAudio` è falso).
+    int addLayerPiece(int layerId, const LayerPiece& piece, bool withAudio, int* audioClip = nullptr);
+
     // Cambia la trasformazione (scala, posizione, rotazione, ritaglio...) dei pezzi indicati; gli id che non esistono si
     // saltano. Restituisce quanti pezzi sono cambiati davvero (0 = niente da annullare). Fa parte delle modifiche.
     int setTransform(const std::vector<int>& fragmentIds, const Transform& transform);
