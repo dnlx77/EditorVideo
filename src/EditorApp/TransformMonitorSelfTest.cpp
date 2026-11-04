@@ -45,7 +45,12 @@ int runManipTest(const QStringList& args, qsizetype at)
     monitor.sequenceChanged();
     monitor.seekTo(0.3);
     QCoreApplication::processEvents();
-    auto* player = monitor.findChild<PlayerWidget*>();
+    PlayerWidget* player = nullptr;
+    for (QWidget* w : monitor.findChildren<QWidget*>()) {  // PlayerWidget non ha Q_OBJECT: findChild non lo accetta
+        player = dynamic_cast<PlayerWidget*>(w);
+        if (player != nullptr)
+            break;
+    }
     check(player != nullptr, "il monitor ha il lettore");
     if (player == nullptr)
         return 3;
