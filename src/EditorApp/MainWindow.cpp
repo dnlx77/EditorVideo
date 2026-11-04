@@ -264,6 +264,8 @@ MainWindow::MainWindow(QWidget* parent)
         return project_.freeSpotFor({core::ObjectRef::Kind::Piece, fragmentId}, 0, desired, pushPieces_);
     };
     timeline_->onMoveTo = [this](int fragmentId, double start) { moveFragment(fragmentId, start); };
+    timeline_->onPieceToLayer = [this](int fragmentId, int layerId, double position) { liftFragmentToLayer(fragmentId, layerId, position); };
+    timeline_->onLayerPieceToV1 = [this](int pieceId, double position) { lowerPieceToV1(pieceId, position); };
     // Bordi dei pezzi (step 16): a passi di un fotogramma dal bordo di partenza, dentro il file, lunghi almeno un
     // fotogramma; durante il trascinamento il Montaggio mostra il fotogramma del nuovo bordo.
     timeline_->trimLimit = [this](int fragmentId, bool atStart, double desired, bool ripple) {

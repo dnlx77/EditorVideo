@@ -909,6 +909,24 @@ double SequenceTimeline::textDragTarget(double x, int lane) const
     return textFreePosition ? textFreePosition(c->clipId, layer, desired) : desired;
 }
 
+double SequenceTimeline::dragToLayerTarget(double x) const
+{
+    if (dragIndex_ < 0 || dragIndex_ >= static_cast<int>(blocks_.size()))
+        return 0.0;
+    const Block& dragged = blocks_[static_cast<std::size_t>(dragIndex_)];
+    const double desired = timeForXBeyondEnd(x) - dragGrab_;
+    return std::max(0.0, snapped(desired, snapMarks(dragIndex_, 0, true, true), {0.0, dragged.length}));
+}
+
+double SequenceTimeline::textDragToV1Target(double x) const
+{
+    const TextBlock* c = findTextClip(textDragClip_);
+    if (c == nullptr)
+        return 0.0;
+    const double desired = timeForXBeyondEnd(x) - textDragGrab_;
+    return std::max(0.0, snapped(desired, pieceDragMarks(), {0.0, c->length}));
+}
+
 double SequenceTimeline::textTrimTarget(double x) const
 {
     const TextBlock* c = findTextClip(textTrimClip_);

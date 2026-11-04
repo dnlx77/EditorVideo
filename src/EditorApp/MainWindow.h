@@ -199,6 +199,10 @@ public:
     bool applyTransitionEdit(const std::string& type, const core::TransitionParams& params, double duration, bool crossfadeAudio,
                              const std::string& field);
     bool moveTextClip(int clipId, int layerId, double position);
+    // Un video si sposta liberamente fra V1 e i livelli (V2, V3...): trascinato su un livello diventa un pezzo del livello
+    // (in V1 resta uno spazio vuoto), trascinato su V1 torna nella sequenza.
+    void liftFragmentToLayer(int fragmentId, int layerId, double position);
+    void lowerPieceToV1(int pieceId, double position);
     bool trimTextClip(int clipId, bool atStart, double value);
     bool fadeTextClip(int clipId, double fadeIn, double fadeOut);  // le maniglie sulla linea del tempo
     void moveFragment(int fragmentId, double start);  // sposta un pezzo (spingendo i successivi se la spinta è accesa)

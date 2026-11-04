@@ -550,10 +550,12 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
             textDragging_ = true;
             setCursor(Qt::ClosedHandCursor);
         }
-        // In verticale si cambia livello di scritte.
-        if (const int lane = textLaneAt(pos.y()); lane >= 0)
+        // In verticale si cambia livello di scritte; un pezzo di video può anche scendere su V1.
+        const TextBlock* grabbed = findTextClip(textDragClip_);
+        textDragToV1_ = grabbed != nullptr && grabbed->piece && onLayerPieceToV1 && videoLane().adjusted(0, -4, 0, 4).contains(QPointF(x, pos.y()));
+        if (const int lane = textLaneAt(pos.y()); lane >= 0 && !textDragToV1_)
             textDragLane_ = lane;
-        textDragStart_ = textDragTarget(x, textDragLane_);
+        textDragStart_ = textDragToV1_ ? textDragToV1Target(x) : textDragTarget(x, textDragLane_);
         invalidate();
         return;
     }
@@ -601,7 +603,8 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         setCursor(Qt::ClosedHandCursor);
     }
     if (dragging_) {
-        dragStart_ = dragTarget(x);
+        dragLayerLane_ = onPieceToLayer ? textLaneAt(pos.y()) : -1;
+        dragStart_ = dragLayerLane_ >= 0 ? dragToLayerTarget(x) : dragTarget(x);
         invalidate();
     }
 }
@@ -728,11 +731,17 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
         const TextBlock* c = findTextClip(clip, &fromLane);
         const double from = c != nullptr ? c->position : 0.0;
         const int lane = textDragLane_;
-        const double to = moved ? textDragTarget(event->position().x(), lane) : from;
+        const bool toV1 = moved && textDragToV1_;
+        const double to = toV1 ? textDragToV1Target(event->position().x()) : moved ? textDragTarget(event->position().x(), lane) : from;
         textDragClip_ = 0;
         textDragging_ = false;
+        textDragToV1_ = false;
         setCursor(Qt::ArrowCursor);
         invalidate();
+        if (toV1 && c != nullptr && onLayerPieceToV1) {
+            onLayerPieceToV1(clip, to);
+            return;
+        }
         if (moved && c != nullptr && lane >= 0 && (lane != fromLane || std::abs(to - from) > 1e-6) && onTextClipMoveTo)
             onTextClipMoveTo(clip, textLanes_[static_cast<std::size_t>(lane)].layerId, to);
         return;
@@ -760,17 +769,24 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
     if (dragging_ && dragIndex_ >= 0) {
         const int fragment = blocks_[dragIndex_].fragmentId;
         const double from = startOfBlock(dragIndex_);
-        const double to = dragTarget(event->position().x());
+        const int layerLane = dragLayerLane_;
+        const double to = layerLane >= 0 ? dragToLayerTarget(event->position().x()) : dragTarget(event->position().x());
         dragging_ = false;
         dragIndex_ = -1;
+        dragLayerLane_ = -1;
         setCursor(Qt::ArrowCursor);
         invalidate();
+        if (layerLane >= 0 && onPieceToLayer) {
+            onPieceToLayer(fragment, textLanes_[static_cast<std::size_t>(layerLane)].layerId, to);
+            return;
+        }
         if (std::abs(to - from) > 1e-6 && onMoveTo)
             onMoveTo(fragment, to);
         return;
     }
     dragging_ = false;
     dragIndex_ = -1;
+    dragLayerLane_ = -1;
 }
 
 void SequenceTimeline::dragEnterEvent(QDragEnterEvent* event)

@@ -114,6 +114,48 @@ int runLayerTest(const QStringList&, qsizetype)
     mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(4.0) + 40, yLow - 6});
     check(!fadeChanged, "un pezzo non ha le maniglie delle dissolvenze");
 
+    // Un video di V1 trascinato su un livello: arriva la richiesta con il livello e il punto.
+    int liftedFragment = 0;
+    int liftedLayer = 0;
+    double liftedAt = -1.0;
+    line.onPieceToLayer = [&](int fragment, int layer, double position) {
+        liftedFragment = fragment;
+        liftedLayer = layer;
+        liftedAt = position;
+    };
+    int loweredPiece = 0;
+    double loweredAt = -1.0;
+    line.onLayerPieceToV1 = [&](int piece, double position) {
+        loweredPiece = piece;
+        loweredAt = position;
+    };
+    const double yVideo = line.videoLaneCenter();
+    const double v1X = line.xForSequenceTime(3.0);
+    mouse(QEvent::MouseButtonPress, {v1X, yVideo});
+    mouse(QEvent::MouseMove, {v1X + perSecond / 2, (yVideo + yHigh) / 2});
+    mouse(QEvent::MouseMove, {v1X + perSecond, yHigh});
+    mouse(QEvent::MouseButtonRelease, {v1X + perSecond, yHigh});
+    check(liftedFragment == 1 && liftedLayer == 2 && std::abs(liftedAt - 1.0) < 0.15, "un video di V1 lasciato sul livello V3 diventa un pezzo del livello (da 1 s)");
+    // Lasciato ancora su V1: è un normale spostamento, non passa sul livello.
+    liftedFragment = 0;
+    mouse(QEvent::MouseButtonPress, {v1X, yVideo});
+    mouse(QEvent::MouseMove, {v1X + perSecond / 2, yVideo});
+    mouse(QEvent::MouseMove, {v1X + perSecond, yVideo});
+    mouse(QEvent::MouseButtonRelease, {v1X + perSecond, yVideo});
+    check(liftedFragment == 0, "lasciato su V1 non passa su un livello");
+    // Un pezzo di livello lasciato sulla corsia di V1 torna nella sequenza; una scritta no.
+    mouse(QEvent::MouseButtonPress, {grabX, yLow});
+    mouse(QEvent::MouseMove, {grabX + perSecond / 2, (yLow + yVideo) / 2});
+    mouse(QEvent::MouseMove, {grabX + perSecond, yVideo});
+    mouse(QEvent::MouseButtonRelease, {grabX + perSecond, yVideo});
+    check(loweredPiece == 11 && std::abs(loweredAt - 5.0) < 0.15, "un pezzo di livello lasciato su V1 torna nella sequenza (da 5 s)");
+    loweredPiece = 0;
+    mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(2.0), yLow});
+    mouse(QEvent::MouseMove, {line.xForSequenceTime(2.0) + perSecond / 2, (yLow + yVideo) / 2});
+    mouse(QEvent::MouseMove, {line.xForSequenceTime(2.0) + perSecond, yVideo});
+    mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(2.0) + perSecond, yVideo});
+    check(loweredPiece == 0, "una scritta non scende su V1");
+
     std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
     return check.failures() == 0 ? 0 : 3;
 }

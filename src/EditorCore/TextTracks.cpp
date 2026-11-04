@@ -164,12 +164,18 @@ double TextTracks::nearestFreeStart(int clipId, int layerId, double desired) con
 {
     double position = 0.0;
     double end = 0.0;
-    const TextLayer* target = layer(layerId);
-    if (!extentOf(clipId, position, end) || target == nullptr)
+    if (!extentOf(clipId, position, end))
         return -1.0;
-    const double length = end - position;
+    return freeStartFor(layerId, end - position, desired, clipId);
+}
+
+double TextTracks::freeStartFor(int layerId, double length, double desired, int ignoreId) const
+{
+    const TextLayer* target = layer(layerId);
+    if (target == nullptr)
+        return -1.0;
     desired = std::max(desired, 0.0);
-    if (isFree(*target, desired, desired + length, clipId))
+    if (isFree(*target, desired, desired + length, ignoreId))
         return desired;
 
     // I posti liberi sono gli spazi fra gli altri oggetti (e dopo l'ultimo): in ognuno si prende il punto più vicino.
@@ -186,7 +192,7 @@ double TextTracks::nearestFreeStart(int clipId, int layerId, double desired) con
         }
     };
     double cursor = 0.0;
-    for (const auto& [from, to] : occupied(*target, clipId)) {
+    for (const auto& [from, to] : occupied(*target, ignoreId)) {
         consider(cursor, from);
         cursor = std::max(cursor, to);
     }

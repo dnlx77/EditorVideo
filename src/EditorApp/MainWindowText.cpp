@@ -226,6 +226,33 @@ bool MainWindow::moveTextOnScreen(int clipId, double centerX, double centerY)
     return true;
 }
 
+void MainWindow::liftFragmentToLayer(int fragmentId, int layerId, double position)
+{
+    const core::Project before = project_;
+    int audio = 0;
+    const int piece = project_.liftToLayer(fragmentId, layerId, position, &audio);
+    if (piece == 0) {
+        statusBar()->showMessage(QStringLiteral("Qui il pezzo non può passare sul livello: non c'è posto."), 6000);
+        return;
+    }
+    timeline_->setSelectedTextClip(piece);
+    recordEdit(QStringLiteral("Sposta il video su un livello"), before);
+    statusBar()->showMessage(audio != 0 ? QStringLiteral("Il video è passato sul livello, con il suo audio in gruppo: in V1 resta uno spazio vuoto.")
+                                        : QStringLiteral("Il video è passato sul livello: in V1 resta uno spazio vuoto."),
+                             8000);
+}
+
+void MainWindow::lowerPieceToV1(int pieceId, double position)
+{
+    const core::Project before = project_;
+    const int fragment = project_.lowerToV1(pieceId, position, pushPieces_);
+    if (fragment == 0)
+        return;
+    timeline_->setSelected(fragment);
+    recordEdit(QStringLiteral("Sposta il video su V1"), before);
+    statusBar()->showMessage(QStringLiteral("Il video è tornato su V1."), 6000);
+}
+
 bool MainWindow::moveTextClip(int clipId, int layerId, double position)
 {
     const bool isPiece = project_.textTracks().findPiece(clipId) != nullptr;  // un pezzo di video su un livello

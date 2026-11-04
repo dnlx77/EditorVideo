@@ -262,8 +262,10 @@ void SequenceTimeline::paintStatic(QPainter& p)
     // Dove andrà il blocco trascinato: il suo contorno, nel colore della selezione.
     if (dragging_ && dragIndex_ >= 0 && dragIndex_ < static_cast<int>(blocks_.size())) {
         const Block& b = blocks_[static_cast<std::size_t>(dragIndex_)];
-        const QRectF target(QPointF(xForTime(dragStart_) + 1, a.top() + 1), QPointF(xForTime(dragStart_ + b.length) - 1, a.bottom() - 1));
-        QColor fill = blockColor(b.colorIndex);
+        // Su un livello (V2, V3...) il contorno sta nella corsia del livello, nel blu dei pezzi dei livelli.
+        const QRectF row = dragLayerLane_ >= 0 ? textLane(dragLayerLane_) : a;
+        const QRectF target(QPointF(xForTime(dragStart_) + 1, row.top() + 1), QPointF(xForTime(dragStart_ + b.length) - 1, row.bottom() - 1));
+        QColor fill = dragLayerLane_ >= 0 ? QColor(62, 128, 196) : blockColor(b.colorIndex);
         fill.setAlpha(150);
         p.setBrush(fill);
         p.setPen(isMate(Object::Kind::Piece, b.fragmentId) ? matePen() : QPen(pal.color(QPalette::Highlight), 3));
@@ -578,7 +580,7 @@ void SequenceTimeline::paintText(QPainter& p)
     if (textDragging_ && textDragLane_ >= 0) {
         if (const TextBlock* c = findTextClip(textDragClip_)) {
             const QColor base = c->piece ? pieceBase : textBase;
-            const QRectF lane = textLane(textDragLane_);
+            const QRectF lane = textDragToV1_ ? videoLane() : textLane(textDragLane_);
             const QRectF target(QPointF(xForTime(textDragStart_) + 1, lane.top() + 1), QPointF(xForTime(textDragStart_ + c->length) - 1, lane.bottom() - 1));
             QColor fill = base;
             fill.setAlpha(150);

@@ -186,6 +186,9 @@ public:
     // Sequence::nearestFreeStart), e dove è stato lasciato.
     std::function<double(int fragmentId, double desired)> freeStart;
     std::function<void(int fragmentId, double start)> onMoveTo;
+    // Un pezzo di V1 trascinato su un livello (V2, V3...) / un pezzo di un livello trascinato su V1: `position` è dove lo si lascia.
+    std::function<void(int fragmentId, int layerId, double position)> onPieceToLayer;
+    std::function<void(int pieceId, double position)> onLayerPieceToV1;
     // Bordi dei pezzi: vicino al bordo sinistro o destro di un blocco il cursore diventa ⟷ e trascinando si sposta
     // l'inizio (atStart) o la fine del pezzo nel file (Alt premuto = ripple: i pezzi dopo scorrono). trimLimit dice
     // dove può andare il bordo se lo si vuole a `desired` (tempo nel file); onTrimPreview si chiama durante il
@@ -262,9 +265,9 @@ public:
 
     // Solo per le prove: dove sta un tempo della sequenza e il centro della corsia video, in coordinate del widget.
     double xForSequenceTime(double seconds) const { return xForTime(seconds); }
-    double videoLaneCenter() const { return videoLane().center().y(); }
     double videoLaneHeight() const { return videoLane().height(); }
     double audioLaneHeight(int index = 0) const { return audioLane(index).height(); }
+    double videoLaneCenter() const { return videoLane().center().y(); }
     double audioLaneCenter(int laneIndex) const { return audioLane(laneIndex).center().y(); }  // 0 = A1
     QToolButton* addTrackButton() const { return addTrack_; }
     QToolButton* removeTrackButton() const { return removeTrack_; }
@@ -316,6 +319,8 @@ private:
     QPointF textFadeHandle(const QRectF& lane, const TextBlock& c, bool isIn) const;
     bool textFadeHandleAt(const QPointF& pos, int& lane, int& clip, bool& isIn) const;
     double textDragTarget(double x, int lane) const;
+    double dragToLayerTarget(double x) const;  // dove va un pezzo di V1 lasciato su un livello
+    double textDragToV1Target(double x) const;  // dove va un pezzo di un livello lasciato su V1
     double textTrimTarget(double x) const;
     void paintText(QPainter& p);
     // Transizioni: il riquadro di una (con la durata provvisoria se la si sta trascinando), quale sta sotto il mouse
@@ -472,6 +477,8 @@ private:
     double textDragGrab_ = 0.0;
     double textDragStart_ = 0.0;  // dove andrà
     int textDragLane_ = -1;       // su quale livello (indice)
+    bool textDragToV1_ = false;   // un pezzo di un livello trascinato sulla corsia di V1
+    int dragLayerLane_ = -1;      // un pezzo di V1 trascinato sul livello (indice) che sta sotto il mouse; -1 = resta in V1
     int textTrimClip_ = 0;        // scritta di cui si trascina un bordo
     bool textTrimAtStart_ = false;
     bool textTrimming_ = false;

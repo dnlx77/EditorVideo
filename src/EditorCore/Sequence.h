@@ -52,7 +52,11 @@ public:
     // La trasformazione del pezzo (normalizzata); false se il pezzo non c'è o non cambia nulla.
     bool setTransform(int fragmentId, const Transform& transform);
     // Toglie il pezzo; quelli dopo scorrono indietro della sua durata (lo spazio vuoto prima di lui resta).
-    bool remove(int fragmentId);
+    // Con `leaveGap` quelli dopo non scorrono: al posto del pezzo resta uno spazio vuoto (come quando un pezzo passa su un livello).
+    bool remove(int fragmentId, bool leaveGap = false);
+    // Mette [start, end) del file in modo che inizi a `position` (la sequenza è in ordine: finisce fra i pezzi giusti; se lì
+    // non ci sta spinge, o con `push` falso cerca il posto libero più vicino). Restituisce l'id del pezzo, 0 se è vuoto.
+    int insertAt(int clipId, double start, double end, double position, bool push = true);
     void removeClip(int clipId);  // tutti i pezzi di un file (quando il file esce dal progetto)
     void move(int fragmentId, int toIndex);  // cambia l'ordine (gli spazi vuoti restano dove sono)
     void clear();
