@@ -3,6 +3,7 @@
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/TextImage.h"
 #include "EditorCore/Transform.h"
+#include "EditorCore/VideoDecoder.h"
 
 #include <cstdint>
 #include <vector>
@@ -20,12 +21,24 @@ struct BlendedText
     double opacity = 1.0;
 };
 
+// Un pezzo di video di un livello sopra V1 già decodificato (BGRA) e come va messo sul fotogramma.
+struct BlendedLayer
+{
+    const VideoFrame* frame = nullptr;
+    Transform transform;
+};
+
 class TextFrameBlender
 {
 public:
     // `pixelFormat`: il formato dei fotogrammi che escono (di solito quello del progetto); le scritte si fondono in RGBA
     // a 8 bit e poi si convertono, quindi in un formato a più bit cambia solo il formato di uscita.
     TextFrameBlender(int width, int height, AVPixelFormat pixelFormat = AV_PIX_FMT_YUV420P);
+
+    // I pezzi dei livelli da mettere sopra il fotogramma della prossima chiamata di blend*() (dal più basso al più alto, sotto
+    // le scritte); valgono per quella chiamata sola. Il fotogramma da cui si parte è il nero con i bordi o la trasformazione
+    // di V1, o la transizione, come senza livelli.
+    void setLayers(std::vector<BlendedLayer> layers) { layers_ = std::move(layers); }
 
     // `source` con `texts` sopra (nell'ordine dato: l'ultima è la più alta). Il risultato resta valido fino alla
     // prossima chiamata; ha i tempi (pts) e le proprietà di `source`.
@@ -48,6 +61,7 @@ private:
     int height_;
     AVPixelFormat pixelFormat_;
     std::vector<std::uint8_t> rgba_;
+    std::vector<BlendedLayer> layers_;  // vedi setLayers
     std::vector<std::uint8_t> layer_;  // il fotogramma originale in RGBA, per blendTransformed
     detail::FramePtr software_;  // per i fotogrammi della scheda video
     detail::FramePtr output_;

@@ -138,6 +138,23 @@ const AVFrame* TextFrameBlender::blendRaster(const std::uint8_t* bgra, int strid
 
 const AVFrame* TextFrameBlender::toYuv(const std::vector<BlendedText>& texts, const AVFrame* props)
 {
+    if (!layers_.empty()) {
+        // I pezzi dei livelli sono BGRA e compositeLayer non guarda i canali: il fotogramma (RGBA) si scambia rosso e blu
+        // per il tempo della composizione.
+        const auto swapRedBlue = [&] {
+            for (std::size_t i = 0; i < rgba_.size(); i += 4)
+                std::swap(rgba_[i], rgba_[i + 2]);
+        };
+        swapRedBlue();
+        for (const BlendedLayer& layer : layers_) {
+            if (layer.frame != nullptr)
+                compositeLayer(rgba_.data(), width_ * 4, width_, height_,
+                               BgraImage{layer.frame->pixels.data(), layer.frame->stride, layer.frame->width, layer.frame->height},
+                               layer.transform);
+        }
+        swapRedBlue();
+        layers_.clear();
+    }
     for (const BlendedText& text : texts) {
         if (text.image != nullptr)
             blendTextOver(rgba_.data(), width_ * 4, width_, height_, *text.image, text.opacity);

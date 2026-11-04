@@ -28,7 +28,7 @@ constexpr int kFrames = 120;
 constexpr int kWidth = 640;
 constexpr int kHeight = 360;
 
-bool writeClip(const fs::path& path)
+bool writeClip(const fs::path& path, int luma = 100)
 {
     try {
         VideoEncoderSettings s;
@@ -69,7 +69,7 @@ bool writeClip(const fs::path& path)
             frame->height = kHeight;
             av_frame_get_buffer(frame, 0);
             for (int y = 0; y < kHeight; ++y)
-                std::fill_n(frame->data[0] + y * frame->linesize[0], kWidth, static_cast<std::uint8_t>(100));
+                std::fill_n(frame->data[0] + y * frame->linesize[0], kWidth, static_cast<std::uint8_t>(luma));
             for (int p = 1; p <= 2; ++p) {
                 for (int y = 0; y < kHeight / 2; ++y)
                     std::fill_n(frame->data[p] + y * frame->linesize[p], kWidth / 2, 128);
@@ -156,7 +156,7 @@ protected:
         fs::create_directories(dir_);
         if (!preferredVideoEncoder(VideoCodec::H264))
             return;
-        ok_ = writeClip(dir_ / "grigio.mp4");
+        ok_ = writeClip(dir_ / "grigio.mp4") && writeClip(dir_ / "chiaro.mp4", 200);
     }
 
     void SetUp() override
@@ -233,4 +233,67 @@ TEST_F(TransformExport, NoTransformMeansEverythingIsCopied)
     const ExportPreview preview = previewExport({clip}, AudioEdit{}, nullptr, {});
     EXPECT_EQ(preview.transformSegments, 0);
     EXPECT_EQ(preview.copiedSegments, 1);
+}
+
+TEST_F(TransformExport, LayerPiecesAreComposedOverTheMainVideo)
+{
+    // V1: il grigio (luminanza 100) per 4 s. Sul livello V2, dal secondo 1 al 3, un pezzo del file chiaro (200) a metà scala.
+    ClipRanges clip{file("grigio.mp4"), {{0.0, 4.0}}};
+    clip.transforms = {Transform{}};
+    ReencodeOptions options;
+    const int layer = options.texts.addLayer();
+    LayerPiece piece;
+    piece.clipId = 7;
+    piece.start = 0.0;
+    piece.end = 2.0;
+    piece.position = 1.0;
+    piece.transform.scaleX = piece.transform.scaleY = 0.5;
+    ASSERT_NE(options.texts.addPiece(layer, piece), 0);
+    options.layerFiles[7] = file("chiaro.mp4");
+
+    const ExportPreview preview = previewExport({clip}, AudioEdit{}, nullptr, options);
+    EXPECT_TRUE(preview.problem.empty()) << preview.problem;
+    EXPECT_EQ(preview.textSegments, 1);
+    EXPECT_NEAR(preview.textSeconds, 2.0, 0.01);
+
+    const fs::path out = dir_ / "livelli.mp4";
+    const ExportResult result = exportClips({clip}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
+    EXPECT_EQ(result.textSegments, 1);
+    const Sampled d = sample(out);
+    EXPECT_EQ(d.errors, 0);
+    ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFrames));
+    for (int i = 0; i < kFrames; ++i) {
+        SCOPED_TRACE("fotogramma " + std::to_string(i));
+        const auto& p = d.pixels[static_cast<std::size_t>(i)];
+        EXPECT_NEAR(p[1], 100, 8);      // l'angolo è sempre V1
+        EXPECT_NEAR(p[2], 100, 8);      // e così il quarto destro (il pezzo è a metà scala, al centro)
+        if (i < 28 || i > 92)
+            EXPECT_NEAR(p[0], 100, 8);  // fuori dal pezzo: solo V1
+        else if (i > 32 && i < 88)
+            EXPECT_NEAR(p[0], 200, 8);  // dentro: il pezzo chiaro al centro
+    }
+}
+
+TEST_F(TransformExport, LayerPieceOverAGapIsDrawnOnBlack)
+{
+    // V1: due tratti con uno spazio vuoto di 2 s in mezzo; il pezzo del livello sta nello spazio.
+    ClipRanges clip{file("grigio.mp4"), {{0.0, 1.0}, {1.0, 2.0}}};
+    clip.gapsBefore = {0.0, 2.0};
+    clip.transforms = {Transform{}, Transform{}};
+    ReencodeOptions options;
+    const int layer = options.texts.addLayer();
+    LayerPiece piece;
+    piece.clipId = 7;
+    piece.start = 0.0;
+    piece.end = 2.0;
+    piece.position = 1.0;
+    ASSERT_NE(options.texts.addPiece(layer, piece), 0);
+    options.layerFiles[7] = file("chiaro.mp4");
+    const fs::path out = dir_ / "livelloNelloSpazio.mp4";
+    exportClips({clip}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
+    const Sampled d = sample(out);
+    ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(4 * kFps));
+    // Nello spazio (1..3 s) c'è il pezzo chiaro a tutto schermo, non il nero.
+    EXPECT_NEAR(d.pixels[2 * kFps][0], 200, 8);
+    EXPECT_NEAR(d.pixels[static_cast<std::size_t>(kFps / 2)][0], 100, 8);
 }

@@ -139,6 +139,13 @@ MainWindow::ExportSettings MainWindow::exportSettings(bool drawText) const
             std::make_shared<PrerenderedTextRenderer>(project_.textTracks(), frame.width(), frame.height(), drawText);
         settings.reencode.texts = project_.textTracks();
         settings.reencode.textRenderer = settings.textRenderer.get();
+        // I pezzi di video dei livelli sopra V1: il file originale di ognuno (mai il proxy).
+        for (const core::TextLayer& layer : project_.textTracks().layers()) {
+            for (const core::LayerPiece& piece : layer.pieces) {
+                if (const core::Clip* file = project_.find(piece.clipId))
+                    settings.reencode.layerFiles[piece.clipId] = file->path;
+            }
+        }
     }
     // Le transizioni: la parte dei pezzi dentro una transizione si ricodifica con i due pezzi fusi.
     settings.reencode.transitions = core::exportTransitionsOf(project_);
@@ -219,6 +226,7 @@ void MainWindow::exportDialog()
         core::ReencodeOptions options = choices;
         options.texts = base.reencode.texts;
         options.textRenderer = base.reencode.textRenderer;
+        options.layerFiles = base.reencode.layerFiles;
         options.transitions = base.reencode.transitions;
         return core::previewExport(plan, base.audio, base.format.empty() ? nullptr : &base.format, options);
     };

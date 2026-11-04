@@ -509,6 +509,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         // Il tempo del fotogramma nel montaggio, a metà fotogramma per non sbagliare ai bordi.
         const double frameTime = doneLength_ + (k + 0.5) * frameSeconds;
         const std::vector<BlendedText> texts = textsAt(frameTime);
+        const bool layered = prepareLayers(frameTime);
         if (piece.transition >= 0) {
             // Dentro una transizione: il fotogramma è la fusione dei due pezzi (con le scritte sopra, se ci sono).
             const ExportTransition& transition = reencode_.transitions[static_cast<std::size_t>(piece.transition)];
@@ -535,8 +536,8 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
                 throw MediaError(kOutOfMemory);
-        } else if (!texts.empty()) {
-            // Sotto una scritta: il fotogramma passa dal disegno del testo.
+        } else if (!texts.empty() || layered) {
+            // Sotto una scritta o un pezzo di un livello: il fotogramma passa dal disegno (testo e livelli).
             const AVFrame* blended = withText(frame, texts);
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
@@ -711,6 +712,27 @@ std::vector<BlendedText> ExportJob::textsAt(double sequenceTime)
     return images;
 }
 
+bool ExportJob::prepareLayers(double sequenceTime)
+{
+    layerFrames_.clear();
+    if (reencode_.layerFiles.empty() || plan_.reference.video() == nullptr)
+        return false;
+    const StreamSignature& format = *plan_.reference.video();
+    if (!layerSource_)
+        layerSource_ = std::make_unique<LayerFrameSource>(reencode_.layerFiles, format.width, format.height,
+                                                          reencode_.decoder != DecoderMode::Software);
+    layerFrames_ = layerSource_->at(reencode_.texts, sequenceTime);
+    if (layerFrames_.empty())
+        return false;
+    if (!blender_)
+        blender_ = std::make_unique<TextFrameBlender>(format.width, format.height, blendPixelFormat(format));
+    std::vector<BlendedLayer> layers;
+    for (const LayerFrameSource::Visible& v : layerFrames_)
+        layers.push_back({v.frame.get(), v.transform});
+    blender_->setLayers(std::move(layers));
+    return true;
+}
+
 const AVFrame* ExportJob::withText(const AVFrame* frame, const std::vector<BlendedText>& texts)
 {
     if (!blender_) {
@@ -741,7 +763,9 @@ std::pair<double, double> ExportJob::writeBlack(double seconds)
     for (int k = 0; k < frames; ++k) {
         black->pts = std::llround((outputPosition_ + k * frameSeconds) * kTicks);
         const AVFrame* shown = black.get();
-        if (const std::vector<BlendedText> texts = textsAt(doneLength_ + (k + 0.5) * frameSeconds); !texts.empty())
+        const double frameTime = doneLength_ + (k + 0.5) * frameSeconds;
+        const std::vector<BlendedText> texts = textsAt(frameTime);
+        if (prepareLayers(frameTime) || !texts.empty())
             shown = withText(black.get(), texts);
         video.encoder.encode(shown, k == 0, videoSink);
         if (progress_ && !progress_(std::clamp((doneLength_ + (k + 1) * frameSeconds) / totalLength_, 0.0, 1.0)))
