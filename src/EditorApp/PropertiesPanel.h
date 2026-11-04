@@ -1,6 +1,8 @@
 #pragma once
 
 #include "EditorCore/Transform.h"
+#include "EditorCore/TransitionList.h"
+#include "EditorCore/Transitions.h"
 
 #include <QtWidgets/QWidget>
 
@@ -8,6 +10,7 @@
 #include <string>
 
 class QCheckBox;
+class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QSlider;
@@ -36,6 +39,10 @@ public:
     void setTextPage(QWidget* page);
     void showText();
     bool showingText() const;
+    // La pagina di una transizione: tipo, direzione, durata (fra `minDuration` e `maxDuration`) e dissolvenza incrociata
+    // dell'audio. I controlli già uguali non si toccano.
+    void showTransitionClip(const core::TransitionClip& clip, double minDuration, double maxDuration);
+    bool showingTransitionClip() const;
     // I valori com'erano all'ultimo showTransform più le modifiche fatte dopo nei controlli.
     core::Transform transform() const;
 
@@ -45,6 +52,10 @@ public:
     std::function<void(const std::function<void(core::Transform&)>& edit, const std::string& field)> onTransformEdit;
     // "Adatta" (false) o "Riempi" (true): scala 100% / scala che riempie il fotogramma, con posizione e ritaglio a zero.
     std::function<void(bool fill)> onFit;
+    // Un controllo della transizione è cambiato: i valori che ora hanno i controlli (tutti) e il nome del campo cambiato.
+    std::function<void(const std::string& type, const core::TransitionParams& params, double duration, bool crossfadeAudio,
+                       const std::string& field)>
+        onTransitionEdit;
 
 private:
     struct Row
@@ -56,11 +67,19 @@ private:
                int sliderMin, int sliderMax, double sliderScale, const char* name);
     void edited(const std::string& field, std::function<void(core::Transform&)> edit);
     QWidget* buildTransformPage();
+    QWidget* buildTransitionPage();
+    void transitionEdited(const std::string& field);
     QToolButton* resetButton(const QString& tip, const std::string& field, std::function<void(core::Transform&)> reset);
 
     QStackedWidget* stack_ = nullptr;
     QWidget* transformPage_ = nullptr;
     QWidget* textPage_ = nullptr;
+    QWidget* transitionPage_ = nullptr;
+    QComboBox* transitionType_ = nullptr;
+    QComboBox* transitionDirection_ = nullptr;
+    QDoubleSpinBox* transitionDuration_ = nullptr;
+    QCheckBox* transitionAudio_ = nullptr;
+    QLabel* transitionHint_ = nullptr;
     QLabel* message_ = nullptr;
     QLabel* countNote_ = nullptr;
     Row scaleX_;

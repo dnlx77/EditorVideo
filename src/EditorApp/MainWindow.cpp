@@ -378,10 +378,13 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->canDropTransition = [this](int beforeFragment) { return canDropTransition(beforeFragment); };
     timeline_->onTransitionDropped = [this](const QString& type, int beforeFragment) { addTransition(type, beforeFragment); };
     timeline_->onTransitionDropRefused = [this](int beforeFragment) { refuseTransition(beforeFragment); };
-    timeline_->onTransitionSelected = [this](int) { setProgramActive(true); };
+    timeline_->onTransitionSelected = [this](int) {
+        setProgramActive(true);
+        refreshPropertiesPanel();
+    };
     timeline_->transitionLimit = [this](int id, double desired) { return clampTransitionDuration(id, desired); };
     timeline_->onTransitionDuration = [this](int id, double duration) { changeTransitionDuration(id, duration); };
-    timeline_->onTransitionActivate = [this](int id) { editTransition(id); };
+    timeline_->onTransitionActivate = [this](int id) { editTransition(id); };  // mostra il pannello Proprietà
     sequenceLabel_ = new QLabel;
     // L'etichetta resta alta quanto il suo testo: lo spazio in più va tutto alla linea del tempo (stretch sotto).
     sequenceLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Maximum);
@@ -474,6 +477,10 @@ MainWindow::MainWindow(QWidget* parent)
     propertiesPanel_ = new PropertiesPanel;
     propertiesPanel_->onTransformEdit = [this](const std::function<void(core::Transform&)>& edit, const std::string& field) {
         applyTransformEdit(edit, field);
+    };
+    propertiesPanel_->onTransitionEdit = [this](const std::string& type, const core::TransitionParams& params, double duration,
+                                                bool crossfadeAudio, const std::string& field) {
+        applyTransitionEdit(type, params, duration, crossfadeAudio, field);
     };
     propertiesPanel_->onFit = [this](bool fill) { fitSelectedPieces(fill); };
     propertiesPanel_->setTextPage(textPanel_);

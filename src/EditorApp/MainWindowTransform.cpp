@@ -39,6 +39,13 @@ void MainWindow::refreshPropertiesPanel()
         propertiesPanel_->showText();  // (refreshTextPanel ne mette i valori)
         return;
     }
+    if (const int transition = timeline_->selectedTransition(); transition != 0) {
+        if (const core::TransitionClip* clip = project_.transitions().find(transition)) {
+            const double limit = std::max(core::kMinTransition, project_.transitionLimits(clip->beforeFragment).max());
+            propertiesPanel_->showTransitionClip(*clip, core::kMinTransition, limit);
+            return;
+        }
+    }
     const std::vector<int> pieces = selectedPieceIds(objects);
     for (int id : pieces) {
         if (const core::Fragment* f = project_.sequence().find(id)) {
@@ -51,8 +58,6 @@ void MainWindow::refreshPropertiesPanel()
         const core::ObjectRef::Kind kind = objects.front().kind;
         if (kind == core::ObjectRef::Kind::AudioClip || kind == core::ObjectRef::Kind::PieceAudio)
             message = QStringLiteral("Per l'audio il livello si cambia con la linea sulla clip e con i comandi della corsia.");
-    } else if (timeline_->selectedTransition() != 0) {
-        message = QStringLiteral("Le proprietà della transizione si cambiano con doppio clic sul blocco.");
     }
     propertiesPanel_->showNothing(message);
 }
