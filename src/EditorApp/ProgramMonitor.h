@@ -99,6 +99,14 @@ public:
     bool transformMode() const { return transformMode_; }
     std::function<void(int fragmentId, const core::Transform& transform)> onTransformEdited;
     std::function<void(bool on)> onTransformModeChanged;  // cambiato dal pulsante del monitor
+    // Ritaglio sul monitor (tasto W): maniglie sui quattro lati e sugli angoli del riquadro ritagliato; il lato va dove porti il
+    // mouse. Si esclude con la modalità Trasforma.
+    void setCropMode(bool on);
+    bool cropMode() const { return cropMode_; }
+    std::function<void(bool on)> onCropModeChanged;  // cambiato dal pulsante del monitor o da Trasforma
+    // La griglia dei terzi sopra l'immagine (sempre, anche senza manipolatori).
+    void setThirdsGrid(bool on);
+    bool thirdsGrid() const { return thirdsGrid_; }
     // Per le prove: i manipolatori sono visibili e sul pezzo (non in riproduzione, né in una transizione o in uno spazio vuoto).
     bool manipulatorsVisible() const;
 
@@ -166,10 +174,16 @@ private:
         core::Transform start;
         core::Transform current;
         core::Point2 from;  // dove si è afferrato, in pixel del progetto
+        int cropEdges = 0;  // in modalità Ritaglia: i lati trascinati (kCropLeft...)
     };
     std::optional<ManipDrag> manipDrag_;
     bool transformMode_ = false;
+    bool cropMode_ = false;
+    bool thirdsGrid_ = false;
+    core::SnapGuides snapGuides_;  // le guide su cui sta scattando il gesto in corso
+    bool rotationSnapped_ = false;
     QToolButton* transformButton_ = nullptr;
+    QToolButton* cropButton_ = nullptr;
     bool showingSource_ = false;             // si mostra un fotogramma di un file, non il montaggio
     PlayerWidget* player_ = nullptr;
     SequenceAudio sequenceAudio_;

@@ -148,3 +148,104 @@ TEST(Manip, RotateAddsTheAngleAroundTheCenterAndSnaps)
     const Transform across = manipRotate(t, kSize, {pivot.x - 200, pivot.y + 10}, {pivot.x - 200, pivot.y - 10}, false);
     EXPECT_NEAR(across.rotation, 2.0 * std::atan2(10.0, 200.0) * 180.0 / 3.14159265358979323846, 1e-6);
 }
+
+// ---- Ritaglio
+
+TEST(ManipCrop, HandlesSitOnTheCroppedFrameAndAreHit)
+{
+    Transform t;
+    t.cropLeft = 0.25;
+    t.cropBottom = 0.5;
+    expectNear(cropHandlePoint(t, kSize, kCropLeft | kCropTop), {480, 0});
+    expectNear(cropHandlePoint(t, kSize, kCropRight | kCropBottom), {1920, 540});
+    expectNear(cropHandlePoint(t, kSize, kCropTop), {1200, 0});
+    expectNear(cropHandlePoint(t, kSize, kCropLeft), {480, 270});
+    EXPECT_EQ(cropHitTest(t, kSize, {482, 2}, 1.0), kCropLeft | kCropTop);
+    EXPECT_EQ(cropHitTest(t, kSize, {700, 3}, 1.0), kCropTop);  // vicino al lato, non al centro
+    EXPECT_EQ(cropHitTest(t, kSize, {1200, 300}, 1.0), 0);      // dentro: niente
+}
+
+TEST(ManipCrop, DraggingASideChangesOnlyThatCrop)
+{
+    Transform t;
+    const Transform left = manipCrop(t, kSize, kCropLeft, {480, 700});
+    EXPECT_NEAR(left.cropLeft, 0.25, 1e-9);
+    EXPECT_NEAR(left.cropRight, 0.0, 1e-12);
+    EXPECT_NEAR(left.cropTop, 0.0, 1e-12);
+    const Transform corner = manipCrop(t, kSize, kCropRight | kCropBottom, {1440, 810});
+    EXPECT_NEAR(corner.cropRight, 0.25, 1e-9);
+    EXPECT_NEAR(corner.cropBottom, 0.25, 1e-9);
+    // Oltre il lato opposto: resta almeno una striscia visibile.
+    const Transform over = manipCrop(corner, kSize, kCropLeft, {1900, 0});
+    EXPECT_NEAR(over.cropLeft, 1.0 - 0.25 - kCropMinVisible, 1e-9);
+    // Fuori dal file: non va sotto zero.
+    EXPECT_NEAR(manipCrop(t, kSize, kCropLeft, {-300, 0}).cropLeft, 0.0, 1e-12);
+}
+
+TEST(ManipCrop, WorksWhenScaledRotatedAndFlipped)
+{
+    Transform t;
+    t.scaleX = t.scaleY = 0.5;
+    t.posX = 100;
+    t.rotation = 90.0;
+    t.flipHorizontal = true;
+    // Il punto in cui sta la maniglia ricavato dal ritaglio voluto: trascinandola lì, si ritrova lo stesso ritaglio.
+    Transform wanted = t;
+    wanted.cropLeft = 0.2;
+    wanted.cropTop = 0.1;
+    const Point2 target = cropHandlePoint(wanted, kSize, kCropLeft | kCropTop);
+    const Transform got = manipCrop(t, kSize, kCropLeft | kCropTop, target);
+    EXPECT_NEAR(got.cropLeft, 0.2, 1e-9);
+    EXPECT_NEAR(got.cropTop, 0.1, 1e-9);
+    // Con lo specchio il lato sinistro dello schermo resta il sinistro: l'altro ritaglio non si tocca.
+    EXPECT_NEAR(got.cropRight, 0.0, 1e-12);
+}
+
+// ---- Guide magnetiche
+
+TEST(ManipSnap, MoveSnapsEdgesAndCenterToTheFrame)
+{
+    Transform t;
+    t.scaleX = t.scaleY = 0.5;  // 960 x 540 al centro
+    t.posX = 3.0;               // il centro è a 3 px da quello del fotogramma
+    SnapGuides guides;
+    Transform out = snapMove(t, kSize, 1.0, &guides);
+    EXPECT_NEAR(out.posX, 0.0, 1e-9);
+    ASSERT_EQ(guides.vertical.size(), 1u);
+    EXPECT_NEAR(guides.vertical[0], 960.0, 1e-9);
+    // Il bordo sinistro del pezzo scatta sul bordo sinistro del fotogramma.
+    t.posX = -480 + 4;
+    out = snapMove(t, kSize, 1.0, &guides);
+    EXPECT_NEAR(out.posX, -480.0, 1e-9);
+    EXPECT_NEAR(guides.vertical.at(0), 0.0, 1e-9);
+    // Lontano da tutto: niente scatto e niente guide.
+    t.posX = 100;
+    t.posY = 77;
+    out = snapMove(t, kSize, 1.0, &guides);
+    EXPECT_NEAR(out.posX, 100.0, 1e-12);
+    EXPECT_NEAR(out.posY, 77.0, 1e-12);
+    EXPECT_TRUE(guides.vertical.empty() && guides.horizontal.empty());
+    // La soglia è in pixel dello schermo: a schermo ridotto (0.25 px per unità) 6 px sono 24 unità.
+    t.posX = 20;
+    t.posY = 0;
+    EXPECT_NEAR(snapMove(t, kSize, 0.25, nullptr).posX, 0.0, 1e-9);
+}
+
+TEST(ManipSnap, RotationSnapsToRightAnglesAndScaleToOneHundred)
+{
+    Transform t;
+    t.rotation = 89.0;
+    bool snapped = false;
+    EXPECT_NEAR(snapRotation(t, &snapped).rotation, 90.0, 1e-12);
+    EXPECT_TRUE(snapped);
+    t.rotation = -179.5;
+    EXPECT_NEAR(snapRotation(t, &snapped).rotation, -180.0, 1e-12);
+    t.rotation = 45.0;
+    EXPECT_NEAR(snapRotation(t, &snapped).rotation, 45.0, 1e-12);
+    EXPECT_FALSE(snapped);
+    t.scaleX = 1.015;
+    t.scaleY = 0.7;
+    const Transform s = snapScale(t);
+    EXPECT_NEAR(s.scaleX, 1.0, 1e-12);
+    EXPECT_NEAR(s.scaleY, 0.7, 1e-12);
+}

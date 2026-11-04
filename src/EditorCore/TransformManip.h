@@ -2,6 +2,8 @@
 
 #include "EditorCore/Transform.h"
 
+#include <vector>
+
 namespace editor::core {
 
 // La matematica dei manipolatori sul monitor (step TR6): dove sono le maniglie di un pezzo trasformato, quale si afferra con
@@ -50,5 +52,49 @@ Transform manipScale(const Transform& start, const ManipSize& size, int corner, 
 // Rotazione attorno al centro del pezzo (il punto da cui si misura la posizione): l'angolo fra `from` e `to` si somma a quello
 // di partenza; `snap` (Maiusc) arrotonda l'angolo finale a multipli di 15°.
 Transform manipRotate(const Transform& start, const ManipSize& size, Point2 from, Point2 to, bool snap);
+
+// ---- Ritaglio sul monitor (step TR7)
+
+// I lati e gli angoli del ritaglio si indicano con una maschera di lati: un lato = la maniglia a metà del lato, due lati
+// = l'angolo. Sono i lati come si vedono sullo schermo (come cropLeft... di Transform, anche con lo specchio).
+inline constexpr int kCropLeft = 1;
+inline constexpr int kCropRight = 2;
+inline constexpr int kCropTop = 4;
+inline constexpr int kCropBottom = 8;
+
+// Quanto resta almeno visibile del file dopo il ritaglio (frazione), perché le maniglie non si sovrappongano.
+inline constexpr double kCropMinVisible = 0.05;
+
+// Dove sta sul progetto la maniglia `edges` del riquadro ritagliato.
+Point2 cropHandlePoint(const Transform& transform, const ManipSize& size, int edges);
+
+// La maniglia sotto `at` (0 = nessuna): prima gli angoli, poi i lati (vicino al lato, non solo al suo centro).
+int cropHitTest(const Transform& transform, const ManipSize& size, Point2 at, double pxPerUnit);
+
+// Trascinando la maniglia `edges` fino a `to`, i lati coinvolti vanno dove sta il mouse (misurato sull'immagine, quindi
+// anche se il pezzo è ruotato, scalato o specchiato), restando dentro il file e lasciando kCropMinVisible visibile.
+Transform manipCrop(const Transform& start, const ManipSize& size, int edges, Point2 to);
+
+// ---- Guide magnetiche (step TR7)
+
+// Le linee dello schermo su cui è scattato lo spostamento, in pixel del progetto: x di guide verticali, y di orizzontali.
+struct SnapGuides
+{
+    std::vector<double> vertical;
+    std::vector<double> horizontal;
+};
+
+// Spostamento: il bordo sinistro/destro/alto/basso e il centro del pezzo scattano sui bordi e sul centro del fotogramma
+// quando ne distano meno di kSnapDistance pixel dello schermo.
+inline constexpr double kSnapDistance = 6.0;
+Transform snapMove(const Transform& moved, const ManipSize& size, double pxPerUnit, SnapGuides* guides);
+
+// Rotazione: scatta a 0, 90, 180, 270 gradi (e ai loro multipli) entro kSnapDegrees. `snapped` dice se è scattata.
+inline constexpr double kSnapDegrees = 2.0;
+Transform snapRotation(const Transform& rotated, bool* snapped);
+
+// Scala: scatta al 100% entro kSnapScale (frazione), separatamente per larghezza e altezza.
+inline constexpr double kSnapScale = 0.02;
+Transform snapScale(const Transform& scaled);
 
 }  // namespace editor::core

@@ -172,4 +172,179 @@ Transform manipRotate(const Transform& start, const ManipSize& size, Point2 from
     return normalized(t);
 }
 
+// ---- Ritaglio
+
+namespace {
+
+// Un punto dell'immagine intera, in frazioni di come la si vede (0..1 da sinistra e dall'alto dello schermo), sul progetto.
+Point2 displayedToProject(const Transform& t, const TransformGeometry& g, const ManipSize& size, double fx, double fy)
+{
+    const double u = (t.flipHorizontal ? 1.0 - fx : fx) * size.srcW;
+    const double v = (t.flipVertical ? 1.0 - fy : fy) * size.srcH;
+    return g.toProject.apply(u, v);
+}
+
+double distanceToSegment(Point2 p, Point2 a, Point2 b)
+{
+    const double dx = b.x - a.x;
+    const double dy = b.y - a.y;
+    const double length2 = dx * dx + dy * dy;
+    const double along = length2 < 1e-12 ? 0.0 : std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / length2, 0.0, 1.0);
+    return distance(p, {a.x + along * dx, a.y + along * dy});
+}
+
+}  // namespace
+
+Point2 cropHandlePoint(const Transform& transform, const ManipSize& size, int edges)
+{
+    const Transform t = normalized(transform);
+    const TransformGeometry g = computeGeometry(t, static_cast<int>(size.srcW), static_cast<int>(size.srcH),
+                                                static_cast<int>(size.projW), static_cast<int>(size.projH));
+    const double left = t.cropLeft;
+    const double right = 1.0 - t.cropRight;
+    const double top = t.cropTop;
+    const double bottom = 1.0 - t.cropBottom;
+    const double fx = (edges & kCropLeft) ? left : (edges & kCropRight) ? right : (left + right) / 2.0;
+    const double fy = (edges & kCropTop) ? top : (edges & kCropBottom) ? bottom : (top + bottom) / 2.0;
+    return displayedToProject(t, g, size, fx, fy);
+}
+
+int cropHitTest(const Transform& transform, const ManipSize& size, Point2 at, double pxPerUnit)
+{
+    if (!valid(size))
+        return 0;
+    const double radius = kManipHandleRadius / std::max(pxPerUnit, 1e-9);
+    constexpr int corners[4] = {kCropLeft | kCropTop, kCropRight | kCropTop, kCropRight | kCropBottom, kCropLeft | kCropBottom};
+    int best = 0;
+    double bestDistance = radius;
+    for (const int edges : corners) {
+        const double d = distance(at, cropHandlePoint(transform, size, edges));
+        if (d <= bestDistance) {
+            best = edges;
+            bestDistance = d;
+        }
+    }
+    if (best != 0)
+        return best;
+    struct Side
+    {
+        int edge;
+        int from;
+        int to;
+    };
+    constexpr Side sides[4] = {{kCropTop, corners[0], corners[1]},
+                               {kCropRight, corners[1], corners[2]},
+                               {kCropBottom, corners[3], corners[2]},
+                               {kCropLeft, corners[0], corners[3]}};
+    bestDistance = radius * 0.75;
+    for (const Side& side : sides) {
+        const double d = distanceToSegment(at, cropHandlePoint(transform, size, side.from), cropHandlePoint(transform, size, side.to));
+        if (d <= bestDistance) {
+            best = side.edge;
+            bestDistance = d;
+        }
+    }
+    return best;
+}
+
+Transform manipCrop(const Transform& start, const ManipSize& size, int edges, Point2 to)
+{
+    if (!valid(size) || edges == 0)
+        return start;
+    Transform t = normalized(start);
+    const TransformGeometry g = computeGeometry(t, static_cast<int>(size.srcW), static_cast<int>(size.srcH),
+                                                static_cast<int>(size.projW), static_cast<int>(size.projH));
+    const Point2 inFile = g.toProject.inverse().apply(to.x, to.y);
+    double fx = inFile.x / size.srcW;
+    double fy = inFile.y / size.srcH;
+    if (t.flipHorizontal)
+        fx = 1.0 - fx;
+    if (t.flipVertical)
+        fy = 1.0 - fy;
+    if (edges & kCropLeft)
+        t.cropLeft = std::clamp(fx, 0.0, 1.0 - t.cropRight - kCropMinVisible);
+    if (edges & kCropRight)
+        t.cropRight = std::clamp(1.0 - fx, 0.0, 1.0 - t.cropLeft - kCropMinVisible);
+    if (edges & kCropTop)
+        t.cropTop = std::clamp(fy, 0.0, 1.0 - t.cropBottom - kCropMinVisible);
+    if (edges & kCropBottom)
+        t.cropBottom = std::clamp(1.0 - fy, 0.0, 1.0 - t.cropTop - kCropMinVisible);
+    return normalized(t);
+}
+
+// ---- Guide magnetiche
+
+Transform snapMove(const Transform& moved, const ManipSize& size, double pxPerUnit, SnapGuides* guides)
+{
+    if (guides != nullptr)
+        *guides = {};
+    if (!valid(size))
+        return moved;
+    Transform t = normalized(moved);
+    const TransformGeometry g = computeGeometry(t, static_cast<int>(size.srcW), static_cast<int>(size.srcH),
+                                                static_cast<int>(size.projW), static_cast<int>(size.projH));
+    double minX = g.corners[0].x, maxX = minX, minY = g.corners[0].y, maxY = minY;
+    for (const Point2& p : g.corners) {
+        minX = std::min(minX, p.x);
+        maxX = std::max(maxX, p.x);
+        minY = std::min(minY, p.y);
+        maxY = std::max(maxY, p.y);
+    }
+    const Point2 center = centerOf(g);
+    const double threshold = kSnapDistance / std::max(pxPerUnit, 1e-9);
+    // Per ogni asse: la correzione più piccola fra (bordi e centro del pezzo) e (bordi e centro del fotogramma).
+    const auto snap = [&](const double features[3], const double targets[3], double& correction, double& target) {
+        double best = threshold + 1.0;
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                const double delta = targets[j] - features[i];
+                if (std::abs(delta) <= threshold && std::abs(delta) < std::abs(best)) {
+                    best = delta;
+                    target = targets[j];
+                }
+            }
+        }
+        correction = std::abs(best) <= threshold ? best : 0.0;
+        return std::abs(best) <= threshold;
+    };
+    const double xs[3] = {minX, center.x, maxX};
+    const double ys[3] = {minY, center.y, maxY};
+    const double targetsX[3] = {0.0, size.projW / 2.0, size.projW};
+    const double targetsY[3] = {0.0, size.projH / 2.0, size.projH};
+    double dx = 0.0, dy = 0.0, lineX = 0.0, lineY = 0.0;
+    const bool snappedX = snap(xs, targetsX, dx, lineX);
+    const bool snappedY = snap(ys, targetsY, dy, lineY);
+    t.posX += dx;
+    t.posY += dy;
+    if (guides != nullptr) {
+        if (snappedX)
+            guides->vertical.push_back(lineX);
+        if (snappedY)
+            guides->horizontal.push_back(lineY);
+    }
+    return normalized(t);
+}
+
+Transform snapRotation(const Transform& rotated, bool* snapped)
+{
+    Transform t = rotated;
+    const double nearest = std::round(t.rotation / 90.0) * 90.0;
+    const bool near = std::abs(t.rotation - nearest) <= kSnapDegrees;
+    if (near)
+        t.rotation = nearest;
+    if (snapped != nullptr)
+        *snapped = near;
+    return t;
+}
+
+Transform snapScale(const Transform& scaled)
+{
+    Transform t = scaled;
+    if (std::abs(t.scaleX - 1.0) <= kSnapScale)
+        t.scaleX = 1.0;
+    if (std::abs(t.scaleY - 1.0) <= kSnapScale)
+        t.scaleY = 1.0;
+    return t;
+}
+
 }  // namespace editor::core

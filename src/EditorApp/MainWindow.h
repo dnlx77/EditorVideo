@@ -171,6 +171,7 @@ public:
     // Un gesto dei manipolatori sul monitor (rilasciato): il pezzo `fragmentId` prende `transform`; un passo di Annulla.
     bool commitMonitorTransform(int fragmentId, const core::Transform& transform);
     QAction* transformModeAction() const { return transformAction_; }
+    QAction* cropModeAction() const { return cropAction_; }
     // "Adatta" / "Riempi" sui pezzi scelti.
     void fitSelectedPieces(bool fill);
     QTabWidget* leftTabs() const { return leftTabs_; }
@@ -443,6 +444,8 @@ private:
     QAction* removeTrackAction_ = nullptr;
     QAction* removeTextLayerAction_ = nullptr;
     QAction* editTextAction_ = nullptr;
+    QAction* cropAction_ = nullptr;       // «Ritaglia sul monitor» (W)
+    QAction* thirdsAction_ = nullptr;     // «Griglia dei terzi sul monitor»
     QAction* transformAction_ = nullptr;  // «Trasforma sul monitor» (Q): i manipolatori del monitor
     QMenu* recentMenu_ = nullptr;
     QAction* undoAction_ = nullptr;

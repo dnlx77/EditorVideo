@@ -97,10 +97,24 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
         if (onTransformModeChanged)
             onTransformModeChanged(on);
     });
+    cropButton_ = new QToolButton;
+    cropButton_->setText(QStringLiteral("Ritaglia"));
+    cropButton_->setObjectName(QStringLiteral("pulsanteRitaglia"));
+    cropButton_->setCheckable(true);
+    cropButton_->setAutoRaise(true);
+    cropButton_->setToolTip(QStringLiteral("Ritaglio sul monitor (W): trascina un lato o un angolo del riquadro. A monitor fermo."));
+    connect(cropButton_, &QToolButton::toggled, this, [this](bool on) {
+        if (on == cropMode_)
+            return;
+        setCropMode(on);
+        if (onCropModeChanged)
+            onCropModeChanged(on);
+    });
     auto* bottom = new QHBoxLayout;
     bottom->setContentsMargins(0, 0, 4, 0);
     bottom->addWidget(fragmentLabel_, 1);
     bottom->addWidget(transformButton_);
+    bottom->addWidget(cropButton_);
     layout->addLayout(bottom);
 
     poll_ = new QTimer(this);
@@ -167,7 +181,7 @@ void ProgramMonitor::load(int index, double offset)
     primedTransitionId_ = 0;
     transitionFrame_.reset();
     player_->setBlank(false);
-    player_->setTransformCanvas(transformMode_);
+    player_->setTransformCanvas(transformMode_ || cropMode_);
     player_->setFrameTransform(f.transform, frameSize());  // scala, posizione, rotazione... del pezzo
     if (f.clipId != loadedClipId_) {
         player_->openFile(QString::fromStdString(clip->path));
@@ -201,7 +215,7 @@ std::vector<core::TextClip> ProgramMonitor::visibleText() const
 
 bool ProgramMonitor::manipulatorsVisible() const
 {
-    return transformMode_ && !playing_ && !showingSource_ && transitionId_ == 0 && gapIndex_ < 0 && index_ >= 0
+    return (transformMode_ || cropMode_) && !playing_ && !showingSource_ && transitionId_ == 0 && gapIndex_ < 0 && index_ >= 0
            && index_ < static_cast<int>(project_.sequence().fragments().size());
 }
 
@@ -239,6 +253,11 @@ void ProgramMonitor::setTransformMode(bool on)
         return;
     transformMode_ = on;
     manipDrag_.reset();
+    if (on && cropMode_) {
+        setCropMode(false);
+        if (onCropModeChanged)
+            onCropModeChanged(false);
+    }
     if (transformButton_ != nullptr && transformButton_->isChecked() != on) {
         const QSignalBlocker block(transformButton_);
         transformButton_->setChecked(on);
@@ -246,9 +265,35 @@ void ProgramMonitor::setTransformMode(bool on)
     applyShownTransform();
 }
 
+void ProgramMonitor::setCropMode(bool on)
+{
+    if (on == cropMode_)
+        return;
+    cropMode_ = on;
+    manipDrag_.reset();
+    if (on && transformMode_) {
+        setTransformMode(false);
+        if (onTransformModeChanged)
+            onTransformModeChanged(false);
+    }
+    if (cropButton_ != nullptr && cropButton_->isChecked() != on) {
+        const QSignalBlocker block(cropButton_);
+        cropButton_->setChecked(on);
+    }
+    applyShownTransform();
+}
+
+void ProgramMonitor::setThirdsGrid(bool on)
+{
+    if (on == thirdsGrid_)
+        return;
+    thirdsGrid_ = on;
+    player_->updateOverlay();
+}
+
 void ProgramMonitor::applyShownTransform()
 {
-    player_->setTransformCanvas(transformMode_);
+    player_->setTransformCanvas(transformMode_ || cropMode_);
     player_->setFrameTransform(shownTransform(), frameSize());
     player_->updateOverlay();
 }
@@ -273,13 +318,6 @@ void ProgramMonitor::paintManipulators(QPainter& painter, const QRectF& target)
     painter.drawPolygon(quad);
     painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5));
     painter.drawPolygon(quad);
-    // La maniglia di rotazione, collegata al lato alto.
-    const QPointF top = (quad[0] + quad[1]) / 2.0;
-    const QPointF rotate = toWidget(core::manipRotationHandle(t, *size, scale));
-    painter.setPen(QPen(QColor(0, 0, 0, 160), 3));
-    painter.drawLine(top, rotate);
-    painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5));
-    painter.drawLine(top, rotate);
     const auto handle = [&](const QPointF& at, bool round) {
         const double r = core::kManipHandleRadius * 0.7;
         painter.setPen(QPen(QColor(0, 0, 0, 200), 1.5));
@@ -289,9 +327,36 @@ void ProgramMonitor::paintManipulators(QPainter& painter, const QRectF& target)
         else
             painter.drawRect(QRectF(at.x() - r, at.y() - r, 2 * r, 2 * r));
     };
-    for (const QPointF& corner : quad)
-        handle(corner, false);
-    handle(rotate, true);
+    if (cropMode_) {
+        // Il file intero, tratteggiato, per vedere cosa si è tolto; le maniglie sugli angoli e a metà dei lati del riquadro.
+        QPolygonF full;
+        for (const core::Point2& corner : g.fullCorners)
+            full << toWidget(corner);
+        painter.setPen(QPen(QColor(255, 255, 255, 120), 1, Qt::DashLine));
+        painter.drawPolygon(full);
+        for (const int edges : {core::kCropLeft | core::kCropTop, core::kCropRight | core::kCropTop,
+                                core::kCropRight | core::kCropBottom, core::kCropLeft | core::kCropBottom})
+            handle(toWidget(core::cropHandlePoint(t, *size, edges)), false);
+        for (const int edge : {core::kCropLeft, core::kCropRight, core::kCropTop, core::kCropBottom})
+            handle(toWidget(core::cropHandlePoint(t, *size, edge)), true);
+    } else {
+        // La maniglia di rotazione, collegata al lato alto.
+        const QPointF top = (quad[0] + quad[1]) / 2.0;
+        const QPointF rotate = toWidget(core::manipRotationHandle(t, *size, scale));
+        painter.setPen(QPen(QColor(0, 0, 0, 160), 3));
+        painter.drawLine(top, rotate);
+        painter.setPen(QPen(QColor(255, 255, 255, 230), 1.5));
+        painter.drawLine(top, rotate);
+        for (const QPointF& corner : quad)
+            handle(corner, false);
+        handle(rotate, true);
+    }
+    // Le guide su cui sta scattando il gesto.
+    painter.setPen(QPen(QColor(255, 80, 200, 230), 1));
+    for (const double x : snapGuides_.vertical)
+        painter.drawLine(QPointF(target.left() + x * scale, target.top()), QPointF(target.left() + x * scale, target.bottom()));
+    for (const double y : snapGuides_.horizontal)
+        painter.drawLine(QPointF(target.left(), target.top() + y * scale), QPointF(target.right(), target.top() + y * scale));
     painter.restore();
 }
 
@@ -304,6 +369,15 @@ bool ProgramMonitor::grabImage(QPointF at)
         return grabText(at);
     const core::Point2 p{at.x() * size->projW, at.y() * size->projH};
     const core::Transform start = shownTransform();
+    snapGuides_ = {};
+    rotationSnapped_ = false;
+    if (cropMode_) {
+        const int edges = core::cropHitTest(start, *size, p, manipScreenScale());
+        if (edges == 0)
+            return grabText(at);
+        manipDrag_ = ManipDrag{project_.sequence().fragments()[static_cast<std::size_t>(index_)].id, {}, start, start, p, edges};
+        return true;
+    }
     const core::ManipHit hit = core::manipHitTest(start, *size, p, manipScreenScale());
     const auto startDrag = [&] {
         manipDrag_ = ManipDrag{project_.sequence().fragments()[static_cast<std::size_t>(index_)].id, hit, start, start, p};
@@ -332,18 +406,31 @@ void ProgramMonitor::dragImage(QPointF at)
     const Qt::KeyboardModifiers keys = QGuiApplication::keyboardModifiers();
     const bool shift = keys.testFlag(Qt::ShiftModifier);
     const bool alt = keys.testFlag(Qt::AltModifier);
-    switch (manipDrag_->hit.part) {
-    case core::ManipPart::Move:
-        manipDrag_->current = core::manipMove(manipDrag_->start, manipDrag_->from, p);
-        break;
-    case core::ManipPart::Corner:
-        manipDrag_->current = core::manipScale(manipDrag_->start, *size, manipDrag_->hit.corner, p, shift, alt);
-        break;
-    case core::ManipPart::Rotate:
-        manipDrag_->current = core::manipRotate(manipDrag_->start, *size, manipDrag_->from, p, shift);
-        break;
-    case core::ManipPart::None:
-        break;
+    // Ctrl: niente scatti magnetici.
+    const bool snap = !keys.testFlag(Qt::ControlModifier);
+    snapGuides_ = {};
+    if (cropMode_) {
+        manipDrag_->current = core::manipCrop(manipDrag_->start, *size, manipDrag_->cropEdges, p);
+    } else {
+        switch (manipDrag_->hit.part) {
+        case core::ManipPart::Move:
+            manipDrag_->current = core::manipMove(manipDrag_->start, manipDrag_->from, p);
+            if (snap)
+                manipDrag_->current = core::snapMove(manipDrag_->current, *size, manipScreenScale(), &snapGuides_);
+            break;
+        case core::ManipPart::Corner:
+            manipDrag_->current = core::manipScale(manipDrag_->start, *size, manipDrag_->hit.corner, p, shift, alt);
+            if (snap)
+                manipDrag_->current = core::snapScale(manipDrag_->current);
+            break;
+        case core::ManipPart::Rotate:
+            manipDrag_->current = core::manipRotate(manipDrag_->start, *size, manipDrag_->from, p, shift);
+            if (snap && !shift)
+                manipDrag_->current = core::snapRotation(manipDrag_->current, &rotationSnapped_);
+            break;
+        case core::ManipPart::None:
+            break;
+        }
     }
     player_->setFrameTransform(manipDrag_->current, frameSize());
     player_->updateOverlay();
@@ -358,6 +445,8 @@ void ProgramMonitor::dropImage(QPointF at)
     dragImage(at);
     const ManipDrag done = *manipDrag_;
     manipDrag_.reset();
+    snapGuides_ = {};
+    rotationSnapped_ = false;
     if (!(done.current == done.start) && onTransformEdited)
         onTransformEdited(done.fragmentId, done.current);
     // Se il progetto non ha cambiato il pezzo, il monitor torna com'era.
@@ -529,6 +618,17 @@ void ProgramMonitor::updateOverlayFrame()
     player_->setOverlay(
         [this](QPainter& painter, const QRectF& target) {
             overlay_.paint(painter, target, painter.device()->devicePixelRatioF(), shownText_, shownTime_);
+            if (thirdsGrid_ && !target.isEmpty()) {
+                painter.save();
+                painter.setPen(QPen(QColor(255, 255, 255, 110), 1));
+                for (int i = 1; i <= 2; ++i) {
+                    const double x = target.left() + target.width() * i / 3.0;
+                    const double y = target.top() + target.height() * i / 3.0;
+                    painter.drawLine(QPointF(x, target.top()), QPointF(x, target.bottom()));
+                    painter.drawLine(QPointF(target.left(), y), QPointF(target.right(), y));
+                }
+                painter.restore();
+            }
             paintManipulators(painter, target);
         },
         frame);

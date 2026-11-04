@@ -211,6 +211,11 @@ MainWindow::MainWindow(QWidget* parent)
         if (transformAction_ != nullptr && transformAction_->isChecked() != on)
             transformAction_->setChecked(on);
     };
+    program_->onCropModeChanged = [this](bool on) {
+        if (cropAction_ != nullptr && cropAction_->isChecked() != on)
+            cropAction_->setChecked(on);
+    };
+
 
     // Proxy: le due anteprime leggono il video dal proxy quando è pronto. Ogni file ha la sua qualità: il menu della
     // Sorgente cambia quella del file nella Sorgente, quello del Montaggio quella del file del pezzo mostrato.
@@ -1648,6 +1653,31 @@ void MainWindow::createMenus()
             statusBar()->showMessage(QStringLiteral("Trasforma: trascina il pezzo (posizione), gli angoli (scala: Maiusc = proporzioni libere, "
                                                     "Alt = dal centro), il cerchio sopra (rotazione: Maiusc = scatti di 15°). Q per uscire."),
                                      10000);
+    });
+    cropAction_ = editMenu->addAction(QStringLiteral("&Ritaglia sul monitor"));
+    cropAction_->setCheckable(true);
+    cropAction_->setShortcut(QKeySequence(Qt::Key_W));
+    cropAction_->setStatusTip(QStringLiteral("Ritaglio sul monitor: trascina un lato o un angolo del riquadro (a monitor fermo)"));
+    connect(cropAction_, &QAction::toggled, this, [this](bool on) {
+        if (program_ != nullptr)
+            program_->setCropMode(on);
+        if (on)
+            statusBar()->showMessage(QStringLiteral("Ritaglia: trascina un lato o un angolo del riquadro; la linea tratteggiata è il file intero. "
+                                                    "W per uscire."),
+                                     10000);
+    });
+    thirdsAction_ = editMenu->addAction(QStringLiteral("Griglia dei &terzi sul monitor"));
+    thirdsAction_->setCheckable(true);
+    thirdsAction_->setChecked(settings().value(QStringLiteral("montaggio/grigliaTerzi"), false).toBool());
+    thirdsAction_->setStatusTip(QStringLiteral("Linee guida dei terzi sopra l'immagine del Montaggio. Spostando, ruotando e scalando i pezzi sul "
+                                               "monitor il pezzo scatta su centro e bordi, sui 90° e sul 100%: tieni premuto Ctrl per non scattare"));
+    if (program_ != nullptr)
+        program_->setThirdsGrid(thirdsAction_->isChecked());
+    connect(thirdsAction_, &QAction::toggled, this, [this](bool on) {
+        if (program_ != nullptr)
+            program_->setThirdsGrid(on);
+        QSettings s = settings();
+        s.setValue(QStringLiteral("montaggio/grigliaTerzi"), on);
     });
     editMenu->addSeparator();
     QAction* group = editMenu->addAction(QStringLiteral("Crea &gruppo"), this, [this] { groupSelection(); });
