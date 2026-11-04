@@ -783,3 +783,33 @@ TEST(TextOnV1, SitsBesideTheVideoPiecesWithoutOverlapping)
     const int reloaded = loaded.project.textTracks().baseLayer().clips[1].id;
     EXPECT_EQ(loaded.project.groupMembers({Kind::TextClip, reloaded}).size(), 3u);  // (la scritta, il pezzo e il suo audio)
 }
+
+TEST(LayerPieceMoves, UnlinkedVideoGoesToALayerAndBackWithoutGettingANewAudio)
+{
+    Project project;
+    const int file = project.add("gita.mp4");
+    project.setAnalysis(file, {0.0}, 30.0);
+    const int a = project.sequence().insert(-1, file, 0.0, 4.0);
+    const int layer = project.textTracks().addLayer();
+    // U: l'audio diventa una clip libera, il video resta muto.
+    int track = 0;
+    const int freeClip = project.unlinkAudio(a, &track);
+    ASSERT_NE(freeClip, 0);
+    // Il video su V2 (senza audio) e di nuovo su V1.
+    int audio = 7;
+    const int piece = project.liftToLayer(a, layer, 0.0, &audio);
+    ASSERT_NE(piece, 0);
+    EXPECT_EQ(audio, 0);
+    const int back = project.lowerToV1(piece, 0.0, true);
+    ASSERT_NE(back, 0);
+    const Fragment* f = project.sequence().find(back);
+    ASSERT_NE(f, nullptr);
+    EXPECT_TRUE(f->detached);  // ancora senza un audio suo: solo la clip libera si sente
+    ASSERT_EQ(project.audioTracks().find(freeClip) != nullptr, true);
+    // G li riunisce: un solo audio, quello del video.
+    int relinked = 0;
+    project.groupObjects({{Kind::Piece, back}, {Kind::AudioClip, freeClip}}, &relinked);
+    EXPECT_EQ(relinked, 1);
+    EXPECT_FALSE(project.sequence().find(back)->detached);
+    EXPECT_EQ(project.audioTracks().find(freeClip), nullptr);
+}
