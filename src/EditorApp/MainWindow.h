@@ -120,6 +120,7 @@ public:
     QString proxyFolder() const;
 
     // Sequenza: comandi del menu Montaggio (usati anche dalle prove automatiche).
+    void addToLayer();           // Maiusc+A: IN-OUT della Sorgente come pezzo su un livello video (V2, V3...) al cursore
     void addToSequence();        // A: IN-OUT della Sorgente (o il file intero) dopo il pezzo selezionato o in fondo
     void cutFromSequence();      // X: toglie IN-OUT della Sorgente dai pezzi di quel file
     void splitAtPlayhead();      // S: divide il pezzo sotto il cursore del montaggio

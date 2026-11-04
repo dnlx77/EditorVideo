@@ -258,6 +258,12 @@ jobs:
           $demo = "$env:TEMP\EditorVideoDemo"
           & ci\run-editorvideo.ps1 -Name manipolatori -Arguments @('--manip-test', "`"$demo\demo_mpeg2_gpu.mkv`"")
 
+      - name: Prova dei pezzi di video sui livelli
+        shell: pwsh
+        run: |
+          # I pezzi di video sui livelli V2, V3... della linea del tempo: spostamento fra livelli, bordi, Ctrl+clic.
+          & ci\run-editorvideo.ps1 -Name livelli -Arguments '--layer-test'
+
       - name: Prova della scheda Gruppi
         shell: pwsh
         run: |

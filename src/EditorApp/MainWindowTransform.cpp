@@ -46,6 +46,12 @@ void MainWindow::refreshPropertiesPanel()
             return;
         }
     }
+    if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::TextClip) {
+        if (const core::LayerPiece* layerPiece = project_.textTracks().findPiece(objects.front().id)) {  // un pezzo di un livello
+            propertiesPanel_->showTransform(layerPiece->transform, 1);
+            return;
+        }
+    }
     const std::vector<int> pieces = selectedPieceIds(objects);
     for (int id : pieces) {
         if (const core::Fragment* f = project_.sequence().find(id)) {
@@ -64,6 +70,24 @@ void MainWindow::refreshPropertiesPanel()
 
 bool MainWindow::applyTransformEdit(const std::function<void(core::Transform&)>& edit, const std::string& field)
 {
+    // Un pezzo di video su un livello (V2, V3...): una trasformazione sola, nel pezzo del livello.
+    if (const int layerPiece = timeline_->selectedTextClip(); layerPiece != 0 && project_.textTracks().findPiece(layerPiece) != nullptr) {
+        core::Transform t = project_.textTracks().findPiece(layerPiece)->transform;
+        edit(t);
+        const core::Project before = project_;
+        if (!project_.textTracks().setPieceTransform(layerPiece, t))
+            return false;
+        const std::string layerKey = field + ":L" + std::to_string(layerPiece);
+        const bool continues = transformMergeKey_ == layerKey && transformMergeCount_ == history_.undoCount() && history_.canUndo()
+                            && history_.undoLabel() == "Cambia trasformazione" && !history_.canRedo();
+        if (continues && history_.amend())
+            sequenceChanged();
+        else
+            recordEdit(QStringLiteral("Cambia trasformazione"), before);
+        transformMergeKey_ = layerKey;
+        transformMergeCount_ = history_.undoCount();
+        return true;
+    }
     const std::vector<int> ids = selectedPieceIds(timeline_->allSelectedObjects());
     if (ids.empty())
         return false;

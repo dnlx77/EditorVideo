@@ -45,6 +45,7 @@ int runTransitionTest(const QStringList& arguments, qsizetype at);
 // --transform-test: il pannello Proprietà (campi, cursori, "Adatta"/"Riempi", ripristino), il fotogramma disegnato con scala,
 // posizione, rotazione, ritaglio e opacità (a pixel) e il pannello a destra nella finestra (vedi TransformSelfTest.cpp).
 int runTransformTest(const QStringList& arguments, qsizetype at);
+int runLayerTest(const QStringList& arguments, qsizetype at);
 int runManipTest(const QStringList& arguments, qsizetype at);
 
 // --export-panel-test: la finestra "Esporta" con un riepilogo inventato: avviso di sovrascrittura, destinazioni che non

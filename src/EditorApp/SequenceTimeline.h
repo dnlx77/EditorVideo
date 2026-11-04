@@ -95,6 +95,7 @@ public:
         double length = 0.0;
         double fadeIn = 0.0;   // dissolvenza in entrata (secondi)
         double fadeOut = 0.0;  // dissolvenza in uscita (secondi)
+        bool piece = false;    // un pezzo di video (non una scritta): blu, senza dissolvenze, senza gruppi (per ora)
     };
 
     // Un livello di scritte (V2, V3...), disegnato sopra la corsia video: il livello più alto sta più in alto.
