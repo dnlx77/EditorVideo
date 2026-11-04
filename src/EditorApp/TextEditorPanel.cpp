@@ -9,6 +9,7 @@
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QFontComboBox>
 #include <QtWidgets/QFormLayout>
+#include <QtWidgets/QFrame>
 #include <QtWidgets/QGridLayout>
 #include <QtWidgets/QGroupBox>
 #include <QtWidgets/QInputDialog>
@@ -49,6 +50,11 @@ QDoubleSpinBox* spin(double min, double max, double step, int decimals, const QS
     box->setDecimals(decimals);
     box->setSuffix(suffix);
     box->setObjectName(QString::fromLatin1(name));
+    // Stile minimale: caselle strette e basse, senza frecce.
+    box->setFixedWidth(64);
+    box->setFixedHeight(20);
+    box->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    box->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     return box;
 }
 
@@ -59,7 +65,7 @@ QToolButton* styleButton(const QString& text, const QString& tip, const char* na
     button->setToolTip(tip);
     button->setCheckable(true);
     button->setObjectName(QString::fromLatin1(name));
-    button->setMinimumWidth(30);
+    button->setFixedSize(22, 20);
     return button;
 }
 
@@ -70,7 +76,7 @@ ColorButton::ColorButton(const QColor& color, bool withAlpha, QWidget* parent)
     , color_(color)
     , withAlpha_(withAlpha)
 {
-    setMinimumWidth(64);
+    setFixedSize(48, 20);
     updateLook();
     connect(this, &QPushButton::clicked, this, [this] {
         const QColor chosen = QColorDialog::getColor(color_, this, QStringLiteral("Colore"),
@@ -93,11 +99,11 @@ void ColorButton::setColor(const QColor& color)
 void ColorButton::updateLook()
 {
     // Sfondo a scacchi sotto al colore, per far vedere la trasparenza.
-    QPixmap pixmap(64, 20);
+    QPixmap pixmap(36, 12);
     QPainter p(&pixmap);
-    for (int y = 0; y < 20; y += 5) {
-        for (int x = 0; x < 64; x += 5)
-            p.fillRect(x, y, 5, 5, ((x + y) / 5) % 2 == 0 ? QColor(200, 200, 200) : QColor(255, 255, 255));
+    for (int y = 0; y < 12; y += 4) {
+        for (int x = 0; x < 36; x += 4)
+            p.fillRect(x, y, 4, 4, ((x + y) / 4) % 2 == 0 ? QColor(200, 200, 200) : QColor(255, 255, 255));
     }
     p.fillRect(pixmap.rect(), color_);
     p.end();
@@ -120,8 +126,8 @@ void TextEditorPanel::build()
     text_ = new QPlainTextEdit;
     text_->setObjectName(QStringLiteral("testo"));
     text_->setPlaceholderText(QStringLiteral("Scrivi qui il testo (Invio va a capo)"));
-    text_->setMinimumHeight(70);
-    text_->setMaximumHeight(110);
+    text_->setMinimumHeight(48);
+    text_->setMaximumHeight(72);
 
     font_ = new QFontComboBox;
     font_->setObjectName(QStringLiteral("font"));
@@ -147,20 +153,27 @@ void TextEditorPanel::build()
     color_->setObjectName(QStringLiteral("coloreTesto"));
     opacity_ = spin(0.0, 100.0, 5.0, 0, QStringLiteral(" %"), "opacita");
 
-    auto* look = new QGroupBox(QStringLiteral("Testo"));
+    auto* look = new QWidget;
     auto* lookForm = new QFormLayout(look);
+    lookForm->setContentsMargins(0, 0, 0, 0);
+    lookForm->setVerticalSpacing(2);
+    lookForm->setHorizontalSpacing(6);
     // Stili con nome: si applicano al testo e agli effetti qui sotto, e si possono salvare con un nome.
     styleList_ = new QComboBox;
     styleList_->setObjectName(QStringLiteral("stili"));
-    auto* applyStyle = new QPushButton(QStringLiteral("Applica"));
+    auto* applyStyle = new QPushButton(QStringLiteral("✓"));
     applyStyle->setObjectName(QStringLiteral("applicaStile"));
     applyStyle->setToolTip(QStringLiteral("Usa lo stile scelto (font, colori, effetti, posizione) su questa scritta"));
-    auto* saveStyle = new QPushButton(QStringLiteral("Salva..."));
+    auto* saveStyle = new QPushButton(QStringLiteral("+"));
     saveStyle->setObjectName(QStringLiteral("salvaStile"));
     saveStyle->setToolTip(QStringLiteral("Salva l'aspetto di questa scritta come stile con un nome, da riusare"));
-    auto* deleteStyle = new QPushButton(QStringLiteral("Elimina"));
+    auto* deleteStyle = new QPushButton(QStringLiteral("✕"));
     deleteStyle->setObjectName(QStringLiteral("eliminaStile"));
+    deleteStyle->setToolTip(QStringLiteral("Elimina lo stile scelto"));
+    for (QPushButton* button : {applyStyle, saveStyle, deleteStyle})
+        button->setFixedSize(24, 20);
     auto* styleRow = new QHBoxLayout;
+    styleRow->setSpacing(3);
     styleRow->addWidget(styleList_, 1);
     styleRow->addWidget(applyStyle);
     styleRow->addWidget(saveStyle);
@@ -203,17 +216,22 @@ void TextEditorPanel::build()
     shadowColor_->setObjectName(QStringLiteral("coloreOmbra"));
     shadowX_ = spin(-10.0, 10.0, 0.1, 1, QStringLiteral(" %"), "ombraX");
     shadowY_ = spin(-10.0, 10.0, 0.1, 1, QStringLiteral(" %"), "ombraY");
+    shadowX_->setFixedWidth(52);
+    shadowY_->setFixedWidth(52);
     background_ = new QCheckBox(QStringLiteral("Sfondo"));
     background_->setObjectName(QStringLiteral("sfondo"));
     backgroundColor_ = new ColorButton(QColor(0, 0, 0, 160), true);
     backgroundColor_->setObjectName(QStringLiteral("coloreSfondo"));
     padding_ = spin(0.0, 20.0, 0.1, 1, QStringLiteral(" %"), "margineSfondo");
 
-    auto* effects = new QGroupBox(QStringLiteral("Contorno, ombra e sfondo"));
+    auto* effects = new QWidget;
     auto* effectsGrid = new QGridLayout(effects);
+    effectsGrid->setContentsMargins(0, 0, 0, 0);
+    effectsGrid->setVerticalSpacing(2);
+    effectsGrid->setHorizontalSpacing(6);
     effectsGrid->addWidget(outline_, 0, 0);
     effectsGrid->addWidget(outlineColor_, 0, 1);
-    effectsGrid->addWidget(new QLabel(QStringLiteral("spessore")), 0, 2);
+    effectsGrid->addWidget(new QLabel(QStringLiteral("spess.")), 0, 2);
     effectsGrid->addWidget(outlineWidth_, 0, 3);
     effectsGrid->addWidget(shadow_, 1, 0);
     effectsGrid->addWidget(shadowColor_, 1, 1);
@@ -224,7 +242,7 @@ void TextEditorPanel::build()
     effectsGrid->addLayout(shadowOffsets, 1, 3);
     effectsGrid->addWidget(background_, 2, 0);
     effectsGrid->addWidget(backgroundColor_, 2, 1);
-    effectsGrid->addWidget(new QLabel(QStringLiteral("margine")), 2, 2);
+    effectsGrid->addWidget(new QLabel(QStringLiteral("marg.")), 2, 2);
     effectsGrid->addWidget(padding_, 2, 3);
 
     // Posizione: nove posti fissi più i valori esatti.
@@ -235,8 +253,11 @@ void TextEditorPanel::build()
     fadeIn_->setToolTip(QStringLiteral("La scritta compare piano piano in questo tempo"));
     fadeOut_ = spin(0.0, 36000.0, 0.1, 2, QStringLiteral(" s"), "dissolvenzaOut");
     fadeOut_->setToolTip(QStringLiteral("La scritta sparisce piano piano in questo tempo"));
-    auto* where = new QGroupBox(QStringLiteral("Posizione e durata"));
+    auto* where = new QWidget;
     auto* whereGrid = new QGridLayout(where);
+    whereGrid->setContentsMargins(0, 0, 0, 0);
+    whereGrid->setVerticalSpacing(2);
+    whereGrid->setHorizontalSpacing(6);
     auto* presets = new QGridLayout;
     const char* names[3][3] = {{"alto a sinistra", "in alto", "alto a destra"},
                                {"a sinistra", "al centro", "a destra"},
@@ -249,40 +270,69 @@ void TextEditorPanel::build()
             button->setText(QStringLiteral("■"));
             button->setToolTip(QString::fromUtf8(names[row][col]));
             button->setObjectName(QStringLiteral("posto%1%2").arg(row).arg(col));
+            button->setFixedSize(20, 18);
             connect(button, &QToolButton::clicked, this, [this, x = xs[col], y = ys[row]] { setPosition(x, y); });
             presets->addWidget(button, row, col);
         }
     }
     whereGrid->addLayout(presets, 0, 0, 3, 1);
-    whereGrid->addWidget(new QLabel(QStringLiteral("Centro: orizzontale")), 0, 1);
+    whereGrid->addWidget(new QLabel(QStringLiteral("Centro X")), 0, 1);
     whereGrid->addWidget(centerX_, 0, 2);
-    whereGrid->addWidget(new QLabel(QStringLiteral("verticale")), 1, 1);
+    whereGrid->addWidget(new QLabel(QStringLiteral("Centro Y")), 1, 1);
     whereGrid->addWidget(centerY_, 1, 2);
     whereGrid->addWidget(new QLabel(QStringLiteral("Durata")), 2, 1);
     whereGrid->addWidget(length_, 2, 2);
-    whereGrid->addWidget(new QLabel(QStringLiteral("Compare in")), 3, 1);
+    whereGrid->addWidget(new QLabel(QStringLiteral("Compare")), 3, 1);
     whereGrid->addWidget(fadeIn_, 3, 2);
-    whereGrid->addWidget(new QLabel(QStringLiteral("Sparisce in")), 4, 1);
+    whereGrid->addWidget(new QLabel(QStringLiteral("Sparisce")), 4, 1);
     whereGrid->addWidget(fadeOut_, 4, 2);
 
     controls_ = new QWidget;
     auto* controlsLayout = new QVBoxLayout(controls_);
-    controlsLayout->setContentsMargins(0, 0, 6, 0);
+    controlsLayout->setContentsMargins(6, 4, 6, 4);
+    controlsLayout->setSpacing(2);
+    {
+        // Testo un po' più piccolo in tutta la pagina.
+        QFont small = controls_->font();
+        small.setPointSizeF(std::max(7.0, small.pointSizeF() - 1.0));
+        controls_->setFont(small);
+    }
+    // Sezioni senza riquadro: una riga sottile, il titolo e i campi (come nella pagina delle trasformazioni).
+    const auto section = [&](const QString& title, QWidget* content) {
+        auto* separator = new QFrame;
+        separator->setFrameShape(QFrame::HLine);
+        separator->setFrameShadow(QFrame::Plain);
+        separator->setEnabled(false);
+        controlsLayout->addSpacing(2);
+        controlsLayout->addWidget(separator);
+        auto* heading = new QLabel(title);
+        QFont bold = heading->font();
+        bold.setBold(true);
+        heading->setFont(bold);
+        controlsLayout->addWidget(heading);
+        controlsLayout->addWidget(content);
+    };
     controlsLayout->addWidget(text_);
-    controlsLayout->addWidget(look);
-    controlsLayout->addWidget(effects);
-    controlsLayout->addWidget(where);
+    section(QStringLiteral("Testo"), look);
+    section(QStringLiteral("Contorno, ombra e sfondo"), effects);
+    section(QStringLiteral("Posizione e durata"), where);
     controlsLayout->addStretch(1);
     auto* scroll = new QScrollArea;
     scroll->setWidget(controls_);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // I menu non fanno allargare il pannello: si accorciano.
+    for (QComboBox* combo : {static_cast<QComboBox*>(font_), align_, styleList_}) {
+        combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        combo->setMinimumContentsLength(6);
+    }
 
     hint_ = new QLabel(QStringLiteral("Scegli una scritta sulla linea del tempo (o Scritte > Nuova scritta)."));
     hint_->setObjectName(QStringLiteral("suggerimento"));
     hint_->setWordWrap(true);
     auto* main = new QVBoxLayout(this);
-    main->setContentsMargins(4, 4, 4, 4);
+    main->setContentsMargins(0, 0, 0, 0);
     main->addWidget(hint_);
     main->addWidget(scroll, 1);
 
