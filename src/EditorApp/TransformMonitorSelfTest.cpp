@@ -117,6 +117,50 @@ int runManipTest(const QStringList& args, qsizetype at)
     send(QEvent::MouseButtonRelease, canvas.center());
     check(edits.empty(), "un clic fermo non cambia nulla");
 
+    // Gli scatti magnetici: uno spostamento di pochi pixel dal centro torna sul centro (niente modifica), con Ctrl no.
+    edits.clear();
+    send(QEvent::MouseButtonPress, canvas.center());
+    send(QEvent::MouseMove, canvas.center() + QPointF(3, 2));
+    send(QEvent::MouseButtonRelease, canvas.center() + QPointF(3, 2));
+    // (la forma del fotogramma mostrato può differire di un soffio da quella del progetto: si tollera mezzo pixel)
+    check(edits.empty() || (edits.size() == 1 && std::abs(edits[0].second.posX) < 0.5 && std::abs(edits[0].second.posY) < 0.5),
+          "un piccolo spostamento scatta sul centro del fotogramma");
+    edits.clear();
+    send(QEvent::MouseButtonPress, handle);
+    send(QEvent::MouseMove, handle + QPointF(4, 0));
+    send(QEvent::MouseButtonRelease, handle + QPointF(4, 0));
+    check(edits.empty(), "una rotazione di un grado scatta a zero");
+
+    // Ritaglia (W): si esclude con Trasforma; un lato e un angolo.
+    monitor.setCropMode(true);
+    QCoreApplication::processEvents();
+    check(monitor.cropMode() && !monitor.transformMode() && monitor.manipulatorsVisible(),
+          "il ritaglio spegne la modalità Trasforma e mostra le maniglie");
+    edits.clear();
+    send(QEvent::MouseButtonPress, toScreen(0, projH / 2.0));
+    send(QEvent::MouseMove, toScreen(projW * 0.1, projH / 2.0));
+    send(QEvent::MouseMove, toScreen(projW * 0.25, projH / 2.0));
+    send(QEvent::MouseButtonRelease, toScreen(projW * 0.25, projH / 2.0));
+    check(edits.size() == 1, "il gesto sul lato sinistro dà una sola modifica");
+    if (edits.size() == 1)
+        check(std::abs(edits[0].second.cropLeft - 0.25) < 0.01 && edits[0].second.cropRight == 0.0 && edits[0].second.cropTop == 0.0,
+              "il lato sinistro ritaglia un quarto e nient'altro");
+    edits.clear();
+    send(QEvent::MouseButtonPress, toScreen(projW, 0));
+    send(QEvent::MouseMove, toScreen(projW * 0.9, projH * 0.2));
+    send(QEvent::MouseButtonRelease, toScreen(projW * 0.9, projH * 0.2));
+    check(edits.size() == 1, "il gesto sull'angolo dà una sola modifica");
+    if (edits.size() == 1)
+        check(std::abs(edits[0].second.cropRight - 0.1) < 0.01 && std::abs(edits[0].second.cropTop - 0.2) < 0.01,
+              "l'angolo alto a destra ritaglia due lati");
+    monitor.setTransformMode(true);
+    check(monitor.transformMode() && !monitor.cropMode(), "Trasforma spegne il ritaglio");
+    monitor.setTransformMode(false);
+    monitor.setThirdsGrid(true);
+    check(monitor.thirdsGrid(), "la griglia dei terzi si accende");
+    monitor.setThirdsGrid(false);
+    monitor.setTransformMode(true);
+
     monitor.setPlaying(true);
     check(!monitor.manipulatorsVisible(), "in riproduzione le maniglie spariscono");
     monitor.setPlaying(false);
