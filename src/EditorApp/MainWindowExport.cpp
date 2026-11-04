@@ -87,10 +87,21 @@ using namespace detail;
 // ---------------------------------------------------------------------------------------------------------------
 // Esportazione
 
+const core::Project& MainWindow::exportSource(std::optional<core::Project>& closed) const
+{
+    // "Chiudi gli spazi vuoti": si toglie solo il vuoto vero; dove c'è una scritta, un livello o dell'audio lo spazio resta.
+    if (!reencodeOptions_.closeGaps || project_.sequence().gapCount() == 0)
+        return project_;
+    closed = project_.withEmptySpaceClosed();
+    return *closed;
+}
+
 std::vector<core::ClipRanges> MainWindow::exportPlan() const
 {
-    if (!project_.sequence().empty())
-        return project_.exportPlan(core::GapExport::Black);  // con gli spazi vuoti (neri o chiusi lo decide l'esportazione)
+    if (!project_.sequence().empty()) {
+        std::optional<core::Project> closed;
+        return exportSource(closed).exportPlan(core::GapExport::Black);  // con gli spazi vuoti (neri, o chiusi: vedi exportSource)
+    }
     // Sequenza vuota: il solo IN-OUT della Sorgente, per un taglio veloce (come allo step 4).
     const core::Clip* clip = project_.find(currentClipId_);
     const core::CutSegment& segment = player_->segment();
@@ -127,28 +138,32 @@ MainWindow::ExportSettings MainWindow::exportSettings(bool drawText) const
     // Audio, formato e ricodifica valgono per il montaggio; il taglio veloce (sequenza vuota) copia il file com'è.
     if (project_.sequence().empty())
         return {};
-    ExportSettings settings{project_.audioEdit(core::GapExport::Black), project_.format(), reencodeOptions_, {}};
+    std::optional<core::Project> closed;
+    const core::Project& source = exportSource(closed);
+    ExportSettings settings{source.audioEdit(core::GapExport::Black), source.format(), reencodeOptions_, {}};
+    if (closed)
+        settings.reencode.closeGaps = false;  // il vuoto vero è già tolto dal progetto; quello con sopra qualcosa resta nero
     // Le scritte: i tratti sotto una scritta si ricodificano col testo sopra.
-    if (project_.textTracks().endTime() > 0.0) {
+    if (source.textTracks().endTime() > 0.0) {
         // Alla misura del video esportato: se la risoluzione è ridotta le scritte si disegnano a quella misura.
         QSize frame = frameSize();
         const core::VideoChange& chosen = reencodeOptions_.video;
         if (chosen.width > 0 && chosen.height > 0)
             frame = QSize(chosen.width, chosen.height);
         settings.textRenderer =
-            std::make_shared<PrerenderedTextRenderer>(project_.textTracks(), frame.width(), frame.height(), drawText);
-        settings.reencode.texts = project_.textTracks();
+            std::make_shared<PrerenderedTextRenderer>(source.textTracks(), frame.width(), frame.height(), drawText);
+        settings.reencode.texts = source.textTracks();
         settings.reencode.textRenderer = settings.textRenderer.get();
         // I pezzi di video dei livelli sopra V1: il file originale di ognuno (mai il proxy).
-        for (const core::TextLayer& layer : project_.textTracks().layers()) {
+        for (const core::TextLayer& layer : source.textTracks().layers()) {
             for (const core::LayerPiece& piece : layer.pieces) {
-                if (const core::Clip* file = project_.find(piece.clipId))
+                if (const core::Clip* file = source.find(piece.clipId))
                     settings.reencode.layerFiles[piece.clipId] = file->path;
             }
         }
     }
     // Le transizioni: la parte dei pezzi dentro una transizione si ricodifica con i due pezzi fusi.
-    settings.reencode.transitions = core::exportTransitionsOf(project_);
+    settings.reencode.transitions = core::exportTransitionsOf(source);
     return settings;
 }
 
@@ -221,14 +236,31 @@ void MainWindow::exportDialog()
     loadExportChoices();
     input.options = reencodeOptions_;
     // Il riepilogo: quanti tratti si copiano e quanti si ricodificano con le scelte fatte nella finestra.
-    const ExportSettings base = exportSettings();  // audio, formato e scritte; la finestra mette le sue scelte
-    input.preview = [base, plan = previewPlan()](const core::ReencodeOptions& choices) {
+    // audio, formato e scritte; la finestra mette le sue scelte. Con e senza "Chiudi gli spazi vuoti" il progetto è diverso
+    // (senza il vuoto vero), quindi si preparano tutti e due.
+    struct ExportVariant
+    {
+        ExportSettings base;
+        std::vector<core::ClipRanges> plan;
+    };
+    const bool savedClose = reencodeOptions_.closeGaps;
+    reencodeOptions_.closeGaps = false;
+    const auto openVariant = std::make_shared<ExportVariant>(ExportVariant{exportSettings(), previewPlan()});
+    auto closedVariant = openVariant;
+    if (project_.sequence().gapCount() > 0) {
+        reencodeOptions_.closeGaps = true;
+        closedVariant = std::make_shared<ExportVariant>(ExportVariant{exportSettings(), previewPlan()});
+    }
+    reencodeOptions_.closeGaps = savedClose;
+    input.preview = [openVariant, closedVariant](const core::ReencodeOptions& choices) {
+        const ExportVariant& v = choices.closeGaps ? *closedVariant : *openVariant;
         core::ReencodeOptions options = choices;
-        options.texts = base.reencode.texts;
-        options.textRenderer = base.reencode.textRenderer;
-        options.layerFiles = base.reencode.layerFiles;
-        options.transitions = base.reencode.transitions;
-        return core::previewExport(plan, base.audio, base.format.empty() ? nullptr : &base.format, options);
+        options.closeGaps = false;  // già nel progetto della variante
+        options.texts = v.base.reencode.texts;
+        options.textRenderer = v.base.reencode.textRenderer;
+        options.layerFiles = v.base.reencode.layerFiles;
+        options.transitions = v.base.reencode.transitions;
+        return core::previewExport(v.plan, v.base.audio, v.base.format.empty() ? nullptr : &v.base.format, options);
     };
 
     ExportDialog dialog(input, this);

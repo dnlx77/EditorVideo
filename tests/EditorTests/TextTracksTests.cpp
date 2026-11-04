@@ -813,3 +813,45 @@ TEST(LayerPieceMoves, UnlinkedVideoGoesToALayerAndBackWithoutGettingANewAudio)
     EXPECT_FALSE(project.sequence().find(back)->detached);
     EXPECT_EQ(project.audioTracks().find(freeClip), nullptr);
 }
+
+TEST(CloseEmptySpace, KeepsTheTextAndRemovesOnlyTheReallyEmptyParts)
+{
+    Project project;
+    const int file = project.add("video.mp4");
+    project.setAnalysis(file, {0.0}, 30.0);
+    const int first = project.sequence().insert(-1, file, 0.0, 4.0);
+    const int second = project.sequence().insert(-1, file, 0.0, 4.0);
+    ASSERT_TRUE(project.sequence().moveTo(second, 14.0));  // spazio vuoto 4 .. 14
+    const int third = project.sequence().insert(-1, file, 0.0, 2.0);
+    ASSERT_TRUE(project.sequence().moveTo(third, 20.0));  // spazio vuoto 18 .. 20, senza niente sopra
+    const int base = TextTracks::kBaseLayerId;
+    const int text = project.textTracks().add(base, title(5.0, 2.0, "Titolo"));  // sulla corsia V1, nello spazio 4 .. 14
+    ASSERT_NE(text, 0);
+    ASSERT_EQ(project.sequence().gapCount(), 2);
+
+    const Project closed = project.withEmptySpaceClosed();
+    // Il primo spazio resta per la parte occupata dalla scritta (1 s prima, 7 s dopo si tolgono); il secondo sparisce.
+    ASSERT_NE(closed.textTracks().find(text), nullptr);
+    EXPECT_DOUBLE_EQ(closed.textTracks().find(text)->position, 4.0);
+    EXPECT_DOUBLE_EQ(closed.textTracks().find(text)->length, 2.0);
+    EXPECT_DOUBLE_EQ(closed.sequence().startOf(closed.sequence().indexOf(first)), 0.0);
+    EXPECT_DOUBLE_EQ(closed.sequence().startOf(closed.sequence().indexOf(second)), 6.0);
+    EXPECT_DOUBLE_EQ(closed.sequence().startOf(closed.sequence().indexOf(third)), 10.0);
+    EXPECT_EQ(closed.sequence().gapCount(), 1);
+    // Il progetto di partenza non cambia.
+    EXPECT_EQ(project.sequence().gapCount(), 2);
+    EXPECT_DOUBLE_EQ(project.textTracks().find(text)->position, 5.0);
+}
+
+TEST(CloseEmptySpace, WithoutAnythingInTheGapsItClosesThemAll)
+{
+    Project project;
+    const int file = project.add("video.mp4");
+    project.setAnalysis(file, {0.0}, 30.0);
+    project.sequence().insert(-1, file, 0.0, 4.0);
+    const int second = project.sequence().insert(-1, file, 0.0, 4.0);
+    ASSERT_TRUE(project.sequence().moveTo(second, 9.0));
+    const Project closed = project.withEmptySpaceClosed();
+    EXPECT_EQ(closed.sequence().gapCount(), 0);
+    EXPECT_DOUBLE_EQ(closed.sequence().totalLength(), 8.0);
+}

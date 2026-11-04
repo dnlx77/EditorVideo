@@ -110,6 +110,113 @@ std::vector<ClipRanges> Project::exportPlan(GapExport gaps) const
     return plan;
 }
 
+Project Project::withEmptySpaceClosed() const
+{
+    using Range = std::pair<double, double>;
+    const std::vector<double> starts = sequence_.starts();
+    std::vector<Range> gapRanges;
+    for (std::size_t i = 0; i < sequence_.fragments().size(); ++i) {
+        const double gap = sequence_.fragments()[i].gap;
+        if (gap > 1e-9)
+            gapRanges.emplace_back(starts[i] - gap, starts[i]);
+    }
+    if (gapRanges.empty())
+        return *this;
+    // Tutto quello che occupa tempo oltre ai pezzi di V1.
+    std::vector<Range> busy;
+    for (const TextLayer* layer : [&] {
+             std::vector<const TextLayer*> all{&text_.baseLayer()};
+             for (const TextLayer& l : text_.layers())
+                 all.push_back(&l);
+             return all;
+         }()) {
+        for (const TextClip& c : layer->clips)
+            busy.emplace_back(c.position, c.endPosition());
+        for (const LayerPiece& p : layer->pieces)
+            busy.emplace_back(p.position, p.endPosition());
+    }
+    for (const AudioTrack& track : audio_.tracks()) {
+        for (const AudioClip& c : track.clips)
+            busy.emplace_back(c.position, c.endPosition());
+    }
+    std::sort(busy.begin(), busy.end());
+    // I tratti vuoti: dentro gli spazi di V1, fuori da tutto il resto.
+    std::vector<Range> empty;
+    for (const Range& gap : gapRanges) {
+        double at = gap.first;
+        for (const Range& b : busy) {
+            if (b.second <= at || b.first >= gap.second)
+                continue;
+            if (b.first > at + 1e-9)
+                empty.emplace_back(at, b.first);
+            at = std::max(at, b.second);
+            if (at >= gap.second)
+                break;
+        }
+        if (gap.second > at + 1e-9)
+            empty.emplace_back(at, gap.second);
+    }
+    if (empty.empty())
+        return *this;
+    // Quanto si è tolto prima del punto `t` (nessun tratto vuoto lo attraversa: chi inizia in `t` non è dentro uno).
+    const auto removedBefore = [&](double t) {
+        double removed = 0.0;
+        for (const Range& e : empty) {
+            if (e.second <= t + 1e-9)
+                removed += e.second - e.first;
+        }
+        return removed;
+    };
+    Project result = *this;
+    std::vector<std::pair<int, double>> deltas;
+    for (std::size_t i = 0; i < sequence_.fragments().size(); ++i) {
+        if (const double r = removedBefore(starts[i]); r > 1e-9)
+            deltas.emplace_back(sequence_.fragments()[i].id, -r);
+    }
+    if (!result.sequence_.shiftPieces(deltas))
+        return *this;
+    // Scritte, pezzi dei livelli e clip audio: dal primo all'ultimo, ognuno sulla sua corsia.
+    struct Move
+    {
+        double from;
+        int kind;  // 0 scritta, 1 pezzo di livello, 2 clip audio
+        int id;
+        int lane;
+    };
+    std::vector<Move> moves;
+    {
+        std::vector<std::pair<int, const TextLayer*>> all{{TextTracks::kBaseLayerId, &text_.baseLayer()}};
+        for (const TextLayer& l : text_.layers())
+            all.emplace_back(l.id, &l);
+        for (const auto& [id, layer] : all) {
+            for (const TextClip& c : layer->clips)
+                moves.push_back({c.position, 0, c.id, id});
+            for (const LayerPiece& p : layer->pieces)
+                moves.push_back({p.position, 1, p.id, id});
+        }
+        for (const AudioTrack& track : audio_.tracks()) {
+            for (const AudioClip& c : track.clips)
+                moves.push_back({c.position, 2, c.id, track.id});
+        }
+    }
+    std::stable_sort(moves.begin(), moves.end(), [](const Move& a, const Move& b) { return a.from < b.from; });
+    for (const Move& m : moves) {
+        const double to = std::max(0.0, m.from - removedBefore(m.from));
+        if (std::abs(to - m.from) < 1e-9)
+            continue;
+        bool ok = false;
+        if (m.kind == 0)
+            ok = result.textTracks().moveTo(m.id, m.lane, to);
+        else if (m.kind == 1)
+            ok = result.textTracks().movePieceTo(m.id, m.lane, to);
+        else
+            ok = result.audioTracks().moveTo(m.id, m.lane, to);
+        if (!ok)
+            return *this;
+    }
+    return result;
+}
+
 void Project::setAudioReplacement(std::optional<AudioReplacement> replacement)
 {
     if (!replacement) {
