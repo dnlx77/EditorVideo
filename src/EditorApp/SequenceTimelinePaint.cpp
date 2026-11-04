@@ -522,10 +522,10 @@ void SequenceTimeline::paintText(QPainter& p)
     const QColor textBase(150, 104, 205);
     const QColor pieceBase(62, 128, 196);  // i pezzi di video dei livelli: blu
     p.save();
-    for (int laneIndex = 0; laneIndex < static_cast<int>(textLanes_.size()); ++laneIndex) {
+    for (int laneIndex = 0; laneIndex <= static_cast<int>(textLanes_.size()); ++laneIndex) {  // (l'ultima è V1)
         const QRectF lane = textLane(laneIndex);
         p.setClipRect(lane.adjusted(-1, -3, 1, 3));
-        for (const TextBlock& c : textLanes_[static_cast<std::size_t>(laneIndex)].clips) {
+        for (const TextBlock& c : laneRef(laneIndex).clips) {
             const QRectF full(QPointF(xForTime(c.position) + 1, lane.top() + 1), QPointF(xForTime(c.position + c.length) - 1, lane.bottom() - 1));
             if (full.right() < visibleLeft() - 4 || full.left() > visibleRight() + 4)
                 continue;

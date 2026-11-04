@@ -69,8 +69,8 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
     }
 
     // Livelli di scritte, sopra la corsia video: il nome, una scritta (bordi o spostamento) o lo sfondo.
-    if (const int textIndex = textLaneAt(pos.y()); textIndex >= 0) {
-        const TextLane& textLane = textLanes_[static_cast<std::size_t>(textIndex)];
+    if (const int textIndex = textLaneHit(pos); textIndex >= 0) {
+        const TextLane& textLane = laneRef(textIndex);
         if (pos.x() < videoLane().left() - 2) {
             setSelectedTextLayer(textLane.layerId);
             if (onTextClipSelected)
@@ -82,7 +82,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         bool atStart = false;
         if (textFadeHandleAt(pos, clipLane, clip, atStart)) {
             // Una maniglia della dissolvenza (atStart qui vuol dire "in entrata").
-            const TextBlock& c = textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)];
+            const TextBlock& c = laneRef(clipLane).clips[static_cast<std::size_t>(clip)];
             textFadeClip_ = c.clipId;
             textFadeIsIn_ = atStart;
             textFading_ = false;
@@ -93,7 +93,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
             return;
         }
         if (textEdgeAt(pos, clipLane, clip, atStart)) {
-            const TextBlock& c = textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)];
+            const TextBlock& c = laneRef(clipLane).clips[static_cast<std::size_t>(clip)];
             textTrimClip_ = c.clipId;
             textTrimAtStart_ = atStart;
             textTrimming_ = false;
@@ -105,7 +105,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
             return;
         }
         if (textClipAt(pos, clipLane, clip)) {
-            const TextBlock& c = textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)];
+            const TextBlock& c = laneRef(clipLane).clips[static_cast<std::size_t>(clip)];
             textDragClip_ = c.clipId;
             textDragging_ = false;
             textDragGrab_ = t - c.position;
@@ -400,7 +400,7 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
             setCursor(Qt::SizeHorCursor);
         else if (textFadeHandleAt(pos, lane, clip, fadeIn)) {
             setCursor(Qt::PointingHandCursor);
-            hoverClip = textLanes_[static_cast<std::size_t>(lane)].clips[static_cast<std::size_t>(clip)].clipId;
+            hoverClip = laneRef(lane).clips[static_cast<std::size_t>(clip)].clipId;
         } else if (edgeAt(pos, atStart) >= 0 || audioEdgeAt(pos, lane, clip, atStart) || textEdgeAt(pos, lane, clip, atStart) || (header >= 0 && levelBar(header).contains(pos)))
             setCursor(Qt::SizeHorCursor);
         else
@@ -553,7 +553,8 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         // In verticale si cambia livello di scritte; un pezzo di video può anche scendere su V1.
         const TextBlock* grabbed = findTextClip(textDragClip_);
         textDragToV1_ = grabbed != nullptr && grabbed->piece && onLayerPieceToV1 && videoLane().adjusted(0, -4, 0, 4).contains(QPointF(x, pos.y()));
-        if (const int lane = textLaneAt(pos.y()); lane >= 0 && !textDragToV1_)
+        // (le scritte possono anche andare su V1, i pezzi di video lo fanno con la loro strada)
+        if (const int lane = textLaneAt(pos.y(), grabbed != nullptr && !grabbed->piece); lane >= 0 && !textDragToV1_)
             textDragLane_ = lane;
         textDragStart_ = textDragToV1_ ? textDragToV1Target(x) : textDragTarget(x, textDragLane_);
         invalidate();
@@ -743,7 +744,7 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
             return;
         }
         if (moved && c != nullptr && lane >= 0 && (lane != fromLane || std::abs(to - from) > 1e-6) && onTextClipMoveTo)
-            onTextClipMoveTo(clip, textLanes_[static_cast<std::size_t>(lane)].layerId, to);
+            onTextClipMoveTo(clip, laneRef(lane).layerId, to);
         return;
     }
     if (selecting_) {
@@ -890,11 +891,11 @@ void SequenceTimeline::mouseDoubleClickEvent(QMouseEvent* event)
             return;
         }
     }
-    if (textLaneAt(pos.y()) >= 0) {
+    if (textLaneHit(pos) >= 0) {
         int lane = 0;
         int clip = 0;
         if (textClipAt(pos, lane, clip) && onTextActivate)
-            onTextActivate(textLanes_[static_cast<std::size_t>(lane)].clips[static_cast<std::size_t>(clip)].clipId);
+            onTextActivate(laneRef(lane).clips[static_cast<std::size_t>(clip)].clipId);
         return;
     }
     if (pos.x() < videoLane().left() - 2) {

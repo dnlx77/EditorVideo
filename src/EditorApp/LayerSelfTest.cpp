@@ -155,11 +155,40 @@ int runLayerTest(const QStringList&, qsizetype)
     mouse(QEvent::MouseButtonRelease, {grabX + perSecond, yVideo});
     check(loweredPiece == 11 && std::abs(loweredAt - 5.0) < 0.15, "un pezzo di livello lasciato su V1 torna nella sequenza (da 5 s)");
     loweredPiece = 0;
+    movedClip = 0;
     mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(2.0), yLow});
     mouse(QEvent::MouseMove, {line.xForSequenceTime(2.0) + perSecond / 2, (yLow + yVideo) / 2});
     mouse(QEvent::MouseMove, {line.xForSequenceTime(2.0) + perSecond, yVideo});
     mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(2.0) + perSecond, yVideo});
-    check(loweredPiece == 0, "una scritta non scende su V1");
+    check(loweredPiece == 0, "una scritta lasciata su V1 non è un pezzo che torna nella sequenza");
+    check(movedClip == 10 && movedLayer == 0, "una scritta lasciata su V1 chiede di spostarsi su V1 (livello 0)");
+
+    // Le scritte che stanno su V1, accanto al video (che dura 12 s): si prendono e si spostano lungo V1, e un clic fuori da
+    // loro è ancora sul video.
+    SequenceTimeline::TextBlock onV1{20, "Su V1", 13.0, 2.0, 0.0, 0.0};
+    line.setBaseTexts({onV1});
+    QCoreApplication::processEvents();
+    selectedText = 0;
+    mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(14.0), yVideo});
+    mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(14.0), yVideo});
+    check(selectedText == 20, "un clic su una scritta di V1 la sceglie");
+    movedClip = 0;
+    mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(14.0), yVideo});
+    mouse(QEvent::MouseMove, {line.xForSequenceTime(14.0) + perSecond / 2, yVideo});
+    mouse(QEvent::MouseMove, {line.xForSequenceTime(14.0) + perSecond, yVideo});
+    mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(14.0) + perSecond, yVideo});
+    check(movedClip == 20 && movedLayer == 0 && std::abs(movedTo - 14.0) < 0.5, "una scritta di V1 si sposta lungo V1 (a 14 s)");
+    selectedText = 0;
+    mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(5.0), yVideo});
+    mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(5.0), yVideo});
+    check(selectedText == 0 && line.selectedTextClip() == 0, "un clic sul video di V1, lontano dalle scritte, non sceglie scritte");
+    // Dalla corsia di V1 una scritta sale su un livello.
+    movedClip = 0;
+    mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(14.0), yVideo});
+    mouse(QEvent::MouseMove, {line.xForSequenceTime(14.0), (yVideo + yLow) / 2});
+    mouse(QEvent::MouseMove, {line.xForSequenceTime(14.0), yLow});
+    mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(14.0), yLow});
+    check(movedClip == 20 && movedLayer == 1, "una scritta di V1 trascinata su V2 chiede il livello 1");
 
     std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
     return check.failures() == 0 ? 0 : 3;

@@ -571,6 +571,13 @@ int Project::lowerToV1(int pieceId, double position, bool push, int* audioClip)
         return 0;
     text_.removePiece(pieceId);
     sequence_.setTransform(id, piece.transform);
+    if (clipId == 0) {
+        // Il pezzo non ha un audio suo (era scollegato, o è stato messo senza audio): in V1 resta muto, senza un audio
+        // collegato nuovo che si sommerebbe alla clip libera che magari c'è ancora.
+        const double from = sequence_.startOf(sequence_.indexOf(id));
+        sequence_.muteRange(from, from + piece.length());
+        sequence_.setDetached(id, true);
+    }
     if (clipId != 0) {
         const AudioClip* clip = audio_.find(clipId);
         const Clip* source = find(piece.clipId);

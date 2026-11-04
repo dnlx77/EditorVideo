@@ -1312,12 +1312,22 @@ void MainWindow::refreshTimeline()
         textLanes.push_back(std::move(lane));
     }
     timeline_->setTextLanes(std::move(textLanes));
+    // Le scritte su V1, sulla corsia dei pezzi video.
+    std::vector<SequenceTimeline::TextBlock> baseTexts;
+    for (const core::TextClip& c : project_.textTracks().baseLayer().clips) {
+        QString label = QString::fromUtf8(c.text.c_str());
+        const qsizetype newline = label.indexOf(QLatin1Char('\n'));
+        if (newline >= 0)
+            label = label.left(newline) + QStringLiteral("…");
+        baseTexts.push_back({c.id, label, c.position, c.length, c.fadeIn, c.fadeOut});
+    }
+    timeline_->setBaseTexts(std::move(baseTexts));
     refreshTransitions();
     refreshGroups();
     if (removeTextLayerAction_ != nullptr)
         removeTextLayerAction_->setEnabled(!project_.textTracks().layers().empty());
     if (editTextAction_ != nullptr)
-        editTextAction_->setEnabled(!project_.textTracks().layers().empty());
+        editTextAction_->setEnabled(!project_.textTracks().layers().empty() || !project_.textTracks().baseLayer().clips.empty());
     if (timeline_->hasAudioSelection() && timeline_->audioSelectionFrom() >= std::max(sequence.totalLength(), audio.endTime()))
         timeline_->setAudioSelection(0.0, 0.0);
     if (originalAudioAction_ != nullptr)
