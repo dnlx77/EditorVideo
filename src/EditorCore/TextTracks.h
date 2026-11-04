@@ -146,9 +146,18 @@ public:
     bool removeLayer(int layerId);  // con le sue scritte
     const std::vector<TextLayer>& layers() const { return layers_; }
     const TextLayer* layer(int layerId) const;
-    int layerIndex(int layerId) const;  // -1 se non c'è
-    std::string layerName(int layerId) const;  // "V2", "V3"... (V1 è la sequenza principale); vuoto se non c'è
-    bool empty() const;  // nessuna scritta e nessun pezzo in nessun livello
+    int layerIndex(int layerId) const;  // -1 se non c'è (e per V1, che non è fra i livelli)
+    std::string layerName(int layerId) const;  // "V2", "V3"...; "V1" per kBaseLayerId; vuoto se non c'è
+
+    // V1: la corsia della sequenza principale. Ci stanno anche scritte (mai pezzi di video di livello: quelli sono i pezzi
+    // della sequenza), sotto a tutti i livelli. Ha id kBaseLayerId e non compare in layers(): si usa con gli stessi metodi
+    // delle scritte (add, moveTo, setStart...). Le scritte di V1 non si sovrappongono né fra loro né ai pezzi video:
+    // setBaseBlocked dice dove stanno i pezzi video (Project lo tiene aggiornato; è solo un dato d'appoggio, non fa parte del
+    // contenuto).
+    static constexpr int kBaseLayerId = 0;
+    const TextLayer& baseLayer() const { return base_; }
+    void setBaseBlocked(std::vector<std::pair<double, double>> spans) const { baseBlocked_ = std::move(spans); }
+    bool empty() const;  // nessuna scritta (anche su V1) e nessun pezzo in nessun livello
 
     // Scritte. add mette la scritta sul livello (l'id passato non conta) e ne restituisce l'id; 0 se il livello non
     // c'è, la scritta è più corta di kMinLength, inizia prima di 0 o si sovrappone a un'altra del livello.
@@ -212,14 +221,17 @@ public:
 
     void clear();
     // Rimette i livelli così come sono (riaprendo un progetto): ricevono id nuovi; le scritte non valide si scartano.
-    void restore(std::vector<TextLayer> layers);
+    void restore(std::vector<TextLayer> layers, std::vector<TextClip> baseClips = {});
     // Torna allo stato di `snapshot` (Annulla / Ripeti); gli id nuovi non riprendono quelli usati nel frattempo.
     void restoreEdits(const TextTracks& snapshot);
 
-    bool operator==(const TextTracks& other) const { return layers_ == other.layers_; }
+    bool operator==(const TextTracks& other) const { return layers_ == other.layers_ && base_ == other.base_; }
 
 private:
     TextClip* findMutable(int clipId);
+    TextLayer* layerMutable(int layerId);  // anche V1; nullptr se non c'è
+    std::vector<TextLayer*> allLayers();   // V1 e poi i livelli, dal più basso
+    std::vector<const TextLayer*> allLayers() const;
     LayerPiece* findPieceMutable(int pieceId);
     // Dove sta una scritta o un pezzo ([inizio, fine) nella sequenza) e il livello che lo contiene (-1 se l'id non c'è).
     bool extentOf(int id, double& position, double& end) const;
@@ -231,6 +243,8 @@ private:
     void sortLayer(TextLayer& layer) const;
 
     std::vector<TextLayer> layers_;
+    TextLayer base_;  // V1 (id kBaseLayerId): solo scritte
+    mutable std::vector<std::pair<double, double>> baseBlocked_;  // dove stanno i pezzi video di V1 (vedi setBaseBlocked)
     int nextLayerId_ = 1;
     int nextClipId_ = 1;
 };

@@ -135,6 +135,7 @@ public:
     double totalLength() const;         // fino alla fine dell'ultimo pezzo, spazi vuoti compresi
     double startOf(int index) const;    // dove inizia il pezzo `index` nella sequenza
     std::vector<double> starts() const;  // l'inizio di ogni pezzo, in una volta sola (startOf per tutti)
+    std::vector<std::pair<double, double>> spans() const;  // [inizio, fine) di ogni pezzo nella sequenza
     // Pezzo che si trova a quel tempo della sequenza (-1 se oltre la fine o in uno spazio vuoto).
     int indexAt(double seconds) const;
 

@@ -141,8 +141,9 @@ public:
     const AudioTracks& audioTracks() const { return audio_; }
 
     // Livelli di scritte (titoli e testi) sopra il video.
-    TextTracks& textTracks() { return text_; }
-    const TextTracks& textTracks() const { return text_; }
+    // (Le scritte di V1 non si sovrappongono ai pezzi video: ad ogni accesso si dice a TextTracks dove stanno.)
+    TextTracks& textTracks() { syncBaseBlocked(); return text_; }
+    const TextTracks& textTracks() const { syncBaseBlocked(); return text_; }
     // Gli stili con nome delle scritte, salvati con il progetto.
     std::vector<NamedTextStyle>& textStyles() { return textStyles_; }
     const std::vector<NamedTextStyle>& textStyles() const { return textStyles_; }
@@ -319,6 +320,7 @@ public:
 private:
     std::vector<Clip> clips_;
     AudioTracks audio_;
+    void syncBaseBlocked() const { text_.setBaseBlocked(sequence_.spans()); }
     TextTracks text_;
     TransitionList transitions_;
     std::vector<NamedTextStyle> textStyles_;

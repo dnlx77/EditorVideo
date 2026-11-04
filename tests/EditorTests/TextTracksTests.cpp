@@ -705,3 +705,81 @@ TEST(LayerPieceMoves, LiftFromV1AndLowerBack)
     EXPECT_EQ(project.liftToLayer(b, 999, 0.0), 0);
     EXPECT_NE(project.sequence().find(b), nullptr);
 }
+
+TEST(LayerPieceMoves, BetweenLayersTakesTheAudioAlong)
+{
+    Project project;
+    const int file = project.add("gita.mp4");
+    project.setAnalysis(file, {0.0}, 30.0);
+    const int v2 = project.textTracks().addLayer();
+    const int v3 = project.textTracks().addLayer();
+    int audio = 0;
+    const int piece = project.addLayerPiece(v2, ::piece(file, 2.0, 5.0, 9.0), true, &audio);
+    ASSERT_NE(piece, 0);
+    const int a2 = project.audioTracks().trackOf(audio);
+    // Da V2 a V3: il pezzo cambia livello, l'audio va su A3, e il gruppo resta.
+    const auto moved = project.moveObject({Kind::LayerPiece, piece}, v3, 3.0, true);
+    EXPECT_TRUE(moved.moved);
+    EXPECT_EQ(project.textTracks().layerOfPiece(piece), v3);
+    EXPECT_NEAR(project.textTracks().findPiece(piece)->position, 3.0, 1e-9);
+    EXPECT_NE(project.audioTracks().trackOf(audio), a2);
+    EXPECT_NEAR(project.audioTracks().find(audio)->position, 3.0, 1e-9);
+    EXPECT_EQ(project.groupMembers({Kind::LayerPiece, piece}).size(), 2u);
+    // E di nuovo su V2.
+    EXPECT_TRUE(project.moveObject({Kind::LayerPiece, piece}, v2, 3.0, true).moved);
+    EXPECT_EQ(project.audioTracks().trackOf(audio), a2);
+    // Se sul livello non c'è posto non cambia niente.
+    ASSERT_NE(project.textTracks().addPiece(v3, ::piece(file, 3.0, 0.0, 2.0)), 0);
+    const Project before = project;
+    EXPECT_FALSE(project.moveObject({Kind::LayerPiece, piece}, v3, 3.5, true).moved);
+    EXPECT_EQ(project.audioTracks().trackOf(audio), before.audioTracks().trackOf(audio));
+    EXPECT_EQ(project.textTracks().layerOfPiece(piece), v2);
+}
+
+TEST(TextOnV1, SitsBesideTheVideoPiecesWithoutOverlapping)
+{
+    Project project;
+    const int file = project.add("gita.mp4");
+    project.setAnalysis(file, {0.0}, 30.0);
+    const int a = project.sequence().insert(-1, file, 0.0, 4.0);   // [0, 4)
+    const int b = project.sequence().insert(-1, file, 10.0, 12.0);  // [4, 6)
+    ASSERT_TRUE(a != 0 && b != 0);
+    TextTracks& text = project.textTracks();
+    EXPECT_EQ(text.layerName(TextTracks::kBaseLayerId), "V1");
+    EXPECT_EQ(text.layers().size(), 0u);
+    // Sopra i pezzi video non ci sta; dopo la fine sì.
+    EXPECT_EQ(text.add(TextTracks::kBaseLayerId, title(1.0, 1.0)), 0);
+    const int t = text.add(TextTracks::kBaseLayerId, title(7.0, 2.0));
+    ASSERT_NE(t, 0);
+    EXPECT_EQ(text.layerOf(t), TextTracks::kBaseLayerId);
+    EXPECT_FALSE(text.empty());
+    // Le scritte di V1 non si sovrappongono fra loro.
+    EXPECT_EQ(text.add(TextTracks::kBaseLayerId, title(8.0, 2.0)), 0);
+    // Spostando: il punto libero più vicino è contro il pezzo video.
+    EXPECT_NEAR(project.freeSpotFor({Kind::TextClip, t}, TextTracks::kBaseLayerId, 5.0, true), 6.0, 1e-9);
+    EXPECT_TRUE(project.moveObject({Kind::TextClip, t}, TextTracks::kBaseLayerId, 6.5, true).moved);
+    EXPECT_NEAR(project.textTracks().find(t)->position, 6.5, 1e-9);
+
+    // Un pezzo video spinto verso destra spinge anche la scritta di V1 che incontra.
+    EXPECT_TRUE(project.moveObject({Kind::Piece, b}, 0, 5.0, true).moved);  // b: [5, 7)
+    EXPECT_NEAR(project.sequence().startOf(project.sequence().indexOf(b)), 5.0, 1e-9);
+    EXPECT_NEAR(project.textTracks().find(t)->position, 7.0, 1e-9);
+
+    // Una scritta di un livello scende su V1 solo dove c'è posto.
+    const int layer = project.textTracks().addLayer();
+    const int up = project.textTracks().add(layer, title(0.0, 1.0));
+    ASSERT_NE(up, 0);
+    EXPECT_FALSE(project.moveObject({Kind::TextClip, up}, TextTracks::kBaseLayerId, 0.0, true).moved);
+    EXPECT_EQ(project.textTracks().layerOf(up), layer);
+    EXPECT_TRUE(project.moveObject({Kind::TextClip, up}, TextTracks::kBaseLayerId, 12.0, true).moved);
+    EXPECT_EQ(project.textTracks().layerOf(up), TextTracks::kBaseLayerId);
+
+    // Salvataggio e riapertura: restano sulla corsia di V1, anche in un gruppo.
+    project.groups().create({{Kind::TextClip, up}, {Kind::Piece, b}});
+    const std::string json = projectToJson("C:/prova/p.evproj", project, ProjectView{});
+    const LoadedProject loaded = projectFromJson("C:/prova/p.evproj", json);
+    ASSERT_EQ(loaded.project.textTracks().baseLayer().clips.size(), 2u);
+    EXPECT_NEAR(loaded.project.textTracks().baseLayer().clips[1].position, 12.0, 1e-6);
+    const int reloaded = loaded.project.textTracks().baseLayer().clips[1].id;
+    EXPECT_EQ(loaded.project.groupMembers({Kind::TextClip, reloaded}).size(), 3u);  // (la scritta, il pezzo e il suo audio)
+}
