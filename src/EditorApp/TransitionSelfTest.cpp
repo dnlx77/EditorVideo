@@ -182,29 +182,29 @@ int runTransitionTest(const QStringList&, qsizetype)
         // Il bordo destro trascinato cambia la durata (limitata); lasciare senza muovere non cambia niente.
         int changedId = 0;
         double changedTo = 0.0;
-        int calls = 0;
+        int callCount = 0;
         line.transitionLimit = [](int, double desired) { return std::clamp(desired, 0.1, 3.0); };
         line.onTransitionDuration = [&](int id, double duration) {
             changedId = id;
             changedTo = duration;
-            ++calls;
+            ++callCount;
         };
         mouse(QEvent::MouseButtonPress, block.right(), Qt::LeftButton);
         mouse(QEvent::MouseButtonRelease, block.right(), Qt::NoButton);
-        check(calls == 0, "un clic sul bordo senza trascinare non cambia la durata");
+        check(callCount == 0, "un clic sul bordo senza trascinare non cambia la durata");
         const double perSecond = line.xForSequenceTime(1.0) - line.xForSequenceTime(0.0);
         mouse(QEvent::MouseButtonPress, block.right(), Qt::LeftButton);
         mouse(QEvent::MouseMove, block.right() + 0.25 * perSecond, Qt::LeftButton);
         mouse(QEvent::MouseMove, block.right() + 0.5 * perSecond, Qt::LeftButton);
         const QRectF during = line.transitionRectForTest(5);
         mouse(QEvent::MouseButtonRelease, block.right() + 0.5 * perSecond, Qt::NoButton);
-        check(calls == 1 && changedId == 5 && std::abs(changedTo - 3.0) < 0.05 && std::abs(during.width() - 3.0 * perSecond) < 2.0,
+        check(callCount == 1 && changedId == 5 && std::abs(changedTo - 3.0) < 0.05 && std::abs(during.width() - 3.0 * perSecond) < 2.0,
               "trascinando il bordo la durata diventa il doppio della distanza dalla giunzione (3 s)");
         mouse(QEvent::MouseButtonPress, block.right(), Qt::LeftButton);
         mouse(QEvent::MouseMove, junctionX + 0.02 * perSecond, Qt::LeftButton);
         mouse(QEvent::MouseMove, junctionX + 0.01 * perSecond, Qt::LeftButton);
         mouse(QEvent::MouseButtonRelease, junctionX + 0.01 * perSecond, Qt::NoButton);
-        check(calls == 2 && std::abs(changedTo - 0.1) < 1e-9, "la durata non scende sotto il minimo");
+        check(callCount == 2 && std::abs(changedTo - 0.1) < 1e-9, "la durata non scende sotto il minimo");
 
         // Doppio clic: si apre; un clic su un pezzo toglie la selezione della transizione.
         int activated = 0;

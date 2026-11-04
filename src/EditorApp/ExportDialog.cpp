@@ -542,8 +542,8 @@ core::VideoChange ExportDialog::videoChange() const
 
 core::AudioCodec ExportDialog::selectedAudioCodec() const
 {
-    const QVariant data = audioCodec_->currentData();
-    return data.isValid() ? static_cast<core::AudioCodec>(data.toInt()) : core::AudioCodec::Aac;
+    const QVariant value = audioCodec_->currentData();
+    return value.isValid() ? static_cast<core::AudioCodec>(value.toInt()) : core::AudioCodec::Aac;
 }
 
 std::optional<core::VideoEncoderInfo> ExportDialog::effectiveEncoder() const
@@ -898,8 +898,8 @@ void ExportDialog::applyProfile()
     const Profile& p = *chosen;
     applyingProfile_ = true;
     updating_ = true;
-    const auto select = [](QComboBox* box, const QVariant& data) {
-        const int at = box->findData(data);
+    const auto select = [](QComboBox* box, const QVariant& value) {
+        const int at = box->findData(value);
         if (at >= 0)
             box->setCurrentIndex(at);
         return at >= 0;

@@ -1,3 +1,4 @@
+#include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/SelfTests.h"
 #include "EditorApp/SequenceTimeline.h"
@@ -259,6 +260,58 @@ int runLayerMonitorTest(const QStringList& args, qsizetype at)
     monitor.setPlaying(false);
     check(best >= 1, "in riproduzione il fotogramma del livello arriva quando il pezzo inizia");
 
+    // Le maniglie sul pezzo di un livello scelto: compaiono, il gesto cambia la trasformazione di quel pezzo.
+    {
+        const int pieceId = project.textTracks().layers().front().pieces.front().id;
+        int selected = 0;
+        monitor.selectedLayerPiece = [&] { return selected; };
+        int editedId = 0;
+        core::Transform edited;
+        monitor.onLayerTransformEdited = [&](int id, const core::Transform& t) {
+            editedId = id;
+            edited = t;
+        };
+        monitor.setTransformMode(true);
+        monitor.seekTo(1.2);
+        QCoreApplication::processEvents();
+        check(!monitor.manipulatorsVisible() || selected == 0, "con un pezzo di V1 sotto e nessun livello scelto vale V1");
+        selected = pieceId;
+        monitor.refreshManipulators();
+        check(monitor.manipulatorsVisible(), "scelto il pezzo di un livello le maniglie ci sono");
+        PlayerWidget* player = nullptr;
+        for (QWidget* w : monitor.findChildren<QWidget*>()) {
+            player = dynamic_cast<PlayerWidget*>(w);
+            if (player != nullptr)
+                break;
+        }
+        check(player != nullptr, "il monitor ha il lettore");
+        if (player != nullptr) {
+            const QRectF canvas = player->imageRect();
+            const double projW = project.format().video()->width;
+            const double projH = project.format().video()->height;
+            const double scale = canvas.width() / projW;
+            QWidget* view = player->childAt(canvas.center().toPoint());
+            check(view != nullptr, "c'è un widget sotto l'immagine");
+            if (view != nullptr) {
+                const auto at = [&](double x, double y) { return QPointF(canvas.left() + x * scale, canvas.top() + y * scale); };
+                const auto send = [&](QEvent::Type type, QPointF p) {
+                    QMouseEvent e(type, p, view->mapToGlobal(p), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                                  type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+                    QCoreApplication::sendEvent(view, &e);
+                };
+                send(QEvent::MouseButtonPress, at(projW / 2.0, projH / 2.0));
+                send(QEvent::MouseMove, at(projW / 2.0 + 30, projH / 2.0 + 10));
+                check(editedId == 0, "durante il gesto sul livello non arriva ancora nessuna modifica");
+                send(QEvent::MouseMove, at(projW / 2.0 + 60, projH / 2.0 + 20));
+                send(QEvent::MouseButtonRelease, at(projW / 2.0 + 60, projH / 2.0 + 20));
+                check(editedId == pieceId, "al rilascio la modifica è per il pezzo del livello");
+                check(std::abs(edited.posX - 60) < 1.0 && std::abs(edited.posY - 20) < 1.0, "la posizione cambia di quanto trascinato");
+            }
+        }
+        monitor.setTransformMode(false);
+        selected = 0;
+    }
+
     // Un pezzo di livello oltre la fine di V1: il monitor ci arriva, lo mostra e si ferma solo alla sua fine.
     piece.position = length + 0.5;
     check(project.textTracks().addPiece(low, piece) != 0, "un pezzo dopo la fine del video principale");
@@ -279,6 +332,36 @@ int runLayerMonitorTest(const QStringList& args, qsizetype at)
     }
     check(reached > length + 1.2, "la riproduzione continua oltre la fine di V1");
     check(!monitor.isPlaying(), "la riproduzione si ferma alla fine del programma");
+
+    // Senza pezzi su V1, solo con una scritta su un livello: la riproduzione parte lo stesso e arriva alla fine della scritta.
+    {
+        core::Project onlyText;
+        const int layer = onlyText.textTracks().addLayer();
+        core::TextClip text;
+        text.position = 0.5;
+        text.length = 1.0;
+        text.text = "Solo scritta";
+        check(onlyText.textTracks().add(layer, text) != 0, "una scritta su un livello senza video su V1");
+        ProgramMonitor bare(onlyText);
+        bare.resize(640, 360);
+        bare.show();
+        bare.sequenceChanged();
+        QCoreApplication::processEvents();
+        check(std::abs(bare.programEnd() - 1.5) < 1e-6, "la fine del programma è la fine della scritta");
+        bare.seekTo(1.0);
+        QCoreApplication::processEvents();
+        check(std::abs(bare.position() - 1.0) < 0.05, "ci si posiziona dentro la scritta senza video");
+        bare.seekTo(0.0);
+        bare.setPlaying(true);
+        check(bare.isPlaying(), "la riproduzione parte anche senza video su V1");
+        double got = 0.0;
+        for (int i = 0; i < 300 && bare.isPlaying(); ++i) {
+            QThread::msleep(20);
+            QCoreApplication::processEvents();
+            got = std::max(got, bare.position());
+        }
+        check(got > 1.3 && !bare.isPlaying(), "arriva in fondo alla scritta e si ferma");
+    }
 
     std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
     return check.failures() == 0 ? 0 : 3;

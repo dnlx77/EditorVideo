@@ -15,7 +15,8 @@ constexpr ManipSize kSquare{1000, 1000, 1920, 1080};  // un file quadrato: bande
 
 Point2 corner(const Transform& t, const ManipSize& s, int index)
 {
-    return computeGeometry(t, s.srcW, s.srcH, s.projW, s.projH).corners[static_cast<std::size_t>(index)];
+    return computeGeometry(t, static_cast<int>(s.srcW), static_cast<int>(s.srcH), static_cast<int>(s.projW),
+                           static_cast<int>(s.projH)).corners[static_cast<std::size_t>(index)];
 }
 
 void expectNear(Point2 p, Point2 q, double tolerance = 1e-6)

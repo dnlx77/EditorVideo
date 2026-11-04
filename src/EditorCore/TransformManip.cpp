@@ -7,6 +7,13 @@ namespace editor::core {
 
 namespace {
 
+// Le misure arrivano in double (contano le proporzioni); computeGeometry vuole pixel interi.
+TransformGeometry geometryOf(const Transform& t, const ManipSize& size)
+{
+    return computeGeometry(t, static_cast<int>(size.srcW), static_cast<int>(size.srcH), static_cast<int>(size.projW),
+                           static_cast<int>(size.projH));
+}
+
 constexpr double kPi = 3.14159265358979323846;
 
 bool valid(const ManipSize& s)
@@ -44,7 +51,7 @@ double distance(Point2 a, Point2 b)
 
 Point2 manipRotationHandle(const Transform& transform, const ManipSize& size, double pxPerUnit)
 {
-    const TransformGeometry g = computeGeometry(normalized(transform), size.srcW, size.srcH, size.projW, size.projH);
+    const TransformGeometry g = geometryOf(normalized(transform), size);
     const Point2 mid{(g.corners[0].x + g.corners[1].x) / 2.0, (g.corners[0].y + g.corners[1].y) / 2.0};
     const Point2 center = centerOf(g);
     double dx = mid.x - center.x;
@@ -65,7 +72,7 @@ ManipHit manipHitTest(const Transform& transform, const ManipSize& size, Point2 
 {
     if (!valid(size))
         return {};
-    const TransformGeometry g = computeGeometry(normalized(transform), size.srcW, size.srcH, size.projW, size.projH);
+    const TransformGeometry g = geometryOf(normalized(transform), size);
     const double radius = kManipHandleRadius / std::max(pxPerUnit, 1e-9);
     if (distance(at, manipRotationHandle(transform, size, pxPerUnit)) <= radius)
         return {ManipPart::Rotate, -1};
@@ -98,7 +105,7 @@ Transform manipScale(const Transform& start, const ManipSize& size, int corner, 
     if (!valid(size) || corner < 0 || corner > 3)
         return start;
     const Transform t0 = normalized(start);
-    const TransformGeometry g = computeGeometry(t0, size.srcW, size.srcH, size.projW, size.projH);
+    const TransformGeometry g = geometryOf(t0, size);
     const std::array<Point2, 4> source = {Point2{g.sourceLeft, g.sourceTop}, Point2{g.sourceRight, g.sourceTop},
                                           Point2{g.sourceRight, g.sourceBottom}, Point2{g.sourceLeft, g.sourceBottom}};
     const Point2 dragged = source[static_cast<std::size_t>(corner)];
