@@ -153,6 +153,9 @@ void ProgramMonitor::setVideoSource(std::function<QString(const QString& path)> 
 void ProgramMonitor::reloadVideo()
 {
     player_->reloadVideo();
+    layerPlaybacks_.clear();  // possono leggere da un altro file (proxy pronto, qualità cambiata)
+    if (!playing_)
+        updateLayers();
     transitionPlayback_.reset();
     if (transitionId_ != 0 && !playing_) {
         if (const auto placement = project_.transitionPlacement(transitionId_))
@@ -181,7 +184,7 @@ void ProgramMonitor::load(int index, double offset)
     primedTransitionId_ = 0;
     transitionFrame_.reset();
     player_->setBlank(false);
-    player_->setTransformCanvas(transformMode_ || cropMode_);
+    player_->setTransformCanvas(transformMode_ || cropMode_ || layersShown_);
     player_->setFrameTransform(f.transform, frameSize());  // scala, posizione, rotazione... del pezzo
     if (f.clipId != loadedClipId_) {
         player_->openFile(QString::fromStdString(clip->path));
@@ -508,6 +511,64 @@ void ProgramMonitor::updateTextOverlay()
     player_->updateOverlay();
 }
 
+void ProgramMonitor::updateLayers()
+{
+    constexpr double kPrime = 1.0;  // quanto prima si apre il file di un pezzo che sta per iniziare, in riproduzione
+    std::vector<PlayerWidget::LayerFrame> shown;
+    std::vector<int> wanted;
+    if (!showingSource_) {
+        const QSize project = frameSize();
+        const QSizeF fitted = QSizeF(project).scaled(QSizeF(1280, 720), Qt::KeepAspectRatio);
+        const int boxWidth = std::min(project.width(), std::max(2, static_cast<int>(fitted.width())));
+        const int boxHeight = std::min(project.height(), std::max(2, static_cast<int>(fitted.height())));
+        for (const core::TextLayer& layer : project_.textTracks().layers()) {
+            for (const core::LayerPiece& piece : layer.pieces) {
+                const bool active = position_ >= piece.position - 1e-9 && position_ < piece.endPosition() - 1e-9;
+                const bool coming = playing_ && speed_ > 0 && !active && piece.position > position_ && piece.position - position_ < kPrime;
+                if (!active && !coming)
+                    continue;
+                const core::Clip* clip = project_.find(piece.clipId);
+                if (clip == nullptr)
+                    continue;
+                std::string path = clip->path;
+                if (player_->videoSourceFor)
+                    path = player_->videoSourceFor(QString::fromStdString(clip->path)).toStdString();
+                std::unique_ptr<core::LayerPlayback>& slot = layerPlaybacks_[piece.id];
+                if (!slot || slot->path() != path)
+                    slot = std::make_unique<core::LayerPlayback>(path, boxWidth, boxHeight);
+                wanted.push_back(piece.id);
+                if (coming) {
+                    slot->request(piece.start, false);  // il primo fotogramma, pronto prima che serva
+                    continue;
+                }
+                const double fileTime = piece.start + (position_ - piece.position);
+                std::shared_ptr<core::VideoFrame> frame;
+                if (playing_) {
+                    slot->request(fileTime, true);
+                    frame = slot->frame(fileTime);
+                } else {
+                    frame = slot->waitFrame(fileTime, 800);
+                }
+                shown.push_back({std::move(frame), piece.transform});
+            }
+        }
+    }
+    for (auto it = layerPlaybacks_.begin(); it != layerPlaybacks_.end();) {
+        it = std::find(wanted.begin(), wanted.end(), it->first) == wanted.end() ? layerPlaybacks_.erase(it) : std::next(it);
+    }
+    const bool any = !shown.empty();
+    layerFramesShown_ = static_cast<int>(std::count_if(shown.begin(), shown.end(), [](const PlayerWidget::LayerFrame& l) { return l.frame != nullptr; }));
+    player_->setLayers(std::move(shown), frameSize());
+    if (any != layersShown_) {
+        layersShown_ = any;
+        player_->setTransformCanvas(transformMode_ || cropMode_ || layersShown_);
+        // (cambiare il modo di disegno fa ricalcolare la trasformazione: V1 si rimette com'era, se c'è un suo pezzo)
+        if (!showingSource_ && transitionId_ == 0 && gapIndex_ < 0 && index_ >= 0
+            && index_ < static_cast<int>(project_.sequence().fragments().size()))
+            applyShownTransform();
+    }
+}
+
 QSize ProgramMonitor::frameSize() const
 {
     // Le misure del fotogramma del progetto; senza formato, 16:9.
@@ -663,6 +724,7 @@ void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QStrin
     transitionFrame_.reset();
     index_ = -1;  // nessun pezzo: il prossimo seekTo riapre quello giusto
     showingSource_ = true;
+    updateLayers();
     updateTextOverlay();
     player_->setBlank(false);
     player_->setFrameTransform({}, {});  // un fotogramma del file, com'è
@@ -1085,6 +1147,7 @@ void ProgramMonitor::updatePosition()
                 primeTransition();
         }
     }
+    updateLayers();
     updateLabels();
     updateTextOverlay();
     if (onPositionChanged)

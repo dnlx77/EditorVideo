@@ -107,6 +107,14 @@ public:
     // base (o una misura nulla) = disegno normale, adattato alla finestra. Vale solo per i fotogrammi del file, non per
     // quelli fatti da altri (showExternalFrame).
     void setFrameTransform(const core::Transform& transform, QSize projectSize);
+    // I pezzi di video dei livelli sopra V1 (V2, V3...) che si vedono ora, dal più basso al più alto: si disegnano sopra il
+    // video, ognuno con la sua trasformazione, dentro il fotogramma del progetto (`projectSize`). Vuoto = nessuno.
+    struct LayerFrame
+    {
+        std::shared_ptr<core::VideoFrame> frame;
+        core::Transform transform;
+    };
+    void setLayers(std::vector<LayerFrame> layers, QSize projectSize);
     // true: il fotogramma si disegna sempre dentro il fotogramma del progetto (con le sue proporzioni), anche senza
     // trasformazione: serve ai manipolatori, che stanno sul fotogramma del progetto. Poi si richiama setFrameTransform.
     void setTransformCanvas(bool force);
