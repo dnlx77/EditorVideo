@@ -103,7 +103,7 @@ TEST_F(AudioMixerTest, PiecesFollowEachOtherWithoutAGap)
         // A1: a.wav 0-1 s, poi b.wav (contenuto da 2 s: indice + 2 s). La musica: a.wav intero.
         const long long own = f < kRate ? sampleAudio(f) : sampleAudio(2 * kRate + (f - kRate));
         const long long music = sampleAudio(f);
-        const long long expected = std::lround(own + music * 0.5);
+        const long long expected = std::lround(static_cast<double>(own) + static_cast<double>(music) * 0.5);
         ASSERT_NEAR(out[f * 2], expected, 1) << "fotogramma " << f;
     }
 }

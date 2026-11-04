@@ -1113,10 +1113,10 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 while (!player->statusText().contains(QStringLiteral("proxy")) && wait.elapsed() < 60000)
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
                 const bool usesProxy = player->statusText().contains(QStringLiteral("proxy"));
-                const double position = player->currentPosition();
-                const bool positionOk = std::abs(position - at) < 0.05;
+                const double playedAt = player->currentPosition();
+                const bool positionOk = std::abs(playedAt - at) < 0.05;
                 std::printf("Proxy 1/2: %s in %.1f s, posizione %.3f s (era %.3f) %s\n",
-                            usesProxy ? "in uso" : "NON in uso", wait.elapsed() / 1000.0, position, at, positionOk ? "ok" : "NO");
+                            usesProxy ? "in uso" : "NON in uso", wait.elapsed() / 1000.0, playedAt, at, positionOk ? "ok" : "NO");
                 std::fflush(stdout);
                 window->setPreviewQuality(window->currentFile(), quality);
                 if (quality != 2) {
@@ -1461,11 +1461,11 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
             {
                 SequenceTimeline* timeline = window->sequenceTimeline();
                 const auto& seq = window->project().sequence();
-                const QString file = QString::fromStdString(window->project().clips().front().path);
+                const QString source = QString::fromStdString(window->project().clips().front().path);
                 const std::size_t pieces = seq.fragments().size();
                 const std::size_t clips = window->project().clips().size();
                 QMimeData mime;
-                mime.setUrls({QUrl::fromLocalFile(file)});
+                mime.setUrls({QUrl::fromLocalFile(source)});
                 // Linea del tempo rimpicciolita oltre "Adatta": lo spazio vuoto a destra vale come "in fondo".
                 for (int i = 0; i < 20; ++i)
                     timeline->zoomOut();
@@ -1486,7 +1486,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 QDir folder(QDir::temp().filePath(QStringLiteral("EditorVideoProvaTrascina")));
                 folder.removeRecursively();
                 QDir().mkpath(folder.path());
-                QFile::copy(file, folder.filePath(QStringLiteral("copia.") + QFileInfo(file).suffix()));
+                QFile::copy(source, folder.filePath(QStringLiteral("copia.") + QFileInfo(source).suffix()));
                 QFile note(folder.filePath(QStringLiteral("note.txt")));
                 if (note.open(QIODevice::WriteOnly))
                     note.write("non è un video");
@@ -1916,8 +1916,8 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                     // Trascinata sull'immagine: il nuovo centro si vede subito nel monitor, e Annulla lo riporta com'era.
                     const double oldX = text.find(third)->style.centerX;
                     const bool movedOnScreen = window->moveTextOnScreen(third, 0.25, 0.4) && std::abs(text.find(third)->style.centerX - 0.25) < 1e-9;
-                    const std::vector<core::TextClip> moved = monitor->visibleText();
-                    const bool seenMoved = !moved.empty() && std::abs(moved.back().style.centerY - 0.4) < 1e-9;
+                    const std::vector<core::TextClip> movedText = monitor->visibleText();
+                    const bool seenMoved = !movedText.empty() && std::abs(movedText.back().style.centerY - 0.4) < 1e-9;
                     const bool movedBack = window->undo() && std::abs(text.find(third)->style.centerX - oldX) < 1e-9;
                     onMonitor = shown && hidden && !grabbed.isNull() && monitor->textOverlay().renderCount() > 0 && movedOnScreen
                              && seenMoved && movedBack;
@@ -2108,10 +2108,10 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 const core::AudioTracks& audio = window->project().audioTracks();
                 const QString wav = QDir::temp().filePath(QStringLiteral("EditorVideoProvaAudio.wav"));
                 {
-                    QFile file(wav);
+                    QFile wavFile(wav);
                     const int rate = 8000;
-                    if (file.open(QIODevice::WriteOnly)) {
-                        QDataStream out(&file);
+                    if (wavFile.open(QIODevice::WriteOnly)) {
+                        QDataStream out(&wavFile);
                         out.setByteOrder(QDataStream::LittleEndian);
                         out.writeRawData("RIFF", 4);
                         out << quint32(36 + rate * 2);
@@ -2133,9 +2133,9 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 window->dropFiles({QDir::toNativeSeparators(wav)}, MainWindow::DropTarget::Sequence, 0);
                 const bool dropped = sequence.fragments().size() == pieces && audio.tracks().size() == 1
                                   && audio.tracks()[0].clips.size() == 1;
-                QElapsedTimer analysis;
-                analysis.start();
-                while (analysis.elapsed() < 20000 && !window->project().allAnalyzed())
+                QElapsedTimer analysisTimer;
+                analysisTimer.start();
+                while (analysisTimer.elapsed() < 20000 && !window->project().allAnalyzed())
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
                 int wavId = 0;
                 for (const core::Clip& c : window->project().clips()) {

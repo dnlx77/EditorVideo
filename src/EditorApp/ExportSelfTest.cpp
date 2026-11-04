@@ -35,7 +35,7 @@ int runExportPanelTest(const QStringList&, qsizetype)
     const auto file = [&](const char* name) { return QDir(folder.path()).filePath(QString::fromLatin1(name)); };
     for (const char* name : {"esiste.mkv", "origine.mkv"}) {
         QFile f(file(name));
-        f.open(QIODevice::WriteOnly);
+        static_cast<void>(f.open(QIODevice::WriteOnly));
         f.write("x");
     }
 
@@ -187,13 +187,13 @@ int runExportPanelTest(const QStringList&, qsizetype)
         // i profili veri.
         {
             setExportProfilesStore(QStringLiteral("EditorVideoProva"));
-            const int before = profiles->count();
+            const int profilesBefore = profiles->count();
             dialog.storeProfileAs(QStringLiteral("Mio uno"));
             dialog.storeProfileAs(QStringLiteral("Mio due"));
-            check(profiles->count() == before + 2 && profiles->currentData().toString() == QStringLiteral("Mio due"),
+            check(profiles->count() == profilesBefore + 2 && profiles->currentData().toString() == QStringLiteral("Mio due"),
                   "salvare due profili nuovi li aggiunge");
             dialog.storeProfileAs(QStringLiteral("mio UNO"));
-            check(profiles->count() == before + 2, "salvare con lo stesso nome sostituisce");
+            check(profiles->count() == profilesBefore + 2, "salvare con lo stesso nome sostituisce");
             QSettings(QSettings::NativeFormat, QSettings::UserScope, QStringLiteral("EditorVideo"), QStringLiteral("EditorVideoProva")).clear();
             setExportProfilesStore(QStringLiteral("EditorVideo"));
         }
