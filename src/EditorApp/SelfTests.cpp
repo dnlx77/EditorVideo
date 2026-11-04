@@ -734,6 +734,7 @@ constexpr CommandLineTest kTests[] = {
     {"--transition-test", runTransitionTest},
     {"--group-test", runGroupTest},
     {"--transform-test", runTransformTest},
+    {"--manip-test", runManipTest},
     {"--export-panel-test", runExportPanelTest},
 };
 

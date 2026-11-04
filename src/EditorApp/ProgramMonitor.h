@@ -2,10 +2,14 @@
 
 #include "EditorApp/SequenceAudio.h"
 #include "EditorApp/TextOverlay.h"
+#include "EditorCore/Transform.h"
+#include "EditorCore/TransformManip.h"
 #include "EditorCore/TransitionPlayback.h"
 
 #include <QtCore/QElapsedTimer>
 #include <QtWidgets/QWidget>
+
+class QToolButton;
 
 #include <functional>
 #include <memory>
@@ -87,6 +91,17 @@ public:
     std::function<void(int clipId)> onTextGrabbed;
     std::function<void(int clipId, double centerX, double centerY)> onTextDragged;
 
+    // Manipolatori sul monitor (tasto Q / pulsante «Trasforma»): sul pezzo mostrato, a monitor fermo, si trascina il centro
+    // (posizione), un angolo (scala; Maiusc = proporzioni libere, Alt = dal centro) o la maniglia sopra il riquadro
+    // (rotazione; Maiusc = scatti di 15°). `onTransformEdited` arriva una volta sola, al rilascio, con il pezzo e la nuova
+    // trasformazione (un gesto = un passo di Annulla).
+    void setTransformMode(bool on);
+    bool transformMode() const { return transformMode_; }
+    std::function<void(int fragmentId, const core::Transform& transform)> onTransformEdited;
+    std::function<void(bool on)> onTransformModeChanged;  // cambiato dal pulsante del monitor
+    // Per le prove: i manipolatori sono visibili e sul pezzo (non in riproduzione, né in una transizione o in uno spazio vuoto).
+    bool manipulatorsVisible() const;
+
     QSize minimumSizeHint() const override { return {120, 60}; }
 
 protected:
@@ -108,7 +123,16 @@ private:
     void updatePosition();
     void updateLabels();
     QSize frameSize() const;
+    bool grabImage(QPointF at);
     bool grabText(QPointF at);
+    // Manipolatori: la trasformazione del pezzo mostrato (quella in corso se si sta trascinando), il suo disegno e il gesto.
+    core::Transform shownTransform() const;
+    std::optional<core::ManipSize> manipSize() const;  // misure del file e del progetto; vuoto se non c'è da manipolare
+    double manipScreenScale() const;                   // pixel dello schermo per pixel del progetto
+    void paintManipulators(QPainter& painter, const QRectF& target);
+    void dragImage(QPointF at);
+    void dropImage(QPointF at);
+    void applyShownTransform();
     void dragText(QPointF at);
     void dropText(QPointF at);
     void updateOverlayFrame();  // dice al lettore come disegnare le scritte
@@ -135,6 +159,17 @@ private:
         QPointF grabOffset;   // dal centro della scritta al punto afferrato (frazioni del fotogramma)
     };
     std::optional<TextDrag> textDrag_;
+    struct ManipDrag
+    {
+        int fragmentId = 0;
+        core::ManipHit hit;
+        core::Transform start;
+        core::Transform current;
+        core::Point2 from;  // dove si è afferrato, in pixel del progetto
+    };
+    std::optional<ManipDrag> manipDrag_;
+    bool transformMode_ = false;
+    QToolButton* transformButton_ = nullptr;
     bool showingSource_ = false;             // si mostra un fotogramma di un file, non il montaggio
     PlayerWidget* player_ = nullptr;
     SequenceAudio sequenceAudio_;
