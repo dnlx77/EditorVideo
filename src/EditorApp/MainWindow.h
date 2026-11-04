@@ -242,6 +242,8 @@ public:
     bool lastExportSucceeded() const { return lastExportOk_; }
     QString lastExportProblem() const { return lastExportProblem_; }  // "annullata" o il messaggio d'errore
     // Cosa verrebbe esportato adesso (vuoto = niente) e quanto dura.
+    // Il progetto da esportare: com'è, o (con "Chiudi gli spazi vuoti") senza il vuoto vero; `closed` tiene la copia.
+    const core::Project& exportSource(std::optional<core::Project>& closed) const;
     std::vector<core::ClipRanges> exportPlan() const;
     bool hasExportPlan() const;  // come !exportPlan().empty(), senza costruire il piano
     double exportLength();  // durata del file che si esporterebbe (per le prove)

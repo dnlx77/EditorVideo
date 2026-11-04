@@ -135,6 +135,10 @@ public:
     // La sequenza come elenco di file e tratti da esportare (pezzi consecutivi dello stesso file insieme), con lo spazio
     // vuoto prima di ogni tratto (ClipRanges::gapsBefore; con GapExport::Close nessuno).
     std::vector<ClipRanges> exportPlan(GapExport gaps = GapExport::Close) const;
+    // Una copia del progetto senza il vuoto vero: dagli spazi vuoti di V1 si tolgono i tratti in cui non c'è nient'altro
+    // (né scritte, né pezzi di livelli, né clip audio) e tutto quello che sta dopo scorre indietro. Dove c'è una scritta o
+    // altro lo spazio resta (per la sola parte occupata). Se non si riesce, il progetto com'è.
+    Project withEmptySpaceClosed() const;
 
     // Tracce audio: A1 (l'audio dei pezzi video) e quelle aggiunte con le clip audio.
     AudioTracks& audioTracks() { return audio_; }
