@@ -171,6 +171,7 @@ public:
     bool applyTransformEdit(const std::function<void(core::Transform&)>& edit, const std::string& field);
     // Un gesto dei manipolatori sul monitor (rilasciato): il pezzo `fragmentId` prende `transform`; un passo di Annulla.
     bool commitMonitorTransform(int fragmentId, const core::Transform& transform);
+    bool commitMonitorLayerTransform(int pieceId, const core::Transform& transform);
     QAction* transformModeAction() const { return transformAction_; }
     QAction* cropModeAction() const { return cropAction_; }
     // "Adatta" / "Riempi" sui pezzi scelti.

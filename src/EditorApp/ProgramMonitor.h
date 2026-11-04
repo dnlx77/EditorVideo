@@ -4,6 +4,7 @@
 #include "EditorApp/SequenceAudio.h"
 #include "EditorApp/TextOverlay.h"
 #include "EditorCore/LayerPlayback.h"
+#include "EditorCore/TextTracks.h"
 #include "EditorCore/Transform.h"
 #include "EditorCore/TransformManip.h"
 #include "EditorCore/TransitionPlayback.h"
@@ -48,6 +49,7 @@ public:
     void audioMixChanged();
     void seekTo(double seconds);  // tempo della sequenza
     double programEnd() const;  // fine del programma: ultimo pezzo, scritta o pezzo di livello
+    bool hasProgram() const;  // c'è qualcosa da riprodurre: pezzi su V1, oppure solo scritte e livelli
     void seekRelative(double deltaSeconds);
     void togglePlayPause();  // mettendo in pausa la velocità torna quella scelta (finisce la spola)
     void setPlaying(bool playing);
@@ -104,6 +106,11 @@ public:
     void setTransformMode(bool on);
     bool transformMode() const { return transformMode_; }
     std::function<void(int fragmentId, const core::Transform& transform)> onTransformEdited;
+    // Il pezzo di un livello (V2, V3...) scelto sulla linea del tempo (0 = nessuno): le maniglie agiscono su quello, se è
+    // sotto il cursore. Il gesto finito arriva a `onLayerTransformEdited`.
+    std::function<int()> selectedLayerPiece;
+    std::function<void(int pieceId, const core::Transform& transform)> onLayerTransformEdited;
+    void refreshManipulators();  // la scelta sulla linea del tempo è cambiata
     std::function<void(bool on)> onTransformModeChanged;  // cambiato dal pulsante del monitor
     // Ritaglio sul monitor (tasto W): maniglie sui quattro lati e sugli angoli del riquadro ritagliato; il lato va dove porti il
     // mouse. Si esclude con la modalità Trasforma.
@@ -140,6 +147,9 @@ private:
     bool grabImage(QPointF at);
     bool grabText(QPointF at);
     // Manipolatori: la trasformazione del pezzo mostrato (quella in corso se si sta trascinando), il suo disegno e il gesto.
+    const core::LayerPiece* manipPiece() const;
+    core::Transform v1Transform() const;  // la trasformazione del pezzo di V1 mostrato (quella in corso se lo si trascina)
+    void showDraggedLayer();
     core::Transform shownTransform() const;
     std::optional<core::ManipSize> manipSize() const;  // misure del file e del progetto; vuoto se non c'è da manipolare
     double manipScreenScale() const;                   // pixel dello schermo per pixel del progetto
@@ -184,6 +194,7 @@ private:
         core::Transform current;
         core::Point2 from;  // dove si è afferrato, in pixel del progetto
         int cropEdges = 0;  // in modalità Ritaglia: i lati trascinati (kCropLeft...)
+        bool layer = false;  // `fragmentId` è un pezzo di un livello, non di V1
     };
     std::optional<ManipDrag> manipDrag_;
     bool transformMode_ = false;
@@ -214,6 +225,8 @@ private:
     QElapsedTimer gapClock_;
     int loadedClipId_ = 0;  // file aperto nel lettore
     std::map<int, std::unique_ptr<core::LayerPlayback>> layerPlaybacks_;  // per id del pezzo del livello
+    std::vector<PlayerWidget::LayerFrame> lastLayers_;  // i fotogrammi dei livelli mostrati, e di chi sono
+    std::vector<int> lastLayerIds_;
     int layerFramesShown_ = 0;
     bool layersShown_ = false;  // ci sono pezzi di livelli sopra V1: V1 si disegna sempre nel fotogramma del progetto
     double position_ = 0.0;

@@ -207,6 +207,13 @@ MainWindow::MainWindow(QWidget* parent)
     program_->onTransformEdited = [this](int fragmentId, const core::Transform& transform) {
         commitMonitorTransform(fragmentId, transform);
     };
+    program_->selectedLayerPiece = [this] {
+        const int id = timeline_->selectedTextClip();
+        return id != 0 && project_.textTracks().findPiece(id) != nullptr ? id : 0;
+    };
+    program_->onLayerTransformEdited = [this](int pieceId, const core::Transform& transform) {
+        commitMonitorLayerTransform(pieceId, transform);
+    };
     program_->onTransformModeChanged = [this](bool on) {
         if (transformAction_ != nullptr && transformAction_->isChecked() != on)
             transformAction_->setChecked(on);
