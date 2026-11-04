@@ -139,6 +139,8 @@ public:
     // Livelli di scritte, dal più basso al più alto (l'ordine dei livelli nel progetto).
     void setTextLanes(std::vector<TextLane> lanes);
     const std::vector<TextLane>& textLanes() const { return textLanes_; }
+    // Le scritte che stanno su V1, insieme ai pezzi video.
+    void setBaseTexts(std::vector<TextBlock> clips);
     // Scritta selezionata (0 = nessuna): selezionarla toglie la selezione di ogni altro oggetto e viceversa.
     void setSelectedTextClip(int clipId);
     int selectedTextClip() const { return selectedTextClip_; }
@@ -311,7 +313,13 @@ private:
     double lanesTop() const { return kRulerHeight + detail::kTop; }  // dove iniziano le corsie, sotto il righello
     double textBand() const;                 // altezza occupata dai livelli di scritte (sopra la corsia video)
     QRectF textLane(int layerIndex) const;   // livello di scritte `layerIndex` (0 = il più basso, subito sopra il video)
-    int textLaneAt(double y) const;          // livello di scritte sotto y (-1 = nessuno)
+    // Livello di scritte sotto y (-1 = nessuno). Con includeBase anche la corsia V1, che ha indice textLanes_.size() (le sue
+    // scritte stanno in baseTexts_): è un livello come gli altri per le scritte, ma la sua corsia è quella dei pezzi video.
+    int textLaneAt(double y, bool includeBase = false) const;
+    // La corsia di scritte sotto il mouse, ma V1 solo se lì c'è una scritta (o il suo bordo o una maniglia): altrimenti il
+    // clic è sui pezzi video.
+    int textLaneHit(const QPointF& pos) const;
+    const TextLane& laneRef(int lane) const { return lane < static_cast<int>(textLanes_.size()) ? textLanes_[static_cast<std::size_t>(lane)] : baseTexts_; }
     bool textClipAt(const QPointF& pos, int& lane, int& clip) const;
     bool textEdgeAt(const QPointF& pos, int& lane, int& clip, bool& atStart) const;
     const TextBlock* findTextClip(int clipId, int* lane = nullptr) const;
@@ -472,6 +480,7 @@ private:
 
     int selectedAudioClip_ = 0;
     std::vector<TextLane> textLanes_;
+    TextLane baseTexts_;  // le scritte su V1 (layerId 0), sulla stessa corsia dei pezzi video
     int selectedTextClip_ = 0;
     int selectedTextLayer_ = 0;
     int textDragClip_ = 0;      // scritta presa (spostamento)

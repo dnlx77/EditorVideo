@@ -120,6 +120,8 @@ void SequenceTimeline::updateDuration()
         for (const TextBlock& c : lane.clips)
             end = std::max(end, c.position + c.length);
     }
+    for (const TextBlock& c : baseTexts_.clips)
+        end = std::max(end, c.position + c.length);
     // Dopo la fine resta sempre un po' di posto (anche con "Adatta"), per poter trascinare più avanti.
     setTimelineDuration(end <= 0 ? 0.0 : end + std::max(2.0, end * 0.15));
 }
@@ -339,12 +341,12 @@ bool SequenceTimeline::objectAt(const QPointF& pos, Object& target)
             return 0;
         return blocks_[static_cast<std::size_t>(index)].fragmentId;
     };
-    if (const int textLane = textLaneAt(pos.y()); textLane >= 0) {
+    if (const int textLane = textLaneHit(pos); textLane >= 0) {
         int clipLane = 0;
         int clip = 0;
         if (!textClipAt(pos, clipLane, clip))
             return false;
-        const TextBlock& hit = textLanes_[static_cast<std::size_t>(clipLane)].clips[static_cast<std::size_t>(clip)];
+        const TextBlock& hit = laneRef(clipLane).clips[static_cast<std::size_t>(clip)];
         target = {hit.piece ? Object::Kind::LayerPiece : Object::Kind::TextClip, hit.clipId};
     } else if (const int lane = laneAt(pos.y()); lane >= 0) {
         int clipLane = 0;
@@ -723,7 +725,7 @@ bool SequenceTimeline::event(QEvent* event)
                 return show(QStringLiteral("%1\n%2").arg(b.label, note));
         }
         if (int textLaneIndex = 0, textClip = 0; textClipAt(pos, textLaneIndex, textClip)) {
-            const TextBlock& c = textLanes_[static_cast<std::size_t>(textLaneIndex)].clips[static_cast<std::size_t>(textClip)];
+            const TextBlock& c = laneRef(textLaneIndex).clips[static_cast<std::size_t>(textClip)];
             return show(QStringLiteral("%1\nNel montaggio da %2 a %3 (%4)")
                             .arg(c.label, QString::fromStdString(core::formatDuration(c.position)),
                                  QString::fromStdString(core::formatDuration(c.position + c.length)),
@@ -764,14 +766,35 @@ double SequenceTimeline::textBand() const
 
 QRectF SequenceTimeline::textLane(int layerIndex) const
 {
+    if (layerIndex >= static_cast<int>(textLanes_.size()))
+        return videoLane();  // V1
     // Il livello più alto sta più in alto: il primo (T1) è subito sopra la corsia video.
     const int row = static_cast<int>(textLanes_.size()) - 1 - layerIndex;
     return QRectF(6 + kHeaderWidth, lanesTop() + row * (videoHeight() + kLaneGap), std::max(1.0, width() - 12 - kHeaderWidth),
                   videoHeight());
 }
 
-int SequenceTimeline::textLaneAt(double y) const
+int SequenceTimeline::textLaneHit(const QPointF& pos) const
 {
+    if (const int layer = textLaneAt(pos.y()); layer >= 0)
+        return layer;
+    if (baseTexts_.clips.empty() || textLaneAt(pos.y(), true) < 0)
+        return -1;
+    int lane = 0;
+    int clip = 0;
+    bool flag = false;
+    return textClipAt(pos, lane, clip) || textEdgeAt(pos, lane, clip, flag) || textFadeHandleAt(pos, lane, clip, flag)
+               ? static_cast<int>(textLanes_.size())
+               : -1;
+}
+
+int SequenceTimeline::textLaneAt(double y, bool includeBase) const
+{
+    if (includeBase) {
+        const QRectF v1 = videoLane();
+        if (y >= v1.top() - kLaneGap / 2 && y < v1.bottom() + kLaneGap / 2)
+            return static_cast<int>(textLanes_.size());
+    }
     for (int i = 0; i < static_cast<int>(textLanes_.size()); ++i) {
         const QRectF lane = textLane(i);
         if (y >= lane.top() - kLaneGap / 2 && y < lane.bottom() + kLaneGap / 2)
@@ -782,11 +805,11 @@ int SequenceTimeline::textLaneAt(double y) const
 
 bool SequenceTimeline::textClipAt(const QPointF& pos, int& lane, int& clip) const
 {
-    lane = textLaneAt(pos.y());
+    lane = textLaneAt(pos.y(), true);
     if (lane < 0 || pos.x() < videoLane().left())
         return false;
     const double t = timeForX(pos.x());
-    const auto& clips = textLanes_[static_cast<std::size_t>(lane)].clips;
+    const auto& clips = laneRef(lane).clips;
     for (std::size_t i = 0; i < clips.size(); ++i) {
         if (t >= clips[i].position && t < clips[i].position + clips[i].length) {
             clip = static_cast<int>(i);
@@ -798,13 +821,13 @@ bool SequenceTimeline::textClipAt(const QPointF& pos, int& lane, int& clip) cons
 
 bool SequenceTimeline::textEdgeAt(const QPointF& pos, int& lane, int& clip, bool& atStart) const
 {
-    lane = textLaneAt(pos.y());
+    lane = textLaneAt(pos.y(), true);
     if (lane < 0 || pos.x() < videoLane().left())
         return false;
     constexpr double kReach = 5.0;  // pixel
     double bestDistance = kReach + 1;
     bool found = false;
-    const auto& clips = textLanes_[static_cast<std::size_t>(lane)].clips;
+    const auto& clips = laneRef(lane).clips;
     for (std::size_t i = 0; i < clips.size(); ++i) {
         const double left = xForTime(clips[i].position);
         const double right = xForTime(clips[i].position + clips[i].length);
@@ -833,8 +856,8 @@ SequenceTimeline::Object::Kind SequenceTimeline::textObjectKind(int clipId) cons
 
 const SequenceTimeline::TextBlock* SequenceTimeline::findTextClip(int clipId, int* lane) const
 {
-    for (std::size_t i = 0; i < textLanes_.size(); ++i) {
-        for (const TextBlock& c : textLanes_[i].clips) {
+    for (std::size_t i = 0; i <= textLanes_.size(); ++i) {  // (l'ultimo è V1)
+        for (const TextBlock& c : laneRef(static_cast<int>(i)).clips) {
             if (c.clipId == clipId) {
                 if (lane != nullptr)
                     *lane = static_cast<int>(i);
@@ -874,11 +897,11 @@ QPointF SequenceTimeline::textFadeHandle(const QRectF& lane, const TextBlock& c,
 
 bool SequenceTimeline::textFadeHandleAt(const QPointF& pos, int& lane, int& clip, bool& isIn) const
 {
-    lane = textLaneAt(pos.y());
+    lane = textLaneAt(pos.y(), true);
     if (lane < 0 || pos.x() < videoLane().left())
         return false;
     const QRectF rect = textLane(lane);
-    const auto& clips = textLanes_[static_cast<std::size_t>(lane)].clips;
+    const auto& clips = laneRef(lane).clips;
     double best = kTextFadeNear + 1;
     bool found = false;
     for (std::size_t i = 0; i < clips.size(); ++i) {
@@ -906,7 +929,7 @@ double SequenceTimeline::textDragTarget(double x, int lane) const
         return 0.0;
     double desired = timeForXBeyondEnd(x) - textDragGrab_;
     desired = std::max(0.0, snapped(desired, snapMarks(-1, 0, true, true, c->clipId), {0.0, c->length}));
-    const int layer = textLanes_[static_cast<std::size_t>(lane)].layerId;
+    const int layer = laneRef(lane).layerId;
     return textFreePosition ? textFreePosition(c->clipId, layer, desired) : desired;
 }
 
@@ -955,7 +978,7 @@ void SequenceTimeline::setSelectedTextClip(int clipId)
         selectedAudioClip_ = 0;
         selectedTrack_ = -1;
         int lane = -1;
-        selectedTextLayer_ = findTextClip(clipId, &lane) != nullptr ? textLanes_[static_cast<std::size_t>(lane)].layerId : 0;
+        selectedTextLayer_ = findTextClip(clipId, &lane) != nullptr ? laneRef(lane).layerId : 0;
         syncTrackButtons();
     }
     invalidate();
@@ -974,6 +997,29 @@ void SequenceTimeline::setSelectedTextLayer(int layerId)
         selectedTrack_ = -1;
         syncTrackButtons();
     }
+    invalidate();
+}
+
+void SequenceTimeline::setBaseTexts(std::vector<TextBlock> clips)
+{
+    baseTexts_.layerId = 0;
+    baseTexts_.name = QStringLiteral("V1");
+    baseTexts_.clips = std::move(clips);
+    // Come per i livelli: quello che non c'è più si toglie dalle selezioni e dai trascinamenti.
+    if (selectedTextClip_ != 0 && findTextClip(selectedTextClip_) == nullptr)
+        selectedTextClip_ = 0;
+    std::erase_if(multi_, [this](const Object& o) { return (o.kind == Object::Kind::TextClip || o.kind == Object::Kind::LayerPiece) && findTextClip(o.id) == nullptr; });
+    if (multi_.size() < 2)
+        multi_.clear();
+    if (textDragClip_ != 0 && findTextClip(textDragClip_) == nullptr) {
+        textDragClip_ = 0;
+        textDragging_ = false;
+    }
+    if (textTrimClip_ != 0 && findTextClip(textTrimClip_) == nullptr) {
+        textTrimClip_ = 0;
+        textTrimming_ = false;
+    }
+    updateDuration();
     invalidate();
 }
 
@@ -1018,8 +1064,8 @@ std::vector<double> SequenceTimeline::snapMarks(int ignoredBlock, int ignoredCli
         marks.push_back(starts_[i]);
         marks.push_back(starts_[i] + blocks_[i].length);
     }
-    for (const TextLane& lane : textLanes_) {
-        for (const TextBlock& c : lane.clips) {
+    for (std::size_t laneIndex = 0; laneIndex <= textLanes_.size(); ++laneIndex) {
+        for (const TextBlock& c : laneRef(static_cast<int>(laneIndex)).clips) {
             if (c.clipId != ignoredText && !isMoving(c.piece ? Object::Kind::LayerPiece : Object::Kind::TextClip, c.clipId)) {
                 marks.push_back(c.position);
                 marks.push_back(c.position + c.length);
