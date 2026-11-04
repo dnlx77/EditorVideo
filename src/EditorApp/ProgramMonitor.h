@@ -1,7 +1,9 @@
 #pragma once
 
+#include "EditorApp/PlayerWidget.h"
 #include "EditorApp/SequenceAudio.h"
 #include "EditorApp/TextOverlay.h"
+#include "EditorCore/LayerPlayback.h"
 #include "EditorCore/Transform.h"
 #include "EditorCore/TransformManip.h"
 #include "EditorCore/TransitionPlayback.h"
@@ -12,6 +14,7 @@
 class QToolButton;
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -74,6 +77,8 @@ public:
     // Le scritte che si vedono ora sopra l'immagine (nessuna mentre si mostra un fotogramma di un file con showSourceFrame).
     std::vector<core::TextClip> visibleText() const;
     const TextOverlay& textOverlay() const { return overlay_; }
+    // Quanti pezzi di livelli sopra V1 si vedono ora con il loro fotogramma (per le prove).
+    int layerFramesShown() const { return layerFramesShown_; }
 
     // Proxy (vedi PlayerWidget::videoSourceFor e reloadVideo) e menu della qualità dell'anteprima.
     void setVideoSource(std::function<QString(const QString& path)> source);
@@ -145,6 +150,9 @@ private:
     void dropText(QPointF at);
     void updateOverlayFrame();  // dice al lettore come disegnare le scritte
     void updateTextOverlay();  // ridisegna le scritte se quelle visibili sono cambiate
+    // I pezzi di video dei livelli sopra V1 che si vedono al tempo attuale: ognuno ha la sua decodifica in un thread a parte
+    // (core::LayerPlayback), aperta un attimo prima che il pezzo inizi; il lettore li disegna sopra V1.
+    void updateLayers();
     // Transizioni: la transizione in cui cade `seconds` (non l'ultimo istante, che è già del pezzo dopo).
     std::optional<core::TransitionPlacement> transitionAt(double seconds) const;
     // `wait`: aspetta il fotogramma (cursore fermo); altrimenti parte il flusso di fotogrammi preparati in anticipo, che un
@@ -204,6 +212,9 @@ private:
     double gapBase_ = 0.0;  // tempo della sequenza quando è partito gapClock_
     QElapsedTimer gapClock_;
     int loadedClipId_ = 0;  // file aperto nel lettore
+    std::map<int, std::unique_ptr<core::LayerPlayback>> layerPlaybacks_;  // per id del pezzo del livello
+    int layerFramesShown_ = 0;
+    bool layersShown_ = false;  // ci sono pezzi di livelli sopra V1: V1 si disegna sempre nel fotogramma del progetto
     double position_ = 0.0;
     bool playing_ = false;
     double speed_ = 1.0;  // negativa = all'indietro

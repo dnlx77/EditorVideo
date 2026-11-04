@@ -538,15 +538,40 @@ void SequenceTimeline::paintText(QPainter& p)
             p.setPen(Qt::NoPen);
             p.setBrush(fill);
             p.drawRoundedRect(r, 3, 3);
+            // Un pezzo di video: le miniature del file come in V1 (una all'inizio e altre a distanza regolare).
+            if (c.piece && thumbnailFor && c.fileId != 0 && full.width() > 24) {
+                const double slot = full.height() * 16.0 / 9.0;
+                const int count = std::max(1, static_cast<int>(full.width() / slot));
+                const int first = std::clamp(static_cast<int>(std::floor((r.left() - full.left()) / slot)), 0, count - 1);
+                const int last = std::clamp(static_cast<int>(std::floor((r.right() - full.left()) / slot)), 0, count - 1);
+                p.save();
+                QPainterPath clip;
+                clip.addRoundedRect(r, 3, 3);
+                p.setClipPath(clip, Qt::IntersectClip);
+                for (int k = first; k <= last; ++k) {
+                    const QImage image = thumbnailFor(c.fileId, c.sourceStart + k * c.length / count);
+                    if (image.isNull())
+                        continue;
+                    const QSizeF size = QSizeF(image.size()).scaled(QSizeF(slot, full.height()), Qt::KeepAspectRatioByExpanding);
+                    p.drawImage(QRectF(QPointF(full.left() + k * slot, full.top()), size), image);
+                }
+                if (dragged)
+                    p.fillRect(r, QColor(255, 255, 255, 140));
+                p.restore();
+            }
             p.setPen(isMate(c.piece ? Object::Kind::LayerPiece : Object::Kind::TextClip, c.clipId)   ? matePen()
                      : isSelected(c.piece ? Object::Kind::LayerPiece : Object::Kind::TextClip, c.clipId) ? QPen(pal.color(QPalette::Highlight), 3)
                                                                     : QPen(base.darker(140), 1));
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(p.pen().widthF() > 1.5 ? r.adjusted(1.5, 1.5, -1.5, -1.5) : r, 3, 3);
             if (r.width() > 20) {
+                const QString shown = p.fontMetrics().elidedText(c.label, Qt::ElideRight, static_cast<int>(r.width() - 9));
+                if (c.piece) {  // sopra le miniature: con l'ombra si legge
+                    p.setPen(QColor(0, 0, 0, 200));
+                    p.drawText(r.adjusted(6, 1, -3, 1), Qt::AlignLeft | Qt::AlignVCenter, shown);
+                }
                 p.setPen(Qt::white);
-                p.drawText(r.adjusted(5, 0, -4, 0), Qt::AlignLeft | Qt::AlignVCenter,
-                           p.fontMetrics().elidedText(c.label, Qt::ElideRight, static_cast<int>(r.width() - 9)));
+                p.drawText(r.adjusted(5, 0, -4, 0), Qt::AlignLeft | Qt::AlignVCenter, shown);
             }
             if (!c.piece && full.width() >= kTextFadeMinWidth) {
                 // La linea dell'opacità: in basso (trasparente) ai bordi, in alto (piena) dopo le dissolvenze, con una

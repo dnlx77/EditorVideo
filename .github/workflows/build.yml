@@ -264,6 +264,13 @@ jobs:
           # I pezzi di video sui livelli V2, V3... della linea del tempo: spostamento fra livelli, bordi, Ctrl+clic.
           & ci\run-editorvideo.ps1 -Name livelli -Arguments '--layer-test'
 
+      - name: Prova dei livelli nel monitor
+        shell: pwsh
+        run: |
+          # I pezzi dei livelli sopra V1 si vedono nel monitor del Montaggio (da fermo e in riproduzione).
+          $demo = "$env:TEMP\EditorVideoDemo"
+          & ci\run-editorvideo.ps1 -Name livelli-monitor -Arguments @('--layer-monitor-test', "`"$demo\demo_mpeg2_gpu.mkv`"")
+
       - name: Prova della scheda Gruppi
         shell: pwsh
         run: |

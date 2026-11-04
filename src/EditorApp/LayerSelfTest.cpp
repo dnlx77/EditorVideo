@@ -1,9 +1,14 @@
+#include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/SelfTests.h"
 #include "EditorApp/SequenceTimeline.h"
+#include "EditorCore/Compatibility.h"
+#include "EditorCore/MediaProbe.h"
+#include "EditorCore/Project.h"
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QStringList>
 #include <QtGui/QMouseEvent>
+#include <QtCore/QThread>
 
 #include <algorithm>
 #include <cmath>
@@ -155,6 +160,75 @@ int runLayerTest(const QStringList&, qsizetype)
     mouse(QEvent::MouseMove, {line.xForSequenceTime(2.0) + perSecond, yVideo});
     mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(2.0) + perSecond, yVideo});
     check(loweredPiece == 0, "una scritta non scende su V1");
+
+    std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
+    return check.failures() == 0 ? 0 : 3;
+}
+
+
+// --layer-monitor-test <video>: il monitor del Montaggio mostra i pezzi dei livelli sopra V1: nessuno prima che inizino e dopo
+// che finiscono, uno mentre ci si è dentro (da fermo e in riproduzione), due su due livelli.
+int runLayerMonitorTest(const QStringList& args, qsizetype at)
+{
+    SelfCheck check;
+    std::printf("Prova dei livelli nel monitor\n");
+    if (at + 1 >= args.size()) {
+        std::printf("Uso: EditorVideo.exe --layer-monitor-test <video>\n");
+        return 1;
+    }
+    namespace core = editor::core;
+    const std::string path = args[at + 1].toStdString();
+    core::Project project;
+    const core::MediaInfo info = core::probeFile(path);
+    project.setFormat(core::formatOf(core::readMediaSignature(path)));
+    const int clip = project.add(path);
+    project.setAnalysis(clip, info.keyframeTimes, info.durationSeconds);
+    const double length = std::min(info.durationSeconds, 3.0);
+    project.sequence().insert(-1, clip, 0.0, length);
+    const int low = project.textTracks().addLayer();
+    const int high = project.textTracks().addLayer();
+    core::LayerPiece piece;
+    piece.clipId = clip;
+    piece.start = 0.0;
+    piece.end = 1.0;
+    piece.position = 1.0;
+    piece.transform.scaleX = 0.5;
+    piece.transform.scaleY = 0.5;
+    check(project.textTracks().addPiece(low, piece) != 0, "il primo pezzo del livello sta sul livello V2");
+    piece.position = 1.5;
+    check(project.textTracks().addPiece(high, piece) != 0, "il secondo pezzo sta su V3");
+
+    ProgramMonitor monitor(project);
+    monitor.resize(900, 600);
+    monitor.show();
+    monitor.sequenceChanged();
+    QCoreApplication::processEvents();
+
+    monitor.seekTo(0.3);
+    QCoreApplication::processEvents();
+    check(monitor.layerFramesShown() == 0, "prima dei pezzi dei livelli non se ne vede nessuno");
+    monitor.seekTo(1.2);
+    QCoreApplication::processEvents();
+    check(monitor.layerFramesShown() == 1, "dentro il primo pezzo se ne vede uno");
+    monitor.seekTo(1.7);
+    QCoreApplication::processEvents();
+    check(monitor.layerFramesShown() == 2, "dove i due pezzi si sovrappongono sui due livelli se ne vedono due");
+    monitor.seekTo(2.7);
+    QCoreApplication::processEvents();
+    check(monitor.layerFramesShown() == 0, "dopo la fine dei pezzi non se ne vede nessuno");
+
+    // In riproduzione da prima del pezzo: arrivato dentro, il fotogramma arriva.
+    monitor.seekTo(0.7);
+    monitor.setPlaying(true);
+    int best = 0;
+    for (int i = 0; i < 120 && best < 1; ++i) {
+        QThread::msleep(20);
+        QCoreApplication::processEvents();
+        if (monitor.position() > 1.1 && monitor.position() < 1.9)
+            best = std::max(best, monitor.layerFramesShown());
+    }
+    monitor.setPlaying(false);
+    check(best >= 1, "in riproduzione il fotogramma del livello arriva quando il pezzo inizia");
 
     std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
     return check.failures() == 0 ? 0 : 3;

@@ -99,19 +99,43 @@ public:
         update();
     }
     // Disegna il fotogramma trasformato dentro il fotogramma del progetto; restituisce quest'ultimo.
+    QRectF canvasFor(QSize project) const
+    {
+        const QSizeF fitted = QSizeF(project).scaled(QSizeF(size()), Qt::KeepAspectRatio);
+        return QRectF(QPointF((width() - fitted.width()) / 2, (height() - fitted.height()) / 2), fitted);
+    }
+
     QRectF paintTransformed(QPainter& painter) const
     {
-        const QSizeF fitted = QSizeF(projectSize_).scaled(QSizeF(size()), Qt::KeepAspectRatio);
-        const QRectF canvas(QPointF((width() - fitted.width()) / 2, (height() - fitted.height()) / 2), fitted);
+        const QRectF canvas = canvasFor(projectSize_);
+        painter.save();
+        painter.fillRect(canvas, Qt::black);
+        painter.restore();
+        drawInCanvas(painter, canvas, *frame_, transform_, projectSize_);
+        return canvas;
+    }
+
+    // I pezzi dei livelli sopra V1, dal più basso al più alto, nel fotogramma del progetto.
+    void paintLayers(QPainter& painter, const QRectF& canvas) const
+    {
+        for (const PlayerWidget::LayerFrame& layer : layers_) {
+            if (layer.frame)
+                drawInCanvas(painter, canvas, *layer.frame, layer.transform, layerProjectSize_);
+        }
+    }
+
+    // Disegna un fotogramma con la sua trasformazione dentro `canvas` (il fotogramma del progetto, di misura `project`).
+    static void drawInCanvas(QPainter& painter, const QRectF& canvas, const core::VideoFrame& frame, const core::Transform& transform,
+                             QSize projectSize)
+    {
         painter.save();
         painter.setClipRect(canvas);
-        painter.fillRect(canvas, Qt::black);
-        const core::TransformGeometry g = core::computeGeometry(transform_, frame_->width, frame_->height, projectSize_.width(),
-                                                                projectSize_.height());
+        const core::TransformGeometry g = core::computeGeometry(transform, frame.width, frame.height, projectSize.width(),
+                                                                projectSize.height());
         const QTransform toProject(g.toProject.a, g.toProject.b, g.toProject.c, g.toProject.d, g.toProject.tx, g.toProject.ty);
         QTransform toCanvas;
         toCanvas.translate(canvas.left(), canvas.top());
-        toCanvas.scale(canvas.width() / projectSize_.width(), canvas.height() / projectSize_.height());
+        toCanvas.scale(canvas.width() / projectSize.width(), canvas.height() / projectSize.height());
         painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setTransform(toProject * toCanvas, true);  // sopra il resto: l'origine è quella del fotogramma del file
@@ -119,11 +143,24 @@ public:
         visible.addRect(QRectF(QPointF(g.sourceLeft, g.sourceTop), QPointF(g.sourceRight, g.sourceBottom)));
         painter.setClipPath(visible, Qt::IntersectClip);
         painter.setOpacity(g.opacity);
-        const QImage image(frame_->pixels.data(), frame_->width, frame_->height, frame_->stride, QImage::Format_RGB32);
-        painter.drawImage(QRectF(0, 0, frame_->width, frame_->height), image);
+        const QImage image(frame.pixels.data(), frame.width, frame.height, frame.stride, QImage::Format_RGB32);
+        painter.drawImage(QRectF(0, 0, frame.width, frame.height), image);
         painter.restore();
-        return canvas;
     }
+
+    // Vedi PlayerWidget::setLayers.
+    void setLayers(std::vector<PlayerWidget::LayerFrame> layers, QSize projectSize)
+    {
+        bool same = projectSize == layerProjectSize_ && layers.size() == layers_.size();
+        for (std::size_t i = 0; same && i < layers.size(); ++i)
+            same = layers[i].frame == layers_[i].frame && layers[i].transform == layers_[i].transform;
+        if (same)
+            return;
+        layers_ = std::move(layers);
+        layerProjectSize_ = projectSize;
+        update();
+    }
+    bool hasLayers() const { return !layers_.empty() && layerProjectSize_.width() > 0 && layerProjectSize_.height() > 0; }
 
     // Dimensione dell'area in pixel fisici (con lo zoom di Windows applicato).
     QSize pixelSize() const { return (QSizeF(size()) * devicePixelRatioF()).toSize(); }
@@ -204,16 +241,29 @@ protected:
         painter.fillRect(rect(), Qt::black);
         imageRect_ = QRectF();
         if (blank_) {
-            if (overlay_ && blankSize_.width() > 0 && blankSize_.height() > 0) {
-                const QSizeF fitted = QSizeF(blankSize_).scaled(QSizeF(size()), Qt::KeepAspectRatio);
-                imageRect_ = QRectF(QPointF((width() - fitted.width()) / 2, (height() - fitted.height()) / 2), fitted);
-                overlay_(painter, imageRect_);
+            if ((overlay_ || hasLayers()) && blankSize_.width() > 0 && blankSize_.height() > 0) {
+                imageRect_ = canvasFor(blankSize_);
+                if (hasLayers())
+                    paintLayers(painter, imageRect_);
+                if (overlay_)
+                    overlay_(painter, imageRect_);
             }
             return;
         }
         if (frame_ && transformed_) {
             const QRectF canvas = paintTransformed(painter);
             imageRect_ = canvas;
+            if (hasLayers())
+                paintLayers(painter, canvas);
+            if (overlay_)
+                overlay_(painter, canvas);
+        } else if (frame_ && hasLayers()) {
+            // Un fotogramma già fatto (la transizione) con dei livelli sopra: sta nel fotogramma del progetto.
+            const QRectF canvas = canvasFor(layerProjectSize_);
+            const QImage image(frame_->pixels.data(), frame_->width, frame_->height, frame_->stride, QImage::Format_RGB32);
+            painter.drawImage(canvas, image);
+            imageRect_ = canvas;
+            paintLayers(painter, canvas);
             if (overlay_)
                 overlay_(painter, canvas);
         } else if (frame_) {
@@ -248,6 +298,8 @@ private:
     core::Transform transform_;
     QSize projectSize_;
     std::function<void(QPainter&, const QRectF&)> overlay_;
+    std::vector<PlayerWidget::LayerFrame> layers_;
+    QSize layerProjectSize_;
     QSize blankSize_;
     QRectF imageRect_;  // dove sta l'immagine, all'ultimo disegno
     bool grabbing_ = false;
@@ -520,6 +572,11 @@ void PlayerWidget::setOverlay(std::function<void(QPainter&, const QRectF&)> over
 void PlayerWidget::setFrameTransform(const core::Transform& transform, QSize projectSize)
 {
     view_->setFrameTransform(transform, projectSize);
+}
+
+void PlayerWidget::setLayers(std::vector<LayerFrame> layers, QSize projectSize)
+{
+    view_->setLayers(std::move(layers), projectSize);
 }
 
 void PlayerWidget::showExternalFrame(std::shared_ptr<core::VideoFrame> frame)

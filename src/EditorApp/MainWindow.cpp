@@ -1303,6 +1303,8 @@ void MainWindow::refreshTimeline()
             const QString name = file != nullptr ? QFileInfo(QString::fromStdString(file->path)).fileName() : QString();
             SequenceTimeline::TextBlock block{piece.id, name, piece.position, piece.length(), 0.0, 0.0};
             block.piece = true;
+            block.fileId = piece.clipId;
+            block.sourceStart = piece.start;
             lane.clips.push_back(std::move(block));
         }
         std::stable_sort(lane.clips.begin(), lane.clips.end(),
