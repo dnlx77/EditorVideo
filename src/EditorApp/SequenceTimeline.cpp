@@ -57,7 +57,7 @@ SequenceTimeline::SequenceTimeline(QWidget* parent)
                               "Canc: togli il pezzo o chiudi lo spazio vuoto selezionato · S: dividi al cursore\n"
                               "Audio: sulle tracce aggiunte trascina lo sfondo per selezionare un tratto · trascina le clip (anche su un'altra traccia), "
                               "i bordi le accorciano, S divide, Canc toglie la clip o il tratto selezionato\n"
-                              "Scritte: sopra il video, i livelli T1, T2... (T mette una scritta al cursore) · trascina le scritte (anche su un altro livello), "
+                              "Scritte: sopra il video, i livelli V2, V3... (T mette una scritta al cursore) · trascina le scritte (anche su un altro livello), "
                               "i bordi le accorciano, S divide, Canc toglie\n"
                               "Ctrl+rotellina (o + e -): ingrandisci e riduci · rotellina: scorri"));
 

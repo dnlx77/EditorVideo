@@ -27,10 +27,10 @@ TEST(TextTracks, LayersAreNamedByPosition)
     EXPECT_TRUE(t.empty());
     const int a = t.addLayer();
     const int b = t.addLayer();
-    EXPECT_EQ(t.layerName(a), "T1");
-    EXPECT_EQ(t.layerName(b), "T2");
+    EXPECT_EQ(t.layerName(a), "V2");
+    EXPECT_EQ(t.layerName(b), "V3");
     EXPECT_TRUE(t.removeLayer(a));
-    EXPECT_EQ(t.layerName(b), "T1");
+    EXPECT_EQ(t.layerName(b), "V2");
     EXPECT_TRUE(t.layerName(a).empty());
 }
 
@@ -451,4 +451,106 @@ TEST(TextFades, FadesAndNamedStylesSurviveSaveAndReopen)
     ASSERT_EQ(viaText.size(), 1u);
     EXPECT_EQ(viaText[0], named);
     EXPECT_TRUE(textStylesFromText("non è json").empty());
+}
+
+// ---- Pezzi di video sui livelli (TR8a)
+
+namespace {
+
+LayerPiece piece(int clipId, double position, double start, double end)
+{
+    LayerPiece p;
+    p.clipId = clipId;
+    p.position = position;
+    p.start = start;
+    p.end = end;
+    return p;
+}
+
+}  // namespace
+
+TEST(TextTracks, PiecesAndTextsShareTheLayerWithoutOverlapping)
+{
+    TextTracks t;
+    const int layer = t.addLayer();
+    const int text = t.add(layer, title(2.0, 2.0));  // [2, 4)
+    ASSERT_NE(text, 0);
+    EXPECT_EQ(t.addPiece(layer, piece(1, 3.0, 0.0, 2.0)), 0);  // sopra la scritta
+    const int a = t.addPiece(layer, piece(1, 4.0, 10.0, 13.0));  // [4, 7)
+    ASSERT_NE(a, 0);
+    EXPECT_NE(a, text);
+    EXPECT_EQ(t.add(layer, title(6.0, 1.0)), 0);  // la scritta contro il pezzo
+    EXPECT_EQ(t.layerOfPiece(a), layer);
+    EXPECT_NEAR(t.endTime(), 7.0, 1e-9);
+    EXPECT_FALSE(t.empty());
+    EXPECT_FALSE(t.canPlace(layer, 3.5, 1.0));
+    EXPECT_TRUE(t.canPlace(layer, 7.0, 1.0));
+    // Troppo corto o prima di 0: no.
+    EXPECT_EQ(t.addPiece(layer, piece(1, 8.0, 0.0, 0.05)), 0);
+    EXPECT_EQ(t.addPiece(layer, piece(1, -1.0, 0.0, 2.0)), 0);
+}
+
+TEST(TextTracks, PiecesMoveBetweenLayersAndStopAgainstOthers)
+{
+    TextTracks t;
+    const int low = t.addLayer();
+    const int high = t.addLayer();
+    const int a = t.addPiece(low, piece(1, 0.0, 0.0, 2.0));
+    t.add(high, title(1.0, 2.0));  // [1, 3)
+    EXPECT_FALSE(t.movePieceTo(a, high, 0.5));  // dentro la scritta
+    EXPECT_TRUE(t.movePieceTo(a, high, 3.0));
+    EXPECT_EQ(t.layerOfPiece(a), high);
+    EXPECT_NEAR(t.findPiece(a)->position, 3.0, 1e-9);
+    // Il posto libero più vicino, anche per un pezzo.
+    EXPECT_NEAR(t.nearestFreeStart(a, high, 1.5), 3.0, 1e-9);
+    // I limiti del bordo tengono conto della scritta che precede.
+    EXPECT_NEAR(t.edgeLimit(a, true, 0.0), 3.0, 1e-9);
+    // moveTo vale anche per i pezzi.
+    EXPECT_TRUE(t.moveTo(a, low, 10.0));
+    EXPECT_EQ(t.layerOfPiece(a), low);
+}
+
+TEST(TextTracks, TrimSplitAndTransformOfPieces)
+{
+    TextTracks t;
+    const int layer = t.addLayer();
+    const int a = t.addPiece(layer, piece(1, 2.0, 10.0, 14.0));  // [2, 6) dal secondo 10 del file
+    const int next = t.addPiece(layer, piece(1, 8.0, 0.0, 1.0));
+    ASSERT_NE(next, 0);
+    EXPECT_TRUE(t.trimPiece(a, 3.0, 11.0, 14.0));
+    EXPECT_NEAR(t.findPiece(a)->endPosition(), 6.0, 1e-9);
+    EXPECT_FALSE(t.trimPiece(a, 3.0, 11.0, 20.0));  // finirebbe sulla seconda
+    EXPECT_FALSE(t.trimPiece(a, 3.0, 11.0, 11.05));  // troppo corto
+    const int second = t.splitPiece(a, 4.5);
+    ASSERT_NE(second, 0);
+    EXPECT_NEAR(t.findPiece(a)->end, 12.5, 1e-9);
+    EXPECT_NEAR(t.findPiece(second)->start, 12.5, 1e-9);
+    EXPECT_NEAR(t.findPiece(second)->position, 4.5, 1e-9);
+    EXPECT_NEAR(t.findPiece(second)->end, 14.0, 1e-9);
+    EXPECT_EQ(t.splitPiece(a, 3.01), 0);  // una parte sotto kMinLength
+    Transform tr;
+    tr.scaleX = tr.scaleY = 0.5;
+    EXPECT_TRUE(t.setPieceTransform(a, tr));
+    EXPECT_FALSE(t.setPieceTransform(a, tr));
+    ASSERT_EQ(t.piecesVisibleAt(4.0).size(), 1u);
+    EXPECT_EQ(t.piecesVisibleAt(4.0)[0]->id, a);
+    EXPECT_TRUE(t.piecesVisibleAt(7.0).empty());
+    EXPECT_TRUE(t.removePiece(second));
+    EXPECT_EQ(t.findPiece(second), nullptr);
+}
+
+TEST(TextTracks, UndoSnapshotsAndRestoreKeepPieces)
+{
+    TextTracks t;
+    const int layer = t.addLayer();
+    t.addPiece(layer, piece(1, 1.0, 0.0, 2.0));
+    const TextTracks snapshot = t;
+    t.addPiece(layer, piece(1, 5.0, 0.0, 1.0));
+    EXPECT_FALSE(t == snapshot);
+    t.restoreEdits(snapshot);
+    EXPECT_TRUE(t == snapshot);
+    TextTracks reopened;
+    reopened.restore(t.layers());
+    ASSERT_EQ(reopened.layers().size(), 1u);
+    EXPECT_EQ(reopened.layers()[0].pieces.size(), 1u);
 }

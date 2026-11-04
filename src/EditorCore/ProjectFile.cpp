@@ -410,7 +410,21 @@ JsonValue textTracksToJson(const TextTracks& text)
                 clip["dissolvenzaOut"] = ticks(c.fadeOut);
             clips.emplace_back(std::move(clip));
         }
-        layers.emplace_back(JsonValue::Object{{"clip", std::move(clips)}});
+        JsonValue::Object layerJson{{"clip", std::move(clips)}};
+        if (!layer.pieces.empty()) {
+            JsonValue::Array pieces;
+            for (const LayerPiece& p : layer.pieces) {
+                JsonValue::Object piece{{"file", p.clipId},
+                                        {"inizio", ticks(p.start)},
+                                        {"fine", ticks(p.end)},
+                                        {"posizione", ticks(p.position)}};
+                if (!p.transform.isIdentity())
+                    piece["trasformazione"] = transformToJson(p.transform);
+                pieces.emplace_back(std::move(piece));
+            }
+            layerJson["pezzi"] = std::move(pieces);
+        }
+        layers.emplace_back(std::move(layerJson));
     }
     return layers;
 }
@@ -556,7 +570,9 @@ std::string projectToJson(const std::string& projectPath, const Project& project
     const bool hasText = !project.textTracks().layers().empty() || !project.textStyles().empty();
     const bool pieceTransforms = std::any_of(project.sequence().fragments().begin(), project.sequence().fragments().end(),
                                              [](const Fragment& f) { return !f.transform.isIdentity(); });
-    const int version = pieceTransforms ? 6 : !transitions.asArray().empty() ? 5 : hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
+    const bool layerPieces = std::any_of(project.textTracks().layers().begin(), project.textTracks().layers().end(),
+                                         [](const TextLayer& l) { return !l.pieces.empty(); });
+    const int version = layerPieces ? 7 : pieceTransforms ? 6 : !transitions.asArray().empty() ? 5 : hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
     JsonValue::Object root{
         {"formato", kFormatName},
         {"versione", version},
@@ -754,6 +770,23 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                     if (!(clip.length >= TextTracks::kMinLength) || clip.position < 0.0)
                         throw ProjectFileError(name + " è rovinato: una scritta non è valida.");
                     layer.clips.push_back(std::move(clip));
+                }
+                // Pezzi di video del livello (versione 7): il file deve esserci, durata e posizione valide.
+                if (l["pezzi"].isArray()) {
+                    for (const JsonValue& p : l["pezzi"].asArray()) {
+                        const auto file = ids.find(p["file"].asInteger());
+                        if (file == ids.end())
+                            throw ProjectFileError(name + " è rovinato: un pezzo di un livello indica un file che non c'è.");
+                        LayerPiece piece;
+                        piece.clipId = file->second;
+                        piece.start = seconds(p["inizio"], "inizio");
+                        piece.end = seconds(p["fine"], "fine");
+                        piece.position = seconds(p["posizione"], "posizione");
+                        piece.transform = transformFromJson(p["trasformazione"]);
+                        if (!(piece.length() >= TextTracks::kMinLength) || piece.position < 0.0 || piece.start < 0.0)
+                            throw ProjectFileError(name + " è rovinato: un pezzo di un livello non è valido.");
+                        layer.pieces.push_back(std::move(piece));
+                    }
                 }
                 layers.push_back(std::move(layer));
             }

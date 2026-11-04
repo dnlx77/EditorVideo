@@ -1,8 +1,11 @@
 #pragma once
 
+#include "EditorCore/Transform.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace editor::core {
@@ -104,11 +107,29 @@ struct NamedTextStyle
     bool operator==(const NamedTextStyle&) const = default;
 };
 
-// Un livello di scritte (T1, T2, ...): le sue scritte in ordine di posizione, senza sovrapposizioni.
+// Un pezzo di video su un livello sopra V1: una parte di un file messa in un punto della sequenza (come un Fragment di V1, ma
+// con la sua posizione: i livelli sopra V1 non hanno la catena di pezzi attaccati).
+struct LayerPiece
+{
+    int id = 0;      // identificativo stabile (lo stesso insieme degli id delle scritte: mai due uguali)
+    int clipId = 0;  // file di origine (vedi Project)
+    double start = 0.0;  // nel file di origine
+    double end = 0.0;
+    double position = 0.0;  // dove inizia nella sequenza, in secondi
+    Transform transform;
+
+    double length() const { return end - start; }
+    double endPosition() const { return position + length(); }
+    bool operator==(const LayerPiece&) const = default;
+};
+
+// Un livello video sopra V1 (V2, V3, ...): le sue scritte e i suoi pezzi di video, tutti insieme in ordine di posizione e mai
+// sovrapposti fra loro (una scritta e un pezzo sullo stesso livello non stanno nello stesso istante).
 struct TextLayer
 {
-    int id = 0;  // identificativo stabile (il nome T1, T2... dipende dalla posizione fra i livelli)
+    int id = 0;  // identificativo stabile (il nome V2, V3... dipende dalla posizione fra i livelli)
     std::vector<TextClip> clips;
+    std::vector<LayerPiece> pieces;
 
     bool operator==(const TextLayer&) const = default;
 };
@@ -126,8 +147,8 @@ public:
     const std::vector<TextLayer>& layers() const { return layers_; }
     const TextLayer* layer(int layerId) const;
     int layerIndex(int layerId) const;  // -1 se non c'è
-    std::string layerName(int layerId) const;  // "T1", "T2"...; vuoto se non c'è
-    bool empty() const;  // nessuna scritta in nessun livello
+    std::string layerName(int layerId) const;  // "V2", "V3"... (V1 è la sequenza principale); vuoto se non c'è
+    bool empty() const;  // nessuna scritta e nessun pezzo in nessun livello
 
     // Scritte. add mette la scritta sul livello (l'id passato non conta) e ne restituisce l'id; 0 se il livello non
     // c'è, la scritta è più corta di kMinLength, inizia prima di 0 o si sovrappone a un'altra del livello.
@@ -158,6 +179,24 @@ public:
     // l'id della seconda parte, 0 se `seconds` non è dentro la scritta (con kMinLength per parte).
     int split(int clipId, double seconds);
 
+    // Pezzi di video sui livelli. addPiece lo mette sul livello (l'id passato non conta) e ne restituisce l'id; 0 se il livello non
+    // c'è, il pezzo è più corto di kMinLength, inizia prima di 0 o si sovrappone a un'altra scritta o a un altro pezzo del livello.
+    int addPiece(int layerId, LayerPiece piece);
+    bool removePiece(int pieceId);
+    const LayerPiece* findPiece(int pieceId) const;
+    int layerOfPiece(int pieceId) const;  // id del livello, -1 se il pezzo non c'è
+    // Sposta il pezzo sul livello `layerId` in modo che inizi a `start` (come moveTo per le scritte).
+    bool movePieceTo(int pieceId, int layerId, double start);
+    // Cambia i bordi di un pezzo: dove inizia nella sequenza e la parte del file (start < end). false, e nessuna modifica, se il
+    // pezzo diventa più corto di kMinLength, inizia prima di 0 o si sovrappone a un altro oggetto del livello.
+    bool trimPiece(int pieceId, double position, double sourceStart, double sourceEnd);
+    // Divide il pezzo al tempo `seconds` della sequenza; restituisce l'id della seconda parte, 0 se non è dentro il pezzo (con
+    // kMinLength per parte).
+    int splitPiece(int pieceId, double seconds);
+    bool setPieceTransform(int pieceId, const Transform& transform);  // false se è già quella
+    // I pezzi visibili al tempo `seconds`, dal livello più basso al più alto.
+    std::vector<const LayerPiece*> piecesVisibleAt(double seconds) const;
+
     bool setText(int clipId, std::string text);
     bool setStyle(int clipId, const TextStyle& style);
     bool setLength(int clipId, double length);  // allunga/accorcia la fine; come setEnd
@@ -179,6 +218,12 @@ public:
 
 private:
     TextClip* findMutable(int clipId);
+    LayerPiece* findPieceMutable(int pieceId);
+    // Dove sta una scritta o un pezzo ([inizio, fine) nella sequenza) e il livello che lo contiene (-1 se l'id non c'è).
+    bool extentOf(int id, double& position, double& end) const;
+    int layerOfObject(int id) const;
+    // Gli intervalli [inizio, fine) occupati sul livello da scritte e pezzi, senza quello con id `ignoreId`, in ordine.
+    std::vector<std::pair<double, double>> occupied(const TextLayer& layer, int ignoreId) const;
     // Il posto [start, end) è libero sul livello, ignorando la scritta `ignoreId`.
     bool isFree(const TextLayer& layer, double start, double end, int ignoreId) const;
     void sortLayer(TextLayer& layer) const;
