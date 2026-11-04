@@ -2,6 +2,7 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/PropertiesPanel.h"
 #include "EditorApp/SelfTests.h"
+#include "EditorApp/TextEditorPanel.h"
 #include "EditorCore/VideoDecoder.h"
 
 #include <QtCore/QCoreApplication>
@@ -10,6 +11,7 @@
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QDoubleSpinBox>
+#include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QSlider>
 #include <QtWidgets/QToolButton>
@@ -181,6 +183,26 @@ int runTransformTest(const QStringList&, qsizetype)
               "i campi mostrano i valori nuovi");
         panel.showNothing(QStringLiteral("niente"));
         check(!panel.showingTransform(), "senza pezzo scelto torna il messaggio");
+
+        // La pagina delle scritte: l'editor sta nel pannello e si alterna con le altre pagine.
+        TextEditorPanel textPage;
+        panel.setTextPage(&textPage);
+        check(!panel.showingText(), "la pagina delle scritte non si vede finché non serve");
+        core::TextClip clip;
+        clip.id = 1;
+        clip.text = "Ciao";
+        clip.length = 2.0;
+        int textEdits = 0;
+        textPage.onEdited = [&](const core::TextClip&) { ++textEdits; };
+        textPage.setClip(&clip, {});
+        panel.showText();
+        check(panel.showingText() && !panel.showingTransform() && textPage.isVisibleTo(&panel),
+              "con una scritta scelta il pannello mostra il suo editor");
+        if (auto* edit = textPage.findChild<QPlainTextEdit*>("testo"))
+            edit->setPlainText(QStringLiteral("Altro"));
+        check(textEdits > 0, "scrivere nell'editor nel pannello arriva a chi ascolta");
+        panel.showTransform(other, 1);
+        check(panel.showingTransform() && !panel.showingText(), "con un pezzo scelto torna la pagina delle trasformazioni");
     }
 
     // --- Il fotogramma disegnato con la trasformazione (a pixel).

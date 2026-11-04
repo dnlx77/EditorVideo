@@ -246,10 +246,8 @@ int runTransitionTest(const QStringList&, qsizetype)
     check(window.sourceStack()->currentWidget() == window.transitionPreview()
               && window.transitionPreview()->transition() == core::findTransition("scorrimento"),
           "scegliendo una transizione la Sorgente ne mostra l'anteprima");
-    window.sourceTabs()->setCurrentIndex(1);
     window.transitionPanel()->select("dissolvenza");
-    check(window.sourceTabs()->currentIndex() == 0 && window.transitionPreview()->transition() == crossfade,
-          "la scelta riporta alla scheda Sorgente e cambia l'anteprima");
+    check(window.transitionPreview()->transition() == crossfade, "la nuova scelta cambia l'anteprima");
     window.showSourcePlayer();
     check(window.sourceStack()->currentWidget() == window.player(), "scegliendo un file torna il lettore");
 

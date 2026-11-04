@@ -18,8 +18,8 @@ class QVBoxLayout;
 namespace editor::app {
 
 // Il pannello "Proprietà", agganciato a destra: il contenuto dipende dall'oggetto scelto sulla linea del tempo. Per ora ha
-// due pagine: nessun oggetto (un messaggio) e un pezzo video (le sue trasformazioni: scala, posizione, rotazione, ritaglio,
-// aspetto). Le altre (scritte, transizioni) si aggiungono come pagine.
+// tre pagine: nessun oggetto (un messaggio), un pezzo video (le sue trasformazioni: scala, posizione, rotazione, ritaglio,
+// aspetto) e una scritta (il suo editor). Le altre (transizioni) si aggiungono come pagine.
 class PropertiesPanel : public QWidget
 {
 public:
@@ -32,6 +32,10 @@ public:
     // toccano.
     void showTransform(const core::Transform& transform, int count);
     bool showingTransform() const;
+    // La pagina delle scritte (l'editor, già costruito): il pannello ne prende possesso. showText() la mostra.
+    void setTextPage(QWidget* page);
+    void showText();
+    bool showingText() const;
     // I valori com'erano all'ultimo showTransform più le modifiche fatte dopo nei controlli.
     core::Transform transform() const;
 
@@ -55,6 +59,8 @@ private:
     QToolButton* resetButton(const QString& tip, const std::string& field, std::function<void(core::Transform&)> reset);
 
     QStackedWidget* stack_ = nullptr;
+    QWidget* transformPage_ = nullptr;
+    QWidget* textPage_ = nullptr;
     QLabel* message_ = nullptr;
     QLabel* countNote_ = nullptr;
     Row scaleX_;

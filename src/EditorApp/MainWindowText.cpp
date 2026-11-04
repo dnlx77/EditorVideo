@@ -155,10 +155,10 @@ void MainWindow::showTextPanel(int clipId, bool focusText)
         timeline_->setSelectedTextClip(clipId);
     if (fullScreenDock_ != nullptr)
         exitFullScreen();
-    sourceDock_->show();
-    sourceDock_->raise();
-    sourceTabs_->setCurrentWidget(textPanel_);
+    propertiesDock_->show();
+    propertiesDock_->raise();
     refreshTextPanel();
+    refreshPropertiesPanel();
     if (focusText)
         textPanel_->focusText();
 }
