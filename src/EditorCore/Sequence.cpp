@@ -77,16 +77,30 @@ int Sequence::insert(int index, int clipId, double start, double end)
     return fragment.id;
 }
 
-bool Sequence::remove(int fragmentId)
+bool Sequence::remove(int fragmentId, bool leaveGap)
 {
     const int index = indexOf(fragmentId);
     if (index < 0)
         return false;
     const double gap = fragments_[index].gap;
+    const double length = fragments_[index].length();
     fragments_.erase(fragments_.begin() + index);
     if (index < static_cast<int>(fragments_.size()))
-        fragments_[index].gap += gap;  // lo spazio prima del pezzo tolto resta
+        fragments_[index].gap += gap + (leaveGap ? length : 0.0);  // lo spazio prima del pezzo tolto resta
     return true;
+}
+
+int Sequence::insertAt(int clipId, double start, double end, double position, bool push)
+{
+    position = std::max(0.0, position);
+    const std::vector<double> begins = starts();
+    int index = 0;
+    while (index < static_cast<int>(begins.size()) && begins[static_cast<std::size_t>(index)] < position - kTimeEpsilon)
+        ++index;
+    const int id = insert(index, clipId, start, end);
+    if (id != 0)
+        moveTo(id, position, nullptr, push);
+    return id;
 }
 
 void Sequence::removeClip(int clipId)

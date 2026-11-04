@@ -193,6 +193,13 @@ public:
     // aggiunta dove ci sta, altrimenti su una traccia nuova; pezzo e clip formano un gruppo. Restituisce l'id del pezzo
     // (0 se non ci sta); *audioClip riceve l'id della clip audio (0 se `withAudio` è falso).
     int addLayerPiece(int layerId, const LayerPiece& piece, bool withAudio, int* audioClip = nullptr);
+    // Un pezzo di V1 passa sul livello `layerId` (nel punto libero più vicino a `position`): in V1 resta uno spazio vuoto, il
+    // suo audio collegato diventa una clip libera in gruppo con il nuovo pezzo; trasformazione e tratti senza audio
+    // seguono. Restituisce l'id del nuovo pezzo, 0 se non si può (nessuna modifica).
+    int liftToLayer(int fragmentId, int layerId, double position, int* audioClip = nullptr);
+    // Un pezzo di un livello passa in V1 (inizia a `position`, o dove ci sta); l'audio in gruppo con lui resta una clip libera
+    // in gruppo con il nuovo pezzo, che ha l'audio scollegato. Restituisce l'id del pezzo in V1, 0 se non si può.
+    int lowerToV1(int pieceId, double position, bool push, int* audioClip = nullptr);
 
     // Cambia la trasformazione (scala, posizione, rotazione, ritaglio...) dei pezzi indicati; gli id che non esistono si
     // saltano. Restituisce quanti pezzi sono cambiati davvero (0 = niente da annullare). Fa parte delle modifiche.
@@ -251,6 +258,7 @@ public:
     double freeSpotFor(ObjectRef object, int track, double desired, bool push) const;
     // I tratti di A1 occupati dall'audio dei pezzi video (quello non scollegato): le clip libere di A1 non ci stanno sopra.
     std::vector<TimeRange> linkedAudioRanges() const;
+    int placeAudioClip(AudioClip clip);  // vedi addLayerPiece: A1 se libera, altrimenti un'altra traccia; 0 se non si può
     struct MoveResult
     {
         bool moved = false;  // qualcosa si è spostato

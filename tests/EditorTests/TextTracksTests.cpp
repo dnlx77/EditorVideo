@@ -642,3 +642,51 @@ TEST(LayerPieceAudio, ComesWithAGroupedAudioClipOnTheFirstFreeTrack)
     EXPECT_EQ(project.addLayerPiece(layer, piece(file, 7.5, 0.0, 1.0), true, &rejected), 0);
     EXPECT_EQ(rejected, 0);
 }
+
+TEST(LayerPieceMoves, LiftFromV1AndLowerBack)
+{
+    Project project;
+    const int file = project.add("gita.mp4");
+    project.setAnalysis(file, {0.0}, 30.0);
+    const int a = project.sequence().insert(-1, file, 0.0, 4.0);   // [0, 4)
+    const int b = project.sequence().insert(-1, file, 10.0, 12.0);  // [4, 6)
+    ASSERT_TRUE(a != 0 && b != 0);
+    Transform tr;
+    tr.scaleX = 0.5;
+    project.sequence().setTransform(a, tr);
+    const int layer = project.textTracks().addLayer();
+
+    int audio = 0;
+    const int piece = project.liftToLayer(a, layer, 1.0, &audio);
+    ASSERT_NE(piece, 0);
+    EXPECT_EQ(project.sequence().find(a), nullptr);
+    // B non si è mosso: al posto di A resta uno spazio vuoto.
+    EXPECT_NEAR(project.sequence().startOf(project.sequence().indexOf(b)), 4.0, 1e-9);
+    const LayerPiece* lifted = project.textTracks().findPiece(piece);
+    ASSERT_NE(lifted, nullptr);
+    EXPECT_NEAR(lifted->position, 1.0, 1e-9);
+    EXPECT_NEAR(lifted->length(), 4.0, 1e-9);
+    EXPECT_NEAR(lifted->transform.scaleX, 0.5, 1e-9);
+    ASSERT_NE(audio, 0);
+    EXPECT_EQ(project.groupMembers({Kind::LayerPiece, piece}).size(), 2u);
+
+    // Di nuovo in V1: la clip audio resta, il pezzo ha l'audio scollegato.
+    int audio2 = 0;
+    const int back = project.lowerToV1(piece, 0.0, true, &audio2);
+    ASSERT_NE(back, 0);
+    EXPECT_EQ(project.textTracks().findPiece(piece), nullptr);
+    EXPECT_EQ(audio2, audio);
+    const Fragment* f = project.sequence().find(back);
+    ASSERT_NE(f, nullptr);
+    EXPECT_TRUE(f->detached);
+    EXPECT_NEAR(f->transform.scaleX, 0.5, 1e-9);
+    EXPECT_NEAR(project.sequence().startOf(project.sequence().indexOf(back)), 0.0, 1e-9);
+    // Un pezzo già con l'audio scollegato passa sul livello senza una seconda clip audio.
+    audio2 = 7;
+    EXPECT_NE(project.liftToLayer(back, layer, 20.0, &audio2), 0);
+    EXPECT_EQ(audio2, 0);
+    // Livello che non c'è: nessuna modifica.
+    const Project before = project;
+    EXPECT_EQ(project.liftToLayer(b, 999, 0.0), 0);
+    EXPECT_NE(project.sequence().find(b), nullptr);
+}

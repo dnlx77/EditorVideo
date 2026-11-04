@@ -161,6 +161,8 @@ public:
     // (`desired` se lì ci sta, altrimenti contro la scritta che lo blocca, o in un altro spazio se è più vicino). -1 se
     // la scritta o il livello non ci sono.
     double nearestFreeStart(int clipId, int layerId, double desired) const;
+    // Lo stesso per un oggetto che ancora non c'è, lungo `length` (ignoreId: un oggetto da non contare, 0 = nessuno).
+    double freeStartFor(int layerId, double length, double desired, int ignoreId = 0) const;
     // Sposta la scritta sul livello `layerId` in modo che inizi a `start` (entro quello che nearestFreeStart
     // permette). false, e nessuna modifica, se `start` non è un posto libero.
     bool moveTo(int clipId, int layerId, double start);
