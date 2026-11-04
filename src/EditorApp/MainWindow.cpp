@@ -116,7 +116,6 @@ MainWindow::MainWindow(QWidget* parent)
     connect(clipList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* item) {
         if (item != nullptr && !updatingList_) {
             setProgramActive(false);
-            sourceTabs_->setCurrentIndex(0);  // un file scelto si vede nella scheda Sorgente (non in quella delle scritte)
             selectClip(item->data(Qt::UserRole).toInt());
         }
     });
@@ -412,7 +411,6 @@ MainWindow::MainWindow(QWidget* parent)
             return;
         transitionPreview_->setTransition(transition);
         sourceStack_->setCurrentWidget(transitionPreview_);
-        sourceTabs_->setCurrentIndex(0);
     };
     leftTabs_ = new QTabWidget;
     leftTabs_->setDocumentMode(true);
@@ -462,8 +460,7 @@ MainWindow::MainWindow(QWidget* parent)
         });
     }
     filesDock_ = makeDock(QStringLiteral("File del progetto"), QStringLiteral("pannelloFile"), leftTabs_);
-    // Il pannello Sorgente ha una scheda in più, "Scritta": l'editor della scritta scelta (le modifiche valgono subito e si
-    // vedono nel Montaggio, che resta a fianco).
+    // L'editor della scritta scelta sta nel pannello Proprietà (le modifiche valgono subito e si vedono nel Montaggio).
     textPanel_ = new TextEditorPanel;
     textPanel_->onEdited = [this](const core::TextClip& edited) { applyTextEdit(edited, nullptr, true); };
     textPanel_->onStylesChanged = [this](const std::vector<core::NamedTextStyle>& styles) {
@@ -471,11 +468,7 @@ MainWindow::MainWindow(QWidget* parent)
         keepTextStyles(styles);
         recordEdit(QStringLiteral("Cambia stili delle scritte"), before);
     };
-    sourceTabs_ = new QTabWidget;
-    sourceTabs_->setDocumentMode(true);
-    sourceTabs_->addTab(sourcePanel, QStringLiteral("Sorgente"));
-    sourceTabs_->addTab(textPanel_, QStringLiteral("Scritta"));
-    sourceDock_ = makeDock(QStringLiteral("Sorgente"), QStringLiteral("pannelloSorgente"), sourceTabs_);
+    sourceDock_ = makeDock(QStringLiteral("Sorgente"), QStringLiteral("pannelloSorgente"), sourcePanel);
     programDock_ = makeDock(QStringLiteral("Montaggio"), QStringLiteral("pannelloMontaggio"), program_);
     // Pannello Proprietà: a destra, il contenuto dipende da ciò che è scelto sulla linea del tempo.
     propertiesPanel_ = new PropertiesPanel;
@@ -483,6 +476,7 @@ MainWindow::MainWindow(QWidget* parent)
         applyTransformEdit(edit, field);
     };
     propertiesPanel_->onFit = [this](bool fill) { fitSelectedPieces(fill); };
+    propertiesPanel_->setTextPage(textPanel_);
     propertiesDock_ = makeDock(QStringLiteral("Proprietà"), QStringLiteral("pannelloProprieta"), propertiesPanel_);
     timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),
                              sequencePanel);

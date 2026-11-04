@@ -5,6 +5,7 @@
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
+#include "EditorApp/PropertiesPanel.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/TransitionMime.h"
 #include "EditorApp/SequenceTimeline.h"
@@ -1870,7 +1871,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                     const bool fadesBack = window->undo() && *text.find(third) == original;
                     edited = shown && back && fadesSet && fadesBack;
                 }
-                // Il pannello della scritta (scheda del pannello Sorgente): le modifiche valgono subito e scrivere una frase
+                // Il pannello della scritta (pagina del pannello Proprietà): le modifiche valgono subito e scrivere una frase
                 // di fila è una sola voce di Annulla.
                 bool panel = false;
                 if (text.find(third) != nullptr) {
@@ -1879,7 +1880,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                     auto* edit = window->textPanel()->findChild<QPlainTextEdit*>("testo");
                     auto* sizeBox = window->textPanel()->findChild<QDoubleSpinBox*>("grandezza");
                     if (edit != nullptr && sizeBox != nullptr && window->textPanel()->hasClip()
-                        && window->sourceTabs()->currentWidget() == window->textPanel()) {
+                        && window->propertiesPanel()->showingText() && window->textPanel()->isVisibleTo(window->propertiesPanel())) {
                         edit->setPlainText(QStringLiteral("Prima"));
                         edit->setPlainText(QStringLiteral("Prima e dopo"));
                         sizeBox->setValue(9.0);
@@ -1890,7 +1891,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                         panel = applied && oneEntry;
                     }
                 }
-                std::printf("Scritte: pannello nella scheda della Sorgente, modifiche subito e in una sola voce di Annulla %s\n",
+                std::printf("Scritte: editor nel pannello Proprietà, modifiche subito e in una sola voce di Annulla %s\n",
                             panel ? "sì" : "NO");
                 std::fflush(stdout);
                 ok = ok && panel;

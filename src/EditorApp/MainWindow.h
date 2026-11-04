@@ -159,7 +159,7 @@ public:
     // `merge` e se l'ultima modifica era un'altra di questo tipo sulla stessa scritta, ne continua la voce di Annulla
     // (il pannello: scrivere una frase è una sola modifica).
     bool applyTextEdit(const core::TextClip& edited, const std::vector<core::NamedTextStyle>* styles = nullptr, bool merge = false);
-    void showTextPanel(int clipId, bool focusText);  // la scheda "Scritta" del pannello Sorgente, con questa scritta
+    void showTextPanel(int clipId, bool focusText);  // l'editor della scritta nel pannello Proprietà
     void refreshTextPanel();                          // la rimette in pari con la scritta scelta e col progetto
     TextEditorPanel* textPanel() const { return textPanel_; }
     // Pannello Proprietà (a destra): il contenuto segue l'oggetto scelto. Per i pezzi video sono le trasformazioni.
@@ -177,7 +177,6 @@ public:
     QStackedWidget* sourceStack() const { return sourceStack_; }
     TransitionPreviewWidget* transitionPreview() const { return transitionPreview_; }
     void showSourcePlayer();
-    QTabWidget* sourceTabs() const { return sourceTabs_; }
     std::vector<core::NamedTextStyle> availableTextStyles() const;  // del progetto e dell'elenco globale
     void keepTextStyles(const std::vector<core::NamedTextStyle>& styles);
     // La scritta trascinata sull'immagine del monitor: nuovo centro (0..1 del fotogramma).
@@ -380,7 +379,6 @@ private:
     QDockWidget* programDock_ = nullptr;
     QDockWidget* timelineDock_ = nullptr;
     QDockWidget* propertiesDock_ = nullptr;
-    QTabWidget* sourceTabs_ = nullptr;      // il pannello Sorgente ha due schede: Sorgente e Scritta (l'editor delle scritte)
     TextEditorPanel* textPanel_ = nullptr;
     PropertiesPanel* propertiesPanel_ = nullptr;
     std::string transformMergeKey_;          // campo e pezzi dell'ultima modifica delle trasformazioni, per unire quelle di fila

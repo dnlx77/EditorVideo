@@ -32,6 +32,7 @@ PropertiesPanel::PropertiesPanel(QWidget* parent)
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidget(buildTransformPage());
     stack_->addWidget(scroll);
+    transformPage_ = scroll;
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(stack_);
@@ -226,7 +227,24 @@ void PropertiesPanel::showNothing(const QString& message)
 
 bool PropertiesPanel::showingTransform() const
 {
-    return stack_->currentWidget() != message_;
+    return stack_->currentWidget() == transformPage_;
+}
+
+void PropertiesPanel::setTextPage(QWidget* page)
+{
+    textPage_ = page;
+    stack_->addWidget(page);
+}
+
+void PropertiesPanel::showText()
+{
+    if (textPage_ != nullptr)
+        stack_->setCurrentWidget(textPage_);
+}
+
+bool PropertiesPanel::showingText() const
+{
+    return textPage_ != nullptr && stack_->currentWidget() == textPage_;
 }
 
 core::Transform PropertiesPanel::transform() const
@@ -273,7 +291,7 @@ void PropertiesPanel::showTransform(const core::Transform& t, int count)
                                   : QString());
     countNote_->setVisible(count > 1);
     updating_ = false;
-    stack_->setCurrentIndex(1);
+    stack_->setCurrentWidget(transformPage_);
 }
 
 }  // namespace editor::app

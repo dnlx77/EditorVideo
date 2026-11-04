@@ -34,6 +34,11 @@ void MainWindow::refreshPropertiesPanel()
     if (propertiesPanel_ == nullptr || timeline_ == nullptr)
         return;
     const std::vector<core::ObjectRef> objects = timeline_->allSelectedObjects();
+    if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::TextClip
+        && project_.textTracks().find(objects.front().id) != nullptr) {
+        propertiesPanel_->showText();  // (refreshTextPanel ne mette i valori)
+        return;
+    }
     const std::vector<int> pieces = selectedPieceIds(objects);
     for (int id : pieces) {
         if (const core::Fragment* f = project_.sequence().find(id)) {
@@ -44,9 +49,7 @@ void MainWindow::refreshPropertiesPanel()
     QString message = QStringLiteral("Scegli un pezzo video sulla linea del tempo per cambiarne scala, posizione, rotazione e ritaglio.");
     if (!objects.empty()) {
         const core::ObjectRef::Kind kind = objects.front().kind;
-        if (kind == core::ObjectRef::Kind::TextClip)
-            message = QStringLiteral("Le proprietà della scritta sono nella scheda «Scritta» del pannello Sorgente.");
-        else if (kind == core::ObjectRef::Kind::AudioClip || kind == core::ObjectRef::Kind::PieceAudio)
+        if (kind == core::ObjectRef::Kind::AudioClip || kind == core::ObjectRef::Kind::PieceAudio)
             message = QStringLiteral("Per l'audio il livello si cambia con la linea sulla clip e con i comandi della corsia.");
     } else if (timeline_->selectedTransition() != 0) {
         message = QStringLiteral("Le proprietà della transizione si cambiano con doppio clic sul blocco.");
