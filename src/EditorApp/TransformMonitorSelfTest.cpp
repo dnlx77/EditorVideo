@@ -424,6 +424,51 @@ int runManipTest(const QStringList& args, qsizetype at)
                         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
                     check(std::abs(program->position() - 1.5) < 0.1, "il doppio clic su un rombo porta il cursore sulla chiave");
                 }
+                // La mini linea del tempo del pannello Proprietà (B2): stesse chiavi, stessi colori, stesse azioni.
+                {
+                    AnimMiniTimeline* mini = panel->miniTimeline();
+                    check(mini != nullptr && !mini->isHidden(), "la mini linea del tempo si vede con un pezzo animato");
+                    mini->resize(300, mini->sizeHint().height());
+                    const auto sendMini = [&](QEvent::Type type, const QPointF& p, bool left) {
+                        QMouseEvent e(type, p, mini->mapToGlobal(p), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                                      left ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+                        QCoreApplication::sendEvent(mini, &e);
+                    };
+                    const double firstTime = animation().track(core::AnimParam::Opacity)[0].time;
+                    const QPointF m0 = mini->markCenterForTest(0);
+                    // Un clic sul rombo porta il cursore sulla chiave.
+                    sendMini(QEvent::MouseButtonPress, m0, true);
+                    sendMini(QEvent::MouseButtonRelease, m0, false);
+                    {
+                        QElapsedTimer settle;
+                        settle.start();
+                        const double want = firstTime - piece.start;
+                        while (std::abs(program->position() - want) > 0.05 && settle.elapsed() < 3000)
+                            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                        check(std::abs(program->position() - want) < 0.1, "un clic sul rombo della mini linea porta il cursore lì");
+                    }
+                    // Trascinarlo sposta la chiave (fra l'inizio del pezzo e l'altra chiave).
+                    const QPointF target(mini->pointForTimeForTest(core::AnimGroup::Opacity, piece.start + 0.2));
+                    sendMini(QEvent::MouseButtonPress, mini->markCenterForTest(0), true);
+                    sendMini(QEvent::MouseMove, QPointF(mini->markCenterForTest(0).x() + 6, m0.y()), true);
+                    sendMini(QEvent::MouseMove, target, true);
+                    sendMini(QEvent::MouseButtonRelease, target, false);
+                    QCoreApplication::processEvents();
+                    check(animation().track(core::AnimParam::Opacity).size() == 2
+                              && std::abs(animation().track(core::AnimParam::Opacity)[0].time - (piece.start + 0.2)) < 0.08,
+                          "trascinare un rombo della mini linea sposta la chiave");
+                    // Clic sul vuoto: il cursore va lì.
+                    const QPointF empty = mini->pointForTimeForTest(core::AnimGroup::Opacity, piece.start + 3.0);
+                    sendMini(QEvent::MouseButtonPress, empty, true);
+                    sendMini(QEvent::MouseButtonRelease, empty, false);
+                    {
+                        QElapsedTimer settle;
+                        settle.start();
+                        while (std::abs(program->position() - 3.0) > 0.1 && settle.elapsed() < 3000)
+                            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                        check(std::abs(program->position() - 3.0) < 0.2, "un clic sul vuoto della mini linea porta il cursore lì");
+                    }
+                }
                 // Il tipo di passaggio (da menu: qui si chiama quello che il menu chiama).
                 check(line->keyRow().keys[0].interp == core::Interp::Linear, "all'inizio il passaggio è lineare");
                 line->onKeyInterp(line->keyRow().keys[0].group, line->keyRow().keys[0].time, core::Interp::Hold, 0, 0, 1, 1);
