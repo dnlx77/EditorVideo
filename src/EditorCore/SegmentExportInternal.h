@@ -503,6 +503,7 @@ private:
     int outLength_ = 4;  // byte della lunghezza davanti ai NAL nei pacchetti video del file creato (per i parametri nel flusso)
 
     // Stato della scrittura.
+    std::vector<TextImage> transformedTexts_;  // le scritte trasformate del fotogramma in corso (vedi textsAt)
     std::map<int, TextImage> textImages_;  // per id di scritta: disegnata una volta sola
     std::unique_ptr<TextFrameBlender> blender_;
     std::unique_ptr<LayerFrameSource> layerSource_;  // i fotogrammi dei pezzi dei livelli (vedi ReencodeOptions::layerFiles)

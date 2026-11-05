@@ -698,6 +698,8 @@ std::vector<BlendedText> ExportJob::textsAt(double sequenceTime)
         return images;
     const StreamSignature& format = *plan_.reference.video();
     const std::vector<const TextClip*> visible = reencode_.texts.visibleAt(sequenceTime);
+    transformedTexts_.clear();
+    transformedTexts_.reserve(visible.size());  // gli indirizzi restano validi fino alla prossima chiamata
     // L'esportazione avanza nel tempo: le immagini delle scritte non più visibili si liberano (con molte scritte
     // in un progetto lungo, altrimenti resterebbero tutte in memoria fino alla fine).
     for (auto it = textImages_.begin(); it != textImages_.end();) {
@@ -709,10 +711,21 @@ std::vector<BlendedText> ExportJob::textsAt(double sequenceTime)
         auto found = textImages_.find(clip->id);
         if (found == textImages_.end())
             found = textImages_.emplace(clip->id, reencode_.textRenderer->render(*clip, format.width, format.height)).first;
-        // Le dissolvenze: la scritta si vede meno all'inizio e alla fine.
-        const double opacity = clip->fadeFactor(sequenceTime);
-        if (!found->second.empty() && opacity > 0.0)
-            images.push_back({&found->second, opacity, reencode_.texts.levelOf(clip->id)});
+        // Le dissolvenze: la scritta si vede meno all'inizio e alla fine; la trasformazione (anche animata: tempi dall'inizio della
+        // scritta) vale sull'immagine disegnata, intorno al centro del suo riquadro.
+        double opacity = clip->fadeFactor(sequenceTime);
+        const TextImage* image = &found->second;
+        if (!clip->transform.isIdentity() || !clip->animation.empty()) {
+            const Transform t = evaluateTransform(clip->transform, clip->animation, sequenceTime - clip->position);
+            opacity *= t.opacity;
+            if (t.movesPicture()) {
+                transformedTexts_.push_back(transformTextImage(found->second, t, clip->style.centerX * format.width,
+                                                               clip->style.centerY * format.height, format.width, format.height));
+                image = &transformedTexts_.back();
+            }
+        }
+        if (!image->empty() && opacity > 0.0)
+            images.push_back({image, opacity, reencode_.texts.levelOf(clip->id)});
     }
     return images;
 }

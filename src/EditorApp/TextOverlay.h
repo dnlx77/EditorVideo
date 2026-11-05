@@ -20,8 +20,10 @@ class TextOverlay
 public:
     // `target` è il rettangolo in cui sta l'immagine del video (in coordinate del `painter`); `devicePixelRatio` quello
     // dello schermo; `time` il tempo del montaggio (per le dissolvenze).
+    // `projectFrame`: la misura in pixel del fotogramma del progetto (lo spostamento delle trasformazioni è in quei pixel); la
+    // trasformazione, anche animata, si applica all'immagine disegnata intorno al centro del riquadro del testo.
     void paint(QPainter& painter, const QRectF& target, qreal devicePixelRatio, const std::vector<core::TextClip>& clips,
-               double time);
+               double time, QSize projectFrame = {});
 
     // Il riquadro della scritta in frazioni del fotogramma (0..1), per sapere se un clic la prende. Vuoto se non ha niente da vedere.
     QRectF bounds(const core::TextClip& clip, int frameWidth, int frameHeight) const;

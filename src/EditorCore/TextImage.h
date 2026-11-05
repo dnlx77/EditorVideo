@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EditorCore/TextTracks.h"
+#include "EditorCore/Transform.h"
 
 #include <cstdint>
 #include <vector>
@@ -35,5 +36,13 @@ public:
 // fotogramma com'era (di solito 255). `opacity` (0..1) rende la scritta più trasparente (le dissolvenze).
 void blendTextOver(std::uint8_t* frameRgba, int stride, int frameWidth, int frameHeight, const TextImage& text,
                    double opacity = 1.0);
+
+// La scritta già disegnata con la trasformazione `transform` (scala, rotazione, specchio e spostamento; il ritaglio e l'opacità non
+// contano qui: l'opacità la applica chi sovrappone): intorno al punto (`pivotX`, `pivotY`), in pixel del fotogramma
+// `frameWidth` x `frameHeight`, di solito il centro del riquadro del testo; `posX`/`posY` spostano in pixel del fotogramma
+// (come per i pezzi video). Interpolazione bilineare sul premoltiplicato. Dell'immagine risultante resta solo la parte dentro il
+// fotogramma; vuota se non si vede niente. Con una trasformazione che non muove niente restituisce la scritta com'è.
+TextImage transformTextImage(const TextImage& text, const Transform& transform, double pivotX, double pivotY, int frameWidth,
+                             int frameHeight);
 
 }  // namespace editor::core

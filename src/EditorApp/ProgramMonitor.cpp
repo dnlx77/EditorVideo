@@ -703,7 +703,7 @@ void ProgramMonitor::updateTextOverlay()
         return;
     std::vector<core::TextClip> now = visibleText();
     // Una scritta in dissolvenza cambia a ogni movimento del cursore, le altre solo quando cambiano (o compaiono).
-    const bool fading = std::any_of(now.begin(), now.end(), [&](const core::TextClip& c) { return c.fadeFactor(position_) < 1.0; });
+    const bool fading = std::any_of(now.begin(), now.end(), [&](const core::TextClip& c) { return c.fadeFactor(position_) < 1.0 || !c.animation.empty(); });
     std::vector<int> levels;
     for (const core::TextClip& c : now)
         levels.push_back(project_.textTracks().levelOf(c.id));
@@ -885,7 +885,7 @@ void ProgramMonitor::primeTransition()
 void ProgramMonitor::updateOverlayFrame()
 {
     const QSize frame = frameSize();
-    player_->setTextPainter([this](QPainter& painter, const QRectF& target, int from, int to) {
+    player_->setTextPainter([this, frame](QPainter& painter, const QRectF& target, int from, int to) {
         std::vector<core::TextClip> clips;
         for (std::size_t i = 0; i < shownText_.size(); ++i) {
             const int level = i < shownLevels_.size() ? shownLevels_[i] : 0;
@@ -893,7 +893,7 @@ void ProgramMonitor::updateOverlayFrame()
                 clips.push_back(shownText_[i]);
         }
         if (!clips.empty())
-            overlay_.paint(painter, target, painter.device()->devicePixelRatioF(), clips, shownTime_);
+            overlay_.paint(painter, target, painter.device()->devicePixelRatioF(), clips, shownTime_, frame);
     });
     player_->setOverlay(
         [this](QPainter& painter, const QRectF& target) {
