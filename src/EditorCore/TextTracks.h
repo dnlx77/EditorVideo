@@ -72,6 +72,11 @@ struct TextClip
     double length = 5.0;
     std::string text;  // UTF-8, con '\n' fra le righe
     TextStyle style;
+    // Trasformazione (scala, posizione, rotazione, specchio, opacità; il ritaglio non si usa) applicata all'immagine della scritta
+    // disegnata, intorno al suo centro, e le chiavi che la animano. I tempi delle chiavi sono secondi dall'INIZIO della scritta
+    // (una scritta non ha un file): spostarla non li cambia; accorciarne l'inizio o dividerla li sposta di conseguenza.
+    Transform transform;
+    TransformAnimation animation;
 
     // Dissolvenza in entrata e in uscita (secondi): l'opacità sale da 0 a 1 nei primi `fadeIn` secondi e scende da 1 a 0
     // negli ultimi `fadeOut`. Se insieme sono più lunghe della scritta si accorciano in proporzione.
@@ -216,6 +221,8 @@ public:
 
     bool setText(int clipId, std::string text);
     bool setStyle(int clipId, const TextStyle& style);
+    bool setTransform(int clipId, const Transform& transform);  // false se è già quella
+    bool setAnimation(int clipId, const TransformAnimation& animation);  // idem (normalizzata)
     bool setLength(int clipId, double length);  // allunga/accorcia la fine; come setEnd
     // Le dissolvenze (secondi, da 0 alla durata della scritta); false se sono già quelle.
     bool setFades(int clipId, double fadeIn, double fadeOut);

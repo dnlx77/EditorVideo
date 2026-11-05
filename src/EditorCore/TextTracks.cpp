@@ -292,6 +292,7 @@ bool TextTracks::setStart(int clipId, double start)
     const TextLayer& l = *layer(layerOf(clipId));
     if (!isFree(l, start, end, clipId))
         return false;
+    shiftKeys(clip->animation, clip->position - start);  // le chiavi restano attaccate all'immagine
     clip->length = end - start;
     clip->position = start;
     return true;
@@ -324,6 +325,7 @@ int TextTracks::split(int clipId, double seconds)
     second.position = seconds;
     second.length = clip->endPosition() - seconds;
     second.id = nextClipId_++;
+    shiftKeys(second.animation, -(seconds - clip->position));  // i tempi della seconda parte partono dal suo inizio
     second.fadeIn = 0.0;  // la dissolvenza in entrata resta alla prima parte, quella in uscita alla seconda
     clip->fadeOut = 0.0;
     clip->length = seconds - clip->position;
@@ -362,6 +364,28 @@ bool TextTracks::setStyle(int clipId, const TextStyle& style)
     if (clip == nullptr || clip->style == style)
         return false;
     clip->style = style;
+    return true;
+}
+
+bool TextTracks::setTransform(int clipId, const Transform& transform)
+{
+    TextClip* clip = findMutable(clipId);
+    if (clip == nullptr || clip->transform == transform)
+        return false;
+    clip->transform = transform;
+    return true;
+}
+
+bool TextTracks::setAnimation(int clipId, const TransformAnimation& animation)
+{
+    TextClip* clip = findMutable(clipId);
+    if (clip == nullptr)
+        return false;
+    TransformAnimation value = animation;
+    normalizeAnimation(value);
+    if (clip->animation == value)
+        return false;
+    clip->animation = std::move(value);
     return true;
 }
 

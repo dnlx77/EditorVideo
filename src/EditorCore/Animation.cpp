@@ -339,6 +339,14 @@ bool moveKeysAt(TransformAnimation& animation, double fromTime, double toTime)
     return moveKeysOf(animation, allParams(), fromTime, toTime);
 }
 
+void shiftKeys(TransformAnimation& animation, double delta)
+{
+    for (auto& track : animation.tracks) {
+        for (AnimKey& key : track)
+            key.time += delta;
+    }
+}
+
 bool removeKeysAt(TransformAnimation& animation, double time, Transform* base)
 {
     return removeKeysOf(animation, allParams(), time, base);

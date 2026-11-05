@@ -101,6 +101,9 @@ const AnimKey* findKey(const TransformAnimation& animation, AnimParam param, dou
 // Le stesse modifiche su TUTTI i parametri che hanno una chiave a quell'istante (la riga dei rombi della linea del tempo ne
 // mostra uno solo per istante). moveKeysAt non fa niente se in `toTime` c'è già una chiave di uno di quei parametri.
 bool moveKeysAt(TransformAnimation& animation, double fromTime, double toTime);
+// Somma `delta` ai tempi di tutte le chiavi (l'ordine non cambia). Serve alle scritte, i cui tempi sono relativi all'inizio
+// della scritta: accorciandone o allungandone l'inizio, o dividendola, le chiavi seguono l'immagine.
+void shiftKeys(TransformAnimation& animation, double delta);
 // Se `base` c'è e un parametro resta senza chiavi, prende il valore della chiave tolta (come col rombo del pannello).
 bool removeKeysAt(TransformAnimation& animation, double time, Transform* base = nullptr);
 bool setKeysInterpAt(TransformAnimation& animation, double time, Interp interp, double c1x = 0.25, double c1y = 0.1,
