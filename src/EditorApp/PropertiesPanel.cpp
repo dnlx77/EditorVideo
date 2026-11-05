@@ -1,5 +1,6 @@
 #include "EditorApp/PropertiesPanel.h"
 #include "EditorApp/AnimColors.h"
+#include "EditorApp/TextEditorPanel.h"
 
 #include <QtCore/QSignalBlocker>
 #include <QtWidgets/QCheckBox>
@@ -133,6 +134,15 @@ QWidget* PropertiesPanel::buildTransformPage()
         page->setFont(small);
     }
 
+    body_ = page;
+    textHeading_ = new QLabel(QStringLiteral("Trasforma"));
+    {
+        QFont bold = textHeading_->font();
+        bold.setBold(true);
+        textHeading_->setFont(bold);
+    }
+    textHeading_->hide();
+    root->addWidget(textHeading_);
     countNote_ = new QLabel;
     countNote_->setWordWrap(true);
     root->addWidget(countNote_);
@@ -144,6 +154,8 @@ QWidget* PropertiesPanel::buildTransformPage()
     auto* fill = new QPushButton(QStringLiteral("Riempi"));
     fill->setToolTip(QStringLiteral("Ingrandisce l'immagine fino a riempire il fotogramma (i bordi in eccesso restano fuori)"));
     auto* all = new QPushButton(QStringLiteral("Ripristina tutto"));
+    fitButton_ = fit;
+    fillButton_ = fill;
     for (QPushButton* button : {fit, fill, all})
         button->setFixedHeight(22);
     quick->addWidget(fit);
@@ -294,6 +306,9 @@ QWidget* PropertiesPanel::buildTransformPage()
     cropRow(cropRight_, QStringLiteral("Destra"), "ritaglioDestra", &core::Transform::cropRight);
     cropRow(cropTop_, QStringLiteral("Alto"), "ritaglioAlto", &core::Transform::cropTop);
     cropRow(cropBottom_, QStringLiteral("Basso"), "ritaglioBasso", &core::Transform::cropBottom);
+    // (separatore e sezione sono gli ultimi due widget aggiunti a `root`: servono per nasconderli per le scritte)
+    cropSection_ = root->itemAt(root->count() - 1)->widget();
+    cropSeparator_ = root->itemAt(root->count() - 2)->widget();
 
     // Aspetto
     QVBoxLayout* look = group(QStringLiteral("Aspetto"), "aspetto", core::AnimGroup::Opacity, [](core::Transform& t) {
@@ -457,7 +472,48 @@ void PropertiesPanel::showTransform(const core::Transform& t, int count)
     mini_->setData(0.0, 1.0, -1.0, {});
 }
 
+void PropertiesPanel::attachBody(bool toText)
+{
+    if (toText == textMode_ || body_ == nullptr)
+        return;
+    auto* editor = dynamic_cast<TextEditorPanel*>(textPage_);
+    if (toText && editor == nullptr)
+        return;
+    auto* scroll = static_cast<QScrollArea*>(transformPage_);
+    if (toText) {
+        scroll->takeWidget();
+        editor->setExtraSection(body_);
+    } else {
+        if (editor != nullptr)
+            editor->takeExtraSection();
+        scroll->setWidget(body_);
+    }
+    textMode_ = toText;
+    // Per le scritte: titolo «Trasforma», senza ritaglio, Adatta/Riempi e animazioni pronte (per i pezzi video).
+    textHeading_->setVisible(toText);
+    cropSeparator_->setVisible(!toText);
+    cropSection_->setVisible(!toText);
+    fitButton_->setVisible(!toText);
+    fillButton_->setVisible(!toText);
+    presetButton_->setVisible(!toText);
+    body_->show();
+}
+
+void PropertiesPanel::showTextTransform(const core::Transform& t, const AnimationState& animation)
+{
+    attachBody(true);
+    updateTransformControls(t, 1, animation);
+    showText();
+}
+
 void PropertiesPanel::showTransform(const core::Transform& t, int count, const AnimationState& animation)
+{
+    attachBody(false);
+    updateTransformControls(t, count, animation);
+    stack_->setCurrentWidget(transformPage_);
+}
+
+void PropertiesPanel::updateTransformControls(const core::Transform& t, int count, const AnimationState& animation)
 {
     shown_ = t;
     updating_ = true;
@@ -513,7 +569,6 @@ void PropertiesPanel::showTransform(const core::Transform& t, int count, const A
                                   : QString());
     countNote_->setVisible(count > 1);
     updating_ = false;
-    stack_->setCurrentWidget(transformPage_);
 }
 
 }  // namespace editor::app
