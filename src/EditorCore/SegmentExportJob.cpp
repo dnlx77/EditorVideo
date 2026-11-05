@@ -32,6 +32,7 @@ ExportJob::ExportJob(const std::vector<ClipRanges>& clips, const std::string& ou
     }
     if (rangeCount_ == 0)
         throw MediaError("Non c'è nessun tratto da esportare.");
+    totalLength_ += std::max(0.0, reencode.tailSeconds);
     // Traccia sostitutiva: il file audio si apre una volta sola, per il controllo e poi per la copia.
     if (replaced_) {
         if (samePath(audio_.replacement->path, outputPath_))
@@ -49,7 +50,7 @@ ExportJob::ExportJob(const std::vector<ClipRanges>& clips, const std::string& ou
     }
 
     // Che cosa succede a ogni file: si copia (con i suoi parametri nel flusso, se diversi) o si ricodifica.
-    plan_ = analysis != nullptr ? *analysis : analyzePlan(clips_, format, noClipAudio_, reencode_.all, reencode_.closeGaps, reencode_.activeTexts(), &reencode_.transitions, reencode_.backend, &reencode_.video);
+    plan_ = analysis != nullptr ? *analysis : analyzePlan(clips_, format, noClipAudio_, reencode_.all, reencode_.closeGaps, reencode_.activeTexts(), &reencode_.transitions, reencode_.backend, &reencode_.video, reencode_.tailSeconds);
     if (!plan_.problem.empty())
         throw ClipsNotJoinable(plan_.problem);
 
@@ -938,6 +939,12 @@ ExportResult ExportJob::run()
                     copyRange(current, c, piece);
                 }
             }
+        }
+        // Oltre l'ultimo pezzo di V1: nero con sopra scritte e livelli (e il silenzio, o l'audio mixato che continua).
+        if (plan_.blackTail && outVideo_ >= 0) {
+            const auto [videoEnd, audioEnd] = writeBlack(reencode_.tailSeconds);
+            outputPosition_ = std::max({outputPosition_, videoEnd, audioEnd});
+            doneLength_ += reencode_.tailSeconds;
         }
         // Il resto della traccia sostitutiva, fino alla fine del file creato.
         pumpReplacement(std::numeric_limits<double>::max(), outputPosition_);

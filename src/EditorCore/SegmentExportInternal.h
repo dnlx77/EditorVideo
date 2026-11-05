@@ -197,6 +197,7 @@ struct PlanAnalysis
     std::vector<std::vector<std::vector<Piece>>> pieces;  // per file e per tratto: le parti, copiate o ricodificate
     std::string impreciseCuts;                  // vedi ExportPreview
     bool blackGaps = false;                     // gli spazi vuoti diventano nero e silenzio
+    bool blackTail = false;                     // dopo l'ultimo pezzo: nero e silenzio fino a ReencodeOptions::tailSeconds
     std::string closedGaps;                     // vedi ExportPreview
     ProjectFormat reference;                    // il formato da rispettare
     bool parametersInStream = false;            // vedi ExportResult
@@ -220,7 +221,8 @@ inline Transform transformOf(const ClipRanges& clip, std::size_t r)
 PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectFormat* format, bool replaced, bool reencodeAll,
                          bool closeGaps, const TextTracks* texts = nullptr,
                          const std::vector<ExportTransition>* transitions = nullptr,
-                         std::optional<EncoderBackend> backend = std::nullopt, const VideoChange* change = nullptr);
+                         std::optional<EncoderBackend> backend = std::nullopt, const VideoChange* change = nullptr,
+                         double tailSeconds = 0.0);
 
 // Codec tag dell'originale se il contenitore di uscita lo accetta, altrimenti 0 (lo sceglie il muxer).
 inline unsigned codecTagFor(const AVOutputFormat* format, const AVCodecParameters* par)

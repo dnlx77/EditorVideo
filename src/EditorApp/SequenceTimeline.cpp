@@ -67,13 +67,27 @@ SequenceTimeline::SequenceTimeline(QWidget* parent)
     addTrack_->setToolTip(QStringLiteral("Aggiungi una traccia audio"));
     addTrack_->setAutoRaise(true);
     connect(addTrack_, &QToolButton::clicked, this, [this] {
-        if (onAddTrack)
+        // Con una traccia video scelta si aggiunge un livello video, altrimenti una traccia audio.
+        if (videoTrackChosen()) {
+            if (onAddVideoLayer)
+                onAddVideoLayer();
+        } else if (onAddTrack) {
             onAddTrack();
+        }
     });
     removeTrack_ = new QToolButton(this);
     removeTrack_->setText(QStringLiteral("\u2212"));
     removeTrack_->setAutoRaise(true);
     connect(removeTrack_, &QToolButton::clicked, this, [this] {
+        if (videoTrackChosen()) {
+            // Il livello video scelto, altrimenti l'ultimo (il più alto).
+            if (textLanes_.empty())
+                return;
+            const bool chosen = std::any_of(textLanes_.begin(), textLanes_.end(), [this](const TextLane& l) { return l.layerId == selectedTextLayer_; });
+            if (onRemoveVideoLayer)
+                onRemoveVideoLayer(chosen ? selectedTextLayer_ : textLanes_.back().layerId);
+            return;
+        }
         // La traccia scelta (clic sul suo nome o su una sua clip), altrimenti l'ultima.
         int track = lanes_.size() > 1 ? lanes_.back().trackId : 0;
         if (selectedTrack_ > 0 && std::any_of(lanes_.begin() + 1, lanes_.end(), [this](const AudioLane& l) { return l.trackId == selectedTrack_; }))
@@ -96,8 +110,27 @@ QSize SequenceTimeline::minimumSizeHint() const
             48 + kRulerHeight + kControlsHeight + static_cast<int>(lanes_.size() - 1 + textLanes_.size()) * 18};
 }
 
+bool SequenceTimeline::videoTrackChosen() const
+{
+    // La scelta è sul video (un pezzo, uno spazio, una scritta o un livello) e non su una traccia audio.
+    return selectedTrack_ < 0 && (selected_ != 0 || selectedGap_ != 0 || selectedTextClip_ != 0 || selectedTextLayer_ != 0 || !multi_.empty());
+}
+
 void SequenceTimeline::syncTrackButtons()
 {
+    if (videoTrackChosen()) {
+        QString name = textLanes_.empty() ? QString() : textLanes_.back().name;
+        for (const TextLane& l : textLanes_) {
+            if (l.layerId == selectedTextLayer_)
+                name = l.name;
+        }
+        addTrack_->setToolTip(QStringLiteral("Aggiungi un livello video"));
+        removeTrack_->setEnabled(!textLanes_.empty());
+        removeTrack_->setToolTip(!textLanes_.empty() ? QStringLiteral("Togli il livello video %1 (con quello che c'è sopra; Ctrl+Z lo rimette)").arg(name)
+                                                     : QStringLiteral("Togli un livello video (non ce ne sono: V1 resta sempre)"));
+        return;
+    }
+    addTrack_->setToolTip(QStringLiteral("Aggiungi una traccia audio"));
     const bool any = lanes_.size() > 1;
     removeTrack_->setEnabled(any);
     QString name = any ? lanes_.back().name : QString();

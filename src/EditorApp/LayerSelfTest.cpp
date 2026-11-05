@@ -9,6 +9,7 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QStringList>
 #include <QtGui/QMouseEvent>
+#include <QtWidgets/QToolButton>
 #include <QtCore/QThread>
 
 #include <algorithm>
@@ -105,6 +106,30 @@ int runLayerTest(const QStringList&, qsizetype)
     mouse(QEvent::MouseButtonPress, {grabX, yLow});
     mouse(QEvent::MouseButtonRelease, {grabX, yLow});
     check(line.selectedObjects().empty() && line.selectedTextClip() == 11, "un clic semplice torna al pezzo da solo");
+
+    // "+" e "−" seguono la traccia scelta: con un livello video scelto agiscono sui livelli, con una traccia audio sull'audio.
+    {
+        int addedLayers = 0;
+        int removedLayer = -1;
+        int addedAudio = 0;
+        line.onAddVideoLayer = [&] { ++addedLayers; };
+        line.onRemoveVideoLayer = [&](int id) { removedLayer = id; };
+        line.onAddTrack = [&] { ++addedAudio; };
+        line.setSelectedTextLayer(1);
+        check(line.videoTrackChosen(), "con un livello scelto la traccia scelta è video");
+        line.addTrackButton()->click();
+        check(addedLayers == 1 && addedAudio == 0, "\"+\" con un livello video scelto aggiunge un livello video");
+        line.removeTrackButton()->click();
+        check(removedLayer == 1, "\"−\" toglie il livello video scelto");
+        line.setSelectedTextLayer(0);
+        line.setSelectedTextClip(0);
+        line.setSelectedTrack(0);
+        check(!line.videoTrackChosen(), "con una traccia audio scelta non è video");
+        line.addTrackButton()->click();
+        check(addedLayers == 1 && addedAudio == 1, "\"+\" con una traccia audio scelta aggiunge una traccia audio");
+        line.setSelectedTrack(-1);
+        line.setSelectedTextClip(11);  // com'era prima: il pezzo del livello è scelto
+    }
 
     // Il bordo sinistro, 1 secondo più avanti: si accorcia l'inizio.
     const double edgeX = line.xForSequenceTime(4.0) + 1;

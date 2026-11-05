@@ -183,6 +183,7 @@ public:
     // Traccia audio scelta (clic sul suo nome o su una sua clip): quella che toglie il pulsante "−". 0 = A1.
     void setSelectedTrack(int trackId);
     int selectedTrack() const { return selectedTrack_; }
+    bool videoTrackChosen() const;  // la scelta è sul video e non su una traccia audio
 
     std::function<void(double)> onSeek;               // clic: tempo della sequenza
     std::function<void(int)> onSelect;                // pezzo selezionato
@@ -236,6 +237,9 @@ public:
     // Tracce audio: pulsanti "+" e "−" in alto a sinistra, muto, solo e livello di una corsia (onLevel si chiama
     // lasciando il cursore del livello, o con un doppio clic che lo riporta a 0 dB).
     std::function<void()> onAddTrack;
+    // Con una traccia video scelta (V1, V2...) "+" e "−" aggiungono e tolgono un livello video (quello scelto, o l'ultimo).
+    std::function<void()> onAddVideoLayer;
+    std::function<void(int layerId)> onRemoveVideoLayer;
     std::function<void(int trackId)> onRemoveTrack;
     std::function<void(int trackId, bool muted)> onTrackMuted;
     std::function<void(int trackId, bool solo)> onTrackSolo;

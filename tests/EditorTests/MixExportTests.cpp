@@ -343,7 +343,7 @@ TEST_F(MixExportTest, ClosedGapsMoveThePiecesAndTheAddedClipsAlike)
     const AudioEdit edit = project.audioEdit(GapExport::Black);
     ASSERT_TRUE(edit.mix);
     ASSERT_TRUE(edit.mixClosed);
-    EXPECT_DOUBLE_EQ(edit.mix->length, 3.0);
+    EXPECT_DOUBLE_EQ(edit.mix->length, 3.5);  // la musica (2.5 .. 3.5) va oltre l'ultimo pezzo e si esporta
     EXPECT_DOUBLE_EQ(edit.mixClosed->length, 2.0);
     EXPECT_DOUBLE_EQ(edit.mix->segments[1].position, 2.0);  // A1, secondo pezzo
     bool found = false;

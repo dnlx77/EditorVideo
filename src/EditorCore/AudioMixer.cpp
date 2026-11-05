@@ -150,6 +150,10 @@ MixSpec mixSpecOf(const Project& project, bool closeGaps)
     }
     spec.gains = trackGainsOf(project.audioTracks());
     spec.length = sequence.totalLength();
+    if (!closeGaps) {
+        for (const MixSegment& s : spec.segments)
+            spec.length = std::max(spec.length, s.position + s.length());  // le clip audio che vanno oltre l'ultimo pezzo
+    }
     return spec;
 }
 

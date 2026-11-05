@@ -297,3 +297,29 @@ TEST_F(TransformExport, LayerPieceOverAGapIsDrawnOnBlack)
     EXPECT_NEAR(d.pixels[2 * kFps][0], 200, 8);
     EXPECT_NEAR(d.pixels[static_cast<std::size_t>(kFps / 2)][0], 100, 8);
 }
+
+TEST_F(TransformExport, LayerPieceBeyondTheEndOfV1IsExportedOnBlack)
+{
+    // V1 dura 2 s; il pezzo del livello va da 1 s a 4 s: oltre V1 c'è una coda nera di 2 s con il pezzo sopra.
+    ClipRanges clip{file("grigio.mp4"), {{0.0, 2.0}}};
+    clip.gapsBefore = {0.0};
+    clip.transforms = {Transform{}};
+    ReencodeOptions options;
+    const int layer = options.texts.addLayer();
+    LayerPiece piece;
+    piece.clipId = 7;
+    piece.start = 0.0;
+    piece.end = 3.0;
+    piece.position = 1.0;
+    ASSERT_NE(options.texts.addPiece(layer, piece), 0);
+    options.layerFiles[7] = file("chiaro.mp4");
+    options.tailSeconds = 2.0;
+    const fs::path out = dir_ / "livelloOltreV1.mp4";
+    const ExportPreview preview = previewExport({clip}, AudioEdit{}, nullptr, options);
+    EXPECT_NEAR(preview.outputSeconds, 4.0, 0.1);
+    exportClips({clip}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
+    const Sampled d = sample(out);
+    ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(4 * kFps));
+    EXPECT_NEAR(d.pixels[static_cast<std::size_t>(kFps / 2)][0], 100, 8);  // V1 da solo
+    EXPECT_NEAR(d.pixels[static_cast<std::size_t>(3 * kFps)][0], 200, 8);  // la coda: il pezzo del livello
+}

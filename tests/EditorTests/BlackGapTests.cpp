@@ -16,6 +16,7 @@ extern "C" {
 
 #include <cmath>
 #include <filesystem>
+#include <memory>
 
 namespace fs = std::filesystem;
 using namespace editor::core;
@@ -230,6 +231,60 @@ TEST_F(BlackGaps, GapsBecomeBlackAndSilenceAsLongAsInTheMontage)
         EXPECT_NEAR(audio.totalSeconds, total, 0.022 * 6 + 0.005);
         EXPECT_FALSE(audio.overlaps);
     }
+}
+
+TEST_F(BlackGaps, TailAfterTheLastPieceIsBlackWithSilence)
+{
+    // Il tratto 0..1 e poi una coda di 1,5 s (scritte o livelli che arrivano più in là): nero e silenzio.
+    const std::vector<ClipRanges> plan{{clip(), {{0.0, 1.0}}, {}, {0.0}}};
+    ReencodeOptions options;
+    options.tailSeconds = 1.5;
+    const ExportPreview preview = previewExport(plan, AudioEdit{}, nullptr, options);
+    EXPECT_NEAR(preview.outputSeconds, 2.5, 1e-9);
+    EXPECT_NEAR(preview.blackSeconds, 1.5, 1e-9);
+    const fs::path out = dir_ / "coda.mp4";
+    exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
+    std::vector<int> expected;
+    addFrames(expected, 0, 30);
+    addBlack(expected, 45);
+    const Decoded decoded = decodeAll(out);
+    EXPECT_EQ(decoded.errors, 0);
+    EXPECT_EQ(wrongFrames(decoded.luma, expected), 0) << "fotogrammi " << decoded.luma.size() << " su " << expected.size();
+    const editor::tests::AudioTimeline audio = editor::tests::audioTimeline(utf8FromPath(out));
+    EXPECT_NEAR(audio.totalSeconds, 2.5, 0.15);
+    EXPECT_FALSE(audio.overlaps);
+}
+
+TEST_F(BlackGaps, MixedAudioBeyondTheLastPieceContinuesInTheTail)
+{
+    // Il tratto 0..1; una clip audio aggiunta (2 s del file) parte a 0,5 s e arriva a 2,5 s, oltre V1: coda nera di 1,5 s.
+    const std::vector<ClipRanges> plan{{clip(), {{0.0, 1.0}}, {}, {0.0}}};
+    auto mix = std::make_shared<MixSpec>();
+    MixSegment own;
+    own.path = clip();
+    own.fileStart = 0.0;
+    own.fileEnd = 1.0;
+    own.position = 0.0;
+    own.trackId = 0;
+    own.ofPiece = true;
+    MixSegment music = own;
+    music.fileEnd = 2.0;
+    music.position = 0.5;
+    music.trackId = 1;
+    music.ofPiece = false;
+    mix->segments = {own, music};
+    mix->gains = {{0, 1.0f}, {1, 1.0f}};
+    mix->length = 2.5;
+    AudioEdit edit;
+    edit.mix = mix;
+    ReencodeOptions options;
+    options.tailSeconds = 1.5;
+    const fs::path out = dir_ / "codaMix.mp4";
+    exportClips(plan, utf8FromPath(out), edit, {}, MuteMethod::Silence, nullptr, options);
+    EXPECT_EQ(decodeAll(out).luma.size(), static_cast<std::size_t>(75));
+    const editor::tests::AudioTimeline audio = editor::tests::audioTimeline(utf8FromPath(out));
+    EXPECT_NEAR(audio.totalSeconds, 2.5, 0.1);
+    EXPECT_FALSE(audio.overlaps);
 }
 
 TEST_F(BlackGaps, CloseGapsKeepsThePiecesTogether)

@@ -59,10 +59,11 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
     // Audio mixato: prima si scrive il mix, poi il video con quell'audio al posto di quello dei file. Se gli spazi vuoti
     // si chiudono (per scelta o perché il nero non si sa fare) vale il mix con gli spazi chiusi.
     const PlanAnalysis plan =
-        analyzePlan(clips, format, true, reencode.all, reencode.closeGaps, reencode.activeTexts(), &reencode.transitions, reencode.backend, &reencode.video);
+        analyzePlan(clips, format, true, reencode.all, reencode.closeGaps, reencode.activeTexts(), &reencode.transitions, reencode.backend, &reencode.video,
+                    reencode.tailSeconds);
     if (!plan.problem.empty())
         throw ClipsNotJoinable(plan.problem);
-    const MixSpec& spec = !plan.blackGaps && audio.mixClosed ? *audio.mixClosed : *audio.mix;
+    const MixSpec& spec = !plan.blackGaps && !plan.blackTail && audio.mixClosed ? *audio.mixClosed : *audio.mix;
     // Il file temporaneo del mix: M4A per l'AAC, altrimenti Matroska (che li contiene tutti). Il file creato deve
     // poter contenere quell'audio.
     const AudioCodec mixCodec = reencode.audioCodec.value_or(AudioCodec::Aac);
@@ -101,7 +102,8 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
     try {
         const PlanAnalysis plan =
             analyzePlan(clips, format, audio.replacement.has_value() || audio.mix != nullptr || !reencode.includeAudio,
-                        reencode.all, reencode.closeGaps, reencode.activeTexts(), &reencode.transitions, reencode.backend, &reencode.video);
+                        reencode.all, reencode.closeGaps, reencode.activeTexts(), &reencode.transitions, reencode.backend, &reencode.video,
+                        reencode.tailSeconds);
         preview.problem = plan.problem;
         preview.impreciseCuts = plan.impreciseCuts;
         preview.closedGaps = plan.closedGaps;
@@ -140,6 +142,11 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
                     }
                 }
             }
+        }
+        if (plan.blackTail && reencode.tailSeconds > kTimeEpsilon) {
+            ++preview.blackGaps;
+            preview.blackSeconds += reencode.tailSeconds;
+            preview.outputSeconds += reencode.tailSeconds;
         }
     } catch (const std::exception& e) {
         preview.problem = e.what();

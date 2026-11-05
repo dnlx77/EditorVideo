@@ -162,6 +162,9 @@ MainWindow::ExportSettings MainWindow::exportSettings(bool drawText) const
             }
         }
     }
+    // Oltre l'ultimo pezzo di V1: scritte, pezzi dei livelli e clip audio che arrivano più in là (nero sotto).
+    settings.reencode.tailSeconds =
+        std::max(0.0, std::max(source.textTracks().endTime(), source.audioTracks().endTime()) - source.sequence().totalLength());
     // Le transizioni: la parte dei pezzi dentro una transizione si ricodifica con i due pezzi fusi.
     settings.reencode.transitions = core::exportTransitionsOf(source);
     return settings;
@@ -260,6 +263,7 @@ void MainWindow::exportDialog()
         options.textRenderer = v.base.reencode.textRenderer;
         options.layerFiles = v.base.reencode.layerFiles;
         options.transitions = v.base.reencode.transitions;
+        options.tailSeconds = v.base.reencode.tailSeconds;
         return core::previewExport(v.plan, v.base.audio, v.base.format.empty() ? nullptr : &v.base.format, options);
     };
 
