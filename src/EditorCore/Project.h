@@ -209,6 +209,8 @@ public:
     // Cambia la trasformazione (scala, posizione, rotazione, ritaglio...) dei pezzi indicati; gli id che non esistono si
     // saltano. Restituisce quanti pezzi sono cambiati davvero (0 = niente da annullare). Fa parte delle modifiche.
     int setTransform(const std::vector<int>& fragmentIds, const Transform& transform);
+    // Idem per i fotogrammi chiave della trasformazione (vedi Animation.h).
+    int setAnimation(const std::vector<int>& fragmentIds, const TransformAnimation& animation);
     // Il contrario, se la clip è ancora allineata al pezzo (stesso file, stesso sincronismo): toglie dalle tracce le
     // clip di quel file nel tratto del pezzo e rimette l'audio del pezzo (con la linea della clip, se era una sola).
     // false se non ce n'è nessuna allineata.

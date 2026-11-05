@@ -170,6 +170,99 @@ JsonValue transformToJson(const Transform& t)
     return o;
 }
 
+const char* animKey(AnimParam p)
+{
+    switch (p) {
+        case AnimParam::ScaleX: return "scalaX";
+        case AnimParam::ScaleY: return "scalaY";
+        case AnimParam::PosX: return "posizioneX";
+        case AnimParam::PosY: return "posizioneY";
+        case AnimParam::Rotation: return "rotazione";
+        case AnimParam::CropLeft: return "ritaglioSinistra";
+        case AnimParam::CropRight: return "ritaglioDestra";
+        case AnimParam::CropTop: return "ritaglioAlto";
+        case AnimParam::CropBottom: return "ritaglioBasso";
+        case AnimParam::Opacity: return "opacita";
+        case AnimParam::Count: break;
+    }
+    return "";
+}
+
+const char* interpName(Interp i)
+{
+    switch (i) {
+        case Interp::Linear: return "lineare";
+        case Interp::Hold: return "fermo";
+        case Interp::Smooth: return "dolce";
+        case Interp::Bezier: return "bezier";
+    }
+    return "lineare";
+}
+
+// Animazione: per ogni parametro animato una lista di chiavi {"t": tempo nel file (tick), "v": valore, "p": passaggio,
+// "b": [c1x, c1y, c2x, c2y] se "bezier"}. I tempi sono quelli del file di origine, non della sequenza.
+JsonValue animationToJson(const TransformAnimation& a)
+{
+    JsonValue::Object o;
+    for (std::size_t i = 0; i < kAnimParamCount; ++i) {
+        const AnimParam p = static_cast<AnimParam>(i);
+        if (!a.animated(p))
+            continue;
+        JsonValue::Array keys;
+        for (const AnimKey& k : a.track(p)) {
+            JsonValue::Object key{{"t", ticks(k.time)}, {"v", k.value}};
+            if (k.interp != Interp::Linear)
+                key["p"] = std::string(interpName(k.interp));
+            if (k.interp == Interp::Bezier)
+                key["b"] = JsonValue::Array{k.c1x, k.c1y, k.c2x, k.c2y};
+            keys.emplace_back(std::move(key));
+        }
+        o[animKey(p)] = std::move(keys);
+    }
+    return o;
+}
+
+TransformAnimation animationFromJson(const JsonValue& v)
+{
+    TransformAnimation a;
+    if (!v.isObject())
+        return a;
+    for (std::size_t i = 0; i < kAnimParamCount; ++i) {
+        const AnimParam p = static_cast<AnimParam>(i);
+        const JsonValue& list = v[animKey(p)];
+        if (!list.isArray())
+            continue;
+        for (const JsonValue& item : list.asArray()) {
+            if (!item.isObject() || !item["t"].isNumber() || !item["v"].isNumber())
+                continue;
+            AnimKey k;
+            k.time = ticksToSeconds(static_cast<std::int64_t>(item["t"].asNumber()));
+            k.value = item["v"].asNumber();
+            if (item["p"].isString()) {
+                const std::string name = item["p"].asString();
+                if (name == "fermo")
+                    k.interp = Interp::Hold;
+                else if (name == "dolce")
+                    k.interp = Interp::Smooth;
+                else if (name == "bezier")
+                    k.interp = Interp::Bezier;
+            }
+            if (k.interp == Interp::Bezier && item["b"].isArray() && item["b"].asArray().size() == 4) {
+                const JsonValue::Array& b = item["b"].asArray();
+                if (b[0].isNumber() && b[1].isNumber() && b[2].isNumber() && b[3].isNumber()) {
+                    k.c1x = b[0].asNumber();
+                    k.c1y = b[1].asNumber();
+                    k.c2x = b[2].asNumber();
+                    k.c2y = b[3].asNumber();
+                }
+            }
+            a.track(p).push_back(k);
+        }
+    }
+    normalizeAnimation(a);
+    return a;
+}
+
 Transform transformFromJson(const JsonValue& v)
 {
     Transform t;  // i campi mancanti restano al valore di base
@@ -449,6 +542,8 @@ JsonValue textTracksToJson(const TextTracks& text)
                                         {"posizione", ticks(p.position)}};
                 if (!p.transform.isIdentity())
                     piece["trasformazione"] = transformToJson(p.transform);
+                if (!p.animation.empty())
+                    piece["animazione"] = animationToJson(p.animation);
                 pieces.emplace_back(std::move(piece));
             }
             layerJson["pezzi"] = std::move(pieces);
@@ -534,6 +629,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
             piece["audioScollegato"] = true;
         if (!f.transform.isIdentity())
             piece["trasformazione"] = transformToJson(f.transform);
+        if (!f.animation.empty())
+            piece["animazione"] = animationToJson(f.animation);
         sequence.emplace_back(std::move(piece));
     }
 
@@ -621,7 +718,13 @@ std::string projectToJson(const std::string& projectPath, const Project& project
                                              [](const Fragment& f) { return !f.transform.isIdentity(); });
     const bool layerPieces = std::any_of(project.textTracks().layers().begin(), project.textTracks().layers().end(),
                                          [](const TextLayer& l) { return !l.pieces.empty(); });
-    const int version = layerPieces ? 7 : pieceTransforms ? 6 : !transitions.asArray().empty() ? 5 : hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
+    const auto animated = [](const auto& list) {
+        return std::any_of(list.begin(), list.end(), [](const auto& item) { return !item.animation.empty(); });
+    };
+    const bool animations = animated(project.sequence().fragments())
+                            || std::any_of(project.textTracks().layers().begin(), project.textTracks().layers().end(),
+                                           [&](const TextLayer& l) { return animated(l.pieces); });
+    const int version = animations ? 8 : layerPieces ? 7 : pieceTransforms ? 6 : !transitions.asArray().empty() ? 5 : hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
     JsonValue::Object root{
         {"formato", kFormatName},
         {"versione", version},
@@ -753,6 +856,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
             f.envelope = envelopeFromJson(piece["linea"]);
             f.detached = piece["audioScollegato"].isBool() && piece["audioScollegato"].asBool();
             f.transform = transformFromJson(piece["trasformazione"]);
+            f.animation = animationFromJson(piece["animazione"]);
             if (piece["spazioPrima"].isInteger()) {
                 f.gap = seconds(piece["spazioPrima"], "spazioPrima");
                 if (f.gap < 0.0)
@@ -821,6 +925,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                         piece.end = seconds(p["fine"], "fine");
                         piece.position = seconds(p["posizione"], "posizione");
                         piece.transform = transformFromJson(p["trasformazione"]);
+                        piece.animation = animationFromJson(p["animazione"]);
                         if (!(piece.length() >= TextTracks::kMinLength) || piece.position < 0.0 || piece.start < 0.0)
                             throw ProjectFileError(name + " è rovinato: un pezzo di un livello non è valido.");
                         layer.pieces.push_back(std::move(piece));

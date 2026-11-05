@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EditorCore/Animation.h"
 #include "EditorCore/Transform.h"
 
 #include <algorithm>
@@ -117,6 +118,7 @@ struct LayerPiece
     double end = 0.0;
     double position = 0.0;  // dove inizia nella sequenza, in secondi
     Transform transform;
+    TransformAnimation animation;  // chiavi nei tempi del file (vedi Animation.h)
 
     double length() const { return end - start; }
     double endPosition() const { return position + length(); }
@@ -208,6 +210,7 @@ public:
     // kMinLength per parte).
     int splitPiece(int pieceId, double seconds);
     bool setPieceTransform(int pieceId, const Transform& transform);  // false se è già quella
+    bool setPieceAnimation(int pieceId, const TransformAnimation& animation);  // idem (normalizzata)
     // I pezzi visibili al tempo `seconds`, dal livello più basso al più alto.
     std::vector<const LayerPiece*> piecesVisibleAt(double seconds) const;
 
