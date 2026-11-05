@@ -213,6 +213,22 @@ MainWindow::MainWindow(QWidget* parent)
         const int id = timeline_->selectedTextClip();
         return id != 0 && project_.textTracks().findPiece(id) != nullptr ? id : 0;
     };
+    program_->onMotionKeyMoved = [this](bool layer, int id, double fileTime, double posX, double posY) {
+        const AnimTarget target = animationTarget();
+        if (!target.valid || target.layer != layer || target.id != id)
+            return;
+        editAnimationKeys(QStringLiteral("Sposta il punto del percorso"), [&](core::TransformAnimation& animation, core::Transform&) {
+            bool changed = false;
+            for (const auto& [param, value] : {std::pair{core::AnimParam::PosX, posX}, std::pair{core::AnimParam::PosY, posY}}) {
+                if (const core::AnimKey* key = core::findKey(animation, param, fileTime)) {
+                    core::AnimKey moved = *key;
+                    moved.value = value;
+                    changed = core::setKey(animation, param, moved) || changed;
+                }
+            }
+            return changed;
+        });
+    };
     program_->onLayerTransformEdited = [this](int pieceId, const core::Transform& transform) {
         commitMonitorLayerTransform(pieceId, transform);
     };

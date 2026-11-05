@@ -110,6 +110,23 @@ public:
     // sotto il cursore. Il gesto finito arriva a `onLayerTransformEdited`.
     std::function<int()> selectedLayerPiece;
     std::function<void(int pieceId, const core::Transform& transform)> onLayerTransformEdited;
+    // Percorso del movimento: con la posizione animata (almeno due istanti) e il tasto dei manipolatori acceso, sul monitor si
+    // vede la linea che il centro del pezzo percorre, con un punto per ogni chiave. Un punto si trascina: al rilascio arriva qui
+    // l'istante della chiave (nel file) e la nuova posizione (spostamento dal centro del fotogramma, in pixel del progetto).
+    std::function<void(bool layer, int id, double fileTime, double posX, double posY)> onMotionKeyMoved;
+    struct MotionDot
+    {
+        double fileTime = 0.0;
+        core::Point2 pos;  // il centro del pezzo, in pixel del progetto (origine in alto a sinistra)
+    };
+    struct MotionPath
+    {
+        bool layer = false;
+        int id = 0;
+        std::vector<MotionDot> dots;
+        std::vector<core::Point2> line;  // la curva, campionata
+    };
+    std::optional<MotionPath> motionPath() const;
     void refreshManipulators();  // la scelta sulla linea del tempo è cambiata
     std::function<void(bool on)> onTransformModeChanged;  // cambiato dal pulsante del monitor
     // Ritaglio sul monitor (tasto W): maniglie sui quattro lati e sugli angoli del riquadro ritagliato; il lato va dove porti il
@@ -199,6 +216,14 @@ private:
         bool layer = false;  // `fragmentId` è un pezzo di un livello, non di V1
     };
     std::optional<ManipDrag> manipDrag_;
+    struct MotionDrag
+    {
+        MotionPath path;
+        std::size_t dot = 0;
+        core::Point2 current;
+    };
+    std::optional<MotionDrag> motionDrag_;
+    int motionDotAt(const MotionPath& path, core::Point2 p, double screenScale) const;  // -1 = nessuno
     bool transformMode_ = false;
     bool cropMode_ = false;
     bool thirdsGrid_ = false;

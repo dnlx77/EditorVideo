@@ -220,6 +220,8 @@ bool MainWindow::commitMonitorTransform(int fragmentId, const core::Transform& t
 {
     if (project_.sequence().find(fragmentId) == nullptr)
         return false;
+    if (commitAnimatedMonitorTransform(false, fragmentId, transform))
+        return true;
     const core::Project before = project_;
     if (project_.setTransform({fragmentId}, transform) == 0)
         return false;
@@ -232,8 +234,31 @@ bool MainWindow::commitMonitorLayerTransform(int pieceId, const core::Transform&
 {
     if (project_.textTracks().findPiece(pieceId) == nullptr)
         return false;
+    if (commitAnimatedMonitorTransform(true, pieceId, transform))
+        return true;
     const core::Project before = project_;
     if (!project_.textTracks().setPieceTransform(pieceId, transform))
+        return false;
+    transformMergeKey_.clear();
+    recordEdit(QStringLiteral("Trasforma sul monitor"), before);
+    return true;
+}
+
+bool MainWindow::commitAnimatedMonitorTransform(bool layer, int id, const core::Transform& edited)
+{
+    // Un pezzo con l'animazione: il monitor mostrava la trasformazione dell'istante sul cursore e `edited` è quella dopo il
+    // gesto. I parametri animati che sono cambiati ricevono una chiave sul cursore (come nel pannello), gli altri cambiano la
+    // trasformazione fissa del pezzo.
+    const AnimTarget target = animationTarget();
+    if (!target.valid || target.layer != layer || target.id != id || target.animation.empty() || !target.inside)
+        return false;
+    const core::Transform shown = core::evaluateTransform(target.base, target.animation, target.fileTime);
+    core::Transform base = target.base;
+    core::TransformAnimation animation = target.animation;
+    if (!core::applyEditWithKeys(animation, base, shown, edited, target.fileTime))
+        return false;
+    const core::Project before = project_;
+    if (!writeAnimTarget(target, base, animation))
         return false;
     transformMergeKey_.clear();
     recordEdit(QStringLiteral("Trasforma sul monitor"), before);
