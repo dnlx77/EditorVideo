@@ -28,6 +28,7 @@ public:
     {
         std::shared_ptr<VideoFrame> frame;
         Transform transform;
+        int level = 1;  // il piano del suo livello (vedi TextTracks::levelOf)
     };
     // I pezzi visibili al tempo `sequenceTime` della sequenza, dal livello più basso al più alto, ognuno con il suo
     // fotogramma. Un pezzo il cui file non si apre o non ha fotogrammi si salta. I decodificatori dei pezzi non più visibili

@@ -138,27 +138,39 @@ const AVFrame* TextFrameBlender::blendRaster(const std::uint8_t* bgra, int strid
 
 const AVFrame* TextFrameBlender::toYuv(const std::vector<BlendedText>& texts, const AVFrame* props)
 {
-    if (!layers_.empty()) {
-        // I pezzi dei livelli sono BGRA e compositeLayer non guarda i canali: il fotogramma (RGBA) si scambia rosso e blu
-        // per il tempo della composizione.
-        const auto swapRedBlue = [&] {
-            for (std::size_t i = 0; i < rgba_.size(); i += 4)
-                std::swap(rgba_[i], rgba_[i + 2]);
-        };
-        swapRedBlue();
-        for (const BlendedLayer& layer : layers_) {
-            if (layer.frame != nullptr)
-                compositeLayer(rgba_.data(), width_ * 4, width_, height_,
-                               BgraImage{layer.frame->pixels.data(), layer.frame->stride, layer.frame->width, layer.frame->height},
-                               layer.transform);
-        }
-        swapRedBlue();
-        layers_.clear();
+    // I pezzi dei livelli sono BGRA e compositeLayer non guarda i canali: il fotogramma (RGBA) si scambia rosso e blu
+    // per il tempo della composizione. Livelli e scritte si mettono in ordine di piano (a parità, il pezzo prima della scritta:
+    // sullo stesso livello non stanno insieme).
+    bool swapped = false;
+    const auto swapRedBlue = [&] {
+        for (std::size_t i = 0; i < rgba_.size(); i += 4)
+            std::swap(rgba_[i], rgba_[i + 2]);
+        swapped = !swapped;
+    };
+    std::size_t nextText = 0;
+    const auto drawText = [&](const BlendedText& text) {
+        if (text.image == nullptr)
+            return;
+        if (swapped)
+            swapRedBlue();
+        blendTextOver(rgba_.data(), width_ * 4, width_, height_, *text.image, text.opacity);
+    };
+    for (const BlendedLayer& layer : layers_) {
+        for (; nextText < texts.size() && texts[nextText].level < layer.level; ++nextText)
+            drawText(texts[nextText]);
+        if (layer.frame == nullptr)
+            continue;
+        if (!swapped)
+            swapRedBlue();
+        compositeLayer(rgba_.data(), width_ * 4, width_, height_,
+                       BgraImage{layer.frame->pixels.data(), layer.frame->stride, layer.frame->width, layer.frame->height},
+                       layer.transform);
     }
-    for (const BlendedText& text : texts) {
-        if (text.image != nullptr)
-            blendTextOver(rgba_.data(), width_ * 4, width_, height_, *text.image, text.opacity);
-    }
+    layers_.clear();
+    for (; nextText < texts.size(); ++nextText)
+        drawText(texts[nextText]);
+    if (swapped)
+        swapRedBlue();
 
     if (av_frame_make_writable(output_.get()) < 0)
         throw MediaError("Memoria insufficiente per il fotogramma da codificare.");

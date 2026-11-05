@@ -73,7 +73,7 @@ std::vector<LayerFrameSource::Visible> LayerFrameSource::at(const TextTracks& tr
     for (const LayerPiece* piece : pieces) {
         const double fileTime = std::clamp(piece->start + (sequenceTime - piece->position), piece->start, std::max(piece->start, piece->end - 1e-3));
         if (std::shared_ptr<VideoFrame> frame = frameFor(*piece, fileTime))
-            visible.push_back({std::move(frame), piece->transform});
+            visible.push_back({std::move(frame), piece->transform, tracks.levelOf(piece->id)});
     }
     return visible;
 }

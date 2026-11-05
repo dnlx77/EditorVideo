@@ -157,6 +157,9 @@ public:
     static constexpr int kBaseLayerId = 0;
     const TextLayer& baseLayer() const { return base_; }
     void setBaseBlocked(std::vector<std::pair<double, double>> spans) const { baseBlocked_ = std::move(spans); }
+    // Il piano di una scritta o di un pezzo di livello nella sovrapposizione: 0 per V1, 1 per V2, 2 per V3... (un piano più alto
+    // copre quelli sotto, scritte comprese). 0 anche se l'id non c'è.
+    int levelOf(int objectId) const { return layerIndex(layerOfObject(objectId)) + 1; }
     bool empty() const;  // nessuna scritta (anche su V1) e nessun pezzo in nessun livello
 
     // Scritte. add mette la scritta sul livello (l'id passato non conta) e ne restituisce l'id; 0 se il livello non
