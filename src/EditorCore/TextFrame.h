@@ -19,6 +19,7 @@ struct BlendedText
 {
     const TextImage* image = nullptr;
     double opacity = 1.0;
+    int level = 0;  // il piano della sua corsia (0 = V1, 1 = V2...): copre i pezzi dei livelli più bassi e sta sotto quelli dei più alti
 };
 
 // Un pezzo di video di un livello sopra V1 già decodificato (BGRA) e come va messo sul fotogramma.
@@ -26,6 +27,7 @@ struct BlendedLayer
 {
     const VideoFrame* frame = nullptr;
     Transform transform;
+    int level = 1;  // il piano del livello (1 = V2...)
 };
 
 class TextFrameBlender
@@ -35,8 +37,8 @@ public:
     // a 8 bit e poi si convertono, quindi in un formato a più bit cambia solo il formato di uscita.
     TextFrameBlender(int width, int height, AVPixelFormat pixelFormat = AV_PIX_FMT_YUV420P);
 
-    // I pezzi dei livelli da mettere sopra il fotogramma della prossima chiamata di blend*() (dal più basso al più alto, sotto
-    // le scritte); valgono per quella chiamata sola. Il fotogramma da cui si parte è il nero con i bordi o la trasformazione
+    // I pezzi dei livelli da mettere sopra il fotogramma della prossima chiamata di blend*() (dal più basso al più alto; le scritte
+    // si mettono in mezzo secondo il loro piano); valgono per quella chiamata sola. Il fotogramma da cui si parte è il nero con i bordi o la trasformazione
     // di V1, o la transizione, come senza livelli.
     void setLayers(std::vector<BlendedLayer> layers) { layers_ = std::move(layers); }
 

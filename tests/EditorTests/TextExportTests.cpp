@@ -295,6 +295,46 @@ TEST(TextBlender, KeepsTheRequestedPixelFormat)
     }
 }
 
+TEST(TextBlender, TextsFollowTheOrderOfTheLevels)
+{
+    // Una scritta sta sopra i livelli sotto di lei e sotto quelli sopra: V1 < V2 < ... e le scritte di un livello vanno con lui.
+    constexpr int w = 64;
+    constexpr int h = 36;
+    VideoFrame red;  // un pezzo di livello tutto rosso (BGRA)
+    red.width = w;
+    red.height = h;
+    red.stride = w * 4;
+    red.pixels.assign(static_cast<std::size_t>(w) * h * 4, 0);
+    for (std::size_t i = 0; i < red.pixels.size(); i += 4) {
+        red.pixels[i + 2] = 255;
+        red.pixels[i + 3] = 255;
+    }
+    TextImage white;  // una scritta bianca che copre la metà sinistra
+    white.width = w / 2;
+    white.height = h;
+    white.rgba.assign(static_cast<std::size_t>(white.width) * h * 4, 255);
+
+    const auto lumaAt = [&](int textLevel) {
+        TextFrameBlender blender(w, h, AV_PIX_FMT_YUV420P);
+        std::vector<std::uint8_t> bgra(static_cast<std::size_t>(w) * h * 4, 0);
+        for (std::size_t i = 3; i < bgra.size(); i += 4)
+            bgra[i] = 255;
+        AVFrame* props = av_frame_alloc();
+        blender.setLayers({{&red, Transform{}, 1}});
+        const AVFrame* out = blender.blendRaster(bgra.data(), w * 4, w, h, {{&white, 1.0, textLevel}}, props);
+        const int y = out->data[0][10 * out->linesize[0] + 10];
+        av_frame_free(&props);
+        return y;
+    };
+    const int under = lumaAt(0);  // una scritta di V1: sotto il livello V2, che la copre
+    const int over = lumaAt(1);   // una scritta di V2 (lo stesso livello del pezzo): sopra
+    const int above = lumaAt(2);  // una scritta di V3: sopra
+    EXPECT_LT(under, 150);
+    EXPECT_GT(under, 40);  // rosso, non nero
+    EXPECT_GT(over, 200);
+    EXPECT_GT(above, 200);
+}
+
 TEST_F(TextExport, WithoutARendererTheTextIsLeftOut)
 {
     ReencodeOptions options;

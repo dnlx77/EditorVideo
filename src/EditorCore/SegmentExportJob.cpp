@@ -708,7 +708,7 @@ std::vector<BlendedText> ExportJob::textsAt(double sequenceTime)
         // Le dissolvenze: la scritta si vede meno all'inizio e alla fine.
         const double opacity = clip->fadeFactor(sequenceTime);
         if (!found->second.empty() && opacity > 0.0)
-            images.push_back({&found->second, opacity});
+            images.push_back({&found->second, opacity, reencode_.texts.levelOf(clip->id)});
     }
     return images;
 }
@@ -729,7 +729,7 @@ bool ExportJob::prepareLayers(double sequenceTime)
         blender_ = std::make_unique<TextFrameBlender>(format.width, format.height, blendPixelFormat(format));
     std::vector<BlendedLayer> layers;
     for (const LayerFrameSource::Visible& v : layerFrames_)
-        layers.push_back({v.frame.get(), v.transform});
+        layers.push_back({v.frame.get(), v.transform, v.level});
     blender_->setLayers(std::move(layers));
     return true;
 }

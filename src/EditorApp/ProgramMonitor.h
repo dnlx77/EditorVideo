@@ -177,6 +177,7 @@ private:
 
     const core::Project& project_;
     TextOverlay overlay_;
+    std::vector<int> shownLevels_;  // il piano di ogni scritta di shownText_ (vedi TextTracks::levelOf)
     std::vector<core::TextClip> shownText_;  // le scritte disegnate l'ultima volta
     double shownTime_ = 0.0;                 // e il tempo del montaggio di allora (per le dissolvenze)
     bool shownFading_ = false;               // una di loro era in dissolvenza

@@ -566,8 +566,12 @@ void ProgramMonitor::updateTextOverlay()
     std::vector<core::TextClip> now = visibleText();
     // Una scritta in dissolvenza cambia a ogni movimento del cursore, le altre solo quando cambiano (o compaiono).
     const bool fading = std::any_of(now.begin(), now.end(), [&](const core::TextClip& c) { return c.fadeFactor(position_) < 1.0; });
-    if (now == shownText_ && !fading && !shownFading_)
+    std::vector<int> levels;
+    for (const core::TextClip& c : now)
+        levels.push_back(project_.textTracks().levelOf(c.id));
+    if (now == shownText_ && levels == shownLevels_ && !fading && !shownFading_)
         return;
+    shownLevels_ = std::move(levels);
     shownText_ = std::move(now);
     shownTime_ = position_;
     shownFading_ = fading;
@@ -614,7 +618,7 @@ void ProgramMonitor::updateLayers()
                     frame = slot->waitFrame(fileTime, 800);
                 }
                 shownIds.push_back(piece.id);
-                shown.push_back({std::move(frame), piece.transform});
+                shown.push_back({std::move(frame), piece.transform, project_.textTracks().levelOf(piece.id)});
             }
         }
     }
@@ -743,9 +747,18 @@ void ProgramMonitor::primeTransition()
 void ProgramMonitor::updateOverlayFrame()
 {
     const QSize frame = frameSize();
+    player_->setTextPainter([this](QPainter& painter, const QRectF& target, int from, int to) {
+        std::vector<core::TextClip> clips;
+        for (std::size_t i = 0; i < shownText_.size(); ++i) {
+            const int level = i < shownLevels_.size() ? shownLevels_[i] : 0;
+            if (level >= from && level < to)
+                clips.push_back(shownText_[i]);
+        }
+        if (!clips.empty())
+            overlay_.paint(painter, target, painter.device()->devicePixelRatioF(), clips, shownTime_);
+    });
     player_->setOverlay(
         [this](QPainter& painter, const QRectF& target) {
-            overlay_.paint(painter, target, painter.device()->devicePixelRatioF(), shownText_, shownTime_);
             if (thirdsGrid_ && !target.isEmpty()) {
                 painter.save();
                 painter.setPen(QPen(QColor(255, 255, 255, 110), 1));

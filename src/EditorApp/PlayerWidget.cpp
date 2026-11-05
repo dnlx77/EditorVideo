@@ -22,6 +22,7 @@
 #include <QtWidgets/QVBoxLayout>
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <functional>
 #include <optional>
@@ -115,13 +116,22 @@ public:
         return canvas;
     }
 
-    // I pezzi dei livelli sopra V1, dal più basso al più alto, nel fotogramma del progetto.
+    // I pezzi dei livelli sopra V1, dal più basso al più alto, nel fotogramma del progetto, e fra l'uno e l'altro le scritte
+    // del loro piano (senza livelli: tutte le scritte).
     void paintLayers(QPainter& painter, const QRectF& canvas) const
     {
-        for (const PlayerWidget::LayerFrame& layer : layers_) {
-            if (layer.frame)
-                drawInCanvas(painter, canvas, *layer.frame, layer.transform, layerProjectSize_);
+        int level = 0;
+        if (hasLayers()) {
+            for (const PlayerWidget::LayerFrame& layer : layers_) {
+                if (textPainter_)
+                    textPainter_(painter, canvas, level, layer.level);
+                level = std::max(level, layer.level);
+                if (layer.frame)
+                    drawInCanvas(painter, canvas, *layer.frame, layer.transform, layerProjectSize_);
+            }
         }
+        if (textPainter_)
+            textPainter_(painter, canvas, level, std::numeric_limits<int>::max());
     }
 
     // Disegna un fotogramma con la sua trasformazione dentro `canvas` (il fotogramma del progetto, di misura `project`).
@@ -153,7 +163,7 @@ public:
     {
         bool same = projectSize == layerProjectSize_ && layers.size() == layers_.size();
         for (std::size_t i = 0; same && i < layers.size(); ++i)
-            same = layers[i].frame == layers_[i].frame && layers[i].transform == layers_[i].transform;
+            same = layers[i].frame == layers_[i].frame && layers[i].transform == layers_[i].transform && layers[i].level == layers_[i].level;
         if (same)
             return;
         layers_ = std::move(layers);
@@ -167,6 +177,11 @@ public:
 
     // Disegna qualcosa sopra l'immagine (le scritte): riceve il rettangolo dove sta il fotogramma. Nello spazio vuoto
     // (nero) il rettangolo ha le proporzioni di `blankSize`.
+    void setTextPainter(std::function<void(QPainter&, const QRectF&, int, int)> paint)
+    {
+        textPainter_ = std::move(paint);
+        update();
+    }
     void setOverlay(std::function<void(QPainter&, const QRectF&)> overlay, QSize blankSize)
     {
         overlay_ = std::move(overlay);
@@ -241,10 +256,9 @@ protected:
         painter.fillRect(rect(), Qt::black);
         imageRect_ = QRectF();
         if (blank_) {
-            if ((overlay_ || hasLayers()) && blankSize_.width() > 0 && blankSize_.height() > 0) {
+            if ((overlay_ || textPainter_ || hasLayers()) && blankSize_.width() > 0 && blankSize_.height() > 0) {
                 imageRect_ = canvasFor(blankSize_);
-                if (hasLayers())
-                    paintLayers(painter, imageRect_);
+                paintLayers(painter, imageRect_);
                 if (overlay_)
                     overlay_(painter, imageRect_);
             }
@@ -253,8 +267,7 @@ protected:
         if (frame_ && transformed_) {
             const QRectF canvas = paintTransformed(painter);
             imageRect_ = canvas;
-            if (hasLayers())
-                paintLayers(painter, canvas);
+            paintLayers(painter, canvas);
             if (overlay_)
                 overlay_(painter, canvas);
         } else if (frame_ && hasLayers()) {
@@ -281,6 +294,7 @@ protected:
             const QRectF target(QPointF((width() - drawn.width()) / 2, (height() - drawn.height()) / 2), drawn);
             painter.drawImage(target, image);
             imageRect_ = target;
+            paintLayers(painter, target);
             if (overlay_)
                 overlay_(painter, target);
         } else if (!message_.isEmpty()) {
@@ -298,6 +312,7 @@ private:
     core::Transform transform_;
     QSize projectSize_;
     std::function<void(QPainter&, const QRectF&)> overlay_;
+    std::function<void(QPainter&, const QRectF&, int, int)> textPainter_;
     std::vector<PlayerWidget::LayerFrame> layers_;
     QSize layerProjectSize_;
     QSize blankSize_;
@@ -567,6 +582,11 @@ void PlayerWidget::setBlank(bool blank)
 void PlayerWidget::setOverlay(std::function<void(QPainter&, const QRectF&)> overlay, QSize blankSize)
 {
     view_->setOverlay(std::move(overlay), blankSize);
+}
+
+void PlayerWidget::setTextPainter(std::function<void(QPainter&, const QRectF&, int, int)> paint)
+{
+    view_->setTextPainter(std::move(paint));
 }
 
 void PlayerWidget::setFrameTransform(const core::Transform& transform, QSize projectSize)

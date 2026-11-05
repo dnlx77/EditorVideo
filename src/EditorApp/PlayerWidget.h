@@ -113,6 +113,7 @@ public:
     {
         std::shared_ptr<core::VideoFrame> frame;
         core::Transform transform;
+        int level = 1;  // il piano del livello (1 = V2...), per mettere le scritte in mezzo (vedi setTextPainter)
     };
     void setLayers(std::vector<LayerFrame> layers, QSize projectSize);
     // true: il fotogramma si disegna sempre dentro il fotogramma del progetto (con le sue proporzioni), anche senza
@@ -123,6 +124,9 @@ public:
     // Misura del fotogramma decodificato mostrato (vuota se non c'è); conta solo la forma.
     QSize currentFrameSize() const;
     void updateOverlay();
+    // Chi disegna le scritte: `paint(painter, rettangolo, da, a)` disegna quelle dei piani da `da` (compreso) ad `a` (escluso). Il
+    // lettore lo chiama fra un livello e l'altro, così una scritta sta sopra i livelli sotto di lei e sotto quelli sopra.
+    void setTextPainter(std::function<void(QPainter&, const QRectF&, int, int)> paint);
     // Il mouse sull'immagine, in frazioni del fotogramma (0..1): `press` dice se si afferra qualcosa (allora arrivano
     // `move` e `release`).
     void setImageMouse(std::function<bool(QPointF)> press, std::function<void(QPointF)> move, std::function<void(QPointF)> release);
