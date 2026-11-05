@@ -39,6 +39,24 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
     pressY_ = pos.y();
     const double t = timeForX(pressX_);
     const bool content = !blocks_.empty() || lanes_.size() > 1 || !textLanes_.empty();
+    // Un rombo della riga delle chiavi: si sceglie (e si può trascinare); un clic altrove toglie la scelta.
+    if (!(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) {
+        if (const int key = keyAt(pos); key >= 0) {
+            const KeyGeometry g = keyGeometry();
+            const double time = keyRow_.keys[static_cast<std::size_t>(key)].time;
+            keyDragIndex_ = key;
+            keyDragging_ = false;
+            keyDragValue_ = time;
+            keyDragGrab_ = timeForX(pos.x()) - (g.position + (time - g.source));
+            selectedKey_ = time;
+            invalidate();
+            return;
+        }
+    }
+    if (selectedKey_ >= 0.0) {
+        selectedKey_ = -1.0;
+        invalidate();
+    }
     // Ctrl+clic su un oggetto: lo aggiunge alla selezione o lo toglie (nient'altro: niente spostamento del cursore).
     if ((event->modifiers() & Qt::ControlModifier) && pos.x() >= videoLane().left() && pos.y() >= lanesTop() - 2 && ctrlPress(pos))
         return;
@@ -379,7 +397,32 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
             startObjectDrag();
         return;
     }
+    if (keyDragIndex_ >= 0) {
+        if (!(event->buttons() & Qt::LeftButton)) {
+            keyDragIndex_ = -1;
+            keyDragging_ = false;
+            invalidate();
+            return;
+        }
+        if (!keyDragging_ && std::abs(x - pressX_) < QApplication::startDragDistance())
+            return;
+        const KeyGeometry g = keyGeometry();
+        if (!g.ok)
+            return;
+        double sequenceTime = timeForX(x) - keyDragGrab_;
+        // Si aggancia al cursore se è vicino.
+        if (std::abs(xForTime(sequenceTime) - xForTime(playhead_)) < 8.0)
+            sequenceTime = playhead_;
+        keyDragValue_ = std::clamp(g.source + (sequenceTime - g.position), g.source, g.source + g.length);
+        keyDragging_ = true;
+        invalidate();
+        return;
+    }
     if (!(event->buttons() & Qt::LeftButton)) {
+        if (keyAt(pos) >= 0) {
+            setCursor(Qt::SizeHorCursor);
+            return;
+        }
         // Sul bordo di un blocco o di una clip audio, o sul livello di una corsia, il cursore diventa ⟷.
         bool atStart = false;
         int lane = 0;
@@ -616,6 +659,24 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
         return;
     if (altDragging_) {  // Alt+clic senza trascinare: niente
         altDragging_ = false;
+        return;
+    }
+    if (keyDragIndex_ >= 0) {
+        const bool moved = keyDragging_;
+        const double from = keyRow_.keys[std::min(static_cast<std::size_t>(keyDragIndex_), keyRow_.keys.size() - 1)].time;
+        const double to = keyDragValue_;
+        keyDragIndex_ = -1;
+        keyDragging_ = false;
+        invalidate();
+        if (moved && std::abs(to - from) > 1e-6 && onKeyMoved) {
+            selectedKey_ = to;
+            onKeyMoved(from, to);
+            const bool found = std::any_of(keyRow_.keys.begin(), keyRow_.keys.end(),
+                                           [&](const KeyMark& m) { return std::abs(m.time - to) <= 1e-6; });
+            if (!found)
+                selectedKey_ = from;  // lo spostamento non è stato accettato: la chiave è dov'era
+            invalidate();
+        }
         return;
     }
     if (scrubbing_) {
@@ -882,6 +943,15 @@ void SequenceTimeline::dropEvent(QDropEvent* event)
 void SequenceTimeline::mouseDoubleClickEvent(QMouseEvent* event)
 {
     const QPointF pos = event->position();
+    if (const int key = keyAt(pos); key >= 0) {
+        // Doppio clic su un rombo: il cursore va a quell'istante.
+        const KeyGeometry g = keyGeometry();
+        playhead_ = std::max(0.0, g.position + (keyRow_.keys[static_cast<std::size_t>(key)].time - g.source));
+        invalidate();
+        if (onSeek)
+            onSeek(playhead_);
+        return;
+    }
     {
         bool edge = false;
         bool atStart = false;

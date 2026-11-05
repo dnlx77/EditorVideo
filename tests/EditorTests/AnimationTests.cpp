@@ -364,3 +364,60 @@ TEST(AnimationGroups, ResetClearsTheGroupOnly)
     EXPECT_TRUE(anim.animated(AnimParam::Rotation));
     EXPECT_DOUBLE_EQ(base.rotation, 30.0);
 }
+
+TEST(AnimationRow, MoveRemoveAndInterpolationActOnEveryParameterAtTheInstant)
+{
+    TransformAnimation a;
+    setKey(a, AnimParam::ScaleX, key(1.0, 1.0));
+    setKey(a, AnimParam::ScaleY, key(1.0, 1.0));
+    setKey(a, AnimParam::ScaleX, key(3.0, 2.0));
+    setKey(a, AnimParam::ScaleY, key(3.0, 2.0));
+    setKey(a, AnimParam::Opacity, key(1.0, 0.0));
+
+    EXPECT_EQ(keyTimes(a).size(), 2u);
+    EXPECT_FALSE(moveKeysAt(a, 1.0, 3.0));  // lì c'è già una chiave della scala
+    EXPECT_FALSE(moveKeysAt(a, 5.0, 6.0));  // niente da spostare
+    EXPECT_TRUE(moveKeysAt(a, 1.0, 2.0));
+    EXPECT_NE(findKey(a, AnimParam::ScaleX, 2.0), nullptr);
+    EXPECT_NE(findKey(a, AnimParam::ScaleY, 2.0), nullptr);
+    EXPECT_NE(findKey(a, AnimParam::Opacity, 2.0), nullptr);
+    EXPECT_EQ(findKey(a, AnimParam::Opacity, 1.0), nullptr);
+
+    EXPECT_TRUE(setKeysInterpAt(a, 2.0, Interp::Hold));
+    EXPECT_EQ(interpAt(a, 2.0), Interp::Hold);
+    EXPECT_EQ(findKey(a, AnimParam::Opacity, 2.0)->interp, Interp::Hold);
+    EXPECT_FALSE(setKeysInterpAt(a, 2.0, Interp::Hold));
+    EXPECT_EQ(interpAt(a, 3.0), Interp::Linear);
+
+    EXPECT_TRUE(removeKeysAt(a, 2.0));
+    EXPECT_FALSE(a.animated(AnimParam::Opacity));
+    EXPECT_EQ(a.track(AnimParam::ScaleX).size(), 1u);
+    EXPECT_FALSE(removeKeysAt(a, 2.0));
+
+    // Con `base`: il parametro che resta senza chiavi prende il valore dell'ultima tolta.
+    TransformAnimation b;
+    setKey(b, AnimParam::Opacity, key(1.0, 0.4));
+    setKey(b, AnimParam::PosX, key(1.0, 50.0));
+    setKey(b, AnimParam::PosX, key(2.0, 70.0));
+    Transform base;
+    EXPECT_TRUE(removeKeysAt(b, 1.0, &base));
+    EXPECT_DOUBLE_EQ(base.opacity, 0.4);
+    EXPECT_DOUBLE_EQ(base.posX, 0.0);  // ha ancora una chiave: resta animato, la base non cambia
+    EXPECT_TRUE(b.animated(AnimParam::PosX));
+}
+
+TEST(AnimationRow, DescribesWhereTheAnimationGoes)
+{
+    TransformAnimation a;
+    EXPECT_TRUE(describeAnimation(Transform{}, a).empty());
+    setKey(a, AnimParam::ScaleX, key(0.0, 1.0));
+    setKey(a, AnimParam::ScaleY, key(0.0, 1.0));
+    setKey(a, AnimParam::ScaleX, key(4.0, 1.3));
+    setKey(a, AnimParam::ScaleY, key(4.0, 1.3));
+    setKey(a, AnimParam::Opacity, key(0.0, 0.0));
+    setKey(a, AnimParam::Opacity, key(1.0, 1.0));
+    const std::vector<std::string> lines = describeAnimation(Transform{}, a);
+    ASSERT_EQ(lines.size(), 2u);
+    EXPECT_EQ(lines[0], "Scala 100%→130%");
+    EXPECT_EQ(lines[1], "Opacità 0%→100%");
+}

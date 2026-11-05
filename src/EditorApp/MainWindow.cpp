@@ -428,6 +428,20 @@ MainWindow::MainWindow(QWidget* parent)
         propertiesDock_->raise();
         refreshPropertiesPanel();
     };
+    timeline_->onKeyMoved = [this](double from, double to) {
+        editAnimationKeys(QStringLiteral("Sposta la chiave"),
+                          [&](core::TransformAnimation& animation, core::Transform&) { return core::moveKeysAt(animation, from, to); });
+    };
+    timeline_->onKeyRemoved = [this](double time) {
+        editAnimationKeys(QStringLiteral("Togli la chiave"), [&](core::TransformAnimation& animation, core::Transform& base) {
+            return core::removeKeysAt(animation, time, &base);
+        });
+    };
+    timeline_->onKeyInterp = [this](double time, core::Interp interp, double c1x, double c1y, double c2x, double c2y) {
+        editAnimationKeys(QStringLiteral("Tipo di passaggio"), [&](core::TransformAnimation& animation, core::Transform&) {
+            return core::setKeysInterpAt(animation, time, interp, c1x, c1y, c2x, c2y);
+        });
+    };
     timeline_->onTransitionSelected = [this](int) {
         setProgramActive(true);
         refreshPropertiesPanel();
@@ -980,6 +994,12 @@ void MainWindow::deleteSelection()
         removeTransition(transition);
         return;
     }
+    if (const double key = timeline_->selectedKey(); key >= 0.0) {
+        // Una chiave di animazione scelta sulla riga dei rombi: Canc toglie quella e non il pezzo.
+        if (timeline_->onKeyRemoved)
+            timeline_->onKeyRemoved(key);
+        return;
+    }
     if (timeline_->selectedObjects().size() >= 2) {
         // Più oggetti scelti con Ctrl+clic: si tolgono solo quelli (gli altri del gruppo restano).
         if (project_.removeObjects(selectedRefs()) > 0) {
@@ -1234,8 +1254,16 @@ void MainWindow::refreshTimeline()
         if (clip != nullptr)
             blocks.back().proxyDivisor = proxies_->sourceDivisor(qs(clip->path));
         blocks.back().audioDetached = f.detached;
-        for (const std::string& line : core::describeTransform(f.transform))
+        core::Transform fixed = f.transform;  // i parametri animati si descrivono a parte (da dove a dove vanno)
+        for (std::size_t p = 0; p < core::kAnimParamCount; ++p) {
+            if (f.animation.animated(static_cast<core::AnimParam>(p)))
+                core::setParamValue(fixed, static_cast<core::AnimParam>(p), core::paramValue(core::Transform{}, static_cast<core::AnimParam>(p)));
+        }
+        for (const std::string& line : core::describeTransform(fixed))
             blocks.back().transformNote += (blocks.back().transformNote.isEmpty() ? QString() : QStringLiteral("\n")) + qs(line);
+        for (const std::string& line : core::describeAnimation(f.transform, f.animation))
+            blocks.back().transformNote += (blocks.back().transformNote.isEmpty() ? QString() : QStringLiteral("\n")) + qs(line)
+                                          + QStringLiteral(" (animata)");
         if (withAudio)
             blocks.back().envelope = f.envelope;
         // Come entra nel file esportato, rispetto al formato del progetto: segno sul blocco e spiegazione.

@@ -741,6 +741,13 @@ bool SequenceTimeline::event(QEvent* event)
             QToolTip::showText(help->globalPos(), text, this);
             return true;
         };
+        if (const int key = keyAt(pos); key >= 0) {
+            const KeyGeometry g = keyGeometry();
+            const double sequenceTime = g.position + (keyRow_.keys[static_cast<std::size_t>(key)].time - g.source);
+            return show(QStringLiteral("Chiave di animazione a %1\nTrascina: la sposta · Canc: la toglie · doppio clic: porta il cursore qui\n"
+                                       "Clic destro: tipo di passaggio (lineare, dolce, fermo, curva)")
+                            .arg(QString::fromStdString(core::formatDuration(sequenceTime)).mid(3)));
+        }
         const QRectF lane = videoLane();
         const int index = lane.contains(pos) ? blockAt(pos.x()) : -1;
         if (index >= 0) {

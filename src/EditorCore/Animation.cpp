@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace editor::core {
 
@@ -266,6 +267,113 @@ const AnimKey* findKey(const TransformAnimation& animation, AnimParam param, dou
             return &k;
     }
     return nullptr;
+}
+
+bool moveKeysAt(TransformAnimation& animation, double fromTime, double toTime)
+{
+    if (!std::isfinite(toTime) || sameTime(fromTime, toTime))
+        return false;
+    bool any = false;
+    for (const std::vector<AnimKey>& keys : animation.tracks) {
+        const bool atFrom = std::any_of(keys.begin(), keys.end(), [&](const AnimKey& k) { return sameTime(k.time, fromTime); });
+        const bool atTo = std::any_of(keys.begin(), keys.end(), [&](const AnimKey& k) { return sameTime(k.time, toTime); });
+        if (atFrom && atTo)
+            return false;
+        any = any || atFrom;
+    }
+    if (!any)
+        return false;
+    for (std::size_t p = 0; p < kAnimParamCount; ++p)
+        moveKey(animation, static_cast<AnimParam>(p), fromTime, toTime);
+    return true;
+}
+
+bool removeKeysAt(TransformAnimation& animation, double time, Transform* base)
+{
+    bool changed = false;
+    for (std::size_t p = 0; p < kAnimParamCount; ++p) {
+        const auto param = static_cast<AnimParam>(p);
+        const AnimKey* at = findKey(animation, param, time);
+        const double value = at != nullptr ? at->value : 0.0;
+        if (removeKey(animation, param, time)) {
+            changed = true;
+            if (base != nullptr && !animation.animated(param))
+                setParamValue(*base, param, value);
+        }
+    }
+    return changed;
+}
+
+bool setKeysInterpAt(TransformAnimation& animation, double time, Interp interp, double c1x, double c1y, double c2x, double c2y)
+{
+    bool changed = false;
+    for (std::size_t p = 0; p < kAnimParamCount; ++p)
+        changed = setKeyInterp(animation, static_cast<AnimParam>(p), time, interp, c1x, c1y, c2x, c2y) || changed;
+    return changed;
+}
+
+Interp interpAt(const TransformAnimation& animation, double time)
+{
+    for (const std::vector<AnimKey>& keys : animation.tracks) {
+        for (const AnimKey& k : keys) {
+            if (sameTime(k.time, time))
+                return k.interp;
+        }
+    }
+    return Interp::Linear;
+}
+
+namespace {
+
+std::string numberText(double value, int decimals)
+{
+    char buffer[48];
+    std::snprintf(buffer, sizeof buffer, "%.*f", decimals, value);
+    std::string out = buffer;
+    if (out.find('.') != std::string::npos) {
+        while (!out.empty() && out.back() == '0')
+            out.pop_back();
+        if (!out.empty() && out.back() == '.')
+            out.pop_back();
+    }
+    const std::size_t dot = out.find('.');
+    if (dot != std::string::npos)
+        out[dot] = ',';
+    return out == "-0" ? "0" : out;
+}
+
+}  // namespace
+
+std::vector<std::string> describeAnimation(const Transform& base, const TransformAnimation& animation)
+{
+    std::vector<std::string> lines;
+    if (animation.empty())
+        return lines;
+    const std::vector<double> times = keyTimes(animation);
+    const Transform first = evaluateTransform(base, animation, times.front());
+    const Transform last = evaluateTransform(base, animation, times.back());
+    const auto animated = [&](AnimGroup g) {
+        for (const AnimParam p : groupParams(g)) {
+            if (animation.animated(p))
+                return true;
+        }
+        return false;
+    };
+    const auto pair = [&](const std::string& name, const std::string& a, const std::string& b) {
+        lines.push_back(name + " " + a + "→" + b);
+    };
+    if (animated(AnimGroup::Scale))
+        pair("Scala", numberText(first.scaleX * 100.0, 1) + "%", numberText(last.scaleX * 100.0, 1) + "%");
+    if (animated(AnimGroup::Position))
+        pair("Posizione", numberText(first.posX, 0) + ", " + numberText(first.posY, 0) + " px",
+             numberText(last.posX, 0) + ", " + numberText(last.posY, 0) + " px");
+    if (animated(AnimGroup::Rotation))
+        pair("Rotazione", numberText(first.rotation, 1) + "°", numberText(last.rotation, 1) + "°");
+    if (animated(AnimGroup::Crop))
+        lines.push_back("Ritaglio animato");
+    if (animated(AnimGroup::Opacity))
+        pair("Opacità", numberText(first.opacity * 100.0, 1) + "%", numberText(last.opacity * 100.0, 1) + "%");
+    return lines;
 }
 
 std::vector<double> keyTimes(const TransformAnimation& animation)

@@ -308,6 +308,106 @@ int runManipTest(const QStringList& args, qsizetype at)
                           "ripristinare la posizione spegne la sua animazione");
                 }
             }
+
+            // --- La riga dei rombi sulla linea del tempo (K5).
+            {
+                SequenceTimeline* line = window.sequenceTimeline();
+                const core::Fragment& piece = *window.project().sequence().find(id);
+                const double t1 = piece.start + 0.5;
+                const double t2 = piece.start + 1.5;
+                const double t3 = piece.start + 2.5;
+                window.editAnimationKeys(QStringLiteral("prova"), [&](core::TransformAnimation& a, core::Transform&) {
+                    core::AnimKey k;
+                    k.time = t1;
+                    k.value = 1.0;
+                    core::setKey(a, core::AnimParam::Opacity, k);
+                    k.time = t2;
+                    k.value = 0.2;
+                    core::setKey(a, core::AnimParam::Opacity, k);
+                    return true;
+                });
+                QCoreApplication::processEvents();
+                check(line->keyRow().keys.size() == 2 && !line->keyRow().layerPiece && line->keyRow().id == id,
+                      "la riga dei rombi mostra le due chiavi del pezzo scelto");
+                const auto send = [&](QEvent::Type type, const QPointF& p, bool left) {
+                    QMouseEvent e(type, p, line->mapToGlobal(p), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                                  left ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+                    QCoreApplication::sendEvent(line, &e);
+                };
+                const QPointF first = line->keyCenterForTest(0);
+                check(first.x() > 0 && first.y() > 0, "il primo rombo si vede sulla linea del tempo");
+                // Un clic sceglie il rombo; Canc non toglie il pezzo ma la chiave.
+                send(QEvent::MouseButtonPress, first, true);
+                send(QEvent::MouseButtonRelease, first, false);
+                check(std::abs(line->selectedKey() - t1) < 1e-6, "il clic sul rombo sceglie la chiave");
+                check(window.project().sequence().fragments().size() == 1, "il clic sul rombo non cambia il pezzo");
+                // Trascinare il rombo sposta la chiave (fra l'altra e la fine del pezzo).
+                const QPointF second = line->keyCenterForTest(1);
+                const QPointF target(first.x() + (second.x() - first.x()) * 0.5, first.y());
+                send(QEvent::MouseButtonPress, first, true);
+                send(QEvent::MouseMove, QPointF(first.x() + 8, first.y()), true);
+                send(QEvent::MouseMove, target, true);
+                send(QEvent::MouseButtonRelease, target, false);
+                QCoreApplication::processEvents();
+                check(animation().track(core::AnimParam::Opacity).size() == 2, "spostare un rombo non cambia il numero di chiavi");
+                if (animation().track(core::AnimParam::Opacity).size() == 2) {
+                    const double moved = animation().track(core::AnimParam::Opacity)[0].time;
+                    check(moved > t1 + 0.2 && moved < t2 - 0.2, "la chiave si è spostata dove si è lasciato il rombo");
+                    check(std::abs(animation().track(core::AnimParam::Opacity)[0].value - 1.0) < 1e-9, "il valore della chiave resta");
+                }
+                // Trascinarlo sull'altro non è permesso: la chiave resta dov'era.
+                const QPointF a = line->keyCenterForTest(0);
+                const QPointF b = line->keyCenterForTest(1);
+                const double before = animation().track(core::AnimParam::Opacity)[0].time;
+                send(QEvent::MouseButtonPress, a, true);
+                send(QEvent::MouseMove, QPointF(a.x() + 10, a.y()), true);
+                send(QEvent::MouseMove, b, true);
+                send(QEvent::MouseButtonRelease, b, false);
+                QCoreApplication::processEvents();
+                check(animation().track(core::AnimParam::Opacity).size() == 2
+                          && std::abs(animation().track(core::AnimParam::Opacity)[0].time - before) < 1e-6,
+                      "una chiave non si lascia sopra un'altra");
+                // Doppio clic: il cursore va lì.
+                {
+                    const QPointF p = line->keyCenterForTest(1);
+                    QMouseEvent e(QEvent::MouseButtonDblClick, p, line->mapToGlobal(p), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                    QCoreApplication::sendEvent(line, &e);
+                    QElapsedTimer settle;
+                    settle.start();
+                    while (std::abs(program->position() - 1.5) > 0.05 && settle.elapsed() < 3000)
+                        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    check(std::abs(program->position() - 1.5) < 0.1, "il doppio clic su un rombo porta il cursore sulla chiave");
+                }
+                // Il tipo di passaggio (da menu: qui si chiama quello che il menu chiama).
+                check(line->keyRow().keys[0].interp == core::Interp::Linear, "all'inizio il passaggio è lineare");
+                line->onKeyInterp(line->keyRow().keys[0].time, core::Interp::Hold, 0, 0, 1, 1);
+                QCoreApplication::processEvents();
+                check(line->keyRow().keys[0].interp == core::Interp::Hold
+                          && animation().track(core::AnimParam::Opacity)[0].interp == core::Interp::Hold,
+                      "il tipo di passaggio cambia sulla chiave e nella riga");
+                line->onKeyInterp(line->keyRow().keys[0].time, core::Interp::Bezier, 0.34, 1.56, 0.64, 1.0);
+                QCoreApplication::processEvents();
+                check(animation().track(core::AnimParam::Opacity)[0].interp == core::Interp::Bezier
+                          && std::abs(animation().track(core::AnimParam::Opacity)[0].c1y - 1.56) < 1e-9,
+                      "una curva Bézier tiene i suoi punti di controllo");
+                // Canc: la chiave scelta si toglie (e non il pezzo).
+                const QPointF last = line->keyCenterForTest(1);
+                send(QEvent::MouseButtonPress, last, true);
+                send(QEvent::MouseButtonRelease, last, false);
+                window.deleteSelection();
+                QCoreApplication::processEvents();
+                check(animation().track(core::AnimParam::Opacity).size() == 1 && window.project().sequence().fragments().size() == 1,
+                      "Canc toglie la chiave scelta e non il pezzo");
+                check(line->keyRow().keys.size() == 1, "la riga dei rombi segue");
+                // Annulla riporta la chiave.
+                window.undo();
+                QCoreApplication::processEvents();
+                check(animation().track(core::AnimParam::Opacity).size() == 2, "Annulla riporta la chiave");
+                // Un pezzo non scelto (selezione vuota): la riga sparisce.
+                line->selectObjects({});
+                QCoreApplication::processEvents();
+                check(line->keyRow().keys.empty(), "senza un pezzo scelto non c'è la riga dei rombi");
+            }
         }
     }
 

@@ -34,6 +34,7 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
     if (propertiesPanel_ == nullptr || timeline_ == nullptr)
         return;
     propertiesFollowCursor_ = false;
+    refreshKeyRow();
     if (program_ != nullptr && !cursorOnly)
         program_->refreshManipulators();  // le maniglie del monitor seguono la scelta
     const std::vector<core::ObjectRef> objects = timeline_->allSelectedObjects();
@@ -113,6 +114,37 @@ MainWindow::AnimTarget MainWindow::animationTarget() const
     target.fileTime = target.from + std::clamp(offset, 0.0, target.to - target.from);
     target.valid = true;
     return target;
+}
+
+void MainWindow::refreshKeyRow()
+{
+    if (timeline_ == nullptr)
+        return;
+    SequenceTimeline::KeyRow row;
+    if (const AnimTarget target = animationTarget(); target.valid) {
+        row.layerPiece = target.layer;
+        row.id = target.id;
+        for (const double time : core::keyTimes(target.animation))
+            row.keys.push_back({time, core::interpAt(target.animation, time)});
+    }
+    timeline_->setKeyRow(std::move(row));
+}
+
+bool MainWindow::editAnimationKeys(const QString& label, const std::function<bool(core::TransformAnimation&, core::Transform&)>& edit)
+{
+    const AnimTarget target = animationTarget();
+    if (!target.valid)
+        return false;
+    core::Transform base = target.base;
+    core::TransformAnimation animation = target.animation;
+    if (!edit(animation, base))
+        return false;
+    const core::Project before = project_;
+    if (!writeAnimTarget(target, base, animation))
+        return false;
+    transformMergeKey_.clear();
+    recordEdit(label, before);
+    return true;
 }
 
 bool MainWindow::writeAnimTarget(const AnimTarget& target, const core::Transform& base, const core::TransformAnimation& animation)

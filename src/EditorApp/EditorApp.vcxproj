@@ -108,6 +108,7 @@
     <ClCompile Include="SequenceAudio.cpp" />
     <ClCompile Include="SequenceTimeline.cpp" />
     <ClCompile Include="SequenceTimelineInput.cpp" />
+    <ClCompile Include="SequenceTimelineKeys.cpp" />
     <ClCompile Include="SequenceTimelinePaint.cpp" />
     <ClCompile Include="ThumbnailCache.cpp" />
     <ClCompile Include="TimelineWidget.cpp" />

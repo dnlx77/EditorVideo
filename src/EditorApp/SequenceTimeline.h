@@ -2,6 +2,7 @@
 
 #include "EditorApp/SequenceTimelineShared.h"
 #include "EditorApp/ZoomableTimeline.h"
+#include "EditorCore/Animation.h"
 #include "EditorCore/AudioTracks.h"
 #include "EditorCore/Groups.h"
 #include "EditorCore/TimeUtil.h"
@@ -117,6 +118,33 @@ public:
         double end = 0.0;        // dove finisce
         double junction = 0.0;   // dove sta la giunzione
     };
+
+    // Riga dei rombi delle chiavi di animazione del pezzo scelto da solo (V1 o di un livello): in basso sul blocco, un rombo
+    // per istante con chiave (tempi del FILE), nel colore del tipo di passaggio. Si prende un rombo e si trascina per
+    // spostare la chiave (lo spostamento si chiama lasciando il mouse), Canc la toglie, il doppio clic porta il cursore
+    // lì, il clic destro apre il menu del tipo di passaggio. Vuota = nessuna riga.
+    struct KeyMark
+    {
+        double time = 0.0;  // nel file
+        core::Interp interp = core::Interp::Linear;
+    };
+    struct KeyRow
+    {
+        bool layerPiece = false;  // un pezzo di un livello (altrimenti un pezzo di V1)
+        int id = 0;
+        std::vector<KeyMark> keys;
+    };
+    void setKeyRow(KeyRow row);
+    const KeyRow& keyRow() const { return keyRow_; }
+    // La chiave scelta (tempo nel file; negativo = nessuna).
+    double selectedKey() const { return selectedKey_; }
+    std::function<void(double fromFileTime, double toFileTime)> onKeyMoved;
+    std::function<void(double fileTime)> onKeyRemoved;
+    std::function<void(double fileTime, core::Interp interp, double c1x, double c1y, double c2x, double c2y)> onKeyInterp;
+    // Solo per le prove: dove sta il rombo della chiave `index` (coordinate del widget; fuori dal widget se non si vede).
+    QPointF keyCenterForTest(int index) const;
+    // Mostra il menu del tipo di passaggio per la chiave a quel tempo (clic destro) e applica la scelta.
+    void showKeyMenu(double fileTime, const QPoint& globalPos);
 
     explicit SequenceTimeline(QWidget* parent = nullptr);
 
@@ -297,6 +325,7 @@ protected:
     void leaveEvent(QEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragMoveEvent(QDragMoveEvent* event) override;
     void dragLeaveEvent(QDragLeaveEvent* event) override;
@@ -446,6 +475,27 @@ private:
     // poi limitato da trimLimit).
     double trimTarget(double x, bool ripple) const;
     double trimEdgeSequenceTime(double value) const;  // dove cade nella sequenza il bordo trascinato a `value`
+
+    // La riga dei rombi: dove sta (il blocco del pezzo, in coordinate del widget, con inizio nella sequenza, durata e
+    // inizio nel file); ok = false se non c'è un pezzo con chiavi.
+    struct KeyGeometry
+    {
+        bool ok = false;
+        QRectF strip;      // la fascia in basso sul blocco
+        double position = 0.0;
+        double length = 0.0;
+        double source = 0.0;
+    };
+    KeyGeometry keyGeometry() const;
+    double keyX(const KeyGeometry& g, double fileTime) const { return xForTime(g.position + (fileTime - g.source)); }
+    int keyAt(const QPointF& pos) const;  // indice in keyRow_.keys del rombo sotto il mouse, -1 se nessuno
+    void paintKeyRow(QPainter& p);
+    KeyRow keyRow_;
+    double selectedKey_ = -1.0;
+    int keyDragIndex_ = -1;      // rombo preso
+    bool keyDragging_ = false;   // si è mosso
+    double keyDragValue_ = 0.0;  // dove andrebbe (tempo nel file)
+    double keyDragGrab_ = 0.0;   // distanza (secondi) fra il rombo e il punto preso
 
     std::vector<Block> blocks_;
     double total_ = 0.0;  // durata della sequenza: somma dei blocchi, calcolata in setBlocks
