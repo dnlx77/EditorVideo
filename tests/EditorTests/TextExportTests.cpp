@@ -1,3 +1,4 @@
+#include "EditorCore/Animation.h"
 #include "EditorCore/Encoder.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/PathUtil.h"
@@ -393,4 +394,53 @@ TEST_F(TextExport, FadesDimTheTextInAndOut)
     EXPECT_LT(at(68), 200);
     EXPECT_LT(at(40), at(46));              // sale
     EXPECT_GT(at(62), at(72));              // poi scende
+}
+
+TEST_F(TextExport, AnimatedOpacityAndShiftApplyToTheDrawnText)
+{
+    const WhiteBox renderer;
+    const std::vector<ClipRanges> plan{{file("grigio.mp4"), {{0.0, 4.0}}}};
+    {
+        // Opacità animata da 0 a 1 lungo la scritta (1,2 s → 2,6 s): grigio all'inizio, bianco alla fine.
+        ReencodeOptions options;
+        options.texts = oneText(1.2, 1.4);
+        TransformAnimation anim;
+        AnimKey a;
+        a.time = 0.0;
+        a.value = 0.0;
+        AnimKey b;
+        b.time = 1.4;
+        b.value = 1.0;
+        anim.track(AnimParam::Opacity) = {a, b};
+        options.texts.setAnimation(options.texts.layers()[0].clips[0].id, anim);
+        options.textRenderer = &renderer;
+        const fs::path out = dir_ / "opacita-animata.mp4";
+        exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
+        const Sampled d = sample(out);
+        EXPECT_EQ(d.errors, 0);
+        ASSERT_EQ(d.inside.size(), static_cast<std::size_t>(kFrames));
+        const auto at = [&](int i) { return d.inside[static_cast<std::size_t>(i)]; };
+        EXPECT_NEAR(at(37), 100, 12);  // appena iniziata: quasi invisibile
+        EXPECT_GT(at(57), 130);        // a metà: né grigio né bianco
+        EXPECT_LT(at(57), 200);
+        EXPECT_GT(at(76), 200);        // alla fine: bianca
+        EXPECT_LT(at(40), at(57));
+        EXPECT_LT(at(57), at(72));
+    }
+    {
+        // Spostata di 300 pixel a destra, la scritta non sta più sopra il punto controllato.
+        ReencodeOptions options;
+        options.texts = oneText(1.2, 1.4);
+        Transform t;
+        t.posX = 300.0;
+        options.texts.setTransform(options.texts.layers()[0].clips[0].id, t);
+        options.textRenderer = &renderer;
+        const fs::path out = dir_ / "spostata.mp4";
+        exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
+        const Sampled d = sample(out);
+        EXPECT_EQ(d.errors, 0);
+        ASSERT_EQ(d.inside.size(), static_cast<std::size_t>(kFrames));
+        for (int i = 38; i <= 75; ++i)
+            EXPECT_NEAR(d.inside[static_cast<std::size_t>(i)], 100, 6) << "fotogramma " << i;
+    }
 }

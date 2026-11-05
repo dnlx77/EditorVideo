@@ -1,5 +1,7 @@
 #include "EditorApp/TextOverlay.h"
 
+#include "EditorCore/Animation.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -15,6 +17,8 @@ core::TextClip drawnForm(const core::TextClip& clip)
     form.length = 1.0;
     form.fadeIn = 0.0;
     form.fadeOut = 0.0;
+    form.transform = {};  // la trasformazione si applica sull'immagine già disegnata
+    form.animation = {};
     return form;
 }
 
@@ -30,7 +34,7 @@ QRectF TextOverlay::bounds(const core::TextClip& clip, int frameWidth, int frame
 }
 
 void TextOverlay::paint(QPainter& painter, const QRectF& target, qreal devicePixelRatio, const std::vector<core::TextClip>& clips,
-                        double time)
+                        double time, QSize projectFrame)
 {
     if (clips.empty() || target.isEmpty())
         return;
@@ -60,10 +64,28 @@ void TextOverlay::paint(QPainter& painter, const QRectF& target, qreal devicePix
         const double fade = clip.fadeFactor(time);
         if (entry.image.isNull() || fade <= 0.0)
             continue;
-        painter.setOpacity(opacityBefore * fade);
+        core::Transform t = clip.transform;
+        if (!clip.animation.empty())
+            t = core::evaluateTransform(clip.transform, clip.animation, time - clip.position);  // tempi dall'inizio della scritta
+        t = core::normalized(t);
+        painter.setOpacity(opacityBefore * fade * t.opacity);
         const QRectF where(target.left() + entry.origin.x() / devicePixelRatio, target.top() + entry.origin.y() / devicePixelRatio,
                            entry.image.width() / devicePixelRatio, entry.image.height() / devicePixelRatio);
+        if (!t.movesPicture()) {
+            painter.drawImage(where, entry.image);
+            continue;
+        }
+        // p' = centro del riquadro + spostamento + R * D * (p - centro), come transformTextImage dell'esportazione.
+        const QPointF pivot(target.left() + clip.style.centerX * target.width(), target.top() + clip.style.centerY * target.height());
+        const double k = projectFrame.width() > 0 ? target.width() / projectFrame.width() : 1.0;
+        painter.save();
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        painter.translate(pivot + QPointF(t.posX * k, t.posY * k));
+        painter.rotate(t.rotation);
+        painter.scale(t.scaleX * (t.flipHorizontal ? -1.0 : 1.0), t.scaleY * (t.flipVertical ? -1.0 : 1.0));
+        painter.translate(-pivot);
         painter.drawImage(where, entry.image);
+        painter.restore();
     }
     painter.setOpacity(opacityBefore);
 }

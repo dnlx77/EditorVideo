@@ -2,6 +2,7 @@
 #include "EditorApp/SelfTests.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/TextOverlay.h"
+#include "EditorCore/Animation.h"
 
 #include <QtCore/QStringList>
 #include <QtGui/QTextCursor>
@@ -425,6 +426,78 @@ int runTextTest(const QStringList&, qsizetype)
         }
         check(brightestFull > 240 && brightestHalf > 100 && brightestHalf < 160, "a metà dissolvenza la scritta è a metà luminosità");
         check(fadeOverlay.renderCount() == 1, "la dissolvenza non fa ridisegnare la scritta");
+        // Trasformazione e animazione della scritta (S2): spostamento, rotazione, opacità animata; nessun ridisegno del testo.
+        {
+            const QSize project(400, 300);
+            const auto boundsOf = [&](const core::TextClip& clip, double time, TextOverlay& overlay, int* brightest = nullptr) {
+                QImage image(400, 300, QImage::Format_ARGB32_Premultiplied);
+                image.fill(QColor(0, 0, 0));
+                {
+                    QPainter painter(&image);
+                    overlay.paint(painter, target, 1.0, {clip}, time, project);
+                }
+                int left = 1000, right = -1, top = 1000, bottom = -1, best = 0;
+                for (int y = 0; y < 300; ++y) {
+                    for (int x = 0; x < 400; ++x) {
+                        const int g = image.pixelColor(x, y).green();
+                        best = std::max(best, g);
+                        if (g > 60) {
+                            left = std::min(left, x);
+                            right = std::max(right, x);
+                            top = std::min(top, y);
+                            bottom = std::max(bottom, y);
+                        }
+                    }
+                }
+                if (brightest != nullptr)
+                    *brightest = best;
+                return QRect(QPoint(left, top), QPoint(right, bottom));
+            };
+            core::TextClip text = clipWith("XXXX");
+            text.id = 7;
+            text.position = 1.0;
+            text.length = 4.0;
+            text.style.size = 0.2;
+            text.style.color = {0, 255, 0, 255};
+            text.style.centerX = 0.5;
+            text.style.centerY = 0.5;
+            TextOverlay overlay;
+            const QRect plain = boundsOf(text, 1.0, overlay);
+            check(plain.width() > 20 && plain.height() > 5, "la scritta di prova si vede");
+            core::TextClip moved = text;
+            moved.transform.posX = 100.0;  // pixel del progetto (400 di larghezza): sul monitor da 360 sono 90
+            const QRect shifted = boundsOf(moved, 1.0, overlay);
+            check(std::abs(shifted.center().x() - plain.center().x() - 90) <= 2 && std::abs(shifted.center().y() - plain.center().y()) <= 1,
+                  "la posizione sposta la scritta (in pixel del progetto, ridotti alla misura del monitor)");
+            core::TextClip turned = text;
+            turned.transform.rotation = 90.0;
+            const QRect rotated = boundsOf(turned, 1.0, overlay);
+            check(std::abs(rotated.width() - plain.height()) <= 3 && std::abs(rotated.height() - plain.width()) <= 3
+                      && std::abs(rotated.center().x() - plain.center().x()) <= 2,
+                  "la rotazione gira la scritta intorno al suo centro");
+            core::TextClip big = text;
+            big.transform.scaleX = big.transform.scaleY = 2.0;
+            const QRect grown = boundsOf(big, 1.0, overlay);
+            check(std::abs(grown.width() - plain.width() * 2) <= 4 && std::abs(grown.center().x() - plain.center().x()) <= 2,
+                  "la scala ingrandisce la scritta intorno al suo centro");
+            // Opacità animata (tempi dall'inizio della scritta): 0 all'inizio, 1 dopo 2 s.
+            core::TextClip fading2 = text;
+            core::AnimKey a;
+            a.time = 0.0;
+            a.value = 0.0;
+            core::AnimKey b;
+            b.time = 2.0;
+            b.value = 1.0;
+            fading2.animation.track(core::AnimParam::Opacity) = {a, b};
+            TextOverlay animated;
+            int atStart = 0, atMiddle = 0, atEnd = 0;
+            boundsOf(fading2, 1.0, animated, &atStart);
+            boundsOf(fading2, 2.0, animated, &atMiddle);
+            boundsOf(fading2, 3.0, animated, &atEnd);
+            check(atStart < 20 && atMiddle > 100 && atMiddle < 160 && atEnd > 240,
+                  "l'opacità animata cambia la luminosità lungo la scritta (tempi dall'inizio)");
+            check(animated.renderCount() == 1, "l'animazione non fa ridisegnare il testo");
+        }
         // Il riquadro (per afferrare la scritta col mouse): contiene il centro e sta dentro il fotogramma.
         const QRectF box = overlay.bounds(low, 400, 300);
         check(!box.isEmpty() && box.contains(QPointF(0.5, 0.5)) && box.left() >= 0.0 && box.right() <= 1.0 && box.width() < 1.0,
