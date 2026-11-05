@@ -1,5 +1,8 @@
+#include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
+#include "EditorApp/PropertiesPanel.h"
+#include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/SelfTests.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/MediaProbe.h"
@@ -8,7 +11,10 @@
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QStringList>
+#include <QtCore/QElapsedTimer>
 #include <QtGui/QMouseEvent>
+#include <QtWidgets/QDoubleSpinBox>
+#include <QtWidgets/QToolButton>
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +26,13 @@
 namespace editor::app {
 
 namespace core = editor::core;
+
+namespace {
+double evaluateTrackForTest(const std::vector<core::AnimKey>& keys, double time)
+{
+    return core::evaluateTrack(keys, time, 0.0);
+}
+}  // namespace
 
 // --manip-test <video>: i manipolatori sul monitor del Montaggio con un pezzo del file dato: maniglie visibili solo da
 // fermo e con il tasto attivo, trascinare il corpo, un angolo e la maniglia di rotazione dà una sola modifica a gesto.
@@ -195,6 +208,108 @@ int runManipTest(const QStringList& args, qsizetype at)
     monitor.setPlaying(false);
     monitor.setTransformMode(false);
     check(!monitor.manipulatorsVisible(), "a tasto spento spariscono");
+
+    // --- Fotogrammi chiave dal pannello Proprietà (K4), con la finestra vera.
+    {
+        MainWindow window;
+        window.resize(1200, 800);
+        window.show();
+        window.openPath(QString::fromStdString(path));
+        QElapsedTimer waiting;
+        waiting.start();
+        while (!window.project().allAnalyzed() && waiting.elapsed() < 30000)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        window.addToSequence();
+        QCoreApplication::processEvents();
+        const auto& fragments = window.project().sequence().fragments();
+        check(fragments.size() == 1, "la finestra ha un pezzo nella sequenza");
+        if (fragments.size() == 1) {
+            const int id = fragments[0].id;
+            window.sequenceTimeline()->selectObjects({{core::ObjectRef::Kind::Piece, id}});
+            QCoreApplication::processEvents();
+            PropertiesPanel* panel = window.propertiesPanel();
+            ProgramMonitor* program = window.programMonitor();
+            const auto animation = [&]() -> const core::TransformAnimation& { return window.project().sequence().find(id)->animation; };
+            const auto seek = [&](double seconds) {
+                program->seekTo(seconds);
+                QElapsedTimer settle;  // il fotogramma arriva da un altro thread: si aspetta che il cursore sia lì
+                settle.start();
+                while (std::abs(program->position() - seconds) > 0.05 && settle.elapsed() < 3000)
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                QCoreApplication::processEvents();
+            };
+            auto* key = panel->findChild<QToolButton*>(QStringLiteral("chiave1"));  // gruppo Posizione
+            auto* next = panel->findChild<QToolButton*>(QStringLiteral("chiaveDopo1"));
+            auto* prev = panel->findChild<QToolButton*>(QStringLiteral("chiavePrima1"));
+            QDoubleSpinBox* posX = nullptr;  // (la pagina delle scritte ha un campo con lo stesso nome: si prende quello visibile)
+            for (QDoubleSpinBox* spin : panel->findChildren<QDoubleSpinBox*>(QStringLiteral("posizioneX"))) {
+                if (spin->isVisibleTo(panel))
+                    posX = spin;
+            }
+            check(panel->showingTransform() && key != nullptr && next != nullptr && prev != nullptr && posX != nullptr,
+                  "il pannello mostra le trasformazioni con il rombo della posizione");
+            if (panel->showingTransform() && key != nullptr && next != nullptr && prev != nullptr && posX != nullptr) {
+                seek(0.5);
+                check(key->isEnabled() && key->text() == QStringLiteral("◇") && !next->isEnabled() && !prev->isEnabled(),
+                      "col cursore nel pezzo il rombo è attivo e vuoto, senza chiavi vicine");
+                key->click();
+                QCoreApplication::processEvents();
+                check(animation().track(core::AnimParam::PosX).size() == 1 && animation().track(core::AnimParam::PosY).size() == 1
+                          && !animation().animated(core::AnimParam::ScaleX),
+                      "il rombo mette una chiave per X e Y della posizione, e nient'altro");
+                check(key->text() == QStringLiteral("◆"), "sul cursore il rombo è pieno");
+
+                // Auto-key: cambiare il valore di un parametro animato, altrove, mette una chiave lì.
+                seek(1.5);
+                check(key->text() == QStringLiteral("◇") && prev->isEnabled(), "più avanti il rombo è vuoto e la freccia indietro è attiva");
+                posX->setValue(100.0);
+                QCoreApplication::processEvents();
+                check(animation().track(core::AnimParam::PosX).size() == 2
+                          && std::abs(animation().track(core::AnimParam::PosX)[1].value - 100.0) < 1e-6,
+                      "cambiare la posizione con l'animazione accesa mette una chiave sul cursore");
+                check(std::abs(window.project().sequence().find(id)->transform.posX) < 1e-9,
+                      "la trasformazione fissa del pezzo non cambia");
+
+                // Fra le due chiavi il pannello mostra il valore interpolato.
+                const double first = animation().track(core::AnimParam::PosX)[0].time;
+                const double second = animation().track(core::AnimParam::PosX)[1].time;
+                seek((first + second) / 2.0);
+                const double expected = evaluateTrackForTest(animation().track(core::AnimParam::PosX), program->position());
+                check(std::abs(posX->value() - expected) < 6.0 && posX->value() > 20.0 && posX->value() < 80.0,
+                      "a metà fra le chiavi il pannello mostra un valore intermedio");
+
+                // Le frecce vanno alle chiavi.
+                seek(first);
+                next->click();
+                QCoreApplication::processEvents();
+                check(std::abs(program->position() - second) < 0.05, "la freccia avanti va alla chiave dopo");
+                prev->click();
+                QCoreApplication::processEvents();
+                check(std::abs(program->position() - first) < 0.05, "la freccia indietro va alla chiave prima");
+
+                // Il rombo su una chiave la toglie.
+                seek(second);
+                check(key->text() == QStringLiteral("◆"), "sulla seconda chiave il rombo è pieno");
+                key->click();
+                QCoreApplication::processEvents();
+                check(animation().track(core::AnimParam::PosX).size() == 1, "il rombo su una chiave la toglie");
+
+                // Il ripristino del gruppo spegne l'animazione.
+                std::vector<QToolButton*> resets;
+                for (QToolButton* b : panel->findChildren<QToolButton*>()) {
+                    if (b->text() == QStringLiteral("↺"))
+                        resets.push_back(b);
+                }
+                check(resets.size() >= 2, "ci sono i pulsanti di ripristino");
+                if (resets.size() >= 2) {
+                    resets[1]->click();  // il secondo gruppo: la posizione
+                    QCoreApplication::processEvents();
+                    check(!animation().animated(core::AnimParam::PosX) && !animation().animated(core::AnimParam::PosY),
+                          "ripristinare la posizione spegne la sua animazione");
+                }
+            }
+        }
+    }
 
     std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
     return check.failures() == 0 ? 0 : 3;

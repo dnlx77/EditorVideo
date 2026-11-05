@@ -197,6 +197,8 @@ MainWindow::MainWindow(QWidget* parent)
     program_->onActivated = [this] { setProgramActive(true); };
     program_->onPositionChanged = [this](double seconds) {
         timeline_->setPlayhead(seconds);
+        if (propertiesFollowCursor_)
+            refreshPropertiesPanel(true);  // i valori e i rombi mostrati seguono il cursore
         syncQualityMenus();  // il menu del Montaggio mostra la qualità del file del pezzo mostrato
     };
     program_->onCacheRangeChanged = [this](double from, double to) { timeline_->setCacheRange(from, to); };
@@ -531,6 +533,9 @@ MainWindow::MainWindow(QWidget* parent)
         applyTransitionEdit(type, params, duration, crossfadeAudio, field);
     };
     propertiesPanel_->onFit = [this](bool fill) { fitSelectedPieces(fill); };
+    propertiesPanel_->onAnimationAction = [this](core::AnimGroup group, PropertiesPanel::AnimAction action) {
+        applyAnimationAction(group, static_cast<int>(action));
+    };
     propertiesPanel_->setTextPage(textPanel_);
     propertiesDock_ = makeDock(QStringLiteral("Proprietà"), QStringLiteral("pannelloProprieta"), propertiesPanel_);
     timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),
