@@ -1669,6 +1669,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
             {
                 auto* line = window->sequenceTimeline();
                 const core::AudioTracks& audio = window->project().audioTracks();
+                line->setSelectedTrack(core::AudioTracks::kOriginalTrack);  // con un pezzo video scelto "+" aggiungerebbe un livello video
                 line->addTrackButton()->click();
                 line->addTrackButton()->click();
                 QCoreApplication::processEvents();
