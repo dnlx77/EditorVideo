@@ -2,6 +2,7 @@
 #include "EditorCore/Json.h"
 #include "EditorCore/Project.h"
 #include "EditorCore/ProjectFile.h"
+#include "EditorCore/TextTracks.h"
 
 #include <gtest/gtest.h>
 
@@ -512,4 +513,109 @@ TEST(AnimationRow, GroupKeysAreEditedIndependentlyOfTheOtherGroupsAtTheSameInsta
     EXPECT_TRUE(removeGroupKeys(a, AnimGroup::Opacity, 1.0));
     EXPECT_EQ(a.track(AnimParam::Opacity).size(), 1u);
     EXPECT_EQ(a.track(AnimParam::ScaleX).size(), 2u);
+}
+
+// ---- Scritte animate (S1): i tempi delle chiavi sono secondi dall'inizio della scritta.
+
+namespace {
+
+TextClip titleAt(double position, double length)
+{
+    TextClip clip;
+    clip.position = position;
+    clip.length = length;
+    clip.text = "Titolo";
+    return clip;
+}
+
+}  // namespace
+
+TEST(TextAnimation, SetTransformAndAnimationReportChangesAndNormalize)
+{
+    TextTracks tracks;
+    const int layer = tracks.addLayer();
+    const int id = tracks.add(layer, titleAt(2.0, 6.0));
+    ASSERT_NE(id, 0);
+    Transform t;
+    t.scaleX = t.scaleY = 1.5;
+    EXPECT_TRUE(tracks.setTransform(id, t));
+    EXPECT_FALSE(tracks.setTransform(id, t));
+    EXPECT_FALSE(tracks.setTransform(9999, t));
+    TransformAnimation anim;
+    anim.track(AnimParam::Opacity) = {key(3.0, 1.0), key(0.0, 0.0), key(3.0, 0.5)};  // fuori ordine, tempo doppio
+    EXPECT_TRUE(tracks.setAnimation(id, anim));
+    const auto& keys = tracks.find(id)->animation.track(AnimParam::Opacity);
+    ASSERT_EQ(keys.size(), 2u);
+    EXPECT_DOUBLE_EQ(keys[0].time, 0.0);
+    EXPECT_DOUBLE_EQ(keys[1].value, 0.5);
+    EXPECT_FALSE(tracks.setAnimation(id, anim));
+}
+
+TEST(TextAnimation, MovingKeepsTheKeysTrimmingAndSplittingShiftThem)
+{
+    TextTracks tracks;
+    const int layer = tracks.addLayer();
+    const int id = tracks.add(layer, titleAt(2.0, 6.0));
+    ASSERT_NE(id, 0);
+    TransformAnimation anim;
+    anim.track(AnimParam::Opacity) = {key(0.0, 0.0), key(4.0, 1.0)};
+    tracks.setAnimation(id, anim);
+    // Spostare la scritta non cambia i tempi (sono dall'inizio).
+    ASSERT_TRUE(tracks.moveTo(id, layer, 10.0));
+    EXPECT_EQ(tracks.find(id)->animation, anim);
+    // Anticipare l'inizio di 1 s: la prima chiave ora sta 1 s dopo l'inizio, l'immagine non cambia.
+    ASSERT_TRUE(tracks.setStart(id, 9.0));
+    EXPECT_DOUBLE_EQ(tracks.find(id)->animation.track(AnimParam::Opacity)[0].time, 1.0);
+    EXPECT_DOUBLE_EQ(tracks.find(id)->animation.track(AnimParam::Opacity)[1].time, 5.0);
+    // Cambiare la fine non tocca le chiavi.
+    ASSERT_TRUE(tracks.setEnd(id, 15.0));
+    EXPECT_DOUBLE_EQ(tracks.find(id)->animation.track(AnimParam::Opacity)[1].time, 5.0);
+    // Dividere a 12 (3 s dall'inizio): la seconda parte parte da 0, la prima resta com'è; l'aspetto non cambia.
+    const double before = evaluateTransform({}, tracks.find(id)->animation, 4.5).opacity;
+    const int second = tracks.split(id, 12.0);
+    ASSERT_NE(second, 0);
+    EXPECT_EQ(tracks.find(id)->animation.track(AnimParam::Opacity)[0].time, 1.0);
+    EXPECT_NEAR(tracks.find(second)->animation.track(AnimParam::Opacity)[0].time, -2.0, 1e-9);
+    EXPECT_NEAR(evaluateTransform({}, tracks.find(second)->animation, 4.5 - 3.0).opacity, before, 1e-9);
+}
+
+TEST(TextAnimation, SavesAndReloadsTheTransformAndTheKeysOfTexts)
+{
+    Project project;
+    ProjectView view;
+    const int layer = project.textTracks().addLayer();
+    TextClip clip = titleAt(1.0, 5.0);
+    clip.transform.scaleX = clip.transform.scaleY = 1.25;
+    clip.transform.rotation = 15.0;
+    clip.animation.track(AnimParam::PosX) = {key(0.0, -100.0, Interp::Smooth), key(2.5, 40.0)};
+    ASSERT_NE(project.textTracks().add(layer, clip), 0);
+    TextClip base = titleAt(0.0, 2.0);  // una scritta di V1 con la sola trasformazione
+    base.transform.flipHorizontal = true;
+    ASSERT_NE(project.textTracks().add(TextTracks::kBaseLayerId, base), 0);
+
+    const std::string json = projectToJson("C:/prova/montaggio.evproj", project, view);
+    EXPECT_EQ(parseJson(json)["versione"].asInteger(), 8);
+    const LoadedProject loaded = projectFromJson("C:/prova/montaggio.evproj", json);
+    ASSERT_EQ(loaded.project.textTracks().layers().size(), 1u);
+    const TextClip& got = loaded.project.textTracks().layers()[0].clips[0];
+    EXPECT_DOUBLE_EQ(got.transform.scaleX, 1.25);
+    EXPECT_DOUBLE_EQ(got.transform.rotation, 15.0);
+    ASSERT_EQ(got.animation.track(AnimParam::PosX).size(), 2u);
+    EXPECT_NEAR(got.animation.track(AnimParam::PosX)[1].time, 2.5, 1e-4);
+    EXPECT_EQ(got.animation.track(AnimParam::PosX)[0].interp, Interp::Smooth);
+    ASSERT_EQ(loaded.project.textTracks().baseLayer().clips.size(), 1u);
+    EXPECT_TRUE(loaded.project.textTracks().baseLayer().clips[0].transform.flipHorizontal);
+
+    // Senza animazione il file resta nella versione 6 (così si apre con i programmi di prima) e un testo normale non scrive niente.
+    Project plain;
+    const int l2 = plain.textTracks().addLayer();
+    TextClip fixed = titleAt(0.0, 2.0);
+    fixed.transform.rotation = 10.0;
+    ASSERT_NE(plain.textTracks().add(l2, fixed), 0);
+    EXPECT_EQ(parseJson(projectToJson("C:/prova/montaggio.evproj", plain, view))["versione"].asInteger(), 6);
+    Project untouched;
+    ASSERT_NE(untouched.textTracks().add(untouched.textTracks().addLayer(), titleAt(0.0, 2.0)), 0);
+    const std::string untouchedJson = projectToJson("C:/prova/montaggio.evproj", untouched, view);
+    EXPECT_EQ(untouchedJson.find("trasformazione"), std::string::npos);
+    EXPECT_EQ(untouchedJson.find("animazione"), std::string::npos);
 }

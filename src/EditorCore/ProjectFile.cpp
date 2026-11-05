@@ -495,6 +495,10 @@ JsonValue textClipsToJson(const std::vector<TextClip>& list)
                                {"durata", ticks(c.length)},
                                {"testo", c.text},
                                {"stile", textStyleToJson(c.style)}};
+        if (!c.transform.isIdentity())
+            clip["trasformazione"] = transformToJson(c.transform);
+        if (!c.animation.empty())
+            clip["animazione"] = animationToJson(c.animation);  // tempi in secondi dall'inizio della scritta
         if (c.fadeIn > 0.0)
             clip["dissolvenzaIn"] = ticks(c.fadeIn);
         if (c.fadeOut > 0.0)
@@ -516,6 +520,8 @@ std::vector<TextClip> textClipsFromJson(const JsonValue& value)
         clip.length = seconds(c["durata"], "durata");
         clip.text = text(c["testo"]);
         clip.style = textStyleFromJson(c["stile"]);
+        clip.transform = transformFromJson(c["trasformazione"]);
+        clip.animation = animationFromJson(c["animazione"]);
         if (c["dissolvenzaIn"].isInteger())
             clip.fadeIn = std::clamp(ticksToSeconds(c["dissolvenzaIn"].asInteger()), 0.0, clip.length);
         if (c["dissolvenzaOut"].isInteger())
@@ -721,10 +727,19 @@ std::string projectToJson(const std::string& projectPath, const Project& project
     const auto animated = [](const auto& list) {
         return std::any_of(list.begin(), list.end(), [](const auto& item) { return !item.animation.empty(); });
     };
+    const auto textsOf = [&](auto&& test) {
+        const TextTracks& tracks = project.textTracks();
+        return std::any_of(tracks.baseLayer().clips.begin(), tracks.baseLayer().clips.end(), test)
+               || std::any_of(tracks.layers().begin(), tracks.layers().end(), [&](const TextLayer& l) {
+                      return std::any_of(l.clips.begin(), l.clips.end(), test);
+                  });
+    };
     const bool animations = animated(project.sequence().fragments())
+                            || textsOf([](const TextClip& c) { return !c.animation.empty(); })
                             || std::any_of(project.textTracks().layers().begin(), project.textTracks().layers().end(),
                                            [&](const TextLayer& l) { return animated(l.pieces); });
-    const int version = animations ? 8 : layerPieces ? 7 : pieceTransforms ? 6 : !transitions.asArray().empty() ? 5 : hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
+    const bool textTransforms = textsOf([](const TextClip& c) { return !c.transform.isIdentity(); });
+    const int version = animations ? 8 : layerPieces ? 7 : (pieceTransforms || textTransforms) ? 6 : !transitions.asArray().empty() ? 5 : hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
     JsonValue::Object root{
         {"formato", kFormatName},
         {"versione", version},
