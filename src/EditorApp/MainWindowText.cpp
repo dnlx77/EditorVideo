@@ -8,6 +8,8 @@
 #include "EditorApp/UiText.h"
 
 #include <QtCore/QSettings>
+#include <QtWidgets/QMessageBox>
+#include <QtWidgets/QPushButton>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QTabWidget>
 
@@ -44,6 +46,23 @@ bool MainWindow::removeTextLayer(int layerId)
         return false;
     const QString name = qs(project_.textTracks().layerName(layerId));
     const std::size_t clips = layer->clips.size() + layer->pieces.size();
+    if (confirmRemovals && clips > 0) {
+        // Togliere il livello cancella tutto quello che c'è sopra: si chiede prima.
+        QMessageBox box(QMessageBox::Warning, QStringLiteral("Togli il livello %1").arg(name),
+                        QStringLiteral("Il livello %1 contiene %2 %3. Toglierlo li cancella.")
+                            .arg(name)
+                            .arg(clips)
+                            .arg(clips == 1 ? QStringLiteral("oggetto (scritta o video)") : QStringLiteral("oggetti (scritte o video)")),
+                        QMessageBox::NoButton, this);
+        box.setInformativeText(QStringLiteral("Con Ctrl+Z si rimette com'era."));
+        QPushButton* remove = box.addButton(QStringLiteral("Togli il livello"), QMessageBox::DestructiveRole);
+        QPushButton* keep = box.addButton(QStringLiteral("Annulla"), QMessageBox::RejectRole);
+        box.setDefaultButton(keep);
+        box.setEscapeButton(keep);
+        box.exec();
+        if (box.clickedButton() != remove)
+            return false;
+    }
     const core::Project before = project_;
     project_.textTracks().removeLayer(layerId);
     recordEdit(QStringLiteral("Togli livello video"), before);

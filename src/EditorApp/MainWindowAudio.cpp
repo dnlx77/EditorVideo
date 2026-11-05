@@ -225,6 +225,23 @@ bool MainWindow::removeAudioTrack(int trackId)
         return false;
     const QString name = qs(project_.audioTracks().trackName(trackId));
     const std::size_t clips = track->clips.size();
+    if (confirmRemovals && clips > 0) {
+        // Togliere la traccia cancella le sue clip: si chiede prima.
+        QMessageBox box(QMessageBox::Warning, QStringLiteral("Togli la traccia %1").arg(name),
+                        QStringLiteral("La traccia audio %1 contiene %2 %3. Toglierla le cancella.")
+                            .arg(name)
+                            .arg(clips)
+                            .arg(QStringLiteral("clip")),
+                        QMessageBox::NoButton, this);
+        box.setInformativeText(QStringLiteral("Con Ctrl+Z si rimette com'era."));
+        QPushButton* remove = box.addButton(QStringLiteral("Togli la traccia"), QMessageBox::DestructiveRole);
+        QPushButton* keep = box.addButton(QStringLiteral("Annulla"), QMessageBox::RejectRole);
+        box.setDefaultButton(keep);
+        box.setEscapeButton(keep);
+        box.exec();
+        if (box.clickedButton() != remove)
+            return false;
+    }
     const core::Project before = project_;
     project_.audioTracks().removeTrack(trackId);
     recordEdit(QStringLiteral("Togli traccia audio"), before);
