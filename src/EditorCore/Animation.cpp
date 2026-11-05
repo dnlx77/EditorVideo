@@ -479,12 +479,21 @@ const char* animPresetName(AnimPreset preset)
         case AnimPreset::PanRight: return "Panoramica verso destra";
         case AnimPreset::FadeIn: return "Dissolvenza in apertura";
         case AnimPreset::FadeOut: return "Dissolvenza in chiusura";
+        case AnimPreset::SlideInLeft: return "Entra da sinistra";
+        case AnimPreset::SlideInRight: return "Entra da destra";
+        case AnimPreset::SlideInBottom: return "Entra dal basso";
+        case AnimPreset::PopIn: return "Compare ingrandendosi";
+        case AnimPreset::SlideOutLeft: return "Esce verso sinistra";
+        case AnimPreset::SlideOutRight: return "Esce verso destra";
+        case AnimPreset::SlideOutBottom: return "Esce verso il basso";
+        case AnimPreset::PopOut: return "Sparisce rimpicciolendosi";
         case AnimPreset::Count: break;
     }
     return "";
 }
 
-bool applyPreset(TransformAnimation& animation, Transform& base, AnimPreset preset, double from, double to, double projectWidth)
+bool applyPreset(TransformAnimation& animation, Transform& base, AnimPreset preset, double from, double to, double projectWidth,
+                 double projectHeight)
 {
     if (!(to - from > 0.1) || !std::isfinite(from) || !std::isfinite(to))
         return false;
@@ -535,6 +544,59 @@ bool applyPreset(TransformAnimation& animation, Transform& base, AnimPreset pres
                 keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const AnimKey& k) { return k.time < from + length; }), keys.end());
             else
                 keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const AnimKey& k) { return k.time > to - length; }), keys.end());
+            if (in) {
+                put(AnimParam::Opacity, from, 0.0, Interp::Linear);
+                put(AnimParam::Opacity, from + length, full, Interp::Linear);
+            } else {
+                put(AnimParam::Opacity, to - length, full, Interp::Linear);
+                put(AnimParam::Opacity, to, 0.0, Interp::Linear);
+            }
+            return true;
+        }
+        case AnimPreset::SlideInLeft:
+        case AnimPreset::SlideInRight:
+        case AnimPreset::SlideInBottom:
+        case AnimPreset::PopIn:
+        case AnimPreset::SlideOutLeft:
+        case AnimPreset::SlideOutRight:
+        case AnimPreset::SlideOutBottom:
+        case AnimPreset::PopOut: {
+            const bool in = preset == AnimPreset::SlideInLeft || preset == AnimPreset::SlideInRight
+                            || preset == AnimPreset::SlideInBottom || preset == AnimPreset::PopIn;
+            const double length = std::min(0.8, (to - from) / 2.0);
+            // Il tratto del bordo: i valori «nascosti» all'estremo e quelli normali (quelli che il pezzo ha lì, se già animato) all'altro.
+            const auto edge = [&](AnimParam p, double (*hidden)(double, double), double d) {
+                const double inner = in ? from + length : to - length;
+                const double full = animation.animated(p) ? evaluateTrack(animation.track(p), inner, paramValue(base, p)) : paramValue(base, p);
+                std::vector<AnimKey>& keys = animation.track(p);
+                keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const AnimKey& k) { return in ? k.time < inner : k.time > inner; }), keys.end());
+                const double outside = hidden(full, d);
+                put(p, in ? from : to, outside, Interp::Smooth);
+                put(p, inner, full, Interp::Smooth);
+            };
+            const auto shift = [](double v, double d) { return v + d; };
+            const auto zoom = [](double v, double) { return v * 0.6; };
+            const double w = std::max(0.0, projectWidth) / 3.0;
+            const double h = std::max(0.0, projectHeight) / 3.0;
+            switch (preset) {
+                case AnimPreset::SlideInLeft: edge(AnimParam::PosX, shift, -w); break;
+                case AnimPreset::SlideOutLeft: edge(AnimParam::PosX, shift, -w); break;
+                case AnimPreset::SlideInRight: edge(AnimParam::PosX, shift, w); break;
+                case AnimPreset::SlideOutRight: edge(AnimParam::PosX, shift, w); break;
+                case AnimPreset::SlideInBottom: edge(AnimParam::PosY, shift, h); break;
+                case AnimPreset::SlideOutBottom: edge(AnimParam::PosY, shift, h); break;
+                default:
+                    edge(AnimParam::ScaleX, zoom, 0);
+                    edge(AnimParam::ScaleY, zoom, 0);
+                    break;
+            }
+            // Con la dissolvenza insieme: l'opacità sale (o scende) nello stesso tratto.
+            const double full = animation.animated(AnimParam::Opacity)
+                                    ? evaluateTrack(animation.track(AnimParam::Opacity), in ? from + length : to - length, base.opacity)
+                                    : base.opacity;
+            std::vector<AnimKey>& keys = animation.track(AnimParam::Opacity);
+            keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const AnimKey& k) { return in ? k.time < from + length : k.time > to - length; }),
+                       keys.end());
             if (in) {
                 put(AnimParam::Opacity, from, 0.0, Interp::Linear);
                 put(AnimParam::Opacity, from + length, full, Interp::Linear);

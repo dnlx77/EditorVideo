@@ -167,7 +167,7 @@ QWidget* PropertiesPanel::buildTransformPage()
     presetButton_->setObjectName(QStringLiteral("presetAnimazione"));
     presetButton_->setText(QStringLiteral("Animazione ▾"));
     presetButton_->setPopupMode(QToolButton::InstantPopup);
-    presetButton_->setToolTip(QStringLiteral("Animazioni pronte per il pezzo scelto: zoom lento, panoramica, dissolvenze. Poi si ritoccano con i rombi."));
+    presetButton_->setToolTip(QStringLiteral("Animazioni pronte per il pezzo o la scritta scelti: zoom lento, panoramica, dissolvenze, entrate e uscite. Poi si ritoccano con i rombi."));
     presetButton_->setFixedHeight(22);
     presetButton_->setEnabled(false);
     auto* presetMenu = new QMenu(presetButton_);
@@ -178,7 +178,10 @@ QWidget* PropertiesPanel::buildTransformPage()
             if (!updating_ && onAnimationPreset)
                 onAnimationPreset(preset);
         });
-        if (preset == core::AnimPreset::ZoomOut || preset == core::AnimPreset::PanRight)
+        if (preset == core::AnimPreset::PanLeft || preset == core::AnimPreset::PanRight)
+            panActions_.push_back(action);  // (per una scritta non hanno senso)
+        if (preset == core::AnimPreset::ZoomOut || preset == core::AnimPreset::PanRight || preset == core::AnimPreset::FadeOut
+            || preset == core::AnimPreset::PopIn)
             presetMenu->addSeparator();
     }
     presetButton_->setMenu(presetMenu);
@@ -489,13 +492,14 @@ void PropertiesPanel::attachBody(bool toText)
         scroll->setWidget(body_);
     }
     textMode_ = toText;
-    // Per le scritte: titolo «Trasforma», senza ritaglio, Adatta/Riempi e animazioni pronte (per i pezzi video).
+    // Per le scritte: titolo «Trasforma», senza ritaglio, Adatta/Riempi e panoramiche.
     textHeading_->setVisible(toText);
     cropSeparator_->setVisible(!toText);
     cropSection_->setVisible(!toText);
     fitButton_->setVisible(!toText);
     fillButton_->setVisible(!toText);
-    presetButton_->setVisible(!toText);
+    for (QAction* pan : panActions_)
+        pan->setVisible(!toText);
     body_->show();
 }
 

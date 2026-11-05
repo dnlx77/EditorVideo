@@ -596,9 +596,10 @@ MainWindow::MainWindow(QWidget* parent)
         if (!target.valid)
             return;
         const double width = frameSize().width();
+        const double height = frameSize().height();
         if (!editAnimationKeys(QStringLiteral("Animazione pronta: %1").arg(QString::fromUtf8(core::animPresetName(preset))),
                                [&](core::TransformAnimation& animation, core::Transform& base) {
-                                   return core::applyPreset(animation, base, preset, target.from, target.to, width);
+                                   return core::applyPreset(animation, base, preset, target.from, target.to, width, height);
                                })) {
             statusBar()->showMessage(QStringLiteral("Il pezzo è troppo corto per questa animazione."), 5000);
         }
