@@ -818,12 +818,13 @@ void ProgramMonitor::showSourceFrame(int clipId, double sourceTime, const QStrin
 
 bool ProgramMonitor::hasProgram() const
 {
-    return !project_.sequence().empty() || project_.textTracks().endTime() > 0.0;
+    return !project_.sequence().empty() || project_.textTracks().endTime() > 0.0 || project_.audioTracks().endTime() > 0.0;
 }
 
 double ProgramMonitor::programEnd() const
 {
-    return std::max(project_.sequence().totalLength(), project_.textTracks().endTime());
+    // Il programma dura fino alla fine della traccia più lunga: V1, scritte e livelli, clip audio.
+    return std::max({project_.sequence().totalLength(), project_.textTracks().endTime(), project_.audioTracks().endTime()});
 }
 
 void ProgramMonitor::seekTo(double seconds)
