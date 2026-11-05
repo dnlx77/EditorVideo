@@ -230,6 +230,31 @@ MainWindow::MainWindow(QWidget* parent)
             return changed;
         });
     };
+    program_->selectedText = [this] {
+        const std::vector<core::ObjectRef> objects = timeline_->allSelectedObjects();
+        if (objects.size() != 1 || objects.front().kind != core::ObjectRef::Kind::TextClip)
+            return 0;
+        return project_.textTracks().find(objects.front().id) != nullptr ? objects.front().id : 0;
+    };
+    program_->onTextTransformEdited = [this](int clipId, const core::Transform& transform) {
+        commitMonitorTextTransform(clipId, transform);
+    };
+    program_->onTextMotionKeyMoved = [this](int clipId, double clipTime, double posX, double posY) {
+        const AnimTarget target = animationTarget();
+        if (!target.valid || !target.text || target.id != clipId)
+            return;
+        editAnimationKeys(QStringLiteral("Sposta il punto del percorso"), [&](core::TransformAnimation& animation, core::Transform&) {
+            bool changed = false;
+            for (const auto& [param, value] : {std::pair{core::AnimParam::PosX, posX}, std::pair{core::AnimParam::PosY, posY}}) {
+                if (const core::AnimKey* key = core::findKey(animation, param, clipTime)) {
+                    core::AnimKey moved = *key;
+                    moved.value = value;
+                    changed = core::setKey(animation, param, moved) || changed;
+                }
+            }
+            return changed;
+        });
+    };
     program_->onLayerTransformEdited = [this](int pieceId, const core::Transform& transform) {
         commitMonitorLayerTransform(pieceId, transform);
     };

@@ -30,7 +30,7 @@ bool sameInstant(double a, double b)
 
 void SequenceTimeline::setKeyRow(KeyRow row)
 {
-    const bool samePiece = row.layerPiece == keyRow_.layerPiece && row.id == keyRow_.id;
+    const bool samePiece = row.layerPiece == keyRow_.layerPiece && row.text == keyRow_.text && row.id == keyRow_.id;
     bool same = samePiece && row.keys.size() == keyRow_.keys.size();
     for (std::size_t i = 0; same && i < row.keys.size(); ++i)
         same = row.keys[i].group == keyRow_.keys[i].group && sameInstant(row.keys[i].time, keyRow_.keys[i].time)
@@ -53,7 +53,7 @@ SequenceTimeline::KeyGeometry SequenceTimeline::keyGeometry() const
     if (keyRow_.keys.empty())
         return g;
     QRectF full;
-    if (!keyRow_.layerPiece) {
+    if (!keyRow_.layerPiece && !keyRow_.text) {
         const std::vector<QRectF> rects = blockRects(videoLane());
         for (std::size_t i = 0; i < blocks_.size(); ++i) {
             if (blocks_[i].fragmentId != keyRow_.id)
@@ -67,13 +67,13 @@ SequenceTimeline::KeyGeometry SequenceTimeline::keyGeometry() const
     } else {
         int lane = 0;
         const TextBlock* c = findTextClip(keyRow_.id, &lane);
-        if (c == nullptr || !c->piece)
+        if (c == nullptr || c->piece == keyRow_.text)
             return g;
         const QRectF l = textLane(lane);
         full = QRectF(QPointF(xForTime(c->position) + 1, l.top() + 1), QPointF(xForTime(c->position + c->length) - 1, l.bottom() - 1));
         g.position = c->position;
         g.length = c->length;
-        g.source = c->sourceStart;
+        g.source = keyRow_.text ? 0.0 : c->sourceStart;
     }
     if (full.isEmpty())
         return g;

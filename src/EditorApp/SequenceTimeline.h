@@ -132,6 +132,7 @@ public:
     struct KeyRow
     {
         bool layerPiece = false;  // un pezzo di un livello (altrimenti un pezzo di V1)
+        bool text = false;        // una scritta (le chiavi sono in secondi dall'inizio della scritta)
         int id = 0;
         std::vector<KeyMark> keys;
     };
