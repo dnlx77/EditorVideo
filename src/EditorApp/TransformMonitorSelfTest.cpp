@@ -3,6 +3,7 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/PropertiesPanel.h"
+#include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/SelfTests.h"
 #include "EditorCore/Compatibility.h"
@@ -679,6 +680,65 @@ int runManipTest(const QStringList& args, qsizetype at)
                 line->selectObjects({});
                 QCoreApplication::processEvents();
                 check(line->keyRow().keys.empty(), "senza un pezzo scelto non c'è la riga dei rombi");
+            }
+
+            // --- La sezione «Trasforma» nella pagina della scritta (S3): stessi controlli, senza ritaglio, tempi dall'inizio della scritta.
+            {
+                const int textId = window.addTextClip(false);
+                QCoreApplication::processEvents();
+                const core::TextClip* text = window.project().textTracks().find(textId);
+                check(textId != 0 && text != nullptr, "una scritta nuova nella sequenza");
+                if (text != nullptr && text->length >= 2.0) {
+                    const double start = text->position;
+                    const auto clipNow = [&]() -> const core::TextClip& { return *window.project().textTracks().find(textId); };
+                    auto* rotation = panel->findChild<QDoubleSpinBox*>(QStringLiteral("rotazione"));
+                    auto* cropLeft = panel->findChild<QDoubleSpinBox*>(QStringLiteral("ritaglioSinistra"));
+                    auto* rotationKey = panel->findChild<QToolButton*>(QStringLiteral("chiave2"));  // gruppo Rotazione
+                    check(panel->showingText() && window.textPanel()->isVisibleTo(panel), "con una scritta scelta il pannello mostra il suo editor");
+                    check(rotation != nullptr && rotation->isVisibleTo(panel) && rotationKey != nullptr && rotationKey->isVisibleTo(panel),
+                          "in fondo all'editor ci sono i controlli della trasformazione (rotazione e il suo rombo)");
+                    check(cropLeft != nullptr && !cropLeft->isVisibleTo(panel), "per le scritte il ritaglio non c'è");
+                    if (rotation != nullptr && rotationKey != nullptr) {
+                        // Un valore cambiato senza animazione cambia la trasformazione fissa della scritta.
+                        seek(start + 0.5);
+                        rotation->setValue(30.0);
+                        QCoreApplication::processEvents();
+                        check(std::abs(clipNow().transform.rotation - 30.0) < 1e-9 && clipNow().animation.empty(),
+                              "la rotazione dal pannello cambia la trasformazione della scritta");
+                        // Il rombo mette una chiave sul cursore: tempo dall'inizio della scritta.
+                        seek(start + 1.0);
+                        rotationKey->click();
+                        QCoreApplication::processEvents();
+                        const auto& keys = clipNow().animation.track(core::AnimParam::Rotation);
+                        check(keys.size() == 1 && std::abs(keys[0].time - 1.0) < 0.1 && std::abs(keys[0].value - 30.0) < 1e-6,
+                              "il rombo mette una chiave al secondo giusto dall'inizio della scritta");
+                        check(panel->miniTimeline() != nullptr && !panel->miniTimeline()->isHidden(),
+                              "la mini linea del tempo mostra le chiavi della scritta");
+                        // Con la chiave, cambiare il valore in un altro istante mette un'altra chiave (auto-key).
+                        seek(start + 2.0);
+                        rotation->setValue(90.0);
+                        QCoreApplication::processEvents();
+                        check(clipNow().animation.track(core::AnimParam::Rotation).size() == 2, "con l'animazione una modifica mette la chiave sul cursore");
+                        // Modificare il testo non tocca la trasformazione né fa una modifica in più.
+                        core::TextClip edited = clipNow();
+                        edited.text = "Altro testo";
+                        const core::TransformAnimation animBefore = clipNow().animation;
+                        const bool ok = window.applyTextEdit(edited, nullptr, false);
+                        QCoreApplication::processEvents();
+                        check(ok && clipNow().text == "Altro testo" && clipNow().animation == animBefore,
+                              "cambiare il testo lascia l'animazione com'è");
+                        // Annulla toglie l'ultima chiave, un passo alla volta.
+                        window.undo();  // il testo
+                        window.undo();  // la chiave a 2 s
+                        QCoreApplication::processEvents();
+                        check(clipNow().animation.track(core::AnimParam::Rotation).size() == 1, "Annulla toglie una chiave alla volta");
+                    }
+                    // Scegliendo di nuovo il pezzo video torna la sua pagina, con il ritaglio.
+                    window.sequenceTimeline()->selectObjects({{core::ObjectRef::Kind::Piece, id}});
+                    QCoreApplication::processEvents();
+                    check(panel->showingTransform() && cropLeft != nullptr && cropLeft->isVisibleTo(panel),
+                          "tornando a un pezzo video si rivede la sua pagina con il ritaglio");
+                }
             }
         }
     }

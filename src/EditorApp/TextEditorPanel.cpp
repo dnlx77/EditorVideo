@@ -120,6 +120,27 @@ TextEditorPanel::TextEditorPanel(QWidget* parent)
     setClip(nullptr, {});
 }
 
+void TextEditorPanel::setExtraSection(QWidget* widget)
+{
+    if (widget == nullptr || widget == extra_ || controlsLayout_ == nullptr)
+        return;
+    takeExtraSection();
+    extra_ = widget;
+    controlsLayout_->insertWidget(controlsLayout_->count() - 1, widget);  // prima dello spazio elastico in fondo
+    widget->show();
+}
+
+QWidget* TextEditorPanel::takeExtraSection()
+{
+    QWidget* widget = extra_;
+    extra_ = nullptr;
+    if (widget != nullptr && controlsLayout_ != nullptr) {
+        controlsLayout_->removeWidget(widget);
+        widget->setParent(nullptr);
+    }
+    return widget;
+}
+
 void TextEditorPanel::build()
 {
     // Il testo e, sotto, tutti i controlli dell'aspetto.
@@ -289,6 +310,7 @@ void TextEditorPanel::build()
 
     controls_ = new QWidget;
     auto* controlsLayout = new QVBoxLayout(controls_);
+    controlsLayout_ = controlsLayout;
     controlsLayout->setContentsMargins(6, 4, 6, 4);
     controlsLayout->setSpacing(2);
     {

@@ -199,11 +199,15 @@ bool MainWindow::applyTextEdit(const core::TextClip& edited, const std::vector<c
     if (current == nullptr)
         return false;
     const bool stylesChanged = styles != nullptr && *styles != availableTextStyles();
-    if (*current == edited && !stylesChanged)
+    // La trasformazione e l'animazione non sono dell'editor del testo (le cambia il pannello Proprietà): non contano nel confronto.
+    core::TextClip comparable = edited;
+    comparable.transform = current->transform;
+    comparable.animation = current->animation;
+    if (*current == comparable && !stylesChanged)
         return true;  // niente è cambiato
     // Scrivere una frase nel pannello è una sola modifica: se l'ultima voce di Annulla è la precedente modifica di questa
     // scritta (e dopo non è successo altro), si continua quella.
-    const bool onlyStyles = *current == edited;  // (qui sono cambiati solo gli stili con nome)
+    const bool onlyStyles = *current == comparable;  // (qui sono cambiati solo gli stili con nome)
     const bool continues = merge && textMergeClip_ == edited.id && textMergeCount_ == history_.undoCount() && history_.canUndo()
                         && history_.undoLabel() == "Modifica scritta" && !history_.canRedo();
     std::optional<core::Project> before;

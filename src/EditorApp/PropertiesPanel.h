@@ -17,6 +17,7 @@ class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
+class QPushButton;
 class QSlider;
 class QStackedWidget;
 class QToolButton;
@@ -49,6 +50,10 @@ public:
     void showTransform(const core::Transform& transform, int count, const AnimationState& animation);
     // La mini linea del tempo delle chiavi del pezzo (vuota/nascosta senza animazione): MainWindow ne mette i dati e le azioni.
     AnimMiniTimeline* miniTimeline() const { return mini_; }
+    // La pagina delle scritte con in più la sezione «Trasforma» (scala, posizione, rotazione, specchio, opacità, con rombi e mini
+    // linea del tempo: gli stessi controlli dei pezzi video, senza ritaglio) in fondo all'editor della scritta. I valori sono
+    // quelli della trasformazione della scritta sul cursore.
+    void showTextTransform(const core::Transform& transform, const AnimationState& animation);
     bool showingTransform() const;
     // La pagina delle scritte (l'editor, già costruito): il pannello ne prende possesso. showText() la mostra.
     void setTextPage(QWidget* page);
@@ -100,6 +105,9 @@ private:
     void transitionEdited(const std::string& field);
     QToolButton* resetButton(const QString& tip, const std::string& field, core::AnimGroup group, std::function<void(core::Transform&)> reset);
     void animate(core::AnimGroup group, AnimAction action);
+    void updateTransformControls(const core::Transform& transform, int count, const AnimationState& animation);
+    // I controlli della trasformazione stanno in un solo widget (body_): nella pagina dei pezzi o in fondo all'editor della scritta.
+    void attachBody(bool toText);
 
     QStackedWidget* stack_ = nullptr;
     QWidget* transformPage_ = nullptr;
@@ -134,6 +142,13 @@ private:
     std::array<AnimButtons, core::kAnimGroupCount> animButtons_{};
     std::array<bool, core::kAnimGroupCount> groupAnimated_{};
     QToolButton* presetButton_ = nullptr;
+    QWidget* body_ = nullptr;           // i controlli della trasformazione
+    QLabel* textHeading_ = nullptr;     // «Trasforma», solo nella pagina delle scritte
+    QWidget* cropSeparator_ = nullptr;  // il ritaglio non c'è per le scritte
+    QWidget* cropSection_ = nullptr;
+    QPushButton* fitButton_ = nullptr;
+    QPushButton* fillButton_ = nullptr;
+    bool textMode_ = false;
     AnimMiniTimeline* mini_ = nullptr;
     core::Transform shown_;
     bool updating_ = false;

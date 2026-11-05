@@ -216,7 +216,7 @@ MainWindow::MainWindow(QWidget* parent)
     };
     program_->onMotionKeyMoved = [this](bool layer, int id, double fileTime, double posX, double posY) {
         const AnimTarget target = animationTarget();
-        if (!target.valid || target.layer != layer || target.id != id)
+        if (!target.valid || target.text || target.layer != layer || target.id != id)
             return;
         editAnimationKeys(QStringLiteral("Sposta il punto del percorso"), [&](core::TransformAnimation& animation, core::Transform&) {
             bool changed = false;

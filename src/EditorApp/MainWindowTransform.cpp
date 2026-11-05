@@ -41,7 +41,25 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
     const std::vector<core::ObjectRef> objects = timeline_->allSelectedObjects();
     if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::TextClip
         && project_.textTracks().find(objects.front().id) != nullptr) {
-        propertiesPanel_->showText();  // (refreshTextPanel ne mette i valori)
+        // La scritta: il suo editor (refreshTextPanel ne mette i valori) e in fondo la sezione «Trasforma» con rombi e mini linea.
+        if (const AnimTarget target = animationTarget(); target.valid) {
+            PropertiesPanel::AnimationState state;
+            state.enabled = target.inside;
+            for (int g = 0; g < core::kAnimGroupCount; ++g)
+                state.groups[static_cast<std::size_t>(g)] =
+                    core::groupState(target.animation, static_cast<core::AnimGroup>(g), target.fileTime, target.from, target.to);
+            propertiesFollowCursor_ = true;
+            propertiesPanel_->showTextTransform(core::evaluateTransform(target.base, target.animation, target.fileTime), state);
+            std::vector<AnimMiniTimeline::Mark> marks;
+            for (int g = 0; g < core::kAnimGroupCount; ++g) {
+                const auto group = static_cast<core::AnimGroup>(g);
+                for (const double time : core::groupKeyTimes(target.animation, group))
+                    marks.push_back({group, time, core::groupInterpAt(target.animation, group, time)});
+            }
+            propertiesPanel_->miniTimeline()->setData(target.from, target.to, target.inside ? target.fileTime : -1.0, std::move(marks));
+        } else {
+            propertiesPanel_->showText();
+        }
         return;
     }
     if (const int transition = timeline_->selectedTransition(); transition != 0) {
@@ -93,7 +111,18 @@ MainWindow::AnimTarget MainWindow::animationTarget() const
         return target;
     const std::vector<core::ObjectRef> objects = timeline_->allSelectedObjects();
     const double position = program_->position();
-    if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::LayerPiece) {
+    if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::TextClip) {
+        const core::TextClip* clip = project_.textTracks().find(objects.front().id);
+        if (clip == nullptr)
+            return target;
+        target.text = true;
+        target.id = clip->id;
+        target.from = 0.0;  // i tempi delle chiavi sono dall'inizio della scritta
+        target.to = clip->length;
+        target.sequenceStart = clip->position;
+        target.base = clip->transform;
+        target.animation = clip->animation;
+    } else if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::LayerPiece) {
         const core::LayerPiece* piece = project_.textTracks().findPiece(objects.front().id);
         if (piece == nullptr)
             return target;
@@ -160,7 +189,7 @@ void MainWindow::refreshKeyRow()
     if (timeline_ == nullptr)
         return;
     SequenceTimeline::KeyRow row;
-    if (const AnimTarget target = animationTarget(); target.valid) {
+    if (const AnimTarget target = animationTarget(); target.valid && !target.text) {  // (la riga sotto le scritte: passo S4)
         row.layerPiece = target.layer;
         row.id = target.id;
         for (int g = 0; g < core::kAnimGroupCount; ++g) {
@@ -191,6 +220,11 @@ bool MainWindow::editAnimationKeys(const QString& label, const std::function<boo
 
 bool MainWindow::writeAnimTarget(const AnimTarget& target, const core::Transform& base, const core::TransformAnimation& animation)
 {
+    if (target.text) {
+        const bool a = project_.textTracks().setTransform(target.id, core::normalized(base));
+        const bool b = project_.textTracks().setAnimation(target.id, animation);
+        return a || b;
+    }
     if (target.layer) {
         const bool a = project_.textTracks().setPieceTransform(target.id, core::normalized(base));
         const bool b = project_.textTracks().setPieceAnimation(target.id, animation);
@@ -217,7 +251,7 @@ bool MainWindow::applyTransformEdit(const std::function<void(core::Transform&)>&
         if (!writeAnimTarget(target, base, animation))
             return false;
         // Un cursore o una casella girati più volte di fila sullo stesso campo (e sullo stesso istante) sono una sola voce di Annulla.
-        const std::string key = field + (target.layer ? ":L" : ":") + std::to_string(target.id) + ":"
+        const std::string key = field + (target.text ? ":T" : target.layer ? ":L" : ":") + std::to_string(target.id) + ":"
                                 + std::to_string(std::lround(target.fileTime * 1000.0));
         const bool continues = transformMergeKey_ == key && transformMergeCount_ == history_.undoCount() && history_.canUndo()
                             && history_.undoLabel() == "Cambia trasformazione" && !history_.canRedo();
@@ -292,7 +326,7 @@ bool MainWindow::commitAnimatedMonitorTransform(bool layer, int id, const core::
     // gesto. I parametri animati che sono cambiati ricevono una chiave sul cursore (come nel pannello), gli altri cambiano la
     // trasformazione fissa del pezzo.
     const AnimTarget target = animationTarget();
-    if (!target.valid || target.layer != layer || target.id != id || target.animation.empty() || !target.inside)
+    if (!target.valid || target.text || target.layer != layer || target.id != id || target.animation.empty() || !target.inside)
         return false;
     const core::Transform shown = core::evaluateTransform(target.base, target.animation, target.fileTime);
     core::Transform base = target.base;

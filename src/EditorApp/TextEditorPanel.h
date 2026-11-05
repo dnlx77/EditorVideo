@@ -17,6 +17,7 @@ class QFontComboBox;
 class QLabel;
 class QPlainTextEdit;
 class QToolButton;
+class QVBoxLayout;
 
 namespace editor::app {
 
@@ -57,6 +58,10 @@ public:
     void saveStyleAs(const std::string& name);
     void focusText();  // il cursore nel testo, tutto selezionato
 
+    // Una sezione in più in fondo ai controlli (la «Trasforma» del pannello Proprietà): il pannello non ne prende possesso, il
+    // widget resta di chi lo ha dato e si riprende con takeExtraSection() (che lo stacca senza distruggerlo).
+    void setExtraSection(QWidget* widget);
+    QWidget* takeExtraSection();
     std::function<void(const core::TextClip&)> onEdited;  // un controllo è cambiato (il progetto non usa moc)
     std::function<void(const std::vector<core::NamedTextStyle>&)> onStylesChanged;  // salvato o tolto uno stile
 
@@ -105,6 +110,8 @@ private:
     QComboBox* styleList_ = nullptr;
     QLabel* hint_ = nullptr;
     QWidget* controls_ = nullptr;
+    QVBoxLayout* controlsLayout_ = nullptr;
+    QWidget* extra_ = nullptr;
 };
 
 }  // namespace editor::app

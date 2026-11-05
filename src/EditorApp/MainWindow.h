@@ -174,6 +174,7 @@ public:
     {
         bool valid = false;
         bool layer = false;
+        bool text = false;      // una scritta (tempi delle chiavi: secondi dall'inizio della scritta, quindi from = 0)
         int id = 0;
         double from = 0.0;      // inizio e fine del pezzo nel file
         double to = 0.0;
