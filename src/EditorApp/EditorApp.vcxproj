@@ -46,7 +46,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="AnimColors.h" />
     <ClInclude Include="AudioOutput.h" />
+    <ClInclude Include="CurveEditorDialog.h" />
     <ClInclude Include="MainWindow.h" />
     <ClInclude Include="MainWindowShared.h" />
     <ClInclude Include="PlayerWidget.h" />
@@ -76,6 +78,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AudioOutput.cpp" />
+    <ClCompile Include="CurveEditorDialog.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainWindow.cpp" />
     <ClCompile Include="MainWindowAudio.cpp" />

@@ -1,4 +1,5 @@
 #include "EditorApp/SequenceTimeline.h"
+#include "EditorApp/AnimColors.h"
 #include "EditorApp/SequenceTimelineShared.h"
 
 #include "EditorCore/AudioTracks.h"
@@ -744,9 +745,10 @@ bool SequenceTimeline::event(QEvent* event)
         if (const int key = keyAt(pos); key >= 0) {
             const KeyGeometry g = keyGeometry();
             const double sequenceTime = g.position + (keyRow_.keys[static_cast<std::size_t>(key)].time - g.source);
-            return show(QStringLiteral("Chiave di animazione a %1\nTrascina: la sposta · Canc: la toglie · doppio clic: porta il cursore qui\n"
-                                       "Clic destro: tipo di passaggio (lineare, dolce, fermo, curva)")
-                            .arg(QString::fromStdString(core::formatDuration(sequenceTime)).mid(3)));
+            return show(QStringLiteral("%2: chiave di animazione a %1\nTrascina: la sposta · Canc: la toglie · doppio clic: porta il cursore qui\n"
+                                       "Clic destro: tipo di passaggio. Forma: rombo = lineare, quadrato = fermo, tondo = dolce, rombo con puntino = curva")
+                            .arg(QString::fromStdString(core::formatDuration(sequenceTime)).mid(3),
+                                 QString::fromUtf8(animGroupName(keyRow_.keys[static_cast<std::size_t>(key)].group))));
         }
         const QRectF lane = videoLane();
         const int index = lane.contains(pos) ? blockAt(pos.x()) : -1;

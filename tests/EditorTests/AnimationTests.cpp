@@ -480,3 +480,36 @@ TEST(AnimationPresets, FadesCanBeCombinedAndKeepTheBaseOpacity)
     for (int i = 0; i < kAnimPresetCount; ++i)
         EXPECT_NE(std::string(animPresetName(static_cast<AnimPreset>(i))), "");
 }
+
+TEST(AnimationRow, GroupKeysAreEditedIndependentlyOfTheOtherGroupsAtTheSameInstant)
+{
+    TransformAnimation a;
+    for (const AnimParam p : {AnimParam::ScaleX, AnimParam::ScaleY, AnimParam::Opacity}) {
+        setKey(a, p, key(1.0, 1.0));
+        setKey(a, p, key(3.0, 2.0));
+    }
+    setKey(a, AnimParam::PosX, key(1.0, 0.0));
+    EXPECT_EQ(groupKeyTimes(a, AnimGroup::Scale), (std::vector<double>{1.0, 3.0}));
+    EXPECT_EQ(groupKeyTimes(a, AnimGroup::Position), (std::vector<double>{1.0}));
+    EXPECT_TRUE(groupKeyTimes(a, AnimGroup::Rotation).empty());
+
+    EXPECT_FALSE(moveGroupKeys(a, AnimGroup::Scale, 1.0, 3.0));  // lì ha già una chiave
+    EXPECT_TRUE(moveGroupKeys(a, AnimGroup::Scale, 1.0, 2.0));
+    EXPECT_NE(findKey(a, AnimParam::ScaleY, 2.0), nullptr);
+    EXPECT_NE(findKey(a, AnimParam::Opacity, 1.0), nullptr);  // l'opacità non si è mossa
+    EXPECT_EQ(findKey(a, AnimParam::Opacity, 2.0), nullptr);
+    EXPECT_FALSE(moveGroupKeys(a, AnimGroup::Rotation, 1.0, 2.0));
+
+    EXPECT_TRUE(setGroupKeysInterp(a, AnimGroup::Opacity, 1.0, Interp::Hold));
+    EXPECT_EQ(groupInterpAt(a, AnimGroup::Opacity, 1.0), Interp::Hold);
+    EXPECT_EQ(groupInterpAt(a, AnimGroup::Scale, 2.0), Interp::Linear);  // la scala non è cambiata
+    EXPECT_EQ(groupInterpAt(a, AnimGroup::Rotation, 1.0), Interp::Linear);
+
+    Transform base;
+    EXPECT_TRUE(removeGroupKeys(a, AnimGroup::Position, 1.0, &base));  // era l'unica: il valore resta nella base
+    EXPECT_FALSE(a.animated(AnimParam::PosX));
+    EXPECT_TRUE(a.animated(AnimParam::Opacity));
+    EXPECT_TRUE(removeGroupKeys(a, AnimGroup::Opacity, 1.0));
+    EXPECT_EQ(a.track(AnimParam::Opacity).size(), 1u);
+    EXPECT_EQ(a.track(AnimParam::ScaleX).size(), 2u);
+}

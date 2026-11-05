@@ -1,4 +1,5 @@
 #include "EditorApp/MainWindow.h"
+#include "EditorApp/CurveEditorDialog.h"
 
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/ProgramMonitor.h"
@@ -117,6 +118,36 @@ MainWindow::AnimTarget MainWindow::animationTarget() const
     return target;
 }
 
+std::array<double, 4> MainWindow::keyCurve(core::AnimGroup group, double time) const
+{
+    const AnimTarget target = animationTarget();
+    if (target.valid) {
+        if (const core::AnimKey* key = core::firstGroupKey(target.animation, group, time)) {
+            switch (key->interp) {
+                case core::Interp::Bezier: return {key->c1x, key->c1y, key->c2x, key->c2y};
+                case core::Interp::Smooth: return {0.42, 0.0, 0.58, 1.0};
+                case core::Interp::Linear:
+                case core::Interp::Hold: break;
+            }
+        }
+    }
+    return {0.0, 0.0, 1.0, 1.0};
+}
+
+bool MainWindow::applyKeyCurve(core::AnimGroup group, double time, const std::array<double, 4>& c)
+{
+    return editAnimationKeys(QStringLiteral("Curva del passaggio"), [&](core::TransformAnimation& animation, core::Transform&) {
+        return core::setGroupKeysInterp(animation, group, time, core::Interp::Bezier, c[0], c[1], c[2], c[3]);
+    });
+}
+
+void MainWindow::editKeyCurve(core::AnimGroup group, double time)
+{
+    CurveEditorDialog dialog(keyCurve(group, time), this);
+    if (dialog.exec() == QDialog::Accepted)
+        applyKeyCurve(group, time, dialog.values());
+}
+
 void MainWindow::refreshKeyRow()
 {
     if (timeline_ == nullptr)
@@ -125,8 +156,11 @@ void MainWindow::refreshKeyRow()
     if (const AnimTarget target = animationTarget(); target.valid) {
         row.layerPiece = target.layer;
         row.id = target.id;
-        for (const double time : core::keyTimes(target.animation))
-            row.keys.push_back({time, core::interpAt(target.animation, time)});
+        for (int g = 0; g < core::kAnimGroupCount; ++g) {
+            const auto group = static_cast<core::AnimGroup>(g);
+            for (const double time : core::groupKeyTimes(target.animation, group))
+                row.keys.push_back({group, time, core::groupInterpAt(target.animation, group, time)});
+        }
     }
     timeline_->setKeyRow(std::move(row));
 }

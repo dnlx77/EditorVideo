@@ -1,4 +1,5 @@
 #include "EditorApp/MainWindow.h"
+#include "EditorApp/CurveEditorDialog.h"
 
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/PlayerWidget.h"
@@ -444,20 +445,22 @@ MainWindow::MainWindow(QWidget* parent)
         propertiesDock_->raise();
         refreshPropertiesPanel();
     };
-    timeline_->onKeyMoved = [this](double from, double to) {
-        editAnimationKeys(QStringLiteral("Sposta la chiave"),
-                          [&](core::TransformAnimation& animation, core::Transform&) { return core::moveKeysAt(animation, from, to); });
+    timeline_->onKeyMoved = [this](core::AnimGroup group, double from, double to) {
+        editAnimationKeys(QStringLiteral("Sposta la chiave"), [&](core::TransformAnimation& animation, core::Transform&) {
+            return core::moveGroupKeys(animation, group, from, to);
+        });
     };
-    timeline_->onKeyRemoved = [this](double time) {
+    timeline_->onKeyRemoved = [this](core::AnimGroup group, double time) {
         editAnimationKeys(QStringLiteral("Togli la chiave"), [&](core::TransformAnimation& animation, core::Transform& base) {
-            return core::removeKeysAt(animation, time, &base);
+            return core::removeGroupKeys(animation, group, time, &base);
         });
     };
-    timeline_->onKeyInterp = [this](double time, core::Interp interp, double c1x, double c1y, double c2x, double c2y) {
+    timeline_->onKeyInterp = [this](core::AnimGroup group, double time, core::Interp interp, double c1x, double c1y, double c2x, double c2y) {
         editAnimationKeys(QStringLiteral("Tipo di passaggio"), [&](core::TransformAnimation& animation, core::Transform&) {
-            return core::setKeysInterpAt(animation, time, interp, c1x, c1y, c2x, c2y);
+            return core::setGroupKeysInterp(animation, group, time, interp, c1x, c1y, c2x, c2y);
         });
     };
+    timeline_->onKeyEditCurve = [this](core::AnimGroup group, double time) { editKeyCurve(group, time); };
     timeline_->onTransitionSelected = [this](int) {
         setProgramActive(true);
         refreshPropertiesPanel();
@@ -1025,7 +1028,7 @@ void MainWindow::deleteSelection()
     if (const double key = timeline_->selectedKey(); key >= 0.0) {
         // Una chiave di animazione scelta sulla riga dei rombi: Canc toglie quella e non il pezzo.
         if (timeline_->onKeyRemoved)
-            timeline_->onKeyRemoved(key);
+            timeline_->onKeyRemoved(timeline_->selectedKeyGroup(), key);
         return;
     }
     if (timeline_->selectedObjects().size() >= 2) {
