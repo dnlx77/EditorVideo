@@ -92,7 +92,7 @@ struct ReencodeOptions
     const TextRenderer* textRenderer = nullptr;
     // I pezzi di video dei livelli sopra V1 (in `texts`, insieme alle scritte) si compongono sopra V1 a ogni fotogramma dei
     // tratti che coprono: `layerFiles` dà il file originale di ogni clip del progetto (per id, come LayerPiece::clipId).
-    // Un pezzo il cui file manca non si vede. Oltre la fine di V1 non si esporta niente.
+    // Un pezzo il cui file manca non si vede. Oltre la fine di V1: vedi `tailSeconds`.
     std::map<int, std::string> layerFiles;
 
     // Transizioni: la parte dei due tratti dentro la transizione si ricodifica, con i due pezzi decodificati e fusi
@@ -115,6 +115,9 @@ struct ReencodeOptions
     // Codec, misura e fotogrammi al secondo del video, se diversi da quelli dei file (dopo gli altri campi: si inizializza in ordine).
     VideoChange video;
     DecoderMode decoder = DecoderMode::Software;
+    // Secondi oltre la fine dell'ultimo pezzo di V1 che si esportano lo stesso: nero con sopra scritte, pezzi dei livelli e
+    // l'audio che arrivano più in là (0 = si finisce con V1). Si fa solo se il nero si sa creare (vedi ExportPreview::problem).
+    double tailSeconds = 0.0;
 
     const TextTracks* activeTexts() const { return (textRenderer != nullptr || !layerFiles.empty()) && texts.endTime() > 0.0 ? &texts : nullptr; }
 };

@@ -330,7 +330,7 @@ std::vector<std::pair<TimeRange, bool>> splitByText(const TimeRange& range, doub
 PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectFormat* format, bool replaced, bool reencodeAll,
                          bool closeGaps, const TextTracks* texts,
                          const std::vector<ExportTransition>* transitions, std::optional<EncoderBackend> backend,
-                         const VideoChange* change)
+                         const VideoChange* change, double tailSeconds)
 {
     PlanAnalysis plan;
     plan.reencode.assign(clips.size(), reencodeAll);
@@ -567,16 +567,24 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
         for (std::size_t r = 0; r < clip.ranges.size(); ++r)
             anyGap = anyGap || gapBefore(clip, r) > kTimeEpsilon;
     }
-    if (anyGap && !closeGaps && plan.problem.empty()) {
+    const bool tail = tailSeconds > kTimeEpsilon;
+    const bool gapsWanted = anyGap && !closeGaps;
+    if ((gapsWanted || tail) && plan.problem.empty()) {
         const StreamSignature* audio = replaced ? nullptr : plan.reference.audio();
+        // Il nero (e il silenzio) si può creare? Se no, gli spazi si chiudono e la coda non si esporta.
+        std::string blackProblem;
         if (!cannotReencode.empty())
-            plan.closedGaps = "Gli spazi vuoti si chiudono (i pezzi uno dopo l'altro) perché il nero non si può creare: " + cannotReencode;
+            blackProblem = " perché il nero non si può creare: " + cannotReencode;
         else if (audio != nullptr && audio->codec != "aac")
-            plan.closedGaps = "Gli spazi vuoti si chiudono (i pezzi uno dopo l'altro): il silenzio per ora si crea solo in AAC e "
-                              "l'audio del formato del progetto è " + audio->codec + ".";
-        else
-            plan.blackGaps = true;
-        plan.parametersInStream = plan.parametersInStream || plan.blackGaps;
+            blackProblem = ": il silenzio per ora si crea solo in AAC e "
+                           "l'audio del formato del progetto è " + audio->codec + ".";
+        if (blackProblem.empty()) {
+            plan.blackGaps = gapsWanted;
+            plan.blackTail = tail;
+        } else if (gapsWanted) {
+            plan.closedGaps = "Gli spazi vuoti si chiudono (i pezzi uno dopo l'altro) " + blackProblem;
+        }
+        plan.parametersInStream = plan.parametersInStream || plan.blackGaps || plan.blackTail;
     }
     if (plan.parametersInStream && plan.problem.empty()) {
         plan.clipParameters.resize(clips.size());

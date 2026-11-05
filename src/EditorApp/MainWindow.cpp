@@ -350,6 +350,8 @@ MainWindow::MainWindow(QWidget* parent)
     // Tracce audio (step 18).
     timeline_->onAddTrack = [this] { addAudioTrack(); };
     timeline_->onRemoveTrack = [this](int trackId) { removeAudioTrack(trackId); };
+    timeline_->onAddVideoLayer = [this] { addTextLayer(); };
+    timeline_->onRemoveVideoLayer = [this](int layerId) { removeTextLayer(layerId); };
     timeline_->onTrackMuted = [this](int trackId, bool muted) { setTrackMuted(trackId, muted); };
     timeline_->onTrackSolo = [this](int trackId, bool solo) { setTrackSolo(trackId, solo); };
     timeline_->onTrackLevel = [this](int trackId, double db) { setTrackLevel(trackId, db); };
