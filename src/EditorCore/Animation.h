@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <string>
 #include <vector>
 
 namespace editor::core {
@@ -96,6 +97,18 @@ bool setKeyInterp(TransformAnimation& animation, AnimParam param, double time, I
 // Spegne l'animazione del parametro (le chiavi spariscono).
 bool clearTrack(TransformAnimation& animation, AnimParam param);
 const AnimKey* findKey(const TransformAnimation& animation, AnimParam param, double time);
+
+// Le stesse modifiche su TUTTI i parametri che hanno una chiave a quell'istante (la riga dei rombi della linea del tempo ne
+// mostra uno solo per istante). moveKeysAt non fa niente se in `toTime` c'è già una chiave di uno di quei parametri.
+bool moveKeysAt(TransformAnimation& animation, double fromTime, double toTime);
+// Se `base` c'è e un parametro resta senza chiavi, prende il valore della chiave tolta (come col rombo del pannello).
+bool removeKeysAt(TransformAnimation& animation, double time, Transform* base = nullptr);
+bool setKeysInterpAt(TransformAnimation& animation, double time, Interp interp, double c1x = 0.25, double c1y = 0.1,
+                     double c2x = 0.25, double c2y = 1.0);
+// Il tipo di passaggio delle chiavi a quell'istante (quello della prima che c'è; Linear se non ce ne sono).
+Interp interpAt(const TransformAnimation& animation, double time);
+// I valori da dove l'animazione parte a dove arriva, uno per riga e in italiano, per il suggerimento del badge: "Scala 100%→130%".
+std::vector<std::string> describeAnimation(const Transform& base, const TransformAnimation& animation);
 
 // Gli istanti in cui c'è almeno una chiave (di qualsiasi parametro), in ordine e senza doppi: per la riga dei rombi.
 std::vector<double> keyTimes(const TransformAnimation& animation);

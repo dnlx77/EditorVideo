@@ -217,6 +217,7 @@ void SequenceTimeline::paintStatic(QPainter& p)
     }
     paintAudio(p);
     paintText(p);
+    paintKeyRow(p);
 
     // La traccia scelta: contorno evidenziato attorno alla sua corsia.
     {
