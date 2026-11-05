@@ -45,6 +45,7 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
         if (const AnimTarget target = animationTarget(); target.valid) {
             PropertiesPanel::AnimationState state;
             state.enabled = target.inside;
+            state.presets = true;
             for (int g = 0; g < core::kAnimGroupCount; ++g)
                 state.groups[static_cast<std::size_t>(g)] =
                     core::groupState(target.animation, static_cast<core::AnimGroup>(g), target.fileTime, target.from, target.to);

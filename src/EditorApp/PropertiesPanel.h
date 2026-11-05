@@ -12,7 +12,9 @@
 #include <array>
 #include <functional>
 #include <string>
+#include <vector>
 
+class QAction;
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
@@ -141,6 +143,7 @@ private:
     };
     std::array<AnimButtons, core::kAnimGroupCount> animButtons_{};
     std::array<bool, core::kAnimGroupCount> groupAnimated_{};
+    std::vector<QAction*> panActions_;  // le panoramiche del menu dei preset
     QToolButton* presetButton_ = nullptr;
     QWidget* body_ = nullptr;           // i controlli della trasformazione
     QLabel* textHeading_ = nullptr;     // «Trasforma», solo nella pagina delle scritte

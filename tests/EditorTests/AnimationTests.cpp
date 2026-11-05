@@ -482,6 +482,40 @@ TEST(AnimationPresets, FadesCanBeCombinedAndKeepTheBaseOpacity)
         EXPECT_NE(std::string(animPresetName(static_cast<AnimPreset>(i))), "");
 }
 
+TEST(AnimationPresets, EntranceAndExitSlideAndFadeAtTheEdgesAndCanBeCombined)
+{
+    TransformAnimation a;
+    Transform base;
+    base.posX = 10.0;
+    base.opacity = 0.9;
+    ASSERT_TRUE(applyPreset(a, base, AnimPreset::SlideInLeft, 0.0, 5.0, 1800, 900));
+    ASSERT_TRUE(applyPreset(a, base, AnimPreset::SlideOutRight, 0.0, 5.0, 1800, 900));
+    EXPECT_NEAR(evaluateTransform(base, a, 0.0).posX, 10.0 - 600.0, 1e-9);  // fuori a sinistra
+    EXPECT_NEAR(evaluateTransform(base, a, 0.0).opacity, 0.0, 1e-9);
+    EXPECT_NEAR(evaluateTransform(base, a, 0.8).posX, 10.0, 1e-9);           // entrata finita: tratto 0,8 s
+    EXPECT_NEAR(evaluateTransform(base, a, 0.8).opacity, 0.9, 1e-9);
+    EXPECT_NEAR(evaluateTransform(base, a, 2.5).posX, 10.0, 1e-9);           // in mezzo: ferma
+    EXPECT_NEAR(evaluateTransform(base, a, 4.2).posX, 10.0, 1e-9);
+    EXPECT_NEAR(evaluateTransform(base, a, 5.0).posX, 10.0 + 600.0, 1e-9);  // esce a destra
+    EXPECT_NEAR(evaluateTransform(base, a, 5.0).opacity, 0.0, 1e-9);
+    // Dal basso: la Y parte un terzo dell'altezza più giù; pop: scala al 60%.
+    TransformAnimation b;
+    Transform baseB;
+    ASSERT_TRUE(applyPreset(b, baseB, AnimPreset::SlideInBottom, 0.0, 3.0, 1800, 900));
+    EXPECT_NEAR(evaluateTransform(baseB, b, 0.0).posY, 300.0, 1e-9);
+    TransformAnimation c;
+    Transform baseC;
+    baseC.scaleX = baseC.scaleY = 2.0;
+    ASSERT_TRUE(applyPreset(c, baseC, AnimPreset::PopIn, 0.0, 3.0, 1800, 900));
+    EXPECT_NEAR(evaluateTransform(baseC, c, 0.0).scaleX, 1.2, 1e-9);
+    EXPECT_NEAR(evaluateTransform(baseC, c, 3.0).scaleX, 2.0, 1e-9);
+    // Su un pezzo corto il tratto è al massimo metà del pezzo.
+    TransformAnimation d;
+    Transform baseD;
+    ASSERT_TRUE(applyPreset(d, baseD, AnimPreset::PopOut, 0.0, 1.0, 1800, 900));
+    EXPECT_NEAR(d.track(AnimParam::Opacity).front().time, 0.5, 1e-9);
+}
+
 TEST(AnimationRow, GroupKeysAreEditedIndependentlyOfTheOtherGroupsAtTheSameInstant)
 {
     TransformAnimation a;

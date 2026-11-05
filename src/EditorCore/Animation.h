@@ -122,6 +122,14 @@ enum class AnimPreset : int
     PanRight,  // panoramica verso destra
     FadeIn,    // dissolvenza in apertura (opacità da 0 al valore di base, al massimo 1 secondo)
     FadeOut,   // dissolvenza in chiusura
+    SlideInLeft,     // entra da sinistra scorrendo e comparendo (nei primi 0,8 s al massimo)
+    SlideInRight,    // entra da destra
+    SlideInBottom,   // entra dal basso
+    PopIn,           // compare ingrandendosi (da 60% al valore di base) e comparendo
+    SlideOutLeft,    // esce verso sinistra scorrendo e sparendo (negli ultimi 0,8 s al massimo)
+    SlideOutRight,   // esce verso destra
+    SlideOutBottom,  // esce verso il basso
+    PopOut,          // sparisce rimpicciolendosi
     Count
 };
 inline constexpr int kAnimPresetCount = static_cast<int>(AnimPreset::Count);
@@ -129,7 +137,10 @@ const char* animPresetName(AnimPreset preset);  // nome italiano per il menu
 // Applica il preset: sostituisce l'animazione dei gruppi che usa (zoom: scala; panoramica: scala fissa e posizione X; dissolvenze:
 // solo il tratto iniziale o finale dell'opacità, quindi apertura e chiusura si possono avere insieme). `base` può cambiare (la
 // panoramica ingrandisce il pezzo). `projectWidth` serve alla panoramica (quanto scorre l'immagine). false se il pezzo è troppo corto.
-bool applyPreset(TransformAnimation& animation, Transform& base, AnimPreset preset, double from, double to, double projectWidth);
+// Entrate e uscite («Slide…», «Pop…»): toccano solo il primo o l'ultimo tratto di posizione, scala e opacità, e si possono avere
+// insieme; lo scorrimento è un terzo circa del fotogramma (`projectWidth`, `projectHeight`).
+bool applyPreset(TransformAnimation& animation, Transform& base, AnimPreset preset, double from, double to, double projectWidth,
+                 double projectHeight = 0.0);
 
 // Curve pronte per i passaggi (come cubic-bezier di CSS): per il menu del clic destro e per l'editor delle curve.
 struct BezierPreset

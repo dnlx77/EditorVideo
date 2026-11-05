@@ -780,6 +780,33 @@ int runManipTest(const QStringList& args, qsizetype at)
                         QCoreApplication::processEvents();
                         check(clipNow().animation.track(core::AnimParam::Rotation).size() == 1, "Annulla toglie una chiave alla volta");
                     }
+                    // --- Le animazioni pronte per le scritte (S5): entrate e uscite, senza le panoramiche.
+                    {
+                        auto* presets = panel->findChild<QToolButton*>(QStringLiteral("presetAnimazione"));
+                        check(presets != nullptr && presets->isVisibleTo(panel) && presets->isEnabled(), "con una scritta scelta c'è il menu delle animazioni pronte");
+                        if (presets != nullptr && presets->menu() != nullptr) {
+                            QAction* slide = nullptr;
+                            bool panVisible = false;
+                            for (QAction* act : presets->menu()->actions()) {
+                                if (act->text() == QString::fromUtf8(core::animPresetName(core::AnimPreset::SlideInLeft)))
+                                    slide = act;
+                                if (act->text() == QString::fromUtf8(core::animPresetName(core::AnimPreset::PanLeft)) && act->isVisible())
+                                    panVisible = true;
+                            }
+                            check(slide != nullptr && !panVisible, "per le scritte ci sono le entrate e non le panoramiche");
+                            if (slide != nullptr) {
+                                const std::size_t posKeys = clipNow().animation.track(core::AnimParam::PosX).size();
+                                slide->trigger();
+                                QCoreApplication::processEvents();
+                                const auto& px = clipNow().animation.track(core::AnimParam::PosX);
+                                check(posKeys == 0 && px.size() == 2 && std::abs(px[0].time) < 1e-9 && px[0].value < -100.0,
+                                      "«Entra da sinistra» mette le chiavi all'inizio della scritta (tempi dall'inizio), partendo da fuori a sinistra");
+                                window.undo();
+                                QCoreApplication::processEvents();
+                                check(!clipNow().animation.animated(core::AnimParam::PosX), "l'animazione pronta della scritta è un solo passo di Annulla");
+                            }
+                        }
+                    }
                     // --- La riga dei rombi sotto la scritta e le maniglie sul monitor (S4).
                     {
                         SequenceTimeline* line = window.sequenceTimeline();
