@@ -40,6 +40,7 @@ public:
     struct AnimationState
     {
         bool enabled = false;
+        bool presets = false;  // c'è un pezzo scelto da solo: i preset di animazione si possono applicare
         std::array<core::GroupState, core::kAnimGroupCount> groups{};
     };
     void showTransform(const core::Transform& transform, int count);
@@ -72,6 +73,8 @@ public:
         ResetAll,
     };
     std::function<void(core::AnimGroup group, AnimAction action)> onAnimationAction;
+    // Un preset di animazione scelto dal menu "Animazione" (si applica a tutto il pezzo scelto).
+    std::function<void(core::AnimPreset preset)> onAnimationPreset;
     // "Adatta" (false) o "Riempi" (true): scala 100% / scala che riempie il fotogramma, con posizione e ritaglio a zero.
     std::function<void(bool fill)> onFit;
     // Un controllo della transizione è cambiato: i valori che ora hanno i controlli (tutti) e il nome del campo cambiato.
@@ -126,6 +129,7 @@ private:
     };
     std::array<AnimButtons, core::kAnimGroupCount> animButtons_{};
     std::array<bool, core::kAnimGroupCount> groupAnimated_{};
+    QToolButton* presetButton_ = nullptr;
     core::Transform shown_;
     bool updating_ = false;
 };

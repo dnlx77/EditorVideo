@@ -14,6 +14,7 @@
 #include <QtCore/QElapsedTimer>
 #include <QtGui/QMouseEvent>
 #include <QtWidgets/QDoubleSpinBox>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QToolButton>
 
 #include <algorithm>
@@ -491,6 +492,33 @@ int runManipTest(const QStringList& args, qsizetype at)
                     QCoreApplication::processEvents();
                     const core::AnimKey* back = core::findKey(animation(), core::AnimParam::PosX, tk);
                     check(back != nullptr && std::abs(back->value - 50.0) < 1e-9, "il punto del percorso è un solo passo di Annulla");
+                }
+                // Preset di animazione dal menu del pannello (K7).
+                {
+                    auto* presets = panel->findChild<QToolButton*>(QStringLiteral("presetAnimazione"));
+                    check(presets != nullptr && presets->isEnabled() && presets->menu() != nullptr
+                              && presets->menu()->actions().size() >= core::kAnimPresetCount,
+                          "il pannello ha il menu dei preset di animazione con un pezzo scelto");
+                    if (presets != nullptr && presets->menu() != nullptr) {
+                        QAction* zoom = nullptr;
+                        for (QAction* a : presets->menu()->actions()) {
+                            if (a->text() == QString::fromUtf8(core::animPresetName(core::AnimPreset::ZoomIn)))
+                                zoom = a;
+                        }
+                        check(zoom != nullptr, "c'è il preset «Zoom lento avanti»");
+                        if (zoom != nullptr) {
+                            zoom->trigger();
+                            QCoreApplication::processEvents();
+                            const auto& scale = animation().track(core::AnimParam::ScaleX);
+                            check(scale.size() == 2 && std::abs(scale[0].time - piece.start) < 1e-6 && std::abs(scale[1].time - piece.end) < 1e-6
+                                      && std::abs(scale[1].value - 1.15) < 1e-9,
+                                  "il preset mette le chiavi di scala all'inizio e alla fine del pezzo");
+                            check(line->keyRow().keys.size() >= 2, "i rombi del preset si vedono sulla linea del tempo");
+                            window.undo();
+                            QCoreApplication::processEvents();
+                            check(!animation().animated(core::AnimParam::ScaleX), "il preset è un solo passo di Annulla");
+                        }
+                    }
                 }
                 // Un pezzo non scelto (selezione vuota): la riga sparisce.
                 line->selectObjects({});

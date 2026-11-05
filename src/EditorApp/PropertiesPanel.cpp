@@ -9,6 +9,7 @@
 #include <QtWidgets/QGroupBox>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QScrollArea>
 #include <QtWidgets/QSlider>
@@ -148,6 +149,27 @@ QWidget* PropertiesPanel::buildTransformPage()
     quick->addWidget(fill);
     quick->addWidget(all);
     root->addLayout(quick);
+    // Preset di animazione: zoom lento, panoramica, dissolvenze (menu; l'animazione si può poi ritoccare con i rombi).
+    presetButton_ = new QToolButton;
+    presetButton_->setObjectName(QStringLiteral("presetAnimazione"));
+    presetButton_->setText(QStringLiteral("Animazione ▾"));
+    presetButton_->setPopupMode(QToolButton::InstantPopup);
+    presetButton_->setToolTip(QStringLiteral("Animazioni pronte per il pezzo scelto: zoom lento, panoramica, dissolvenze. Poi si ritoccano con i rombi."));
+    presetButton_->setFixedHeight(22);
+    presetButton_->setEnabled(false);
+    auto* presetMenu = new QMenu(presetButton_);
+    for (int i = 0; i < core::kAnimPresetCount; ++i) {
+        const auto preset = static_cast<core::AnimPreset>(i);
+        QAction* action = presetMenu->addAction(QString::fromUtf8(core::animPresetName(preset)));
+        connect(action, &QAction::triggered, this, [this, preset] {
+            if (!updating_ && onAnimationPreset)
+                onAnimationPreset(preset);
+        });
+        if (preset == core::AnimPreset::ZoomOut || preset == core::AnimPreset::PanRight)
+            presetMenu->addSeparator();
+    }
+    presetButton_->setMenu(presetMenu);
+    root->addWidget(presetButton_);
     connect(fit, &QPushButton::clicked, this, [this] {
         if (!updating_ && onFit)
             onFit(false);
@@ -466,6 +488,8 @@ void PropertiesPanel::showTransform(const core::Transform& t, int count, const A
         const QSignalBlocker c(linked_);
         linked_->setChecked(false);
     }
+    if (presetButton_ != nullptr)
+        presetButton_->setEnabled(animation.presets);
     for (std::size_t g = 0; g < animButtons_.size(); ++g) {
         const core::GroupState& state = animation.groups[g];
         groupAnimated_[g] = state.animated;

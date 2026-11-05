@@ -421,3 +421,62 @@ TEST(AnimationRow, DescribesWhereTheAnimationGoes)
     EXPECT_EQ(lines[0], "Scala 100%→130%");
     EXPECT_EQ(lines[1], "Opacità 0%→100%");
 }
+
+TEST(AnimationPresets, ZoomAnimatesTheScaleSmoothlyFromTheBaseValue)
+{
+    TransformAnimation a;
+    Transform base;
+    base.scaleX = base.scaleY = 1.2;
+    ASSERT_TRUE(applyPreset(a, base, AnimPreset::ZoomIn, 2.0, 6.0, 1920));
+    EXPECT_NEAR(evaluateTransform(base, a, 2.0).scaleX, 1.2, 1e-9);
+    EXPECT_NEAR(evaluateTransform(base, a, 6.0).scaleX, 1.2 * 1.15, 1e-9);
+    EXPECT_NEAR(evaluateTransform(base, a, 4.0).scaleX, 1.2 * 1.075, 1e-6);  // dolce: a metà è a metà
+    EXPECT_NEAR(evaluateTransform(base, a, 4.0).scaleY, evaluateTransform(base, a, 4.0).scaleX, 1e-12);
+    TransformAnimation out;
+    Transform base2;
+    ASSERT_TRUE(applyPreset(out, base2, AnimPreset::ZoomOut, 0.0, 3.0, 1920));
+    EXPECT_NEAR(evaluateTransform(base2, out, 0.0).scaleX, 1.15, 1e-9);
+    EXPECT_NEAR(evaluateTransform(base2, out, 3.0).scaleX, 1.0, 1e-9);
+    EXPECT_FALSE(applyPreset(out, base2, AnimPreset::ZoomIn, 1.0, 1.05, 1920));  // troppo corto
+}
+
+TEST(AnimationPresets, PanZoomsTheImageAndSlidesItAcrossWithoutShowingTheEdges)
+{
+    TransformAnimation a;
+    Transform base;
+    ASSERT_TRUE(applyPreset(a, base, AnimPreset::PanRight, 0.0, 4.0, 1920));
+    EXPECT_NEAR(base.scaleX, 1.15, 1e-9);  // il pezzo è ingrandito, non animato
+    EXPECT_FALSE(a.animated(AnimParam::ScaleX));
+    const double reach = 1920 * 0.15 / 2 * 0.9;
+    EXPECT_NEAR(evaluateTransform(base, a, 0.0).posX, reach, 1e-6);
+    EXPECT_NEAR(evaluateTransform(base, a, 4.0).posX, -reach, 1e-6);
+    // Mai oltre il margine che l'ingrandimento nasconde: (1920 * 0.15 / 2 = 144 pixel per lato).
+    for (double t = 0.0; t <= 4.0; t += 0.25)
+        EXPECT_LE(std::abs(evaluateTransform(base, a, t).posX), 1920 * 0.15 / 2);
+    TransformAnimation left;
+    Transform base2;
+    ASSERT_TRUE(applyPreset(left, base2, AnimPreset::PanLeft, 0.0, 4.0, 1920));
+    EXPECT_NEAR(evaluateTransform(base2, left, 0.0).posX, -reach, 1e-6);
+}
+
+TEST(AnimationPresets, FadesCanBeCombinedAndKeepTheBaseOpacity)
+{
+    TransformAnimation a;
+    Transform base;
+    base.opacity = 0.8;
+    ASSERT_TRUE(applyPreset(a, base, AnimPreset::FadeIn, 10.0, 20.0, 1920));
+    ASSERT_TRUE(applyPreset(a, base, AnimPreset::FadeOut, 10.0, 20.0, 1920));
+    EXPECT_NEAR(evaluateTransform(base, a, 10.0).opacity, 0.0, 1e-9);
+    EXPECT_NEAR(evaluateTransform(base, a, 10.5).opacity, 0.4, 1e-9);
+    EXPECT_NEAR(evaluateTransform(base, a, 15.0).opacity, 0.8, 1e-9);
+    EXPECT_NEAR(evaluateTransform(base, a, 19.5).opacity, 0.4, 1e-9);
+    EXPECT_NEAR(evaluateTransform(base, a, 20.0).opacity, 0.0, 1e-9);
+    EXPECT_EQ(a.track(AnimParam::Opacity).size(), 4u);
+    // Su un pezzo corto la dissolvenza è al massimo metà del pezzo.
+    TransformAnimation shortOne;
+    Transform base2;
+    ASSERT_TRUE(applyPreset(shortOne, base2, AnimPreset::FadeIn, 0.0, 1.0, 1920));
+    EXPECT_NEAR(shortOne.track(AnimParam::Opacity).back().time, 0.5, 1e-9);
+    for (int i = 0; i < kAnimPresetCount; ++i)
+        EXPECT_NE(std::string(animPresetName(static_cast<AnimPreset>(i))), "");
+}
