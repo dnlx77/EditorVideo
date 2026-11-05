@@ -149,6 +149,9 @@ public:
     bool trimAudioClip(int clipId, bool atStart, double value, bool ripple);
     // Scritte (step T3): livelli e scritte sopra la corsia video.
     int addTextLayer();
+    // Togliere un livello video o una traccia audio con delle clip sopra le cancella: prima si chiede conferma (le prove
+    // automatiche, che partono con un'opzione "--...", non la chiedono).
+    static inline bool confirmRemovals = true;
     bool removeTextLayer(int layerId);
     void removeSelectedTextLayer();  // quello scelto sulla linea del tempo, altrimenti l'ultimo
     void groupSelection();           // G: gli oggetti scelti con Ctrl+clic diventano un gruppo

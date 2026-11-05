@@ -21,6 +21,11 @@ int main(int argc, char* argv[])
 
     // I percorsi si leggono da QApplication::arguments(): argv su Windows perde le lettere accentate.
     const QStringList arguments = QApplication::arguments();
+    // Le prove automatiche (opzioni "--...") non aprono finestre di conferma.
+    for (const QString& argument : arguments) {
+        if (argument.startsWith(QStringLiteral("--")))
+            editor::app::MainWindow::confirmRemovals = false;
+    }
     if (const auto code = editor::app::runCommandLineTest(arguments))
         return *code;
 
