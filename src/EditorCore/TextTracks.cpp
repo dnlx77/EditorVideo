@@ -485,6 +485,19 @@ bool TextTracks::setPieceTransform(int pieceId, const Transform& transform)
     return true;
 }
 
+bool TextTracks::setPieceAnimation(int pieceId, const TransformAnimation& animation)
+{
+    LayerPiece* piece = findPieceMutable(pieceId);
+    if (piece == nullptr)
+        return false;
+    TransformAnimation value = animation;
+    normalizeAnimation(value);
+    if (piece->animation == value)
+        return false;
+    piece->animation = std::move(value);
+    return true;
+}
+
 std::vector<const LayerPiece*> TextTracks::piecesVisibleAt(double seconds) const
 {
     std::vector<const LayerPiece*> visible;

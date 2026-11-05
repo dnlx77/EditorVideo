@@ -273,13 +273,13 @@ TEST_F(ProjectFileTest, NewerFormatIsRefused)
     std::string json = projectToJson(projectPath(), sample(view), view);
     const auto at = json.find("\"versione\": 1");
     ASSERT_NE(at, std::string::npos);
-    json.replace(at, 13, "\"versione\": 8");
+    json.replace(at, 13, "\"versione\": 9");
     try {
         projectFromJson(projectPath(), json);
         ADD_FAILURE() << "doveva essere rifiutato";
     } catch (const ProjectFileError& e) {
         EXPECT_NE(std::string(e.what()).find("versione più recente"), std::string::npos) << e.what();
-        EXPECT_NE(std::string(e.what()).find("formato 8"), std::string::npos) << e.what();
+        EXPECT_NE(std::string(e.what()).find("formato 9"), std::string::npos) << e.what();
     }
 }
 

@@ -423,6 +423,21 @@ bool Sequence::setTransform(int fragmentId, const Transform& transform)
     return false;
 }
 
+bool Sequence::setAnimation(int fragmentId, const TransformAnimation& animation)
+{
+    for (Fragment& f : fragments_) {
+        if (f.id != fragmentId)
+            continue;
+        TransformAnimation value = animation;
+        normalizeAnimation(value);
+        if (f.animation == value)
+            return false;
+        f.animation = std::move(value);
+        return true;
+    }
+    return false;
+}
+
 int Sequence::split(double seconds)
 {
     const int index = indexAt(seconds);
@@ -436,6 +451,7 @@ int Sequence::split(double seconds)
     second.detached = f.detached;  // l'audio scollegato resta tale anche nella seconda parte
     second.envelope = f.envelope;  // la linea è nei tempi del file: ognuno tiene la sua parte
     second.transform = f.transform;  // la trasformazione vale per tutto il pezzo: tutte e due le parti la mantengono
+    second.animation = f.animation;  // chiavi nei tempi del file: le due parti si vedono come prima della divisione
     f.end = cut;
     f.muted = clipRanges(f.muted, f.start, cut);
     fragments_.insert(fragments_.begin() + index + 1, second);
@@ -463,12 +479,14 @@ Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, doub
             result.push_back({f.id, f.clipId, f.start, from, clipRanges(f.muted, f.start, from)});
             result.back().envelope = f.envelope;
             result.back().transform = f.transform;
+            result.back().animation = f.animation;
         }
         if (f.end > to + kTimeEpsilon) {
             const bool firstPartKept = f.start < from - kTimeEpsilon;
             result.push_back({firstPartKept ? nextId_++ : f.id, f.clipId, to, f.end, clipRanges(f.muted, to, f.end)});
             result.back().envelope = f.envelope;
             result.back().transform = f.transform;
+            result.back().animation = f.animation;
         }
         if (result.size() > before) {
             result[before].gap = f.gap + carriedGap;

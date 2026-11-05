@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EditorCore/Animation.h"
 #include "EditorCore/LevelEnvelope.h"
 #include "EditorCore/TimeUtil.h"
 #include "EditorCore/Transform.h"
@@ -28,6 +29,9 @@ struct Fragment
     bool detached = false;
     // Scala, posizione, rotazione, ritaglio, specchio e opacità del video del pezzo (vedi Transform). Segue il pezzo.
     Transform transform;
+    // Fotogrammi chiave della trasformazione (vedi Animation.h): i parametri animati sostituiscono quelli fissi di `transform`.
+    // I tempi sono quelli del file, quindi seguono il pezzo.
+    TransformAnimation animation;
 
     double length() const { return end - start; }
 };
@@ -51,6 +55,8 @@ public:
     bool setDetached(int fragmentId, bool detached);
     // La trasformazione del pezzo (normalizzata); false se il pezzo non c'è o non cambia nulla.
     bool setTransform(int fragmentId, const Transform& transform);
+    // L'animazione del pezzo (normalizzata); false se il pezzo non c'è o non cambia nulla.
+    bool setAnimation(int fragmentId, const TransformAnimation& animation);
     // Toglie il pezzo; quelli dopo scorrono indietro della sua durata (lo spazio vuoto prima di lui resta).
     // Con `leaveGap` quelli dopo non scorrono: al posto del pezzo resta uno spazio vuoto (come quando un pezzo passa su un livello).
     bool remove(int fragmentId, bool leaveGap = false);

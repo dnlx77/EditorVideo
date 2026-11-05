@@ -628,6 +628,7 @@ int Project::liftToLayer(int fragmentId, int layerId, double position, int* audi
     piece.end = fragment.end;
     piece.position = where;
     piece.transform = fragment.transform;
+    piece.animation = fragment.animation;
     const int id = text_.addPiece(layerId, piece);
     if (id == 0) {
         *this = backup;
@@ -678,6 +679,7 @@ int Project::lowerToV1(int pieceId, double position, bool push, int* audioClip)
         return 0;
     text_.removePiece(pieceId);
     sequence_.setTransform(id, piece.transform);
+    sequence_.setAnimation(id, piece.animation);
     if (clipId == 0) {
         // Il pezzo non ha un audio suo (era scollegato, o è stato messo senza audio): in V1 resta muto, senza un audio
         // collegato nuovo che si sommerebbe alla clip libera che magari c'è ancora.
@@ -712,6 +714,14 @@ int Project::setTransform(const std::vector<int>& fragmentIds, const Transform& 
     int changed = 0;
     for (int id : fragmentIds)
         changed += sequence_.setTransform(id, transform) ? 1 : 0;
+    return changed;
+}
+
+int Project::setAnimation(const std::vector<int>& fragmentIds, const TransformAnimation& animation)
+{
+    int changed = 0;
+    for (int id : fragmentIds)
+        changed += sequence_.setAnimation(id, animation) ? 1 : 0;
     return changed;
 }
 
