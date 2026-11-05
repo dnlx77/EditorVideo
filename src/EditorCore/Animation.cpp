@@ -280,4 +280,130 @@ std::vector<double> keyTimes(const TransformAnimation& animation)
     return times;
 }
 
+std::vector<AnimParam> groupParams(AnimGroup group)
+{
+    switch (group) {
+        case AnimGroup::Scale: return {AnimParam::ScaleX, AnimParam::ScaleY};
+        case AnimGroup::Position: return {AnimParam::PosX, AnimParam::PosY};
+        case AnimGroup::Rotation: return {AnimParam::Rotation};
+        case AnimGroup::Crop: return {AnimParam::CropLeft, AnimParam::CropRight, AnimParam::CropTop, AnimParam::CropBottom};
+        case AnimGroup::Opacity: return {AnimParam::Opacity};
+    }
+    return {};
+}
+
+namespace {
+
+// La chiave del parametro più vicina a `time` (entro la tolleranza del cursore), nullptr se non c'è.
+const AnimKey* keyNear(const std::vector<AnimKey>& keys, double time)
+{
+    const AnimKey* best = nullptr;
+    for (const AnimKey& k : keys) {
+        if (std::abs(k.time - time) <= kAnimCursorTolerance && (best == nullptr || std::abs(k.time - time) < std::abs(best->time - time)))
+            best = &k;
+    }
+    return best;
+}
+
+}  // namespace
+
+GroupState groupState(const TransformAnimation& animation, AnimGroup group, double time, double from, double to)
+{
+    GroupState state;
+    std::vector<double> times;
+    for (const AnimParam p : groupParams(group)) {
+        if (!animation.animated(p))
+            continue;
+        state.animated = true;
+        for (const AnimKey& k : animation.track(p))
+            times.push_back(k.time);
+    }
+    std::sort(times.begin(), times.end());
+    times.erase(std::unique(times.begin(), times.end(), [](double a, double b) { return sameTime(a, b); }), times.end());
+    state.keyCount = static_cast<int>(times.size());
+    for (const double t : times) {
+        if (t < from - kAnimTimeEpsilon || t > to + kAnimTimeEpsilon)
+            continue;  // fuori dal pezzo: non si raggiunge
+        if (std::abs(t - time) <= kAnimCursorTolerance)
+            state.keyAtCursor = true;
+        else if (t < time) {
+            state.hasPrev = true;
+            state.prevTime = t;  // l'ultima prima del cursore (i tempi sono in ordine)
+        } else if (!state.hasNext) {
+            state.hasNext = true;
+            state.nextTime = t;
+        }
+    }
+    return state;
+}
+
+bool toggleGroupKey(TransformAnimation& animation, Transform& base, AnimGroup group, double time)
+{
+    const std::vector<AnimParam> params = groupParams(group);
+    const GroupState state = groupState(animation, group, time, -1e18, 1e18);
+    if (state.animated && state.keyAtCursor) {
+        // Toglie le chiavi sul cursore; un parametro che resta senza chiavi mantiene il valore che aveva lì.
+        for (const AnimParam p : params) {
+            std::vector<AnimKey>& keys = animation.track(p);
+            const AnimKey* at = keyNear(keys, time);
+            if (at == nullptr)
+                continue;
+            const double value = at->value;
+            const double atTime = at->time;
+            removeKey(animation, p, atTime);
+            if (keys.empty())
+                setParamValue(base, p, value);
+        }
+        return true;
+    }
+    // Aggiunge una chiave per ogni parametro del gruppo, col valore che ha adesso.
+    const Transform now = evaluateTransform(base, animation, time);
+    for (const AnimParam p : params) {
+        AnimKey key;
+        key.time = time;
+        key.value = paramValue(now, p);
+        setKey(animation, p, key);
+    }
+    return true;
+}
+
+void resetGroup(TransformAnimation& animation, Transform& base, AnimGroup group)
+{
+    const Transform defaults;
+    for (const AnimParam p : groupParams(group)) {
+        clearTrack(animation, p);
+        setParamValue(base, p, paramValue(defaults, p));
+    }
+}
+
+bool applyEditWithKeys(TransformAnimation& animation, Transform& base, const Transform& shown, const Transform& edited, double time)
+{
+    bool changed = false;
+    Transform newBase = edited;  // parametri non animati (e specchio): valori della modifica
+    for (std::size_t i = 0; i < kAnimParamCount; ++i) {
+        const AnimParam p = static_cast<AnimParam>(i);
+        if (!animation.animated(p))
+            continue;
+        setParamValue(newBase, p, paramValue(base, p));  // quelli animati restano come sono nella trasformazione fissa
+        const double was = paramValue(shown, p);
+        const double now = paramValue(edited, p);
+        if (std::abs(now - was) <= 1e-12)
+            continue;
+        AnimKey key;
+        key.time = time;
+        if (const AnimKey* near = keyNear(animation.track(p), time))
+            key = *near;  // si aggiorna la chiave che c'è, con il suo tipo di passaggio
+        else
+            key.interp = Interp::Linear;
+        key.value = now;
+        changed = setKey(animation, p, key) || changed;
+    }
+    newBase = normalized(newBase);
+    if (!(newBase == base)) {
+        base = newBase;
+        changed = true;
+    }
+    return changed;
+}
+
 }  // namespace editor::core

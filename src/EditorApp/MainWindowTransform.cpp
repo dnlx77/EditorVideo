@@ -29,11 +29,12 @@ std::vector<int> selectedPieceIds(const std::vector<core::ObjectRef>& objects)
 
 }  // namespace
 
-void MainWindow::refreshPropertiesPanel()
+void MainWindow::refreshPropertiesPanel(bool cursorOnly)
 {
     if (propertiesPanel_ == nullptr || timeline_ == nullptr)
         return;
-    if (program_ != nullptr)
+    propertiesFollowCursor_ = false;
+    if (program_ != nullptr && !cursorOnly)
         program_->refreshManipulators();  // le maniglie del monitor seguono la scelta
     const std::vector<core::ObjectRef> objects = timeline_->allSelectedObjects();
     if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::TextClip
@@ -48,11 +49,16 @@ void MainWindow::refreshPropertiesPanel()
             return;
         }
     }
-    if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::LayerPiece) {
-        if (const core::LayerPiece* layerPiece = project_.textTracks().findPiece(objects.front().id)) {  // un pezzo di un livello
-            propertiesPanel_->showTransform(layerPiece->transform, 1);
-            return;
-        }
+    // Un pezzo scelto da solo (di V1 o di un livello): valori al cursore e rombi dei fotogrammi chiave.
+    if (const AnimTarget target = animationTarget(); target.valid) {
+        PropertiesPanel::AnimationState state;
+        state.enabled = target.inside;
+        for (int g = 0; g < core::kAnimGroupCount; ++g)
+            state.groups[static_cast<std::size_t>(g)] =
+                core::groupState(target.animation, static_cast<core::AnimGroup>(g), target.fileTime, target.from, target.to);
+        propertiesFollowCursor_ = true;
+        propertiesPanel_->showTransform(core::evaluateTransform(target.base, target.animation, target.fileTime), 1, state);
+        return;
     }
     const std::vector<int> pieces = selectedPieceIds(objects);
     for (int id : pieces) {
@@ -70,23 +76,82 @@ void MainWindow::refreshPropertiesPanel()
     propertiesPanel_->showNothing(message);
 }
 
+MainWindow::AnimTarget MainWindow::animationTarget() const
+{
+    AnimTarget target;
+    if (timeline_ == nullptr || program_ == nullptr)
+        return target;
+    const std::vector<core::ObjectRef> objects = timeline_->allSelectedObjects();
+    const double position = program_->position();
+    if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::LayerPiece) {
+        const core::LayerPiece* piece = project_.textTracks().findPiece(objects.front().id);
+        if (piece == nullptr)
+            return target;
+        target.layer = true;
+        target.id = piece->id;
+        target.from = piece->start;
+        target.to = piece->end;
+        target.sequenceStart = piece->position;
+        target.base = piece->transform;
+        target.animation = piece->animation;
+    } else {
+        const std::vector<int> pieces = selectedPieceIds(objects);
+        if (pieces.size() != 1)
+            return target;
+        const core::Fragment* f = project_.sequence().find(pieces.front());
+        if (f == nullptr)
+            return target;
+        target.id = f->id;
+        target.from = f->start;
+        target.to = f->end;
+        target.sequenceStart = project_.sequence().startOf(project_.sequence().indexOf(f->id));
+        target.base = f->transform;
+        target.animation = f->animation;
+    }
+    const double offset = position - target.sequenceStart;
+    target.inside = offset >= -1e-9 && offset <= (target.to - target.from) + 1e-9;
+    target.fileTime = target.from + std::clamp(offset, 0.0, target.to - target.from);
+    target.valid = true;
+    return target;
+}
+
+bool MainWindow::writeAnimTarget(const AnimTarget& target, const core::Transform& base, const core::TransformAnimation& animation)
+{
+    if (target.layer) {
+        const bool a = project_.textTracks().setPieceTransform(target.id, core::normalized(base));
+        const bool b = project_.textTracks().setPieceAnimation(target.id, animation);
+        return a || b;
+    }
+    const int a = project_.setTransform({target.id}, base);
+    const int b = project_.setAnimation({target.id}, animation);
+    return a + b > 0;
+}
+
 bool MainWindow::applyTransformEdit(const std::function<void(core::Transform&)>& edit, const std::string& field)
 {
-    // Un pezzo di video su un livello (V2, V3...): una trasformazione sola, nel pezzo del livello.
-    if (const int layerPiece = timeline_->selectedTextClip(); layerPiece != 0 && project_.textTracks().findPiece(layerPiece) != nullptr) {
-        core::Transform t = project_.textTracks().findPiece(layerPiece)->transform;
-        edit(t);
-        const core::Project before = project_;
-        if (!project_.textTracks().setPieceTransform(layerPiece, t))
+    // Un pezzo scelto da solo (di V1 o di un livello): i parametri animati ricevono una chiave sul cursore (auto-key), il resto
+    // cambia la trasformazione fissa.
+    if (const AnimTarget target = animationTarget(); target.valid) {
+        const core::Transform shown = core::evaluateTransform(target.base, target.animation, target.fileTime);
+        core::Transform edited = shown;
+        edit(edited);
+        core::Transform base = target.base;
+        core::TransformAnimation animation = target.animation;
+        if (!core::applyEditWithKeys(animation, base, shown, edited, target.fileTime))
             return false;
-        const std::string layerKey = field + ":L" + std::to_string(layerPiece);
-        const bool continues = transformMergeKey_ == layerKey && transformMergeCount_ == history_.undoCount() && history_.canUndo()
+        const core::Project before = project_;
+        if (!writeAnimTarget(target, base, animation))
+            return false;
+        // Un cursore o una casella girati più volte di fila sullo stesso campo (e sullo stesso istante) sono una sola voce di Annulla.
+        const std::string key = field + (target.layer ? ":L" : ":") + std::to_string(target.id) + ":"
+                                + std::to_string(std::lround(target.fileTime * 1000.0));
+        const bool continues = transformMergeKey_ == key && transformMergeCount_ == history_.undoCount() && history_.canUndo()
                             && history_.undoLabel() == "Cambia trasformazione" && !history_.canRedo();
         if (continues && history_.amend())
             sequenceChanged();
         else
             recordEdit(QStringLiteral("Cambia trasformazione"), before);
-        transformMergeKey_ = layerKey;
+        transformMergeKey_ = key;
         transformMergeCount_ = history_.undoCount();
         return true;
     }
@@ -143,6 +208,47 @@ bool MainWindow::commitMonitorLayerTransform(int pieceId, const core::Transform&
     return true;
 }
 
+void MainWindow::applyAnimationAction(core::AnimGroup group, int actionValue)
+{
+    const auto action = static_cast<PropertiesPanel::AnimAction>(actionValue);
+    const AnimTarget target = animationTarget();
+    if (!target.valid)
+        return;
+    if (action == PropertiesPanel::AnimAction::PrevKey || action == PropertiesPanel::AnimAction::NextKey) {
+        const core::GroupState state = core::groupState(target.animation, group, target.fileTime, target.from, target.to);
+        const bool previous = action == PropertiesPanel::AnimAction::PrevKey;
+        if (previous ? !state.hasPrev : !state.hasNext)
+            return;
+        const double fileTime = previous ? state.prevTime : state.nextTime;
+        setProgramActive(true);
+        program_->seekTo(target.sequenceStart + (fileTime - target.from));
+        return;
+    }
+    core::Transform base = target.base;
+    core::TransformAnimation animation = target.animation;
+    QString label;
+    if (action == PropertiesPanel::AnimAction::ToggleKey) {
+        if (!target.inside)
+            return;
+        core::toggleGroupKey(animation, base, group, target.fileTime);
+        label = QStringLiteral("Fotogramma chiave");
+    } else {
+        for (int g = 0; g < core::kAnimGroupCount; ++g) {
+            if (action == PropertiesPanel::AnimAction::Reset && g != static_cast<int>(group))
+                continue;
+            core::resetGroup(animation, base, static_cast<core::AnimGroup>(g));
+        }
+        if (action == PropertiesPanel::AnimAction::ResetAll || group == core::AnimGroup::Opacity)
+            base.flipHorizontal = base.flipVertical = false;
+        label = QStringLiteral("Ripristina l'animazione");
+    }
+    const core::Project before = project_;
+    if (!writeAnimTarget(target, base, animation))
+        return;
+    transformMergeKey_.clear();
+    recordEdit(label, before);
+}
+
 void MainWindow::fitSelectedPieces(bool fill)
 {
     const core::StreamSignature* target = project_.format().video();
@@ -174,6 +280,12 @@ void MainWindow::fitSelectedPieces(bool fill)
         t.posX = t.posY = 0.0;
         t.cropLeft = t.cropRight = t.cropTop = t.cropBottom = 0.0;
         changed += project_.setTransform({id}, t);
+        // Scala, posizione e ritaglio animati: l'animazione si spegne, altrimenti coprirebbe il valore appena messo.
+        core::TransformAnimation animation = f->animation;
+        for (const core::AnimGroup g : {core::AnimGroup::Scale, core::AnimGroup::Position, core::AnimGroup::Crop})
+            for (const core::AnimParam p : core::groupParams(g))
+                core::clearTrack(animation, p);
+        changed += project_.setAnimation({id}, animation);
     }
     if (changed == 0)
         return;

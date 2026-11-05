@@ -100,4 +100,47 @@ const AnimKey* findKey(const TransformAnimation& animation, AnimParam param, dou
 // Gli istanti in cui c'è almeno una chiave (di qualsiasi parametro), in ordine e senza doppi: per la riga dei rombi.
 std::vector<double> keyTimes(const TransformAnimation& animation);
 
+// ---- Gruppi di parametri, come li vede il pannello Proprietà: un rombo per gruppo, che anima insieme i suoi parametri.
+
+enum class AnimGroup : int
+{
+    Scale,     // ScaleX e ScaleY
+    Position,  // PosX e PosY
+    Rotation,
+    Crop,  // i quattro lati
+    Opacity,
+};
+inline constexpr int kAnimGroupCount = 5;
+std::vector<AnimParam> groupParams(AnimGroup group);
+
+// Quanto vicino al cursore una chiave conta "sul cursore" (il cursore si ferma sui fotogrammi: non è mai preciso al microsecondo).
+inline constexpr double kAnimCursorTolerance = 0.002;
+
+// Lo stato di un gruppo al tempo `time` del file, per un pezzo che va da `from` a `to` nel file.
+struct GroupState
+{
+    bool animated = false;      // almeno un parametro del gruppo ha chiavi
+    bool keyAtCursor = false;   // c'è una chiave sul cursore
+    bool hasPrev = false;       // una chiave nel pezzo prima del cursore
+    bool hasNext = false;       // una chiave nel pezzo dopo il cursore
+    double prevTime = 0.0;
+    double nextTime = 0.0;
+    int keyCount = 0;           // quanti istanti con chiave (nel gruppo)
+};
+GroupState groupState(const TransformAnimation& animation, AnimGroup group, double time, double from, double to);
+
+// Il rombo del pannello: gruppo non animato → parte l'animazione con una chiave sul cursore (valore com'è ora); animato e con
+// una chiave sul cursore → la toglie (se era l'ultima, l'animazione finisce e il valore resta quello della chiave, in `base`);
+// animato e senza chiave sul cursore → ne mette una (valore interpolato di adesso). `base` è la trasformazione fissa del pezzo.
+// Restituisce true (cambia sempre qualcosa).
+bool toggleGroupKey(TransformAnimation& animation, Transform& base, AnimGroup group, double time);
+
+// Ripristina il gruppo: niente animazione e valori di base.
+void resetGroup(TransformAnimation& animation, Transform& base, AnimGroup group);
+
+// Auto-key: l'utente ha cambiato i valori mostrati (`shown`, valutati al tempo `time`) in `edited`. I parametri animati che
+// sono cambiati ricevono una chiave sul cursore (o aggiornano quella che c'è); tutto il resto (parametri non animati,
+// specchio) cambia nella trasformazione fissa `base`. Restituisce true se è cambiato qualcosa.
+bool applyEditWithKeys(TransformAnimation& animation, Transform& base, const Transform& shown, const Transform& edited, double time);
+
 }  // namespace editor::core

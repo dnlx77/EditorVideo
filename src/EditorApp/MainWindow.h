@@ -167,7 +167,26 @@ public:
     void refreshTextPanel();                          // la rimette in pari con la scritta scelta e col progetto
     TextEditorPanel* textPanel() const { return textPanel_; }
     // Pannello Proprietà (a destra): il contenuto segue l'oggetto scelto. Per i pezzi video sono le trasformazioni.
-    void refreshPropertiesPanel();
+    void refreshPropertiesPanel(bool cursorOnly = false);  // cursorOnly: il cursore si è mosso (le maniglie del monitor non cambiano)
+    // Il pezzo video (di V1 o di un livello) scelto da solo, con le sue trasformazioni e i fotogrammi chiave, e dove si trova il
+    // cursore rispetto a lui (tempi nel file). Serve ai rombi e all'auto-key del pannello Proprietà.
+    struct AnimTarget
+    {
+        bool valid = false;
+        bool layer = false;
+        int id = 0;
+        double from = 0.0;      // inizio e fine del pezzo nel file
+        double to = 0.0;
+        double sequenceStart = 0.0;  // dove inizia nella sequenza
+        double fileTime = 0.0;  // il cursore nel file, limitato al pezzo
+        bool inside = false;    // il cursore sta dentro il pezzo
+        core::Transform base;
+        core::TransformAnimation animation;
+    };
+    AnimTarget animationTarget() const;
+    // Scrive trasformazione fissa e animazione del pezzo; true se è cambiato qualcosa.
+    bool writeAnimTarget(const AnimTarget& target, const core::Transform& base, const core::TransformAnimation& animation);
+    void applyAnimationAction(core::AnimGroup group, int action);
     PropertiesPanel* propertiesPanel() const { return propertiesPanel_; }
     // Cambia la trasformazione dei pezzi video scelti con `edit` (un campo alla volta: `field` unisce le modifiche di
     // seguito dello stesso campo in una voce di Annulla). false se nessun pezzo è cambiato.
@@ -401,6 +420,7 @@ private:
     PropertiesPanel* propertiesPanel_ = nullptr;
     std::string transitionMergeKey_;         // come transformMergeKey_, per le modifiche delle transizioni
     std::size_t transitionMergeCount_ = 0;
+    bool propertiesFollowCursor_ = false;  // il pannello mostra un pezzo scelto da solo: i valori e i rombi seguono il cursore
     std::string transformMergeKey_;          // campo e pezzi dell'ultima modifica delle trasformazioni, per unire quelle di fila
     std::size_t transformMergeCount_ = 0;
     QTabWidget* leftTabs_ = nullptr;        // il blocco in alto a sinistra ha tre schede: File del progetto, Transizioni e Gruppi

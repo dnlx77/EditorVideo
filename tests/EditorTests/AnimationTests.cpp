@@ -271,3 +271,96 @@ TEST(AnimationFile, BrokenKeysAreSkippedAndSorted)
     ASSERT_EQ(keys.size(), 1u);
     EXPECT_DOUBLE_EQ(keys[0].value, 20.0);
 }
+
+TEST(AnimationGroups, DiamondStartsTogglesAndEndsTheAnimation)
+{
+    Transform base;
+    base.scaleX = 1.5;
+    base.scaleY = 0.5;
+    TransformAnimation anim;
+    EXPECT_FALSE(groupState(anim, AnimGroup::Scale, 2.0, 0.0, 10.0).animated);
+
+    // Primo clic: parte l'animazione con una chiave per parametro, col valore di adesso.
+    ASSERT_TRUE(toggleGroupKey(anim, base, AnimGroup::Scale, 2.0));
+    EXPECT_EQ(anim.track(AnimParam::ScaleX).size(), 1u);
+    EXPECT_DOUBLE_EQ(anim.track(AnimParam::ScaleX)[0].value, 1.5);
+    EXPECT_DOUBLE_EQ(anim.track(AnimParam::ScaleY)[0].value, 0.5);
+    EXPECT_FALSE(anim.animated(AnimParam::PosX));  // gli altri gruppi non si toccano
+    GroupState s = groupState(anim, AnimGroup::Scale, 2.0, 0.0, 10.0);
+    EXPECT_TRUE(s.animated && s.keyAtCursor && !s.hasPrev && !s.hasNext);
+
+    // Più avanti, senza chiave: un secondo clic ne mette una col valore interpolato (qui costante).
+    s = groupState(anim, AnimGroup::Scale, 5.0, 0.0, 10.0);
+    EXPECT_TRUE(s.animated && !s.keyAtCursor && s.hasPrev && !s.hasNext);
+    EXPECT_DOUBLE_EQ(s.prevTime, 2.0);
+    ASSERT_TRUE(toggleGroupKey(anim, base, AnimGroup::Scale, 5.0));
+    EXPECT_EQ(anim.track(AnimParam::ScaleX).size(), 2u);
+
+    // Una chiave quasi sul cursore (un fotogramma di differenza nel tempo) conta come sul cursore.
+    s = groupState(anim, AnimGroup::Scale, 5.0009, 0.0, 10.0);
+    EXPECT_TRUE(s.keyAtCursor);
+    // Chiavi fuori dal pezzo non si raggiungono.
+    s = groupState(anim, AnimGroup::Scale, 3.0, 0.0, 4.0);
+    EXPECT_TRUE(s.hasPrev && !s.hasNext);
+
+    // Clic su una chiave: la toglie; togliendo l'ultima l'animazione finisce e il valore resta quello della chiave.
+    ASSERT_TRUE(toggleGroupKey(anim, base, AnimGroup::Scale, 5.0));
+    EXPECT_EQ(anim.track(AnimParam::ScaleX).size(), 1u);
+    anim.track(AnimParam::ScaleX)[0].value = 2.0;
+    ASSERT_TRUE(toggleGroupKey(anim, base, AnimGroup::Scale, 2.0));
+    EXPECT_FALSE(anim.animated(AnimParam::ScaleX));
+    EXPECT_FALSE(anim.animated(AnimParam::ScaleY));
+    EXPECT_DOUBLE_EQ(base.scaleX, 2.0);
+    EXPECT_DOUBLE_EQ(base.scaleY, 0.5);
+}
+
+TEST(AnimationGroups, EditsOnAnimatedParametersBecomeKeysTheRestChangesTheBase)
+{
+    Transform base;
+    TransformAnimation anim;
+    anim.track(AnimParam::PosX) = {key(0.0, 0.0), key(4.0, 100.0)};
+    anim.track(AnimParam::PosY) = {key(0.0, 0.0), key(4.0, 0.0)};
+    const Transform shown = evaluateTransform(base, anim, 1.0);  // posX 25
+    ASSERT_DOUBLE_EQ(shown.posX, 25.0);
+
+    Transform edited = shown;
+    edited.posX = 60.0;       // animato: diventa una chiave a 1 s
+    edited.rotation = 15.0;   // non animato: cambia la trasformazione fissa
+    edited.flipHorizontal = true;
+    ASSERT_TRUE(applyEditWithKeys(anim, base, shown, edited, 1.0));
+    ASSERT_EQ(anim.track(AnimParam::PosX).size(), 3u);
+    EXPECT_DOUBLE_EQ(anim.track(AnimParam::PosX)[1].time, 1.0);
+    EXPECT_DOUBLE_EQ(anim.track(AnimParam::PosX)[1].value, 60.0);
+    EXPECT_EQ(anim.track(AnimParam::PosY).size(), 2u);  // posY non è cambiata: nessuna chiave nuova
+    EXPECT_DOUBLE_EQ(base.posX, 0.0);                    // la base degli animati non si tocca
+    EXPECT_DOUBLE_EQ(base.rotation, 15.0);
+    EXPECT_TRUE(base.flipHorizontal);
+
+    // Una seconda modifica quasi sullo stesso istante aggiorna la stessa chiave e ne tiene il tipo di passaggio.
+    ASSERT_TRUE(setKeyInterp(anim, AnimParam::PosX, 1.0, Interp::Hold));
+    const Transform shown2 = evaluateTransform(base, anim, 1.0005);
+    Transform edited2 = shown2;
+    edited2.posX = 70.0;
+    ASSERT_TRUE(applyEditWithKeys(anim, base, shown2, edited2, 1.0005));
+    ASSERT_EQ(anim.track(AnimParam::PosX).size(), 3u);
+    EXPECT_DOUBLE_EQ(anim.track(AnimParam::PosX)[1].value, 70.0);
+    EXPECT_EQ(anim.track(AnimParam::PosX)[1].interp, Interp::Hold);
+
+    // Nessuna modifica: niente cambia.
+    EXPECT_FALSE(applyEditWithKeys(anim, base, shown2, shown2, 1.0));
+}
+
+TEST(AnimationGroups, ResetClearsTheGroupOnly)
+{
+    Transform base;
+    base.posX = 12.0;
+    base.rotation = 30.0;
+    TransformAnimation anim;
+    anim.track(AnimParam::PosX) = {key(0.0, 0.0), key(1.0, 5.0)};
+    anim.track(AnimParam::Rotation) = {key(0.0, 0.0), key(1.0, 90.0)};
+    resetGroup(anim, base, AnimGroup::Position);
+    EXPECT_FALSE(anim.animated(AnimParam::PosX));
+    EXPECT_DOUBLE_EQ(base.posX, 0.0);
+    EXPECT_TRUE(anim.animated(AnimParam::Rotation));
+    EXPECT_DOUBLE_EQ(base.rotation, 30.0);
+}

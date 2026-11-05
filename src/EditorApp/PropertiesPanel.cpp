@@ -94,14 +94,27 @@ void PropertiesPanel::edited(const std::string& field, std::function<void(core::
     onTransformEdit(edit, field);
 }
 
-QToolButton* PropertiesPanel::resetButton(const QString& tip, const std::string& field, std::function<void(core::Transform&)> reset)
+void PropertiesPanel::animate(core::AnimGroup group, AnimAction action)
+{
+    if (!updating_ && onAnimationAction)
+        onAnimationAction(group, action);
+}
+
+QToolButton* PropertiesPanel::resetButton(const QString& tip, const std::string& field, core::AnimGroup group,
+                                          std::function<void(core::Transform&)> reset)
 {
     auto* button = new QToolButton;
     button->setText(QStringLiteral("↺"));
     button->setToolTip(tip);
     button->setAutoRaise(true);
     button->setFixedSize(18, 18);
-    connect(button, &QToolButton::clicked, this, [this, field, reset] { edited(field + "_ripristina", reset); });
+    connect(button, &QToolButton::clicked, this, [this, field, group, reset] {
+        // Con un'animazione il ripristino la spegne (valori di base): non è una modifica che mette una chiave.
+        if (groupAnimated_[static_cast<std::size_t>(group)])
+            animate(group, AnimAction::Reset);
+        else
+            edited(field + "_ripristina", reset);
+    });
     return button;
 }
 
@@ -143,9 +156,15 @@ QWidget* PropertiesPanel::buildTransformPage()
         if (!updating_ && onFit)
             onFit(true);
     });
-    connect(all, &QPushButton::clicked, this, [this] { edited("tutto", [](core::Transform& t) { t = core::Transform{}; }); });
+    connect(all, &QPushButton::clicked, this, [this] {
+        if (std::any_of(groupAnimated_.begin(), groupAnimated_.end(), [](bool animated) { return animated; }))
+            animate(core::AnimGroup::Scale, AnimAction::ResetAll);
+        else
+            edited("tutto", [](core::Transform& t) { t = core::Transform{}; });
+    });
 
-    const auto group = [&](const QString& title, const std::string& field, std::function<void(core::Transform&)> reset) {
+    const auto group = [&](const QString& title, const std::string& field, core::AnimGroup animGroup,
+                           std::function<void(core::Transform&)> reset) {
         // Una sezione senza riquadro: una riga sottile sopra, poi il titolo (con il ripristino a destra) e i campi.
         auto* separator = new QFrame;
         separator->setFrameShape(QFrame::HLine);
@@ -164,14 +183,37 @@ QWidget* PropertiesPanel::buildTransformPage()
         heading->setFont(bold);
         header->addWidget(heading);
         header->addStretch(1);
-        header->addWidget(resetButton(QStringLiteral("Ripristina %1").arg(title.toLower()), field, std::move(reset)));
+        // Fotogrammi chiave: freccia indietro, rombo, freccia avanti.
+        AnimButtons& anim = animButtons_[static_cast<std::size_t>(animGroup)];
+        const auto small = [&](const QString& text, const QString& tip, const char* name) {
+            auto* button = new QToolButton;
+            button->setText(text);
+            button->setToolTip(tip);
+            button->setAutoRaise(true);
+            button->setFixedSize(18, 18);
+            button->setObjectName(QString::fromLatin1(name) + QString::number(static_cast<int>(animGroup)));
+            return button;
+        };
+        anim.prev = small(QStringLiteral("◀"), QStringLiteral("Vai al fotogramma chiave prima"), "chiavePrima");
+        anim.key = small(QStringLiteral("◇"), QStringLiteral("Anima %1: mette un fotogramma chiave sul cursore").arg(title.toLower()), "chiave");
+        anim.next = small(QStringLiteral("▶"), QStringLiteral("Vai al fotogramma chiave dopo"), "chiaveDopo");
+        connect(anim.prev, &QToolButton::clicked, this, [this, animGroup] { animate(animGroup, AnimAction::PrevKey); });
+        connect(anim.key, &QToolButton::clicked, this, [this, animGroup] { animate(animGroup, AnimAction::ToggleKey); });
+        connect(anim.next, &QToolButton::clicked, this, [this, animGroup] { animate(animGroup, AnimAction::NextKey); });
+        header->addWidget(anim.prev);
+        header->addWidget(anim.key);
+        header->addWidget(anim.next);
+        anim.prev->setEnabled(false);
+        anim.key->setEnabled(false);
+        anim.next->setEnabled(false);
+        header->addWidget(resetButton(QStringLiteral("Ripristina %1").arg(title.toLower()), field, animGroup, std::move(reset)));
         v->addLayout(header);
         root->addWidget(section);
         return v;
     };
 
     // Scala
-    QVBoxLayout* scale = group(QStringLiteral("Scala"), "scala", [](core::Transform& t) { t.scaleX = t.scaleY = 1.0; });
+    QVBoxLayout* scale = group(QStringLiteral("Scala"), "scala", core::AnimGroup::Scale, [](core::Transform& t) { t.scaleX = t.scaleY = 1.0; });
     scaleX_ = addRow(scale, QStringLiteral("Larghezza"), core::kMinScale * 100.0, core::kMaxScale * 100.0, 1.0, 1,
                      QStringLiteral(" %"), 1, 400, 1.0, "scalaX");
     linked_ = new QCheckBox(QStringLiteral("Proporzionale"));
@@ -199,7 +241,7 @@ QWidget* PropertiesPanel::buildTransformPage()
     });
 
     // Posizione
-    QVBoxLayout* position = group(QStringLiteral("Posizione"), "posizione", [](core::Transform& t) { t.posX = t.posY = 0.0; });
+    QVBoxLayout* position = group(QStringLiteral("Posizione"), "posizione", core::AnimGroup::Position, [](core::Transform& t) { t.posX = t.posY = 0.0; });
     posX_ = addRow(position, QStringLiteral("X"), -core::kMaxPosition, core::kMaxPosition, 1.0, 1, QStringLiteral(" px"), 0, 0, 1.0, "posizioneX");
     posY_ = addRow(position, QStringLiteral("Y"), -core::kMaxPosition, core::kMaxPosition, 1.0, 1, QStringLiteral(" px"), 0, 0, 1.0, "posizioneY");
     posX_.spin->setToolTip(QStringLiteral("Dal centro del fotogramma: positiva verso destra"));
@@ -208,13 +250,13 @@ QWidget* PropertiesPanel::buildTransformPage()
     connect(posY_.spin, &QDoubleSpinBox::valueChanged, this, [this](double v) { edited("posizioneY", [v](core::Transform& t) { t.posY = v; }); });
 
     // Rotazione
-    QVBoxLayout* rotation = group(QStringLiteral("Rotazione"), "rotazione", [](core::Transform& t) { t.rotation = 0.0; });
+    QVBoxLayout* rotation = group(QStringLiteral("Rotazione"), "rotazione", core::AnimGroup::Rotation, [](core::Transform& t) { t.rotation = 0.0; });
     rotation_ = addRow(rotation, QStringLiteral("Angolo"), -core::kMaxRotation, core::kMaxRotation, 0.5, 1, QStringLiteral(" °"), -180, 180, 1.0, "rotazione");
     rotation_.spin->setToolTip(QStringLiteral("Gradi, in senso orario se positivi"));
     connect(rotation_.spin, &QDoubleSpinBox::valueChanged, this, [this](double v) { edited("rotazione", [v](core::Transform& t) { t.rotation = v; }); });
 
     // Ritaglio
-    QVBoxLayout* crop = group(QStringLiteral("Ritaglio"), "ritaglio", [](core::Transform& t) {
+    QVBoxLayout* crop = group(QStringLiteral("Ritaglio"), "ritaglio", core::AnimGroup::Crop, [](core::Transform& t) {
         t.cropLeft = t.cropRight = t.cropTop = t.cropBottom = 0.0;
     });
     const auto cropRow = [&](Row& row, const QString& label, const char* name, double core::Transform::*member) {
@@ -229,7 +271,7 @@ QWidget* PropertiesPanel::buildTransformPage()
     cropRow(cropBottom_, QStringLiteral("Basso"), "ritaglioBasso", &core::Transform::cropBottom);
 
     // Aspetto
-    QVBoxLayout* look = group(QStringLiteral("Aspetto"), "aspetto", [](core::Transform& t) {
+    QVBoxLayout* look = group(QStringLiteral("Aspetto"), "aspetto", core::AnimGroup::Opacity, [](core::Transform& t) {
         t.opacity = 1.0;
         t.flipHorizontal = t.flipVertical = false;
     });
@@ -386,6 +428,11 @@ core::Transform PropertiesPanel::transform() const
 
 void PropertiesPanel::showTransform(const core::Transform& t, int count)
 {
+    showTransform(t, count, AnimationState{});
+}
+
+void PropertiesPanel::showTransform(const core::Transform& t, int count, const AnimationState& animation)
+{
     shown_ = t;
     updating_ = true;
     const auto set = [](Row& row, double value) {
@@ -418,6 +465,19 @@ void PropertiesPanel::showTransform(const core::Transform& t, int count)
     if (std::abs(t.scaleX - t.scaleY) > 1e-9) {
         const QSignalBlocker c(linked_);
         linked_->setChecked(false);
+    }
+    for (std::size_t g = 0; g < animButtons_.size(); ++g) {
+        const core::GroupState& state = animation.groups[g];
+        groupAnimated_[g] = state.animated;
+        AnimButtons& b = animButtons_[g];
+        b.key->setEnabled(animation.enabled);
+        b.prev->setEnabled(animation.enabled && state.hasPrev);
+        b.next->setEnabled(animation.enabled && state.hasNext);
+        b.key->setText(state.keyAtCursor ? QStringLiteral("◆") : QStringLiteral("◇"));
+        b.key->setStyleSheet(state.animated ? QStringLiteral("QToolButton { color: #e08a00; }") : QString());
+        b.key->setToolTip(state.keyAtCursor ? QStringLiteral("Toglie il fotogramma chiave sul cursore")
+                          : state.animated  ? QStringLiteral("Mette un fotogramma chiave sul cursore (col valore di adesso)")
+                                            : QStringLiteral("Anima: mette un fotogramma chiave sul cursore"));
     }
     countNote_->setText(count > 1 ? QStringLiteral("%1 pezzi scelti: ogni modifica vale per tutti (si vedono i valori del primo).").arg(count)
                                   : QString());
