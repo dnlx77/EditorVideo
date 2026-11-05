@@ -375,6 +375,28 @@ Interp groupInterpAt(const TransformAnimation& animation, AnimGroup group, doubl
     return interpOf(animation, groupParams(group), time);
 }
 
+const AnimKey* firstGroupKey(const TransformAnimation& animation, AnimGroup group, double time)
+{
+    for (const AnimParam p : groupParams(group)) {
+        if (const AnimKey* k = findKey(animation, p, time))
+            return k;
+    }
+    return nullptr;
+}
+
+const std::vector<BezierPreset>& bezierPresets()
+{
+    static const std::vector<BezierPreset> presets = {
+        {"Lineare", 0.0, 0.0, 1.0, 1.0},
+        {"Dolce (parte e arriva piano)", 0.42, 0.0, 0.58, 1.0},
+        {"Parte piano, poi veloce", 0.42, 0.0, 1.0, 1.0},
+        {"Parte veloce, arriva piano", 0.0, 0.0, 0.58, 1.0},
+        {"Molto dolce", 0.65, 0.0, 0.35, 1.0},
+        {"Rimbalzo in arrivo", 0.34, 1.56, 0.64, 1.0},
+    };
+    return presets;
+}
+
 std::vector<double> groupKeyTimes(const TransformAnimation& animation, AnimGroup group)
 {
     std::vector<double> times;

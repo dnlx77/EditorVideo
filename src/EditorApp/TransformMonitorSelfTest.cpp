@@ -1,3 +1,4 @@
+#include "EditorApp/CurveEditorDialog.h"
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
@@ -13,6 +14,7 @@
 #include <QtCore/QStringList>
 #include <QtCore/QElapsedTimer>
 #include <QtGui/QMouseEvent>
+#include <QtWidgets/QComboBox>
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QToolButton>
@@ -434,6 +436,61 @@ int runManipTest(const QStringList& args, qsizetype at)
                 check(animation().track(core::AnimParam::Opacity)[0].interp == core::Interp::Bezier
                           && std::abs(animation().track(core::AnimParam::Opacity)[0].c1y - 1.56) < 1e-9,
                       "una curva Bézier tiene i suoi punti di controllo");
+                // Editor delle curve (K8b): le maniglie si trascinano, i valori e l'elenco delle curve pronte seguono.
+                {
+                    CurveEditorDialog dialog({0.25, 0.1, 0.25, 1.0});
+                    dialog.show();
+                    QCoreApplication::processEvents();
+                    CurveWidget* cw = dialog.curveWidget();
+                    check(cw != nullptr && std::abs(cw->values()[0] - 0.25) < 1e-9 && std::abs(cw->values()[3] - 1.0) < 1e-9,
+                          "l'editor delle curve parte dai valori della chiave");
+                    if (cw != nullptr) {
+                        const auto sendCurve = [&](QEvent::Type type, const QPointF& p) {
+                            QMouseEvent e(type, p, cw->mapToGlobal(p), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                                          type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+                            QCoreApplication::sendEvent(cw, &e);
+                        };
+                        const QPointF h2 = cw->handlePosition(1);
+                        const QPointF target(h2.x() - cw->width() * 0.3, h2.y() + cw->height() * 0.3);  // più a sinistra e più in basso
+                        sendCurve(QEvent::MouseButtonPress, h2);
+                        sendCurve(QEvent::MouseMove, QPointF(h2.x() - 5, h2.y() + 5));
+                        sendCurve(QEvent::MouseMove, target);
+                        sendCurve(QEvent::MouseButtonRelease, target);
+                        check(cw->values()[2] < 0.25 && cw->values()[3] < 1.0 && std::abs(cw->values()[0] - 0.25) < 1e-9,
+                              "trascinare la seconda maniglia cambia solo x2 e y2");
+                        // Fuori dal riquadro i valori si fermano ai limiti.
+                        sendCurve(QEvent::MouseButtonPress, cw->handlePosition(0));
+                        sendCurve(QEvent::MouseMove, QPointF(-500, -500));
+                        sendCurve(QEvent::MouseButtonRelease, QPointF(-500, -500));
+                        check(std::abs(cw->values()[0]) < 1e-9 && std::abs(cw->values()[1] - CurveWidget::kMaxY) < 1e-9,
+                              "le maniglie non escono dai limiti (x in 0..1, y fra -0,8 e 1,8)");
+                        auto* spin = dialog.findChild<QDoubleSpinBox*>(QStringLiteral("curveValue0"));
+                        check(spin != nullptr && std::abs(spin->value() - cw->values()[0]) < 0.006, "i valori scritti seguono la curva");
+                        if (spin != nullptr) {
+                            spin->setValue(0.6);
+                            check(std::abs(cw->values()[0] - 0.6) < 1e-9, "scrivere un valore sposta la maniglia");
+                        }
+                        auto* presets = dialog.findChild<QComboBox*>(QStringLiteral("curvePresets"));
+                        check(presets != nullptr && presets->count() > core::bezierPresets().size(), "c'è l'elenco delle curve pronte");
+                        if (presets != nullptr && presets->count() > 2) {
+                            QMetaObject::invokeMethod(presets, "activated", Q_ARG(int, 2));  // la seconda curva pronta: «Dolce»
+                            check(std::abs(cw->values()[0] - 0.42) < 1e-9 && std::abs(cw->values()[3] - 1.0) < 1e-9,
+                                  "una curva pronta mette i suoi valori");
+                        }
+                    }
+                    // Dalla chiave: i punti di partenza dipendono dal tipo di passaggio, e con OK la chiave diventa una Bézier.
+                    const core::AnimGroup g = core::AnimGroup::Opacity;
+                    const double tk = animation().track(core::AnimParam::Opacity)[0].time;
+                    window.applyKeyCurve(g, tk, {0.1, 0.9, 0.7, 0.2});
+                    QCoreApplication::processEvents();
+                    const core::AnimKey& curved = animation().track(core::AnimParam::Opacity)[0];
+                    check(curved.interp == core::Interp::Bezier && std::abs(curved.c1y - 0.9) < 1e-9 && std::abs(curved.c2x - 0.7) < 1e-9,
+                          "la curva scelta nell'editor finisce sulla chiave");
+                    const auto start = window.keyCurve(g, tk);
+                    check(std::abs(start[1] - 0.9) < 1e-9 && std::abs(start[2] - 0.7) < 1e-9, "riaprendo l'editor si riparte dalla curva della chiave");
+                    window.undo();
+                    QCoreApplication::processEvents();
+                }
                 // Canc: la chiave scelta si toglie (e non il pezzo).
                 const QPointF last = line->keyCenterForTest(1);
                 send(QEvent::MouseButtonPress, last, true);

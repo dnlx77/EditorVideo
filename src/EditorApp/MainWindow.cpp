@@ -1,4 +1,5 @@
 #include "EditorApp/MainWindow.h"
+#include "EditorApp/CurveEditorDialog.h"
 
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/PlayerWidget.h"
@@ -459,6 +460,7 @@ MainWindow::MainWindow(QWidget* parent)
             return core::setGroupKeysInterp(animation, group, time, interp, c1x, c1y, c2x, c2y);
         });
     };
+    timeline_->onKeyEditCurve = [this](core::AnimGroup group, double time) { editKeyCurve(group, time); };
     timeline_->onTransitionSelected = [this](int) {
         setProgramActive(true);
         refreshPropertiesPanel();

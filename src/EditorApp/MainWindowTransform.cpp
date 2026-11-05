@@ -1,4 +1,5 @@
 #include "EditorApp/MainWindow.h"
+#include "EditorApp/CurveEditorDialog.h"
 
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/ProgramMonitor.h"
@@ -115,6 +116,36 @@ MainWindow::AnimTarget MainWindow::animationTarget() const
     target.fileTime = target.from + std::clamp(offset, 0.0, target.to - target.from);
     target.valid = true;
     return target;
+}
+
+std::array<double, 4> MainWindow::keyCurve(core::AnimGroup group, double time) const
+{
+    const AnimTarget target = animationTarget();
+    if (target.valid) {
+        if (const core::AnimKey* key = core::firstGroupKey(target.animation, group, time)) {
+            switch (key->interp) {
+                case core::Interp::Bezier: return {key->c1x, key->c1y, key->c2x, key->c2y};
+                case core::Interp::Smooth: return {0.42, 0.0, 0.58, 1.0};
+                case core::Interp::Linear:
+                case core::Interp::Hold: break;
+            }
+        }
+    }
+    return {0.0, 0.0, 1.0, 1.0};
+}
+
+bool MainWindow::applyKeyCurve(core::AnimGroup group, double time, const std::array<double, 4>& c)
+{
+    return editAnimationKeys(QStringLiteral("Curva del passaggio"), [&](core::TransformAnimation& animation, core::Transform&) {
+        return core::setGroupKeysInterp(animation, group, time, core::Interp::Bezier, c[0], c[1], c[2], c[3]);
+    });
+}
+
+void MainWindow::editKeyCurve(core::AnimGroup group, double time)
+{
+    CurveEditorDialog dialog(keyCurve(group, time), this);
+    if (dialog.exec() == QDialog::Accepted)
+        applyKeyCurve(group, time, dialog.values());
 }
 
 void MainWindow::refreshKeyRow()

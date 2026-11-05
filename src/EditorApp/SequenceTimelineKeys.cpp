@@ -248,15 +248,22 @@ void SequenceTimeline::showKeyMenu(core::AnimGroup group, double fileTime, const
     addInterp(menu, QStringLiteral("Dolce (parte e arriva piano)"), core::Interp::Smooth, {0.42, 0, 0.58, 1}, current == core::Interp::Smooth);
     addInterp(menu, QStringLiteral("Fermo (salta alla chiave dopo)"), core::Interp::Hold, {0, 0, 1, 1}, current == core::Interp::Hold);
     QMenu* bezier = menu.addMenu(QStringLiteral("Curva"));
-    addInterp(*bezier, QStringLiteral("Parte piano, poi veloce"), core::Interp::Bezier, {0.42, 0, 1, 1}, false);
-    addInterp(*bezier, QStringLiteral("Parte veloce, arriva piano"), core::Interp::Bezier, {0, 0, 0.58, 1}, false);
-    addInterp(*bezier, QStringLiteral("Molto dolce"), core::Interp::Bezier, {0.65, 0, 0.35, 1}, false);
-    addInterp(*bezier, QStringLiteral("Rimbalzo in arrivo"), core::Interp::Bezier, {0.34, 1.56, 0.64, 1}, false);
+    const std::vector<core::BezierPreset>& presets = core::bezierPresets();
+    for (std::size_t i = 2; i < presets.size(); ++i)  // (Lineare e Dolce sono già sopra)
+        addInterp(*bezier, QString::fromUtf8(presets[i].name), core::Interp::Bezier,
+                  {presets[i].c1x, presets[i].c1y, presets[i].c2x, presets[i].c2y}, false);
+    bezier->addSeparator();
+    QAction* customize = bezier->addAction(QStringLiteral("Personalizza…"));
     menu.addSeparator();
     QAction* remove = menu.addAction(QStringLiteral("Togli la chiave di %1").arg(QString::fromUtf8(animGroupName(group)).toLower()));
     QAction* chosen = menu.exec(globalPos);
     if (chosen == nullptr)
         return;
+    if (chosen == customize) {
+        if (onKeyEditCurve)
+            onKeyEditCurve(group, fileTime);
+        return;
+    }
     if (chosen == remove) {
         if (onKeyRemoved)
             onKeyRemoved(group, fileTime);

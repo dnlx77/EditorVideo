@@ -128,6 +128,14 @@ const char* animPresetName(AnimPreset preset);  // nome italiano per il menu
 // panoramica ingrandisce il pezzo). `projectWidth` serve alla panoramica (quanto scorre l'immagine). false se il pezzo è troppo corto.
 bool applyPreset(TransformAnimation& animation, Transform& base, AnimPreset preset, double from, double to, double projectWidth);
 
+// Curve pronte per i passaggi (come cubic-bezier di CSS): per il menu del clic destro e per l'editor delle curve.
+struct BezierPreset
+{
+    const char* name;  // italiano
+    double c1x, c1y, c2x, c2y;
+};
+const std::vector<BezierPreset>& bezierPresets();
+
 // Gli istanti in cui c'è almeno una chiave (di qualsiasi parametro), in ordine e senza doppi: per la riga dei rombi.
 std::vector<double> keyTimes(const TransformAnimation& animation);
 
@@ -149,6 +157,8 @@ bool removeGroupKeys(TransformAnimation& animation, AnimGroup group, double time
 bool setGroupKeysInterp(TransformAnimation& animation, AnimGroup group, double time, Interp interp, double c1x = 0.25, double c1y = 0.1,
                         double c2x = 0.25, double c2y = 1.0);
 Interp groupInterpAt(const TransformAnimation& animation, AnimGroup group, double time);
+// La prima chiave del gruppo a quell'istante (per il tipo di passaggio e i punti della curva); nullptr se non ce n'è.
+const AnimKey* firstGroupKey(const TransformAnimation& animation, AnimGroup group, double time);
 std::vector<double> groupKeyTimes(const TransformAnimation& animation, AnimGroup group);
 
 // Quanto vicino al cursore una chiave conta "sul cursore" (il cursore si ferma sui fotogrammi: non è mai preciso al microsecondo).

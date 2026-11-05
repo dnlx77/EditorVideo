@@ -144,6 +144,8 @@ public:
     std::function<void(core::AnimGroup group, double fileTime)> onKeyRemoved;
     std::function<void(core::AnimGroup group, double fileTime, core::Interp interp, double c1x, double c1y, double c2x, double c2y)>
         onKeyInterp;
+    // «Personalizza…» nel menu della curva: si apre l'editor grafico della curva di quella chiave (lo fa la MainWindow).
+    std::function<void(core::AnimGroup group, double fileTime)> onKeyEditCurve;
     // Solo per le prove: dove sta il rombo della chiave `index` (coordinate del widget; fuori dal widget se non si vede).
     QPointF keyCenterForTest(int index) const;
     // Mostra il menu del tipo di passaggio per la chiave a quel tempo (clic destro) e applica la scelta.

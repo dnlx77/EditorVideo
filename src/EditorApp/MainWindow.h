@@ -190,6 +190,11 @@ public:
     // Cambia le chiavi di animazione del pezzo scelto da solo con `edit` (che riceve l'animazione e la trasformazione fissa e
     // dice se ha cambiato qualcosa): un passo di Annulla con l'etichetta `label`. false se non c'è un pezzo o non è cambiato niente.
     bool editAnimationKeys(const QString& label, const std::function<bool(core::TransformAnimation&, core::Transform&)>& edit);
+    // L'editor grafico della curva del passaggio di una chiave (clic destro sul rombo → Curva → Personalizza…). I punti di
+    // partenza vengono dal tipo di passaggio che la chiave ha adesso; con OK la chiave diventa una Bézier con i nuovi punti.
+    void editKeyCurve(core::AnimGroup group, double time);
+    std::array<double, 4> keyCurve(core::AnimGroup group, double time) const;
+    bool applyKeyCurve(core::AnimGroup group, double time, const std::array<double, 4>& c);
     void refreshKeyRow();  // la riga dei rombi sulla linea del tempo segue il pezzo scelto
     PropertiesPanel* propertiesPanel() const { return propertiesPanel_; }
     // Cambia la trasformazione dei pezzi video scelti con `edit` (un campo alla volta: `field` unisce le modifiche di
