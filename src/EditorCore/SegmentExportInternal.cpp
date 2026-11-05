@@ -450,6 +450,7 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
             const double sequenceStart = sequence;
             sequence += range.length();
             const Transform transform = transformOf(clips[c], r);
+            const TransformAnimation animation = animationOf(clips[c], r);
             std::vector<Piece> all;
             for (const TransitionPart& part : splitByTransition(range, rangeIndex, transitions)) {
                 if (part.transition >= 0) {
@@ -464,11 +465,13 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
                 }
                 const TimeRange partRange = part.range;
                 const double partStart = sequenceStart + (partRange.start - range.start);
-                if (!transform.isIdentity()) {
-                    // Un tratto trasformato si ricodifica tutto: la trasformazione si applica al fotogramma decodificato.
+                if (!transform.isIdentity() || !animation.empty()) {
+                    // Un tratto trasformato (o animato) si ricodifica tutto: la trasformazione si applica al fotogramma
+                    // decodificato (con i fotogrammi chiave, quella del suo tempo).
                     Piece piece{partRange, true};
                     piece.transformed = true;
                     piece.transform = transform;
+                    piece.animation = animation;
                     all.push_back(piece);
                     transformNeeded = true;
                     preciseNeeded = preciseNeeded || cannotReencode.empty();

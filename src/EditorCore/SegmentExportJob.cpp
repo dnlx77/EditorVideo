@@ -533,7 +533,11 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             // Tratto trasformato: scala, posizione, rotazione e ritaglio sul fotogramma, poi le scritte (se ci sono).
             if (!blender_)
                 blender_ = std::make_unique<TextFrameBlender>(format.width, format.height, blendPixelFormat(format));
-            const AVFrame* blended = blender_->blendTransformed(frame, piece.transform, texts);
+            // Con i fotogrammi chiave la trasformazione è quella del tempo del fotogramma nel file.
+            const Transform now = piece.animation.empty()
+                                      ? piece.transform
+                                      : evaluateTransform(piece.transform, piece.animation, range.start + k * frameSeconds);
+            const AVFrame* blended = blender_->blendTransformed(frame, now, texts);
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
                 throw MediaError(kOutOfMemory);

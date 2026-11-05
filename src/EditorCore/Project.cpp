@@ -105,6 +105,7 @@ std::vector<ClipRanges> Project::exportPlan(GapExport gaps) const
         plan.back().ranges.push_back({f.start, f.end});
         plan.back().gapsBefore.push_back(gaps == GapExport::Black ? f.gap : 0.0);
         plan.back().transforms.push_back(f.transform);
+        plan.back().animations.push_back(f.animation);
         previousClip = f.clipId;
     }
     return plan;
