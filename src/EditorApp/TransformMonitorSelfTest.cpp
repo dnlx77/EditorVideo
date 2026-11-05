@@ -17,6 +17,7 @@
 #include <QtWidgets/QToolButton>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -200,6 +201,48 @@ int runManipTest(const QStringList& args, qsizetype at)
         monitor.seekTo(1.0);
         QCoreApplication::processEvents();
         check(player->drawnTransform().isIdentity(), "senza fotogrammi chiave il pezzo torna senza trasformazione");
+    }
+
+    // Percorso del movimento (K6): con la posizione animata il monitor mostra un punto per chiave, e un punto si trascina.
+    {
+        const core::Fragment& fragment = project.sequence().fragments()[0];
+        core::TransformAnimation animation;
+        animation.track(core::AnimParam::PosX) = {{.time = 0.5, .value = 0.0}, {.time = 2.5, .value = 200.0}};
+        animation.track(core::AnimParam::PosY) = {{.time = 0.5, .value = 0.0}, {.time = 2.5, .value = 100.0}};
+        project.sequence().setAnimation(fragment.id, animation);
+        monitor.sequenceChanged();
+        monitor.seekTo(1.0);
+        monitor.setTransformMode(true);
+        QCoreApplication::processEvents();
+        const auto path = monitor.motionPath();
+        check(path.has_value() && path->dots.size() == 2 && path->line.size() > 10, "con la posizione animata il monitor ha il percorso del movimento");
+        if (path.has_value() && path->dots.size() == 2) {
+            check(std::abs(path->dots[0].pos.x - projW / 2.0) < 1e-6 && std::abs(path->dots[1].pos.x - (projW / 2.0 + 200.0)) < 1e-6
+                      && std::abs(path->dots[1].pos.y - (projH / 2.0 + 100.0)) < 1e-6 && std::abs(path->dots[1].fileTime - 2.5) < 1e-9,
+                  "i punti del percorso stanno dove il pezzo è alle chiavi");
+            std::vector<std::array<double, 3>> moved;
+            monitor.onMotionKeyMoved = [&](bool, int, double t, double x, double y) { moved.push_back({t, x, y}); };
+            edits.clear();
+            const core::Point2 dot = path->dots[1].pos;
+            send(QEvent::MouseButtonPress, toScreen(dot.x, dot.y));
+            send(QEvent::MouseMove, toScreen(dot.x + 25, dot.y + 10));
+            send(QEvent::MouseMove, toScreen(dot.x + 50, dot.y + 20));
+            check(moved.empty(), "durante il trascinamento di un punto non arriva ancora nessuna modifica");
+            send(QEvent::MouseButtonRelease, toScreen(dot.x + 50, dot.y + 20));
+            check(moved.size() == 1 && std::abs(moved[0][0] - 2.5) < 1e-9 && std::abs(moved[0][1] - 250.0) < 1.0
+                      && std::abs(moved[0][2] - 120.0) < 1.0,
+                  "al rilascio arrivano l'istante della chiave e la nuova posizione");
+            check(edits.empty(), "trascinare un punto del percorso non sposta il pezzo");
+        }
+        // Una chiave sola: non c'è un percorso.
+        animation.track(core::AnimParam::PosX) = {{.time = 0.5, .value = 10.0}};
+        animation.track(core::AnimParam::PosY).clear();
+        project.sequence().setAnimation(fragment.id, animation);
+        monitor.sequenceChanged();
+        check(!monitor.motionPath().has_value(), "con una chiave sola non c'è il percorso");
+        project.sequence().setAnimation(fragment.id, {});
+        monitor.sequenceChanged();
+        monitor.setTransformMode(false);
     }
 
     monitor.setTransformMode(true);
@@ -403,6 +446,52 @@ int runManipTest(const QStringList& args, qsizetype at)
                 window.undo();
                 QCoreApplication::processEvents();
                 check(animation().track(core::AnimParam::Opacity).size() == 2, "Annulla riporta la chiave");
+                // Un gesto sul monitor (K6): il parametro animato che cambia riceve una chiave sul cursore, gli altri cambiano la base.
+                {
+                    seek(2.0);
+                    const core::Fragment& now = *window.project().sequence().find(id);
+                    const core::Transform shown = core::evaluateTransform(now.transform, now.animation, piece.start + 2.0);
+                    core::Transform edited = shown;
+                    edited.opacity = 0.7;   // animato (ha le sue chiavi)
+                    edited.rotation = 12.0;  // fisso
+                    const std::size_t keysBefore = animation().track(core::AnimParam::Opacity).size();
+                    check(window.commitMonitorTransform(id, edited), "il gesto sul monitor di un pezzo animato viene accettato");
+                    QCoreApplication::processEvents();
+                    const core::Fragment& after = *window.project().sequence().find(id);
+                    check(animation().track(core::AnimParam::Opacity).size() == keysBefore + 1
+                              && after.animation.track(core::AnimParam::Opacity).back().value == 0.7,
+                          "il parametro animato cambiato dal gesto riceve una chiave sul cursore");
+                    check(!after.animation.animated(core::AnimParam::Rotation) && std::abs(after.transform.rotation - 12.0) < 1e-9,
+                          "il parametro fisso cambiato dal gesto cambia la trasformazione di base");
+                    check(std::abs(after.transform.opacity - 1.0) < 1e-9, "la base del parametro animato non cambia");
+                    window.undo();
+                    QCoreApplication::processEvents();
+                    check(animation().track(core::AnimParam::Opacity).size() == keysBefore
+                              && std::abs(window.project().sequence().find(id)->transform.rotation) < 1e-9,
+                          "il gesto sul monitor è un solo passo di Annulla");
+                }
+                // Un punto del percorso trascinato sul monitor cambia la posizione della chiave (e un solo passo di Annulla).
+                {
+                    const double tk = piece.start + 1.0;
+                    window.editAnimationKeys(QStringLiteral("prova percorso"), [&](core::TransformAnimation& a, core::Transform&) {
+                        for (const core::AnimParam p : {core::AnimParam::PosX, core::AnimParam::PosY}) {
+                            core::setKey(a, p, {.time = piece.start + 0.2, .value = 0.0});
+                            core::setKey(a, p, {.time = tk, .value = 50.0});
+                        }
+                        return true;
+                    });
+                    QCoreApplication::processEvents();
+                    window.programMonitor()->onMotionKeyMoved(false, id, tk, 300.0, -80.0);
+                    QCoreApplication::processEvents();
+                    const core::AnimKey* kx = core::findKey(animation(), core::AnimParam::PosX, tk);
+                    const core::AnimKey* ky = core::findKey(animation(), core::AnimParam::PosY, tk);
+                    check(kx != nullptr && ky != nullptr && std::abs(kx->value - 300.0) < 1e-9 && std::abs(ky->value + 80.0) < 1e-9,
+                          "un punto del percorso trascinato cambia X e Y della chiave");
+                    window.undo();
+                    QCoreApplication::processEvents();
+                    const core::AnimKey* back = core::findKey(animation(), core::AnimParam::PosX, tk);
+                    check(back != nullptr && std::abs(back->value - 50.0) < 1e-9, "il punto del percorso è un solo passo di Annulla");
+                }
                 // Un pezzo non scelto (selezione vuota): la riga sparisce.
                 line->selectObjects({});
                 QCoreApplication::processEvents();

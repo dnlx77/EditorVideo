@@ -271,6 +271,72 @@ core::Transform ProgramMonitor::shownTransform() const
     return v1Transform();
 }
 
+std::optional<ProgramMonitor::MotionPath> ProgramMonitor::motionPath() const
+{
+    if (!transformMode_ || cropMode_ || !manipulatorsVisible())
+        return std::nullopt;
+    const core::Transform* base = nullptr;
+    const core::TransformAnimation* animation = nullptr;
+    MotionPath path;
+    double from = 0.0;
+    double to = 0.0;
+    if (const core::LayerPiece* piece = manipPiece()) {
+        base = &piece->transform;
+        animation = &piece->animation;
+        path.layer = true;
+        path.id = piece->id;
+        from = piece->start;
+        to = piece->end;
+    } else {
+        const std::vector<core::Fragment>& fragments = project_.sequence().fragments();
+        if (index_ < 0 || index_ >= static_cast<int>(fragments.size()))
+            return std::nullopt;
+        const core::Fragment& f = fragments[static_cast<std::size_t>(index_)];
+        base = &f.transform;
+        animation = &f.animation;
+        path.id = f.id;
+        from = f.start;
+        to = f.end;
+    }
+    std::vector<double> times;
+    for (const core::AnimParam p : {core::AnimParam::PosX, core::AnimParam::PosY}) {
+        for (const core::AnimKey& k : animation->track(p)) {
+            if (k.time >= from - 1e-6 && k.time <= to + 1e-6)
+                times.push_back(k.time);
+        }
+    }
+    std::sort(times.begin(), times.end());
+    times.erase(std::unique(times.begin(), times.end(), [](double a, double b) { return std::abs(a - b) < 1e-6; }), times.end());
+    if (times.size() < 2)
+        return std::nullopt;
+    const QSize frame = frameSize();
+    const auto centerAt = [&](double t) {
+        const core::Transform e = core::evaluateTransform(*base, *animation, t);
+        return core::Point2{frame.width() / 2.0 + e.posX, frame.height() / 2.0 + e.posY};
+    };
+    for (const double t : times)
+        path.dots.push_back({t, centerAt(t)});
+    constexpr int kSamples = 64;
+    for (int i = 0; i <= kSamples; ++i)
+        path.line.push_back(centerAt(times.front() + (times.back() - times.front()) * i / kSamples));
+    return path;
+}
+
+int ProgramMonitor::motionDotAt(const MotionPath& path, core::Point2 p, double screenScale) const
+{
+    const double reach = (core::kManipHandleRadius + 2.0) / std::max(screenScale, 1e-9);
+    int best = -1;
+    double bestDistance = reach;
+    for (std::size_t i = 0; i < path.dots.size(); ++i) {
+        const double d = std::hypot(path.dots[i].pos.x - p.x, path.dots[i].pos.y - p.y);
+        if (d <= bestDistance) {
+            best = static_cast<int>(i);
+            bestDistance = d;
+        }
+    }
+    return best;
+}
+
 void ProgramMonitor::refreshManipulators()
 {
     applyShownTransform();
@@ -309,6 +375,7 @@ void ProgramMonitor::setTransformMode(bool on)
         return;
     transformMode_ = on;
     manipDrag_.reset();
+    motionDrag_.reset();
     if (on && cropMode_) {
         setCropMode(false);
         if (onCropModeChanged)
@@ -327,6 +394,7 @@ void ProgramMonitor::setCropMode(bool on)
         return;
     cropMode_ = on;
     manipDrag_.reset();
+    motionDrag_.reset();
     if (on && transformMode_) {
         setTransformMode(false);
         if (onTransformModeChanged)
@@ -396,6 +464,32 @@ void ProgramMonitor::paintManipulators(QPainter& painter, const QRectF& target)
         else
             painter.drawRect(QRectF(at.x() - r, at.y() - r, 2 * r, 2 * r));
     };
+    if (const std::optional<MotionPath> path = motionDrag_ ? std::optional<MotionPath>(motionDrag_->path) : motionPath()) {
+        // Il percorso del movimento: la curva e un punto per chiave (quello preso segue il mouse).
+        QPolygonF line;
+        std::vector<core::Point2> points = path->line;
+        if (motionDrag_) {  // durante il trascinamento: segmenti fra i punti, con quello preso dov'è il mouse
+            points.clear();
+            for (std::size_t i = 0; i < path->dots.size(); ++i)
+                points.push_back(i == motionDrag_->dot ? motionDrag_->current : path->dots[i].pos);
+        }
+        for (const core::Point2& p : points)
+            line << toWidget(p);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(QColor(0, 0, 0, 160), 3, Qt::DashLine));
+        painter.drawPolyline(line);
+        painter.setPen(QPen(QColor(255, 170, 0, 240), 1.5, Qt::DashLine));
+        painter.drawPolyline(line);
+        for (std::size_t i = 0; i < path->dots.size(); ++i) {
+            const QPointF at = toWidget(motionDrag_ && i == motionDrag_->dot ? motionDrag_->current : path->dots[i].pos);
+            const double r = core::kManipHandleRadius * 0.85;
+            painter.setPen(QPen(QColor(0, 0, 0, 200), 1.5));
+            painter.setBrush(QColor(255, 170, 0));
+            QPolygonF diamond;
+            diamond << QPointF(at.x(), at.y() - r) << QPointF(at.x() + r, at.y()) << QPointF(at.x(), at.y() + r) << QPointF(at.x() - r, at.y());
+            painter.drawPolygon(diamond);
+        }
+    }
     if (cropMode_) {
         // Il file intero, tratteggiato, per vedere cosa si è tolto; le maniglie sugli angoli e a metà dei lati del riquadro.
         QPolygonF full;
@@ -449,6 +543,13 @@ bool ProgramMonitor::grabImage(QPointF at)
         manipDrag_ = ManipDrag{targetId, {}, start, start, p, edges, layerPiece != nullptr};
         return true;
     }
+    // Prima i punti del percorso del movimento.
+    if (const std::optional<MotionPath> path = motionPath()) {
+        if (const int dot = motionDotAt(*path, p, manipScreenScale()); dot >= 0) {
+            motionDrag_ = MotionDrag{*path, static_cast<std::size_t>(dot), path->dots[static_cast<std::size_t>(dot)].pos};
+            return true;
+        }
+    }
     const core::ManipHit hit = core::manipHitTest(start, *size, p, manipScreenScale());
     const auto startDrag = [&] {
         manipDrag_ = ManipDrag{targetId, hit, start, start, p, 0, layerPiece != nullptr};
@@ -466,6 +567,13 @@ bool ProgramMonitor::grabImage(QPointF at)
 
 void ProgramMonitor::dragImage(QPointF at)
 {
+    if (motionDrag_) {
+        if (const std::optional<core::ManipSize> size = manipSize()) {
+            motionDrag_->current = {at.x() * size->projW, at.y() * size->projH};
+            player_->update();
+        }
+        return;
+    }
     if (!manipDrag_) {
         dragText(at);
         return;
@@ -512,6 +620,21 @@ void ProgramMonitor::dragImage(QPointF at)
 
 void ProgramMonitor::dropImage(QPointF at)
 {
+    if (motionDrag_) {
+        dragImage(at);
+        const MotionDrag done = *motionDrag_;
+        motionDrag_.reset();
+        const QSize frame = frameSize();
+        const MotionDot& dot = done.path.dots[done.dot];
+        if (std::abs(done.current.x - dot.pos.x) > 0.5 || std::abs(done.current.y - dot.pos.y) > 0.5) {
+            if (onMotionKeyMoved)
+                onMotionKeyMoved(done.path.layer, done.path.id, dot.fileTime, done.current.x - frame.width() / 2.0,
+                                 done.current.y - frame.height() / 2.0);
+        }
+        applyShownTransform();
+        player_->update();
+        return;
+    }
     if (!manipDrag_) {
         dropText(at);
         return;
@@ -519,6 +642,7 @@ void ProgramMonitor::dropImage(QPointF at)
     dragImage(at);
     const ManipDrag done = *manipDrag_;
     manipDrag_.reset();
+    motionDrag_.reset();
     snapGuides_ = {};
     rotationSnapped_ = false;
     if (!(done.current == done.start)) {
