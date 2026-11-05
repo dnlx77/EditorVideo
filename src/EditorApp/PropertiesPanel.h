@@ -5,6 +5,8 @@
 #include "EditorCore/TransitionList.h"
 #include "EditorCore/Transitions.h"
 
+#include "AnimMiniTimeline.h"
+
 #include <QtWidgets/QWidget>
 
 #include <array>
@@ -45,6 +47,8 @@ public:
     };
     void showTransform(const core::Transform& transform, int count);
     void showTransform(const core::Transform& transform, int count, const AnimationState& animation);
+    // La mini linea del tempo delle chiavi del pezzo (vuota/nascosta senza animazione): MainWindow ne mette i dati e le azioni.
+    AnimMiniTimeline* miniTimeline() const { return mini_; }
     bool showingTransform() const;
     // La pagina delle scritte (l'editor, già costruito): il pannello ne prende possesso. showText() la mostra.
     void setTextPage(QWidget* page);
@@ -130,6 +134,7 @@ private:
     std::array<AnimButtons, core::kAnimGroupCount> animButtons_{};
     std::array<bool, core::kAnimGroupCount> groupAnimated_{};
     QToolButton* presetButton_ = nullptr;
+    AnimMiniTimeline* mini_ = nullptr;
     core::Transform shown_;
     bool updating_ = false;
 };

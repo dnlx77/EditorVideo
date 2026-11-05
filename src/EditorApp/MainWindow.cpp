@@ -581,6 +581,20 @@ MainWindow::MainWindow(QWidget* parent)
     propertiesPanel_->onAnimationAction = [this](core::AnimGroup group, PropertiesPanel::AnimAction action) {
         applyAnimationAction(group, static_cast<int>(action));
     };
+    // La mini linea del tempo del pannello: stesse azioni sulle chiavi della riga di rombi sulla linea del tempo.
+    {
+        AnimMiniTimeline* mini = propertiesPanel_->miniTimeline();
+        mini->onSeek = [this](double fileTime) {
+            const AnimTarget target = animationTarget();
+            if (target.valid && program_ != nullptr)
+                program_->seekTo(target.sequenceStart + (std::clamp(fileTime, target.from, target.to) - target.from));
+        };
+        mini->onKeyMoved = [this](core::AnimGroup group, double from, double to) { timeline_->onKeyMoved(group, from, to); };
+        mini->onKeyRemoved = [this](core::AnimGroup group, double time) { timeline_->onKeyRemoved(group, time); };
+        mini->onKeyInterp = [this](core::AnimGroup group, double time, core::Interp interp) {
+            timeline_->onKeyInterp(group, time, interp, 0.0, 0.0, 1.0, 1.0);
+        };
+    }
     propertiesPanel_->setTextPage(textPanel_);
     propertiesDock_ = makeDock(QStringLiteral("Proprietà"), QStringLiteral("pannelloProprieta"), propertiesPanel_);
     timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),

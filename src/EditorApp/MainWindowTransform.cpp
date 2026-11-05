@@ -61,6 +61,13 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
                 core::groupState(target.animation, static_cast<core::AnimGroup>(g), target.fileTime, target.from, target.to);
         propertiesFollowCursor_ = true;
         propertiesPanel_->showTransform(core::evaluateTransform(target.base, target.animation, target.fileTime), 1, state);
+        std::vector<AnimMiniTimeline::Mark> marks;
+        for (int g = 0; g < core::kAnimGroupCount; ++g) {
+            const auto group = static_cast<core::AnimGroup>(g);
+            for (const double time : core::groupKeyTimes(target.animation, group))
+                marks.push_back({group, time, core::groupInterpAt(target.animation, group, time)});
+        }
+        propertiesPanel_->miniTimeline()->setData(target.from, target.to, target.inside ? target.fileTime : -1.0, std::move(marks));
         return;
     }
     const std::vector<int> pieces = selectedPieceIds(objects);

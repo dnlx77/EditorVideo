@@ -171,6 +171,8 @@ QWidget* PropertiesPanel::buildTransformPage()
     }
     presetButton_->setMenu(presetMenu);
     root->addWidget(presetButton_);
+    mini_ = new AnimMiniTimeline;
+    root->addWidget(mini_);
     connect(fit, &QPushButton::clicked, this, [this] {
         if (!updating_ && onFit)
             onFit(false);
@@ -452,6 +454,7 @@ core::Transform PropertiesPanel::transform() const
 void PropertiesPanel::showTransform(const core::Transform& t, int count)
 {
     showTransform(t, count, AnimationState{});
+    mini_->setData(0.0, 1.0, -1.0, {});
 }
 
 void PropertiesPanel::showTransform(const core::Transform& t, int count, const AnimationState& animation)

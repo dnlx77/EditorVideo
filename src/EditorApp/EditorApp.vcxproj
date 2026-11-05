@@ -47,6 +47,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="AnimColors.h" />
+    <ClInclude Include="AnimMiniTimeline.h" />
     <ClInclude Include="AudioOutput.h" />
     <ClInclude Include="CurveEditorDialog.h" />
     <ClInclude Include="MainWindow.h" />
@@ -111,6 +112,7 @@
     <ClCompile Include="SequenceAudio.cpp" />
     <ClCompile Include="SequenceTimeline.cpp" />
     <ClCompile Include="SequenceTimelineInput.cpp" />
+    <ClCompile Include="AnimMiniTimeline.cpp" />
     <ClCompile Include="SequenceTimelineKeys.cpp" />
     <ClCompile Include="SequenceTimelinePaint.cpp" />
     <ClCompile Include="ThumbnailCache.cpp" />
