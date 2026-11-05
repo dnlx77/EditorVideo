@@ -14,6 +14,7 @@
 
 class QToolButton;
 
+#include <array>
 #include <functional>
 #include <map>
 #include <memory>
@@ -110,6 +111,12 @@ public:
     // sotto il cursore. Il gesto finito arriva a `onLayerTransformEdited`.
     std::function<int()> selectedLayerPiece;
     std::function<void(int pieceId, const core::Transform& transform)> onLayerTransformEdited;
+    // Una scritta scelta da sola sulla linea del tempo (0 = nessuna): se è sotto il cursore le maniglie agiscono su di lei (scala 100% =
+    // la grandezza della scritta; ruota e scala attorno al suo centro di stile). Il gesto finito arriva a `onTextTransformEdited`,
+    // un punto del percorso a `onTextMotionKeyMoved` (istante in secondi dall'inizio della scritta, spostamento `posX/posY`).
+    std::function<int()> selectedText;
+    std::function<void(int clipId, const core::Transform& transform)> onTextTransformEdited;
+    std::function<void(int clipId, double clipTime, double posX, double posY)> onTextMotionKeyMoved;
     // Percorso del movimento: con la posizione animata (almeno due istanti) e il tasto dei manipolatori acceso, sul monitor si
     // vede la linea che il centro del pezzo percorre, con un punto per ogni chiave. Un punto si trascina: al rilascio arriva qui
     // l'istante della chiave (nel file) e la nuova posizione (spostamento dal centro del fotogramma, in pixel del progetto).
@@ -122,6 +129,7 @@ public:
     struct MotionPath
     {
         bool layer = false;
+        bool text = false;  // di una scritta: gli istanti sono secondi dall'inizio della scritta
         int id = 0;
         std::vector<MotionDot> dots;
         std::vector<core::Point2> line;  // la curva, campionata
@@ -139,6 +147,8 @@ public:
     bool thirdsGrid() const { return thirdsGrid_; }
     // Per le prove: i manipolatori sono visibili e sul pezzo (non in riproduzione, né in una transizione o in uno spazio vuoto).
     bool manipulatorsVisible() const;
+    // Per le prove: i quattro angoli del riquadro mostrato, in pixel del progetto (vuoto se le maniglie non si vedono).
+    std::optional<std::array<core::Point2, 4>> manipQuad() const;
 
     QSize minimumSizeHint() const override { return {120, 60}; }
 
@@ -165,6 +175,27 @@ private:
     bool grabText(QPointF at);
     // Manipolatori: la trasformazione del pezzo mostrato (quella in corso se si sta trascinando), il suo disegno e il gesto.
     const core::LayerPiece* manipPiece() const;
+    // La scritta scelta, se è sotto il cursore (e le maniglie non sono quelle del ritaglio, che le scritte non hanno).
+    const core::TextClip* manipText() const;
+    // Una scritta si manipola come un file «virtuale» grande quanto il suo riquadro: scala 1 = grandezza della scritta, e il
+    // centro del riquadro (non il punto di stile attorno a cui ruota davvero) è il centro dell'immagine. toVirtual/toReal
+    // passano dalla trasformazione vera alla virtuale e viceversa.
+    struct TextManip
+    {
+        const core::TextClip* clip = nullptr;
+        core::Point2 pivot;      // il centro di stile, in pixel del progetto
+        core::Point2 boxCenter;  // il centro del riquadro della scritta
+        double fit = 1.0;        // il fattore «adatta al fotogramma» del riquadro
+        core::ManipSize size;    // il riquadro e il progetto
+    };
+    std::optional<TextManip> textManip() const;
+    core::Transform textToVirtual(const core::Transform& real, const TextManip& m) const;
+    core::Transform textToReal(const core::Transform& virt, const TextManip& m) const;
+    core::Transform textShownReal() const;  // la trasformazione della scritta al tempo del cursore
+    void showDraggedText();
+    mutable core::TextClip boxClip_;  // l'ultima scritta di cui si è misurato il riquadro (senza trasformazione)
+    mutable QSize boxFrame_;
+    mutable QRectF boxRect_;
     core::Transform v1Transform() const;  // la trasformazione del pezzo di V1 mostrato (quella in corso se lo si trascina)
     void showDraggedLayer();
     core::Transform layerPieceTransform(const core::LayerPiece& piece) const;  // con i fotogrammi chiave, al tempo del cursore
@@ -214,6 +245,7 @@ private:
         core::Point2 from;  // dove si è afferrato, in pixel del progetto
         int cropEdges = 0;  // in modalità Ritaglia: i lati trascinati (kCropLeft...)
         bool layer = false;  // `fragmentId` è un pezzo di un livello, non di V1
+        bool text = false;   // `fragmentId` è una scritta (le trasformazioni sono quelle «virtuali», vedi TextManip)
     };
     std::optional<ManipDrag> manipDrag_;
     struct MotionDrag

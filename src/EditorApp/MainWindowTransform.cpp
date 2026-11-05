@@ -189,8 +189,9 @@ void MainWindow::refreshKeyRow()
     if (timeline_ == nullptr)
         return;
     SequenceTimeline::KeyRow row;
-    if (const AnimTarget target = animationTarget(); target.valid && !target.text) {  // (la riga sotto le scritte: passo S4)
+    if (const AnimTarget target = animationTarget(); target.valid) {
         row.layerPiece = target.layer;
+        row.text = target.text;
         row.id = target.id;
         for (int g = 0; g < core::kAnimGroupCount; ++g) {
             const auto group = static_cast<core::AnimGroup>(g);
@@ -306,6 +307,23 @@ bool MainWindow::commitMonitorTransform(int fragmentId, const core::Transform& t
     return true;
 }
 
+bool MainWindow::commitMonitorTextTransform(int clipId, const core::Transform& transform)
+{
+    const core::TextClip* clip = project_.textTracks().find(clipId);
+    if (clip == nullptr)
+        return false;
+    if (commitAnimatedMonitorTransform(false, clipId, transform, true))
+        return true;
+    if (!clip->animation.empty())
+        return false;  // (con l'animazione serve un solo oggetto scelto: così non si cambierebbe quello che si vede)
+    const core::Project before = project_;
+    if (!project_.textTracks().setTransform(clipId, core::normalized(transform)))
+        return false;
+    transformMergeKey_.clear();
+    recordEdit(QStringLiteral("Trasforma sul monitor"), before);
+    return true;
+}
+
 bool MainWindow::commitMonitorLayerTransform(int pieceId, const core::Transform& transform)
 {
     if (project_.textTracks().findPiece(pieceId) == nullptr)
@@ -320,13 +338,13 @@ bool MainWindow::commitMonitorLayerTransform(int pieceId, const core::Transform&
     return true;
 }
 
-bool MainWindow::commitAnimatedMonitorTransform(bool layer, int id, const core::Transform& edited)
+bool MainWindow::commitAnimatedMonitorTransform(bool layer, int id, const core::Transform& edited, bool text)
 {
     // Un pezzo con l'animazione: il monitor mostrava la trasformazione dell'istante sul cursore e `edited` è quella dopo il
     // gesto. I parametri animati che sono cambiati ricevono una chiave sul cursore (come nel pannello), gli altri cambiano la
     // trasformazione fissa del pezzo.
     const AnimTarget target = animationTarget();
-    if (!target.valid || target.text || target.layer != layer || target.id != id || target.animation.empty() || !target.inside)
+    if (!target.valid || target.text != text || target.layer != layer || target.id != id || target.animation.empty() || !target.inside)
         return false;
     const core::Transform shown = core::evaluateTransform(target.base, target.animation, target.fileTime);
     core::Transform base = target.base;

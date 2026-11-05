@@ -249,6 +249,53 @@ int runManipTest(const QStringList& args, qsizetype at)
         monitor.setTransformMode(false);
     }
 
+    // --- Le maniglie su una scritta (S4): scala 100% = la grandezza della scritta; un gesto = una modifica.
+    {
+        core::TextClip tc;
+        tc.text = "Prova";
+        tc.position = 0.0;
+        tc.length = 3.0;
+        const int textId = project.textTracks().add(project.textTracks().addLayer(), tc);
+        check(textId != 0, "una scritta per provare le maniglie");
+        monitor.selectedText = [&] { return textId; };
+        std::vector<core::Transform> textEdits;
+        monitor.onTextTransformEdited = [&](int, const core::Transform& t) { textEdits.push_back(t); };
+        monitor.sequenceChanged();
+        monitor.seekTo(1.0);
+        monitor.setTransformMode(true);
+        QCoreApplication::processEvents();
+        const auto quad = monitor.manipQuad();
+        check(monitor.manipulatorsVisible() && quad.has_value(), "con la scritta scelta le maniglie sono sulla scritta");
+        if (quad.has_value()) {
+            const double w = (*quad)[1].x - (*quad)[0].x;
+            const double h = (*quad)[3].y - (*quad)[0].y;
+            check(w > 10 && h > 5 && w < projW && h < projH / 2, "il riquadro ha la grandezza della scritta, non quella del fotogramma");
+            const core::Point2 c{((*quad)[0].x + (*quad)[2].x) / 2, ((*quad)[0].y + (*quad)[2].y) / 2};
+            // Spostamento: dal centro del riquadro, di 60 e 30 pixel (Ctrl non c'è: i bordi del fotogramma sono lontani).
+            send(QEvent::MouseButtonPress, toScreen(c.x, c.y));
+            send(QEvent::MouseMove, toScreen(c.x + 30, c.y + 15));
+            send(QEvent::MouseMove, toScreen(c.x + 60, c.y + 30));
+            check(textEdits.empty(), "durante il gesto sulla scritta non arriva nessuna modifica");
+            send(QEvent::MouseButtonRelease, toScreen(c.x + 60, c.y + 30));
+            check(textEdits.size() == 1 && std::abs(textEdits[0].posX - 60.0) < 6.0 && std::abs(textEdits[0].posY - 30.0) < 6.0,
+                  "spostare il riquadro dà una sola modifica con lo spostamento della scritta");
+            // Scala: l'angolo in basso a destra, portato al doppio (l'angolo in alto a sinistra resta fermo): scala 2 e centro spostato.
+            textEdits.clear();
+            const core::Point2 corner = (*quad)[2];
+            const core::Point2 origin = (*quad)[0];
+            const core::Point2 target{origin.x + 2 * (corner.x - origin.x), origin.y + 2 * (corner.y - origin.y)};
+            send(QEvent::MouseButtonPress, toScreen(corner.x, corner.y));
+            send(QEvent::MouseMove, toScreen(target.x, target.y));
+            send(QEvent::MouseButtonRelease, toScreen(target.x, target.y));
+            check(textEdits.size() == 1 && std::abs(textEdits[0].scaleX - 2.0) < 0.15 && std::abs(textEdits[0].scaleY - 2.0) < 0.15,
+                  "la scala della scritta è in unità vere (2 = il doppio della scritta)");
+            check(textEdits.size() == 1 && std::abs(textEdits[0].posX - w / 2.0) < 8.0 && std::abs(textEdits[0].posY - h / 2.0) < 8.0,
+                  "con l'angolo opposto fermo il centro della scritta si sposta di mezza scritta");
+        }
+        monitor.selectedText = nullptr;
+        monitor.setTransformMode(false);
+    }
+
     monitor.setTransformMode(true);
     monitor.setPlaying(true);
     check(!monitor.manipulatorsVisible(), "in riproduzione le maniglie spariscono");
@@ -732,6 +779,54 @@ int runManipTest(const QStringList& args, qsizetype at)
                         window.undo();  // la chiave a 2 s
                         QCoreApplication::processEvents();
                         check(clipNow().animation.track(core::AnimParam::Rotation).size() == 1, "Annulla toglie una chiave alla volta");
+                    }
+                    // --- La riga dei rombi sotto la scritta e le maniglie sul monitor (S4).
+                    {
+                        SequenceTimeline* line = window.sequenceTimeline();
+                        check(line->keyRow().text && line->keyRow().id == textId && !line->keyRow().keys.empty(),
+                              "con una scritta animata scelta la linea del tempo ha la sua riga di rombi");
+                        program->setTransformMode(true);
+                        seek(start + 1.5);
+                        check(program->manipulatorsVisible(), "con la scritta scelta e sotto il cursore si vedono le maniglie");
+                        // Un gesto finito sul monitor: la posizione cambia nella base (non è animata), la rotazione animata prende una chiave.
+                        core::Transform shown = core::evaluateTransform(clipNow().transform, clipNow().animation, 1.5);
+                        core::Transform edited = shown;
+                        edited.posX = 40.0;
+                        edited.rotation = 45.0;
+                        check(window.commitMonitorTextTransform(textId, edited), "il gesto sul monitor di una scritta viene accettato");
+                        QCoreApplication::processEvents();
+                        check(std::abs(clipNow().transform.posX - 40.0) < 1e-9 && !clipNow().animation.animated(core::AnimParam::PosX),
+                              "la posizione non animata cambia la trasformazione della scritta");
+                        check(clipNow().animation.track(core::AnimParam::Rotation).size() == 2
+                                  && std::abs(core::findKey(clipNow().animation, core::AnimParam::Rotation, 1.5)->value - 45.0) < 1e-6,
+                              "la rotazione animata riceve la chiave sul cursore (secondi dall'inizio della scritta)");
+                        window.undo();
+                        QCoreApplication::processEvents();
+                        check(std::abs(clipNow().transform.posX) < 1e-9 && clipNow().animation.track(core::AnimParam::Rotation).size() == 1,
+                              "il gesto sulla scritta è un solo passo di Annulla");
+                        // Il percorso: due chiavi di posizione, le maniglie e i punti si vedono.
+                        window.editAnimationKeys(QStringLiteral("prova percorso scritta"), [&](core::TransformAnimation& a, core::Transform&) {
+                            for (const core::AnimParam p : {core::AnimParam::PosX, core::AnimParam::PosY}) {
+                                core::setKey(a, p, {.time = 0.5, .value = 0.0});
+                                core::setKey(a, p, {.time = 2.0, .value = 100.0});
+                            }
+                            return true;
+                        });
+                        QCoreApplication::processEvents();
+                        const auto path = program->motionPath();
+                        check(path.has_value() && path->text && path->dots.size() >= 2 && std::abs(path->dots.back().fileTime - 2.0) < 1e-9,
+                              "con la posizione della scritta animata il monitor ha il percorso del movimento");
+                        program->onTextMotionKeyMoved(textId, 2.0, 160.0, 20.0);  // (quello che il monitor manda al rilascio)
+                        QCoreApplication::processEvents();
+                        const core::AnimKey* kx = core::findKey(clipNow().animation, core::AnimParam::PosX, 2.0);
+                        const core::AnimKey* ky = core::findKey(clipNow().animation, core::AnimParam::PosY, 2.0);
+                        check(kx != nullptr && ky != nullptr && std::abs(kx->value - 160.0) < 1e-9 && std::abs(ky->value - 20.0) < 1e-9,
+                              "un punto del percorso della scritta cambia X e Y della chiave");
+                        window.undo();
+                        QCoreApplication::processEvents();
+                        const core::AnimKey* back = core::findKey(clipNow().animation, core::AnimParam::PosX, 2.0);
+                        check(back != nullptr && std::abs(back->value - 100.0) < 1e-9, "il punto del percorso della scritta è un solo passo di Annulla");
+                        program->setTransformMode(false);
                     }
                     // Scegliendo di nuovo il pezzo video torna la sua pagina, con il ritaglio.
                     window.sequenceTimeline()->selectObjects({{core::ObjectRef::Kind::Piece, id}});

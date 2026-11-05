@@ -231,18 +231,119 @@ const core::LayerPiece* ProgramMonitor::manipPiece() const
     return piece;
 }
 
+const core::TextClip* ProgramMonitor::manipText() const
+{
+    if (!selectedText || cropMode_ || showingSource_ || playing_)
+        return nullptr;
+    const int id = selectedText();
+    if (id == 0)
+        return nullptr;
+    const core::TextClip* clip = project_.textTracks().find(id);
+    if (clip == nullptr || position_ < clip->position - 1e-9 || position_ >= clip->endPosition() - 1e-9)
+        return nullptr;
+    return clip;
+}
+
+std::optional<ProgramMonitor::TextManip> ProgramMonitor::textManip() const
+{
+    const core::TextClip* clip = manipText();
+    const QSize frame = frameSize();
+    if (clip == nullptr || frame.isEmpty())
+        return std::nullopt;
+    core::TextClip form = *clip;
+    form.transform = {};
+    form.animation = {};
+    if (boxFrame_ != frame || !(boxClip_ == form)) {
+        boxRect_ = overlay_.bounds(form, frame.width(), frame.height());
+        boxClip_ = form;
+        boxFrame_ = frame;
+    }
+    if (boxRect_.isEmpty())
+        return std::nullopt;
+    TextManip m;
+    m.clip = clip;
+    m.pivot = {clip->style.centerX * frame.width(), clip->style.centerY * frame.height()};
+    const double boxW = boxRect_.width() * frame.width();
+    const double boxH = boxRect_.height() * frame.height();
+    m.boxCenter = {boxRect_.center().x() * frame.width(), boxRect_.center().y() * frame.height()};
+    m.size = {boxW, boxH, static_cast<double>(frame.width()), static_cast<double>(frame.height())};
+    m.fit = std::min(m.size.projW / boxW, m.size.projH / boxH);
+    return m;
+}
+
+namespace {
+
+// Dove va a finire il vettore dal centro di stile al centro del riquadro, con scala, specchio e rotazione di `t`.
+core::Point2 turnedOffset(const core::Transform& t, core::Point2 d)
+{
+    constexpr double kPi = 3.14159265358979323846;
+    const double ex = t.scaleX * (t.flipHorizontal ? -1.0 : 1.0);
+    const double ey = t.scaleY * (t.flipVertical ? -1.0 : 1.0);
+    const double cs = std::cos(t.rotation * kPi / 180.0);
+    const double sn = std::sin(t.rotation * kPi / 180.0);
+    return {cs * ex * d.x - sn * ey * d.y, sn * ex * d.x + cs * ey * d.y};
+}
+
+}  // namespace
+
+core::Transform ProgramMonitor::textToVirtual(const core::Transform& real, const TextManip& m) const
+{
+    const core::Transform t = core::normalized(real);
+    const core::Point2 turned = turnedOffset(t, {m.boxCenter.x - m.pivot.x, m.boxCenter.y - m.pivot.y});
+    core::Transform v = t;
+    v.scaleX = t.scaleX / m.fit;
+    v.scaleY = t.scaleY / m.fit;
+    v.posX = m.pivot.x + t.posX + turned.x - m.size.projW / 2.0;
+    v.posY = m.pivot.y + t.posY + turned.y - m.size.projH / 2.0;
+    return v;
+}
+
+core::Transform ProgramMonitor::textToReal(const core::Transform& virt, const TextManip& m) const
+{
+    core::Transform t = virt;
+    t.scaleX = virt.scaleX * m.fit;
+    t.scaleY = virt.scaleY * m.fit;
+    const core::Point2 turned = turnedOffset(t, {m.boxCenter.x - m.pivot.x, m.boxCenter.y - m.pivot.y});
+    t.posX = m.size.projW / 2.0 + virt.posX - m.pivot.x - turned.x;
+    t.posY = m.size.projH / 2.0 + virt.posY - m.pivot.y - turned.y;
+    return core::normalized(t);
+}
+
+core::Transform ProgramMonitor::textShownReal() const
+{
+    const core::TextClip* clip = manipText();
+    if (clip == nullptr)
+        return {};
+    return core::evaluateTransform(clip->transform, clip->animation, std::clamp(position_ - clip->position, 0.0, clip->length));
+}
+
+void ProgramMonitor::showDraggedText()
+{
+    // Durante il gesto sulla scritta: la scritta si disegna con la trasformazione in corso (senza animazione).
+    const std::optional<TextManip> m = textManip();
+    if (!m || !manipDrag_)
+        return;
+    for (core::TextClip& clip : shownText_) {
+        if (clip.id == manipDrag_->fragmentId) {
+            clip.transform = textToReal(manipDrag_->current, *m);
+            clip.animation = {};
+        }
+    }
+    player_->updateOverlay();
+}
+
 bool ProgramMonitor::manipulatorsVisible() const
 {
     if (!(transformMode_ || cropMode_) || playing_ || showingSource_)
         return false;
-    if (manipPiece() != nullptr)
+    if (manipPiece() != nullptr || textManip())
         return true;
     return transitionId_ == 0 && gapIndex_ < 0 && index_ >= 0 && index_ < static_cast<int>(project_.sequence().fragments().size());
 }
 
 core::Transform ProgramMonitor::v1Transform() const
 {
-    if (manipDrag_ && !manipDrag_->layer)
+    if (manipDrag_ && !manipDrag_->layer && !manipDrag_->text)
         return manipDrag_->current;
     if (index_ < 0 || index_ >= static_cast<int>(project_.sequence().fragments().size()))
         return {};
@@ -268,6 +369,8 @@ core::Transform ProgramMonitor::shownTransform() const
         return manipDrag_->current;
     if (const core::LayerPiece* piece = manipPiece())
         return layerPieceTransform(*piece);
+    if (const std::optional<TextManip> m = textManip())
+        return textToVirtual(textShownReal(), *m);
     return v1Transform();
 }
 
@@ -280,7 +383,15 @@ std::optional<ProgramMonitor::MotionPath> ProgramMonitor::motionPath() const
     MotionPath path;
     double from = 0.0;
     double to = 0.0;
-    if (const core::LayerPiece* piece = manipPiece()) {
+    const std::optional<TextManip> text = textManip();
+    if (text) {
+        base = &text->clip->transform;
+        animation = &text->clip->animation;
+        path.text = true;
+        path.id = text->clip->id;
+        from = 0.0;
+        to = text->clip->length;
+    } else if (const core::LayerPiece* piece = manipPiece()) {
         base = &piece->transform;
         animation = &piece->animation;
         path.layer = true;
@@ -312,6 +423,10 @@ std::optional<ProgramMonitor::MotionPath> ProgramMonitor::motionPath() const
     const QSize frame = frameSize();
     const auto centerAt = [&](double t) {
         const core::Transform e = core::evaluateTransform(*base, *animation, t);
+        if (text) {
+            const core::Transform v = textToVirtual(e, *text);
+            return core::Point2{frame.width() / 2.0 + v.posX, frame.height() / 2.0 + v.posY};
+        }
         return core::Point2{frame.width() / 2.0 + e.posX, frame.height() / 2.0 + e.posY};
     };
     for (const double t : times)
@@ -337,6 +452,14 @@ int ProgramMonitor::motionDotAt(const MotionPath& path, core::Point2 p, double s
     return best;
 }
 
+std::optional<std::array<core::Point2, 4>> ProgramMonitor::manipQuad() const
+{
+    const std::optional<core::ManipSize> size = manipSize();
+    if (!size)
+        return std::nullopt;
+    return core::computeGeometry(core::normalized(shownTransform()), size->srcW, size->srcH, size->projW, size->projH).corners;
+}
+
 void ProgramMonitor::refreshManipulators()
 {
     applyShownTransform();
@@ -346,6 +469,8 @@ std::optional<core::ManipSize> ProgramMonitor::manipSize() const
 {
     if (!manipulatorsVisible())
         return std::nullopt;
+    if (const std::optional<TextManip> m = textManip())
+        return m->size;
     QSize source = player_->currentFrameSize();
     if (const core::LayerPiece* piece = manipPiece()) {
         // Il pezzo di un livello: la forma del suo fotogramma (conta solo quella).
@@ -535,12 +660,15 @@ bool ProgramMonitor::grabImage(QPointF at)
     snapGuides_ = {};
     rotationSnapped_ = false;
     const core::LayerPiece* layerPiece = manipPiece();
-    const int targetId = layerPiece != nullptr ? layerPiece->id : project_.sequence().fragments()[static_cast<std::size_t>(index_)].id;
+    const core::TextClip* textClip = layerPiece == nullptr ? manipText() : nullptr;
+    const int targetId = layerPiece != nullptr ? layerPiece->id
+                         : textClip != nullptr ? textClip->id
+                                               : project_.sequence().fragments()[static_cast<std::size_t>(index_)].id;
     if (cropMode_) {
         const int edges = core::cropHitTest(start, *size, p, manipScreenScale());
         if (edges == 0)
             return grabText(at);
-        manipDrag_ = ManipDrag{targetId, {}, start, start, p, edges, layerPiece != nullptr};
+        manipDrag_ = ManipDrag{targetId, {}, start, start, p, edges, layerPiece != nullptr, false};
         return true;
     }
     // Prima i punti del percorso del movimento.
@@ -552,9 +680,15 @@ bool ProgramMonitor::grabImage(QPointF at)
     }
     const core::ManipHit hit = core::manipHitTest(start, *size, p, manipScreenScale());
     const auto startDrag = [&] {
-        manipDrag_ = ManipDrag{targetId, hit, start, start, p, 0, layerPiece != nullptr};
+        manipDrag_ = ManipDrag{targetId, hit, start, start, p, 0, layerPiece != nullptr, textClip != nullptr};
         return true;
     };
+    if (textClip != nullptr) {
+        // La scritta scelta: le sue maniglie e il suo riquadro (si sposta da lì); fuori, un'altra scritta si può afferrare.
+        if (hit.part != core::ManipPart::None)
+            return startDrag();
+        return grabText(at);
+    }
     // Prima le maniglie, poi le scritte (stanno sopra l'immagine), poi il resto del pezzo.
     if (hit.part == core::ManipPart::Corner || hit.part == core::ManipPart::Rotate)
         return startDrag();
@@ -599,7 +733,7 @@ void ProgramMonitor::dragImage(QPointF at)
             break;
         case core::ManipPart::Corner:
             manipDrag_->current = core::manipScale(manipDrag_->start, *size, manipDrag_->hit.corner, p, shift, alt);
-            if (snap)
+            if (snap && !manipDrag_->text)  // (per una scritta il 100% non è l'adattamento al fotogramma)
                 manipDrag_->current = core::snapScale(manipDrag_->current);
             break;
         case core::ManipPart::Rotate:
@@ -613,6 +747,8 @@ void ProgramMonitor::dragImage(QPointF at)
     }
     if (manipDrag_->layer)
         showDraggedLayer();
+    else if (manipDrag_->text)
+        showDraggedText();
     else
         player_->setFrameTransform(manipDrag_->current, frameSize());
     player_->updateOverlay();
@@ -627,9 +763,20 @@ void ProgramMonitor::dropImage(QPointF at)
         const QSize frame = frameSize();
         const MotionDot& dot = done.path.dots[done.dot];
         if (std::abs(done.current.x - dot.pos.x) > 0.5 || std::abs(done.current.y - dot.pos.y) > 0.5) {
-            if (onMotionKeyMoved)
+            if (done.path.text) {
+                // Il punto è il centro del riquadro: lo spostamento vero è quello che ve lo porta, con scala e rotazione di quell'istante.
+                if (const std::optional<TextManip> m = textManip(); m && onTextMotionKeyMoved) {
+                    const core::Transform e = core::evaluateTransform(m->clip->transform, m->clip->animation, dot.fileTime);
+                    core::Transform v = textToVirtual(e, *m);
+                    v.posX = done.current.x - frame.width() / 2.0;
+                    v.posY = done.current.y - frame.height() / 2.0;
+                    const core::Transform real = textToReal(v, *m);
+                    onTextMotionKeyMoved(done.path.id, dot.fileTime, real.posX, real.posY);
+                }
+            } else if (onMotionKeyMoved) {
                 onMotionKeyMoved(done.path.layer, done.path.id, dot.fileTime, done.current.x - frame.width() / 2.0,
                                  done.current.y - frame.height() / 2.0);
+            }
         }
         applyShownTransform();
         player_->update();
@@ -646,7 +793,10 @@ void ProgramMonitor::dropImage(QPointF at)
     snapGuides_ = {};
     rotationSnapped_ = false;
     if (!(done.current == done.start)) {
-        if (done.layer && onLayerTransformEdited)
+        if (done.text) {
+            if (const std::optional<TextManip> m = textManip(); m && onTextTransformEdited)
+                onTextTransformEdited(done.fragmentId, textToReal(done.current, *m));
+        } else if (done.layer && onLayerTransformEdited)
             onLayerTransformEdited(done.fragmentId, done.current);
         else if (!done.layer && onTransformEdited)
             onTransformEdited(done.fragmentId, done.current);
@@ -654,6 +804,8 @@ void ProgramMonitor::dropImage(QPointF at)
     // Se il progetto non ha cambiato il pezzo, il monitor torna com'era.
     if (done.layer)
         player_->setLayers(lastLayers_, frameSize());
+    if (done.text)
+        updateTextOverlay();
     applyShownTransform();
 }
 
