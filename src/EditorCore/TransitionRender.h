@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EditorCore/Animation.h"
 #include "EditorCore/Project.h"
 #include "EditorCore/Transform.h"
 #include "EditorCore/VideoDecoder.h"
@@ -30,6 +31,10 @@ struct TransitionJob
     // Trasformazioni dei due pezzi (scala, posizione, rotazione, ritaglio...): si applicano a ognuno prima della fusione.
     Transform transformA;
     Transform transformB;
+    // Fotogrammi chiave delle due trasformazioni (nei tempi dei file dei pezzi): a ogni fotogramma la trasformazione è quella
+    // valutata al tempo del file del lato.
+    TransformAnimation animationA;
+    TransformAnimation animationB;
 };
 
 // std::nullopt se la transizione, i pezzi o i file non ci sono.

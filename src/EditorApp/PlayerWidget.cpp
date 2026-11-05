@@ -88,6 +88,8 @@ public:
     QRectF imageRect() const { return imageRect_; }
     QSize frameSize() const { return frame_ ? QSize(frame_->width, frame_->height) : QSize(); }
 
+    core::Transform drawnTransform() const { return transformed_ ? transform_ : core::Transform{}; }
+
     // Vedi PlayerWidget::setFrameTransform.
     void setFrameTransform(const core::Transform& transform, QSize projectSize)
     {
@@ -620,6 +622,11 @@ void PlayerWidget::setTransformCanvas(bool force)
 QRectF PlayerWidget::imageRect() const
 {
     return view_->imageRect();
+}
+
+core::Transform PlayerWidget::drawnTransform() const
+{
+    return view_->drawnTransform();
 }
 
 QSize PlayerWidget::currentFrameSize() const
