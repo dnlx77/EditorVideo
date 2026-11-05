@@ -36,7 +36,13 @@ std::shared_ptr<VideoFrame> LayerFrameSource::frameFor(const LayerPiece& piece, 
             options.allowHardware = hardware_;
             options.readAhead = false;
             // Un pezzo ingrandito si decodifica più grande, così non è sfocato (fino a una misura ragionevole).
-            const double zoom = std::clamp(std::max(piece.transform.scaleX, piece.transform.scaleY), 1.0, 4.0);
+            // (con i fotogrammi chiave, la scala più grande fra quelle fisse e quelle delle chiavi)
+            double biggest = std::max(piece.transform.scaleX, piece.transform.scaleY);
+            for (const AnimParam p : {AnimParam::ScaleX, AnimParam::ScaleY}) {
+                for (const AnimKey& key : piece.animation.track(p))
+                    biggest = std::max(biggest, key.value);
+            }
+            const double zoom = std::clamp(biggest, 1.0, 4.0);
             options.maxWidth = static_cast<int>(std::min(width_ * zoom, kMaxSide));
             options.maxHeight = static_cast<int>(std::min(height_ * zoom, kMaxSide));
             reader.decoder = std::make_unique<VideoDecoder>(file->second, options);
@@ -73,7 +79,7 @@ std::vector<LayerFrameSource::Visible> LayerFrameSource::at(const TextTracks& tr
     for (const LayerPiece* piece : pieces) {
         const double fileTime = std::clamp(piece->start + (sequenceTime - piece->position), piece->start, std::max(piece->start, piece->end - 1e-3));
         if (std::shared_ptr<VideoFrame> frame = frameFor(*piece, fileTime))
-            visible.push_back({std::move(frame), piece->transform, tracks.levelOf(piece->id)});
+            visible.push_back({std::move(frame), evaluateTransform(piece->transform, piece->animation, fileTime), tracks.levelOf(piece->id)});
     }
     return visible;
 }

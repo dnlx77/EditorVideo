@@ -323,3 +323,73 @@ TEST_F(TransformExport, LayerPieceBeyondTheEndOfV1IsExportedOnBlack)
     EXPECT_NEAR(d.pixels[static_cast<std::size_t>(kFps / 2)][0], 100, 8);  // V1 da solo
     EXPECT_NEAR(d.pixels[static_cast<std::size_t>(3 * kFps)][0], 200, 8);  // la coda: il pezzo del livello
 }
+
+TEST_F(TransformExport, AnimatedOpacityIsEvaluatedFrameByFrame)
+{
+    // Un tratto di 4 s con l'opacità che scende da 1 a 0 (tempi nel file): il centro passa da luminanza 100 al nero (16 nel video
+    // a gamma limitata), in modo lineare.
+    ClipRanges clip{file("grigio.mp4"), {{0.0, 4.0}}};
+    clip.transforms = {Transform{}};
+    TransformAnimation animation;
+    animation.track(AnimParam::Opacity) = {{.time = 0.0, .value = 1.0}, {.time = 4.0, .value = 0.0}};
+    clip.animations = {animation};
+    const std::vector<ClipRanges> plan{clip};
+
+    const ExportPreview preview = previewExport(plan, AudioEdit{}, nullptr, {});
+    EXPECT_TRUE(preview.problem.empty()) << preview.problem;
+    EXPECT_EQ(preview.transformSegments, 1);  // con i fotogrammi chiave il tratto si ricodifica
+    EXPECT_NEAR(preview.transformSeconds, 4.0, 0.01);
+
+    const fs::path out = dir_ / "opacitaAnimata.mp4";
+    const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, {});
+    EXPECT_EQ(result.transformSegments, 1);
+    const Sampled d = sample(out);
+    EXPECT_EQ(d.errors, 0);
+    ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFrames));
+    for (int i = 4; i < kFrames - 4; i += 7) {
+        SCOPED_TRACE("fotogramma " + std::to_string(i));
+        EXPECT_NEAR(d.pixels[static_cast<std::size_t>(i)][0], 16.0 + 84.0 * (1.0 - static_cast<double>(i) / kFrames), 7.0);  // (il nero è 16)
+    }
+}
+
+TEST_F(TransformExport, AnimationKeysFollowTheFileTimeOfTheStretch)
+{
+    // Solo il secondo tratto (file 2..4 s) è animato: la dissolvenza va da 1 (a 2 s del file) a 0 (a 4 s). Il primo resta com'è.
+    ClipRanges clip{file("grigio.mp4"), {{0.0, 2.0}, {2.0, 4.0}}};
+    clip.transforms = {Transform{}, Transform{}};
+    TransformAnimation animation;
+    animation.track(AnimParam::Opacity) = {{.time = 2.0, .value = 1.0}, {.time = 4.0, .value = 0.0}};
+    clip.animations = {TransformAnimation{}, animation};
+    const fs::path out = dir_ / "opacitaSecondoTratto.mp4";
+    const ExportResult result = exportClips({clip}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, {});
+    EXPECT_EQ(result.transformSegments, 1);
+    const Sampled d = sample(out);
+    ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFrames));
+    EXPECT_NEAR(d.pixels[static_cast<std::size_t>(kFps)][0], 100, 6);         // primo tratto: pieno
+    EXPECT_NEAR(d.pixels[static_cast<std::size_t>(2 * kFps + 5)][0], 16.0 + 84.0 * (1.0 - 5.0 / 60.0), 7.0);  // inizio della dissolvenza
+    EXPECT_NEAR(d.pixels[static_cast<std::size_t>(3 * kFps)][0], 58, 7);      // a metà (file 3 s)
+}
+
+TEST_F(TransformExport, AnimatedLayerPieceIsEvaluatedFrameByFrame)
+{
+    // V1 grigio (100) per 4 s; sul livello, da 1 s a 3 s, il pezzo chiaro (200) la cui opacità scende da 1 a 0: 200 → 100.
+    ClipRanges clip{file("grigio.mp4"), {{0.0, 4.0}}};
+    clip.transforms = {Transform{}};
+    ReencodeOptions options;
+    const int layer = options.texts.addLayer();
+    LayerPiece piece;
+    piece.clipId = 7;
+    piece.start = 0.0;
+    piece.end = 2.0;
+    piece.position = 1.0;
+    piece.animation.track(AnimParam::Opacity) = {{.time = 0.0, .value = 1.0}, {.time = 2.0, .value = 0.0}};
+    ASSERT_NE(options.texts.addPiece(layer, piece), 0);
+    options.layerFiles[7] = file("chiaro.mp4");
+    const fs::path out = dir_ / "livelloAnimato.mp4";
+    exportClips({clip}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
+    const Sampled d = sample(out);
+    ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFrames));
+    EXPECT_NEAR(d.pixels[static_cast<std::size_t>(kFps + 3)][0], 200, 10);      // all'inizio del pezzo: opaco
+    EXPECT_NEAR(d.pixels[static_cast<std::size_t>(2 * kFps)][0], 150, 10);      // a metà: metà e metà
+    EXPECT_NEAR(d.pixels[static_cast<std::size_t>(3 * kFps - 3)][0], 100, 10);  // alla fine: trasparente
+}

@@ -162,6 +162,8 @@ struct Piece
     // prima delle scritte.
     bool transformed = false;
     Transform transform;
+    // Fotogrammi chiave della trasformazione (tempi nel file): a ogni fotogramma si valuta `transform` + `animation`.
+    TransformAnimation animation;
 };
 
 // Taglio preciso di un tratto copiato (vedi exportClips): ricodificati i bordi fra IN e il primo fotogramma chiave e, con
@@ -216,6 +218,12 @@ inline double gapBefore(const ClipRanges& clip, std::size_t r)
 inline Transform transformOf(const ClipRanges& clip, std::size_t r)
 {
     return r < clip.transforms.size() ? normalized(clip.transforms[r]) : Transform{};
+}
+
+// Fotogrammi chiave della trasformazione del tratto `r` di `clip` (nessuno se il piano non ne ha).
+inline TransformAnimation animationOf(const ClipRanges& clip, std::size_t r)
+{
+    return r < clip.animations.size() ? clip.animations[r] : TransformAnimation{};
 }
 
 PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectFormat* format, bool replaced, bool reencodeAll,
