@@ -161,6 +161,35 @@ int runManipTest(const QStringList& args, qsizetype at)
     monitor.setThirdsGrid(false);
     monitor.setTransformMode(true);
 
+    // Fotogrammi chiave (K2): il monitor disegna il pezzo con la trasformazione dell'istante, a ogni posizione.
+    monitor.setTransformMode(false);
+    {
+        const core::Fragment& fragment = project.sequence().fragments()[0];
+        core::TransformAnimation animation;
+        animation.track(core::AnimParam::ScaleX) = {{.time = 0.5, .value = 0.5}, {.time = 1.5, .value = 1.0}};
+        animation.track(core::AnimParam::ScaleY) = animation.track(core::AnimParam::ScaleX);
+        animation.track(core::AnimParam::Opacity) = {{.time = 0.0, .value = 0.2}};
+        project.sequence().setAnimation(fragment.id, animation);
+        monitor.sequenceChanged();
+        monitor.seekTo(0.5);
+        QCoreApplication::processEvents();
+        check(std::abs(player->drawnTransform().scaleX - 0.5) < 1e-6 && std::abs(player->drawnTransform().opacity - 0.2) < 1e-6,
+              "al primo fotogramma chiave il pezzo è disegnato con il suo valore");
+        monitor.seekTo(1.0);
+        QCoreApplication::processEvents();
+        check(std::abs(player->drawnTransform().scaleX - 0.75) < 0.03,
+              "a metà fra due fotogrammi chiave la scala è interpolata (75%)");
+        monitor.seekTo(2.0);
+        QCoreApplication::processEvents();
+        check(std::abs(player->drawnTransform().scaleX - 1.0) < 1e-6, "dopo l'ultimo fotogramma chiave resta il suo valore");
+        project.sequence().setAnimation(fragment.id, {});
+        monitor.sequenceChanged();
+        monitor.seekTo(1.0);
+        QCoreApplication::processEvents();
+        check(player->drawnTransform().isIdentity(), "senza fotogrammi chiave il pezzo torna senza trasformazione");
+    }
+
+    monitor.setTransformMode(true);
     monitor.setPlaying(true);
     check(!monitor.manipulatorsVisible(), "in riproduzione le maniglie spariscono");
     monitor.setPlaying(false);

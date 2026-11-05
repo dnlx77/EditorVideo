@@ -373,3 +373,37 @@ TEST_F(TransitionRenderTest, PiecesAreTransformedBeforeTheyAreBlended)
         maxDiff = std::max(maxDiff, std::abs(static_cast<int>(last->pixels[i]) - static_cast<int>(expected[i])));
     EXPECT_LE(maxDiff, 12);
 }
+
+TEST_F(TransitionRenderTest, AnimatedTransformIsEvaluatedAtTheTimeOfTheFile)
+{
+    auto setup = makeSetup();
+    // Il primo pezzo si rimpicciolisce da 50% (al secondo 1 del file) a 100% (al 2): all'inizio della transizione il file è
+    // al secondo 1,5, quindi la scala è 75%.
+    TransformAnimation animation;
+    animation.track(AnimParam::ScaleX) = {{.time = 1.0, .value = 0.5}, {.time = 2.0, .value = 1.0}};
+    animation.track(AnimParam::ScaleY) = animation.track(AnimParam::ScaleX);
+    const auto fragments = setup->project.sequence().fragments();
+    ASSERT_EQ(setup->project.setAnimation({fragments[0].id}, animation), 1);
+    setup->placement = setup->project.transitionPlacement(setup->transition).value();
+    const auto job = makeTransitionJob(setup->project, setup->placement);
+    ASSERT_TRUE(job.has_value());
+    EXPECT_EQ(job->animationA, animation);
+
+    auto renderer = makeRenderer();
+    const auto first = renderer->render(setup->project, setup->placement, setup->placement.start());
+    ASSERT_NE(first, nullptr);
+    const auto a = decode("a.mkv", 1.5);
+    ASSERT_NE(a, nullptr);
+    Transform expectedTransform;
+    expectedTransform.scaleX = expectedTransform.scaleY = 0.75;
+    std::vector<std::uint8_t> expected(static_cast<std::size_t>(kWidth) * kHeight * 4, 0);
+    for (std::size_t i = 3; i < expected.size(); i += 4)
+        expected[i] = 255;
+    compositeLayer(expected.data(), kWidth * 4, kWidth, kHeight, BgraImage{a->pixels.data(), a->stride, a->width, a->height},
+                   expectedTransform);
+    int maxDiff = 0;
+    for (std::size_t i = 0; i < expected.size(); ++i)
+        maxDiff = std::max(maxDiff, std::abs(static_cast<int>(first->pixels[i]) - static_cast<int>(expected[i])));
+    EXPECT_LE(maxDiff, 12);
+    EXPECT_LE(first->pixels[0], 12);  // gli angoli restano neri: il pezzo è più piccolo del fotogramma
+}

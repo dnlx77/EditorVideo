@@ -123,6 +123,8 @@ public:
     QRectF imageRect() const;
     // Misura del fotogramma decodificato mostrato (vuota se non c'è); conta solo la forma.
     QSize currentFrameSize() const;
+    // La trasformazione con cui è disegnato il fotogramma di V1 (Transform{} se è disegnato senza): per le prove.
+    core::Transform drawnTransform() const;
     void updateOverlay();
     // Chi disegna le scritte: `paint(painter, rettangolo, da, a)` disegna quelle dei piani da `da` (compreso) ad `a` (escluso). Il
     // lettore lo chiama fra un livello e l'altro, così una scritta sta sopra i livelli sotto di lei e sotto quelli sopra.

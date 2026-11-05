@@ -185,7 +185,8 @@ void ProgramMonitor::load(int index, double offset)
     transitionFrame_.reset();
     player_->setBlank(false);
     player_->setTransformCanvas(transformMode_ || cropMode_ || layersShown_);
-    player_->setFrameTransform(f.transform, frameSize());  // scala, posizione, rotazione... del pezzo
+    // Scala, posizione, rotazione... del pezzo (con i fotogrammi chiave, quelli del punto da cui si parte).
+    player_->setFrameTransform(core::evaluateTransform(f.transform, f.animation, f.start + std::clamp(offset, 0.0, f.length())), frameSize());
     if (f.clipId != loadedClipId_) {
         player_->openFile(QString::fromStdString(clip->path));
         loadedClipId_ = f.clipId;
@@ -245,7 +246,20 @@ core::Transform ProgramMonitor::v1Transform() const
         return manipDrag_->current;
     if (index_ < 0 || index_ >= static_cast<int>(project_.sequence().fragments().size()))
         return {};
-    return project_.sequence().fragments()[static_cast<std::size_t>(index_)].transform;
+    const core::Fragment& f = project_.sequence().fragments()[static_cast<std::size_t>(index_)];
+    if (f.animation.empty())
+        return f.transform;
+    // Con i fotogrammi chiave la trasformazione dipende dall'istante: quello sul cursore, nei tempi del file.
+    const double fileTime = f.start + std::clamp(position_ - project_.sequence().startOf(index_), 0.0, f.length());
+    return core::evaluateTransform(f.transform, f.animation, fileTime);
+}
+
+core::Transform ProgramMonitor::layerPieceTransform(const core::LayerPiece& piece) const
+{
+    if (piece.animation.empty())
+        return piece.transform;
+    const double fileTime = piece.start + std::clamp(position_ - piece.position, 0.0, piece.length());
+    return core::evaluateTransform(piece.transform, piece.animation, fileTime);
 }
 
 core::Transform ProgramMonitor::shownTransform() const
@@ -253,7 +267,7 @@ core::Transform ProgramMonitor::shownTransform() const
     if (manipDrag_)
         return manipDrag_->current;
     if (const core::LayerPiece* piece = manipPiece())
-        return piece->transform;
+        return layerPieceTransform(*piece);
     return v1Transform();
 }
 
@@ -618,7 +632,7 @@ void ProgramMonitor::updateLayers()
                     frame = slot->waitFrame(fileTime, 800);
                 }
                 shownIds.push_back(piece.id);
-                shown.push_back({std::move(frame), piece.transform, project_.textTracks().levelOf(piece.id)});
+                shown.push_back({std::move(frame), layerPieceTransform(piece), project_.textTracks().levelOf(piece.id)});
             }
         }
     }
@@ -1265,6 +1279,9 @@ void ProgramMonitor::updatePosition()
     } else if (index_ >= 0 && index_ < static_cast<int>(sequence.fragments().size())) {
         const core::Fragment& f = sequence.fragments()[index_];
         position_ = sequence.startOf(index_) + std::clamp(player_->currentPosition() - f.start, 0.0, f.length());
+        // Con i fotogrammi chiave la trasformazione cambia a ogni fotogramma (senza, setFrameTransform non fa nulla).
+        if (!f.animation.empty() && !manipDrag_)
+            player_->setFrameTransform(v1Transform(), frameSize());
         // Arrivati al tratto di una transizione, anche da un pezzo solo: da qui in poi la fusione la fa il monitor.
         if (playing_ && speed_ != 0.0) {
             if (const auto placement = transitionAt(position_))

@@ -168,6 +168,8 @@ std::optional<TransitionJob> makeTransitionJob(const Project& project, const Tra
     job.fragmentStartB = b->start;
     job.transformA = a->transform;
     job.transformB = b->transform;
+    job.animationA = a->animation;
+    job.animationB = b->animation;
     job.sequenceStartA = sequence.startOf(sequence.indexOf(a->id));
     job.sequenceStartB = sequence.startOf(sequence.indexOf(b->id));
     job.start = placement.start();
@@ -243,8 +245,8 @@ std::shared_ptr<VideoFrame> TransitionRenderer::render(const TransitionJob& job,
 
     // Se un lato ha un fotogramma più piccolo del riquadro (o di altre proporzioni) sta al centro, con i bordi neri.
     const auto blendBegin = now();
-    std::shared_ptr<VideoFrame> out = onCanvasTransformed(*frameA, boxWidth_, boxHeight_, job.transformA);
-    const std::shared_ptr<VideoFrame> second = onCanvasTransformed(*frameB, boxWidth_, boxHeight_, job.transformB);
+    std::shared_ptr<VideoFrame> out = onCanvasTransformed(*frameA, boxWidth_, boxHeight_, evaluateTransform(job.transformA, job.animationA, timeA));
+    const std::shared_ptr<VideoFrame> second = onCanvasTransformed(*frameB, boxWidth_, boxHeight_, evaluateTransform(job.transformB, job.animationB, timeB));
     const double duration = job.end - job.start;
     const double progress = duration > 0 ? (t - job.start) / duration : 1.0;
     effect->blend({out->pixels.data(), out->width, out->height, out->stride},

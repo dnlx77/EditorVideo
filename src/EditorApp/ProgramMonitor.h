@@ -150,6 +150,7 @@ private:
     const core::LayerPiece* manipPiece() const;
     core::Transform v1Transform() const;  // la trasformazione del pezzo di V1 mostrato (quella in corso se lo si trascina)
     void showDraggedLayer();
+    core::Transform layerPieceTransform(const core::LayerPiece& piece) const;  // con i fotogrammi chiave, al tempo del cursore
     core::Transform shownTransform() const;
     std::optional<core::ManipSize> manipSize() const;  // misure del file e del progetto; vuoto se non c'è da manipolare
     double manipScreenScale() const;                   // pixel dello schermo per pixel del progetto
