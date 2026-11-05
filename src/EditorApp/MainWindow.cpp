@@ -563,6 +563,18 @@ MainWindow::MainWindow(QWidget* parent)
         applyTransitionEdit(type, params, duration, crossfadeAudio, field);
     };
     propertiesPanel_->onFit = [this](bool fill) { fitSelectedPieces(fill); };
+    propertiesPanel_->onAnimationPreset = [this](core::AnimPreset preset) {
+        const AnimTarget target = animationTarget();
+        if (!target.valid)
+            return;
+        const double width = frameSize().width();
+        if (!editAnimationKeys(QStringLiteral("Animazione pronta: %1").arg(QString::fromUtf8(core::animPresetName(preset))),
+                               [&](core::TransformAnimation& animation, core::Transform& base) {
+                                   return core::applyPreset(animation, base, preset, target.from, target.to, width);
+                               })) {
+            statusBar()->showMessage(QStringLiteral("Il pezzo è troppo corto per questa animazione."), 5000);
+        }
+    };
     propertiesPanel_->onAnimationAction = [this](core::AnimGroup group, PropertiesPanel::AnimAction action) {
         applyAnimationAction(group, static_cast<int>(action));
     };

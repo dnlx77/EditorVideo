@@ -376,6 +376,85 @@ std::vector<std::string> describeAnimation(const Transform& base, const Transfor
     return lines;
 }
 
+const char* animPresetName(AnimPreset preset)
+{
+    switch (preset) {
+        case AnimPreset::ZoomIn: return "Zoom lento avanti";
+        case AnimPreset::ZoomOut: return "Zoom lento indietro";
+        case AnimPreset::PanLeft: return "Panoramica verso sinistra";
+        case AnimPreset::PanRight: return "Panoramica verso destra";
+        case AnimPreset::FadeIn: return "Dissolvenza in apertura";
+        case AnimPreset::FadeOut: return "Dissolvenza in chiusura";
+        case AnimPreset::Count: break;
+    }
+    return "";
+}
+
+bool applyPreset(TransformAnimation& animation, Transform& base, AnimPreset preset, double from, double to, double projectWidth)
+{
+    if (!(to - from > 0.1) || !std::isfinite(from) || !std::isfinite(to))
+        return false;
+    constexpr double kZoom = 1.15;
+    const auto put = [&](AnimParam p, double time, double value, Interp interp) {
+        AnimKey key;
+        key.time = time;
+        key.value = value;
+        key.interp = interp;
+        setKey(animation, p, key);
+    };
+    switch (preset) {
+        case AnimPreset::ZoomIn:
+        case AnimPreset::ZoomOut: {
+            const bool in = preset == AnimPreset::ZoomIn;
+            for (const AnimParam p : {AnimParam::ScaleX, AnimParam::ScaleY}) {
+                const double start = paramValue(base, p);
+                clearTrack(animation, p);
+                put(p, from, in ? start : start * kZoom, Interp::Smooth);
+                put(p, to, in ? start * kZoom : start, Interp::Smooth);
+            }
+            return true;
+        }
+        case AnimPreset::PanLeft:
+        case AnimPreset::PanRight: {
+            clearTrack(animation, AnimParam::ScaleX);
+            clearTrack(animation, AnimParam::ScaleY);
+            clearTrack(animation, AnimParam::PosX);
+            const double zoom = std::max({base.scaleX, base.scaleY, kZoom});
+            base.scaleX = base.scaleY = zoom;
+            const double reach = std::max(0.0, projectWidth) * (zoom - 1.0) / 2.0 * 0.9;
+            const double left = base.posX - reach;
+            const double right = base.posX + reach;
+            // Panoramica verso sinistra: la "camera" va a sinistra, l'immagine scorre verso destra.
+            const bool toLeft = preset == AnimPreset::PanLeft;
+            put(AnimParam::PosX, from, toLeft ? left : right, Interp::Smooth);
+            put(AnimParam::PosX, to, toLeft ? right : left, Interp::Smooth);
+            return true;
+        }
+        case AnimPreset::FadeIn:
+        case AnimPreset::FadeOut: {
+            const bool in = preset == AnimPreset::FadeIn;
+            const double length = std::min(1.0, (to - from) / 2.0);
+            const double full = animation.animated(AnimParam::Opacity) ? evaluateTrack(animation.track(AnimParam::Opacity), in ? from + length : to - length, base.opacity)
+                                                                       : base.opacity;
+            std::vector<AnimKey>& keys = animation.track(AnimParam::Opacity);
+            if (in)
+                keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const AnimKey& k) { return k.time < from + length; }), keys.end());
+            else
+                keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const AnimKey& k) { return k.time > to - length; }), keys.end());
+            if (in) {
+                put(AnimParam::Opacity, from, 0.0, Interp::Linear);
+                put(AnimParam::Opacity, from + length, full, Interp::Linear);
+            } else {
+                put(AnimParam::Opacity, to - length, full, Interp::Linear);
+                put(AnimParam::Opacity, to, 0.0, Interp::Linear);
+            }
+            return true;
+        }
+        case AnimPreset::Count: break;
+    }
+    return false;
+}
+
 std::vector<double> keyTimes(const TransformAnimation& animation)
 {
     std::vector<double> times;

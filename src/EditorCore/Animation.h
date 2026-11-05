@@ -110,6 +110,24 @@ Interp interpAt(const TransformAnimation& animation, double time);
 // I valori da dove l'animazione parte a dove arriva, uno per riga e in italiano, per il suggerimento del badge: "Scala 100%→130%".
 std::vector<std::string> describeAnimation(const Transform& base, const TransformAnimation& animation);
 
+// ---- Preset: animazioni pronte che mettono le chiavi di un pezzo che va da `from` a `to` nel file.
+enum class AnimPreset : int
+{
+    ZoomIn,    // ingrandisce piano piano (100% → 115% della scala di base)
+    ZoomOut,   // rimpicciolisce piano piano (115% → 100%)
+    PanLeft,   // panoramica verso sinistra: il pezzo è ingrandito al 115% e l'immagine scorre da sinistra a destra
+    PanRight,  // panoramica verso destra
+    FadeIn,    // dissolvenza in apertura (opacità da 0 al valore di base, al massimo 1 secondo)
+    FadeOut,   // dissolvenza in chiusura
+    Count
+};
+inline constexpr int kAnimPresetCount = static_cast<int>(AnimPreset::Count);
+const char* animPresetName(AnimPreset preset);  // nome italiano per il menu
+// Applica il preset: sostituisce l'animazione dei gruppi che usa (zoom: scala; panoramica: scala fissa e posizione X; dissolvenze:
+// solo il tratto iniziale o finale dell'opacità, quindi apertura e chiusura si possono avere insieme). `base` può cambiare (la
+// panoramica ingrandisce il pezzo). `projectWidth` serve alla panoramica (quanto scorre l'immagine). false se il pezzo è troppo corto.
+bool applyPreset(TransformAnimation& animation, Transform& base, AnimPreset preset, double from, double to, double projectWidth);
+
 // Gli istanti in cui c'è almeno una chiave (di qualsiasi parametro), in ordine e senza doppi: per la riga dei rombi.
 std::vector<double> keyTimes(const TransformAnimation& animation);
 
