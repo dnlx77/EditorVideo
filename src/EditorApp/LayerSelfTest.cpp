@@ -388,6 +388,27 @@ int runLayerMonitorTest(const QStringList& args, qsizetype at)
         check(got > 1.3 && !bare.isPlaying(), "arriva in fondo alla scritta e si ferma");
     }
 
+    // Solo una clip audio oltre ogni video: anche lei fa parte della durata del programma (il cursore ci arriva).
+    {
+        core::Project onlyAudio;
+        const int track = onlyAudio.audioTracks().addTrack();
+        core::AudioClip clip;
+        clip.path = "inesistente.wav";
+        clip.start = 0.0;
+        clip.end = 1.0;
+        clip.position = 0.5;
+        check(onlyAudio.audioTracks().add(track, clip) != 0, "una clip audio senza video");
+        ProgramMonitor bare(onlyAudio);
+        bare.resize(640, 360);
+        bare.show();
+        bare.sequenceChanged();
+        QCoreApplication::processEvents();
+        check(std::abs(bare.programEnd() - 1.5) < 1e-6, "la fine del programma è la fine della clip audio");
+        bare.seekTo(1.2);
+        QCoreApplication::processEvents();
+        check(std::abs(bare.position() - 1.2) < 0.05, "il cursore arriva fin dove arriva l'audio");
+    }
+
     std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
     return check.failures() == 0 ? 0 : 3;
 }

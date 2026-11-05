@@ -48,8 +48,8 @@ public:
     // Livello, muto o solo di una traccia audio cambiati: si sente subito, senza fermare la riproduzione.
     void audioMixChanged();
     void seekTo(double seconds);  // tempo della sequenza
-    double programEnd() const;  // fine del programma: ultimo pezzo, scritta o pezzo di livello
-    bool hasProgram() const;  // c'è qualcosa da riprodurre: pezzi su V1, oppure solo scritte e livelli
+    double programEnd() const;  // fine del programma: ultimo pezzo, scritta, pezzo di livello o clip audio
+    bool hasProgram() const;  // c'è qualcosa da riprodurre: pezzi su V1, oppure solo scritte, livelli o clip audio
     void seekRelative(double deltaSeconds);
     void togglePlayPause();  // mettendo in pausa la velocità torna quella scelta (finisce la spola)
     void setPlaying(bool playing);
