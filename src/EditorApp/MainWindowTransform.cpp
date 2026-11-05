@@ -125,8 +125,11 @@ void MainWindow::refreshKeyRow()
     if (const AnimTarget target = animationTarget(); target.valid) {
         row.layerPiece = target.layer;
         row.id = target.id;
-        for (const double time : core::keyTimes(target.animation))
-            row.keys.push_back({time, core::interpAt(target.animation, time)});
+        for (int g = 0; g < core::kAnimGroupCount; ++g) {
+            const auto group = static_cast<core::AnimGroup>(g);
+            for (const double time : core::groupKeyTimes(target.animation, group))
+                row.keys.push_back({group, time, core::groupInterpAt(target.animation, group, time)});
+        }
     }
     timeline_->setKeyRow(std::move(row));
 }

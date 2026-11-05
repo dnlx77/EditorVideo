@@ -1,4 +1,5 @@
 #include "EditorApp/PropertiesPanel.h"
+#include "EditorApp/AnimColors.h"
 
 #include <QtCore/QSignalBlocker>
 #include <QtWidgets/QCheckBox>
@@ -498,7 +499,9 @@ void PropertiesPanel::showTransform(const core::Transform& t, int count, const A
         b.prev->setEnabled(animation.enabled && state.hasPrev);
         b.next->setEnabled(animation.enabled && state.hasNext);
         b.key->setText(state.keyAtCursor ? QStringLiteral("◆") : QStringLiteral("◇"));
-        b.key->setStyleSheet(state.animated ? QStringLiteral("QToolButton { color: #e08a00; }") : QString());
+        b.key->setStyleSheet(state.animated ? QStringLiteral("QToolButton { color: %1; }")
+                                                    .arg(animGroupColor(static_cast<core::AnimGroup>(g)).name())
+                                            : QString());
         b.key->setToolTip(state.keyAtCursor ? QStringLiteral("Toglie il fotogramma chiave sul cursore")
                           : state.animated  ? QStringLiteral("Mette un fotogramma chiave sul cursore (col valore di adesso)")
                                             : QStringLiteral("Anima: mette un fotogramma chiave sul cursore"));

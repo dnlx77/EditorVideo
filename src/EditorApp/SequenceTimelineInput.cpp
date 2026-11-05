@@ -44,6 +44,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         if (const int key = keyAt(pos); key >= 0) {
             const KeyGeometry g = keyGeometry();
             const double time = keyRow_.keys[static_cast<std::size_t>(key)].time;
+            selectedKeyGroup_ = keyRow_.keys[static_cast<std::size_t>(key)].group;
             keyDragIndex_ = key;
             keyDragging_ = false;
             keyDragValue_ = time;
@@ -663,16 +664,18 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
     }
     if (keyDragIndex_ >= 0) {
         const bool moved = keyDragging_;
-        const double from = keyRow_.keys[std::min(static_cast<std::size_t>(keyDragIndex_), keyRow_.keys.size() - 1)].time;
+        const KeyMark& grabbed = keyRow_.keys[std::min(static_cast<std::size_t>(keyDragIndex_), keyRow_.keys.size() - 1)];
+        const double from = grabbed.time;
+        const core::AnimGroup group = grabbed.group;
         const double to = keyDragValue_;
         keyDragIndex_ = -1;
         keyDragging_ = false;
         invalidate();
         if (moved && std::abs(to - from) > 1e-6 && onKeyMoved) {
             selectedKey_ = to;
-            onKeyMoved(from, to);
+            onKeyMoved(group, from, to);
             const bool found = std::any_of(keyRow_.keys.begin(), keyRow_.keys.end(),
-                                           [&](const KeyMark& m) { return std::abs(m.time - to) <= 1e-6; });
+                                           [&](const KeyMark& m) { return m.group == group && std::abs(m.time - to) <= 1e-6; });
             if (!found)
                 selectedKey_ = from;  // lo spostamento non è stato accettato: la chiave è dov'era
             invalidate();

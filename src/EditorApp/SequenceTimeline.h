@@ -125,8 +125,9 @@ public:
     // lì, il clic destro apre il menu del tipo di passaggio. Vuota = nessuna riga.
     struct KeyMark
     {
-        double time = 0.0;  // nel file
-        core::Interp interp = core::Interp::Linear;
+        core::AnimGroup group = core::AnimGroup::Scale;  // a quale trasformazione appartiene (una sotto-riga e un colore per gruppo)
+        double time = 0.0;                                // nel file
+        core::Interp interp = core::Interp::Linear;       // la forma: rombo lineare, quadrato fermo, tondo dolce, rombo con puntino curva
     };
     struct KeyRow
     {
@@ -136,15 +137,17 @@ public:
     };
     void setKeyRow(KeyRow row);
     const KeyRow& keyRow() const { return keyRow_; }
-    // La chiave scelta (tempo nel file; negativo = nessuna).
+    // La chiave scelta (tempo nel file; negativo = nessuna) e il suo gruppo.
     double selectedKey() const { return selectedKey_; }
-    std::function<void(double fromFileTime, double toFileTime)> onKeyMoved;
-    std::function<void(double fileTime)> onKeyRemoved;
-    std::function<void(double fileTime, core::Interp interp, double c1x, double c1y, double c2x, double c2y)> onKeyInterp;
+    core::AnimGroup selectedKeyGroup() const { return selectedKeyGroup_; }
+    std::function<void(core::AnimGroup group, double fromFileTime, double toFileTime)> onKeyMoved;
+    std::function<void(core::AnimGroup group, double fileTime)> onKeyRemoved;
+    std::function<void(core::AnimGroup group, double fileTime, core::Interp interp, double c1x, double c1y, double c2x, double c2y)>
+        onKeyInterp;
     // Solo per le prove: dove sta il rombo della chiave `index` (coordinate del widget; fuori dal widget se non si vede).
     QPointF keyCenterForTest(int index) const;
     // Mostra il menu del tipo di passaggio per la chiave a quel tempo (clic destro) e applica la scelta.
-    void showKeyMenu(double fileTime, const QPoint& globalPos);
+    void showKeyMenu(core::AnimGroup group, double fileTime, const QPoint& globalPos);
 
     explicit SequenceTimeline(QWidget* parent = nullptr);
 
@@ -481,17 +484,21 @@ private:
     struct KeyGeometry
     {
         bool ok = false;
-        QRectF strip;      // la fascia in basso sul blocco
+        QRectF strip;      // la fascia in basso sul blocco, con una sotto-riga per gruppo
+        std::vector<core::AnimGroup> rows;  // i gruppi che hanno chiavi, dall'alto in basso
+        double rowHeight = 0.0;
         double position = 0.0;
         double length = 0.0;
         double source = 0.0;
     };
     KeyGeometry keyGeometry() const;
     double keyX(const KeyGeometry& g, double fileTime) const { return xForTime(g.position + (fileTime - g.source)); }
+    double keyY(const KeyGeometry& g, core::AnimGroup group) const;  // il centro della sotto-riga del gruppo
     int keyAt(const QPointF& pos) const;  // indice in keyRow_.keys del rombo sotto il mouse, -1 se nessuno
     void paintKeyRow(QPainter& p);
     KeyRow keyRow_;
     double selectedKey_ = -1.0;
+    core::AnimGroup selectedKeyGroup_ = core::AnimGroup::Scale;
     int keyDragIndex_ = -1;      // rombo preso
     bool keyDragging_ = false;   // si è mosso
     double keyDragValue_ = 0.0;  // dove andrebbe (tempo nel file)

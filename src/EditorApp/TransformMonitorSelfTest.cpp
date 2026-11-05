@@ -424,12 +424,12 @@ int runManipTest(const QStringList& args, qsizetype at)
                 }
                 // Il tipo di passaggio (da menu: qui si chiama quello che il menu chiama).
                 check(line->keyRow().keys[0].interp == core::Interp::Linear, "all'inizio il passaggio è lineare");
-                line->onKeyInterp(line->keyRow().keys[0].time, core::Interp::Hold, 0, 0, 1, 1);
+                line->onKeyInterp(line->keyRow().keys[0].group, line->keyRow().keys[0].time, core::Interp::Hold, 0, 0, 1, 1);
                 QCoreApplication::processEvents();
                 check(line->keyRow().keys[0].interp == core::Interp::Hold
                           && animation().track(core::AnimParam::Opacity)[0].interp == core::Interp::Hold,
                       "il tipo di passaggio cambia sulla chiave e nella riga");
-                line->onKeyInterp(line->keyRow().keys[0].time, core::Interp::Bezier, 0.34, 1.56, 0.64, 1.0);
+                line->onKeyInterp(line->keyRow().keys[0].group, line->keyRow().keys[0].time, core::Interp::Bezier, 0.34, 1.56, 0.64, 1.0);
                 QCoreApplication::processEvents();
                 check(animation().track(core::AnimParam::Opacity)[0].interp == core::Interp::Bezier
                           && std::abs(animation().track(core::AnimParam::Opacity)[0].c1y - 1.56) < 1e-9,
@@ -447,6 +447,59 @@ int runManipTest(const QStringList& args, qsizetype at)
                 window.undo();
                 QCoreApplication::processEvents();
                 check(animation().track(core::AnimParam::Opacity).size() == 2, "Annulla riporta la chiave");
+                // Più gruppi animati (K8): una sotto-riga e un colore per gruppo, ogni operazione vale per il gruppo cliccato.
+                {
+                    const double tOpacity = animation().track(core::AnimParam::Opacity)[0].time;
+                    window.editAnimationKeys(QStringLiteral("prova gruppi"), [&](core::TransformAnimation& a, core::Transform&) {
+                        for (const core::AnimParam p : {core::AnimParam::ScaleX, core::AnimParam::ScaleY}) {
+                            core::setKey(a, p, {.time = tOpacity, .value = 1.0});
+                            core::setKey(a, p, {.time = piece.start + 2.6, .value = 1.5});
+                        }
+                        return true;
+                    });
+                    QCoreApplication::processEvents();
+                    int scaleMarks = 0;
+                    int opacityMarks = 0;
+                    int scaleIndexAtOpacityTime = -1;
+                    int opacityIndex = -1;
+                    for (int i = 0; i < static_cast<int>(line->keyRow().keys.size()); ++i) {
+                        const auto& mark = line->keyRow().keys[static_cast<std::size_t>(i)];
+                        scaleMarks += mark.group == core::AnimGroup::Scale;
+                        opacityMarks += mark.group == core::AnimGroup::Opacity;
+                        if (std::abs(mark.time - tOpacity) < 1e-6) {
+                            if (mark.group == core::AnimGroup::Scale)
+                                scaleIndexAtOpacityTime = i;
+                            if (mark.group == core::AnimGroup::Opacity)
+                                opacityIndex = i;
+                        }
+                    }
+                    check(scaleMarks == 2 && opacityMarks == 2, "ogni gruppo ha i suoi rombi nella riga");
+                    check(scaleIndexAtOpacityTime >= 0 && opacityIndex >= 0, "nello stesso istante ci sono un rombo di scala e uno di opacità");
+                    if (scaleIndexAtOpacityTime >= 0 && opacityIndex >= 0) {
+                        const QPointF a = line->keyCenterForTest(scaleIndexAtOpacityTime);
+                        const QPointF b = line->keyCenterForTest(opacityIndex);
+                        check(std::abs(a.x() - b.x()) < 1.0 && std::abs(a.y() - b.y()) > 4.0,
+                              "i rombi dello stesso istante stanno su sotto-righe diverse");
+                        // Clic sul rombo dell'opacità: sceglie quel gruppo; Canc toglie solo l'opacità di quell'istante.
+                        send(QEvent::MouseButtonPress, b, true);
+                        send(QEvent::MouseButtonRelease, b, false);
+                        check(line->selectedKeyGroup() == core::AnimGroup::Opacity, "il clic sceglie il rombo del gruppo cliccato");
+                        const std::size_t scaleKeys = animation().track(core::AnimParam::ScaleX).size();
+                        window.deleteSelection();
+                        QCoreApplication::processEvents();
+                        check(animation().track(core::AnimParam::Opacity).size() == 1 && animation().track(core::AnimParam::ScaleX).size() == scaleKeys,
+                              "Canc toglie la chiave del gruppo scelto e lascia le altre");
+                        window.undo();  // riporta l'opacità
+                        QCoreApplication::processEvents();
+                    }
+                    // Via le chiavi di scala di prova (un solo passo, senza toccare l'opacità).
+                    window.editAnimationKeys(QStringLiteral("pulizia"), [&](core::TransformAnimation& a, core::Transform&) {
+                        return core::clearTrack(a, core::AnimParam::ScaleX) | core::clearTrack(a, core::AnimParam::ScaleY);
+                    });
+                    QCoreApplication::processEvents();
+                    check(!animation().animated(core::AnimParam::ScaleX) && animation().track(core::AnimParam::Opacity).size() == 2,
+                          "dopo la pulizia restano solo le chiavi dell'opacità");
+                }
                 // Un gesto sul monitor (K6): il parametro animato che cambia riceve una chiave sul cursore, gli altri cambiano la base.
                 {
                     seek(2.0);

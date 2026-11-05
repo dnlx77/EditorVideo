@@ -143,6 +143,13 @@ enum class AnimGroup : int
 };
 inline constexpr int kAnimGroupCount = 5;
 std::vector<AnimParam> groupParams(AnimGroup group);
+// Le stesse operazioni su un solo gruppo di parametri (la riga dei rombi della linea del tempo ha una sotto-riga per gruppo).
+bool moveGroupKeys(TransformAnimation& animation, AnimGroup group, double fromTime, double toTime);
+bool removeGroupKeys(TransformAnimation& animation, AnimGroup group, double time, Transform* base = nullptr);
+bool setGroupKeysInterp(TransformAnimation& animation, AnimGroup group, double time, Interp interp, double c1x = 0.25, double c1y = 0.1,
+                        double c2x = 0.25, double c2y = 1.0);
+Interp groupInterpAt(const TransformAnimation& animation, AnimGroup group, double time);
+std::vector<double> groupKeyTimes(const TransformAnimation& animation, AnimGroup group);
 
 // Quanto vicino al cursore una chiave conta "sul cursore" (il cursore si ferma sui fotogrammi: non è mai preciso al microsecondo).
 inline constexpr double kAnimCursorTolerance = 0.002;

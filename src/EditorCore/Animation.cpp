@@ -269,12 +269,23 @@ const AnimKey* findKey(const TransformAnimation& animation, AnimParam param, dou
     return nullptr;
 }
 
-bool moveKeysAt(TransformAnimation& animation, double fromTime, double toTime)
+namespace {
+
+std::vector<AnimParam> allParams()
+{
+    std::vector<AnimParam> params;
+    for (std::size_t p = 0; p < kAnimParamCount; ++p)
+        params.push_back(static_cast<AnimParam>(p));
+    return params;
+}
+
+bool moveKeysOf(TransformAnimation& animation, const std::vector<AnimParam>& params, double fromTime, double toTime)
 {
     if (!std::isfinite(toTime) || sameTime(fromTime, toTime))
         return false;
     bool any = false;
-    for (const std::vector<AnimKey>& keys : animation.tracks) {
+    for (const AnimParam param : params) {
+        const std::vector<AnimKey>& keys = animation.track(param);
         const bool atFrom = std::any_of(keys.begin(), keys.end(), [&](const AnimKey& k) { return sameTime(k.time, fromTime); });
         const bool atTo = std::any_of(keys.begin(), keys.end(), [&](const AnimKey& k) { return sameTime(k.time, toTime); });
         if (atFrom && atTo)
@@ -283,16 +294,15 @@ bool moveKeysAt(TransformAnimation& animation, double fromTime, double toTime)
     }
     if (!any)
         return false;
-    for (std::size_t p = 0; p < kAnimParamCount; ++p)
-        moveKey(animation, static_cast<AnimParam>(p), fromTime, toTime);
+    for (const AnimParam param : params)
+        moveKey(animation, param, fromTime, toTime);
     return true;
 }
 
-bool removeKeysAt(TransformAnimation& animation, double time, Transform* base)
+bool removeKeysOf(TransformAnimation& animation, const std::vector<AnimParam>& params, double time, Transform* base)
 {
     bool changed = false;
-    for (std::size_t p = 0; p < kAnimParamCount; ++p) {
-        const auto param = static_cast<AnimParam>(p);
+    for (const AnimParam param : params) {
         const AnimKey* at = findKey(animation, param, time);
         const double value = at != nullptr ? at->value : 0.0;
         if (removeKey(animation, param, time)) {
@@ -304,23 +314,77 @@ bool removeKeysAt(TransformAnimation& animation, double time, Transform* base)
     return changed;
 }
 
-bool setKeysInterpAt(TransformAnimation& animation, double time, Interp interp, double c1x, double c1y, double c2x, double c2y)
+bool setInterpOf(TransformAnimation& animation, const std::vector<AnimParam>& params, double time, Interp interp, double c1x, double c1y,
+                 double c2x, double c2y)
 {
     bool changed = false;
-    for (std::size_t p = 0; p < kAnimParamCount; ++p)
-        changed = setKeyInterp(animation, static_cast<AnimParam>(p), time, interp, c1x, c1y, c2x, c2y) || changed;
+    for (const AnimParam param : params)
+        changed = setKeyInterp(animation, param, time, interp, c1x, c1y, c2x, c2y) || changed;
     return changed;
+}
+
+Interp interpOf(const TransformAnimation& animation, const std::vector<AnimParam>& params, double time)
+{
+    for (const AnimParam param : params) {
+        if (const AnimKey* k = findKey(animation, param, time))
+            return k->interp;
+    }
+    return Interp::Linear;
+}
+
+}  // namespace
+
+bool moveKeysAt(TransformAnimation& animation, double fromTime, double toTime)
+{
+    return moveKeysOf(animation, allParams(), fromTime, toTime);
+}
+
+bool removeKeysAt(TransformAnimation& animation, double time, Transform* base)
+{
+    return removeKeysOf(animation, allParams(), time, base);
+}
+
+bool setKeysInterpAt(TransformAnimation& animation, double time, Interp interp, double c1x, double c1y, double c2x, double c2y)
+{
+    return setInterpOf(animation, allParams(), time, interp, c1x, c1y, c2x, c2y);
 }
 
 Interp interpAt(const TransformAnimation& animation, double time)
 {
-    for (const std::vector<AnimKey>& keys : animation.tracks) {
-        for (const AnimKey& k : keys) {
-            if (sameTime(k.time, time))
-                return k.interp;
-        }
+    return interpOf(animation, allParams(), time);
+}
+
+bool moveGroupKeys(TransformAnimation& animation, AnimGroup group, double fromTime, double toTime)
+{
+    return moveKeysOf(animation, groupParams(group), fromTime, toTime);
+}
+
+bool removeGroupKeys(TransformAnimation& animation, AnimGroup group, double time, Transform* base)
+{
+    return removeKeysOf(animation, groupParams(group), time, base);
+}
+
+bool setGroupKeysInterp(TransformAnimation& animation, AnimGroup group, double time, Interp interp, double c1x, double c1y, double c2x,
+                        double c2y)
+{
+    return setInterpOf(animation, groupParams(group), time, interp, c1x, c1y, c2x, c2y);
+}
+
+Interp groupInterpAt(const TransformAnimation& animation, AnimGroup group, double time)
+{
+    return interpOf(animation, groupParams(group), time);
+}
+
+std::vector<double> groupKeyTimes(const TransformAnimation& animation, AnimGroup group)
+{
+    std::vector<double> times;
+    for (const AnimParam p : groupParams(group)) {
+        for (const AnimKey& k : animation.track(p))
+            times.push_back(k.time);
     }
-    return Interp::Linear;
+    std::sort(times.begin(), times.end());
+    times.erase(std::unique(times.begin(), times.end(), [](double a, double b) { return sameTime(a, b); }), times.end());
+    return times;
 }
 
 namespace {
