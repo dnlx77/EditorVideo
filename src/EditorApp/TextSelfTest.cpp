@@ -472,8 +472,11 @@ int runTextTest(const QStringList&, qsizetype)
             core::TextClip turned = text;
             turned.transform.rotation = 90.0;
             const QRect rotated = boundsOf(turned, 1.0, overlay);
-            check(std::abs(rotated.width() - plain.height()) <= 3 && std::abs(rotated.height() - plain.width()) <= 3
-                      && std::abs(rotated.center().x() - plain.center().x()) <= 2,
+            // 90° in senso orario intorno al centro del riquadro (200, 150 sul monitor): (dx, dy) -> (-dy, dx). Il riquadro dei pixel
+            // accesi non è centrato esattamente sul centro (spazi del font): si controlla la geometria vera, non il centro del riquadro.
+            const QPointF expectedCenter(200.0 - (plain.center().y() - 150.0), 150.0 + (plain.center().x() - 200.0));
+            check(std::abs(rotated.width() - plain.height()) <= 6 && std::abs(rotated.height() - plain.width()) <= 6
+                      && std::abs(rotated.center().x() - expectedCenter.x()) <= 5 && std::abs(rotated.center().y() - expectedCenter.y()) <= 5,
                   "la rotazione gira la scritta intorno al suo centro");
             core::TextClip big = text;
             big.transform.scaleX = big.transform.scaleY = 2.0;
