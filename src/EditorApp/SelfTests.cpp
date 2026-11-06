@@ -3,6 +3,7 @@
 #include "EditorApp/GroupListPanel.h"
 #include "EditorApp/ExportDialog.h"
 #include "EditorApp/MainWindow.h"
+#include "EditorApp/MixerPanel.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/PropertiesPanel.h"
@@ -2163,8 +2164,27 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 const bool keepsPlaying = window->programMonitor()->isPlaying() && audio.audible(track)
                                        && !audio.audible(core::AudioTracks::kOriginalTrack) && audio.tracks()[0].clips[0].envelope.size() == 2;
                 window->programMonitor()->setPlaying(false);
+                // Il pannello Mixer ha una colonna per traccia, con gli stessi valori delle corsie, e i suoi comandi
+                // cambiano il progetto come quelli della linea del tempo.
+                MixerPanel* mixer = window->mixerPanel();
+                bool mixerOk = mixer->stripCount() == 1 + audio.addedTrackCount();
+                if (mixerOk) {
+                    const MixerPanel::Track& a1 = mixer->trackAt(0);
+                    const MixerPanel::Track& a2 = mixer->trackAt(1);
+                    mixerOk = a1.trackId == core::AudioTracks::kOriginalTrack && a1.muted && a2.trackId == track
+                           && a2.solo && std::abs(a2.levelDb + 12.0) < 1e-9;
+                    mixer->onLevel(track, -3.0);
+                    mixer->onMuted(core::AudioTracks::kOriginalTrack, false);
+                    mixer->onSolo(track, false);
+                    mixerOk = mixerOk && std::abs(audio.mix(track).levelDb + 3.0) < 1e-9
+                           && !audio.mix(core::AudioTracks::kOriginalTrack).muted && !audio.mix(track).solo
+                           && std::abs(mixer->trackAt(1).levelDb + 3.0) < 1e-9 && !mixer->trackAt(0).muted;
+                }
+                std::printf("Mixer: colonne come le corsie e comandi che cambiano il progetto %s\n", mixerOk ? "sì" : "NO");
+                std::fflush(stdout);
+                ok = ok && mixerOk;
                 bool undone = true;
-                for (int i = 0; i < 12 && !(audio.isDefault() && window->project().find(wavId) == nullptr); ++i)
+                for (int i = 0; i < 20 && !(audio.isDefault() && window->project().find(wavId) == nullptr); ++i)
                     undone = window->undo() && undone;
                 undone = undone && audio.isDefault() && sequence.fragments().size() == pieces;
                 std::printf("Mix audio: file solo audio rilasciato nel montaggio %s, con A %s, livello/solo/muto suonando %s, annulla %s\n",

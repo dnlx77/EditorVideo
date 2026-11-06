@@ -98,6 +98,8 @@ void MainWindow::resetLayout()
     splitDockWidget(filesDock_, sourceDock_, Qt::Horizontal);
     splitDockWidget(sourceDock_, programDock_, Qt::Horizontal);
     splitDockWidget(programDock_, propertiesDock_, Qt::Horizontal);  // le proprietà all'estremo destro
+    tabifyDockWidget(propertiesDock_, mixerDock_);                   // il mixer è una scheda accanto alle proprietà
+    propertiesDock_->raise();
     addDockWidget(Qt::BottomDockWidgetArea, timelineDock_);
     for (QDockWidget* dock : docks())
         dock->show();
@@ -115,6 +117,7 @@ void MainWindow::saveLayout()
     s.setValue(QStringLiteral("finestra/geometria"), saveGeometry());
     s.setValue(QStringLiteral("finestra/disposizione"), saveState());
     s.setValue(QStringLiteral("finestra/conProprieta"), true);
+    s.setValue(QStringLiteral("finestra/conMixer"), true);
     s.setValue(QStringLiteral("finestra/altezzaLineaDelTempo"), timelineHeight_);
 }
 
@@ -134,6 +137,13 @@ void MainWindow::restoreLayout()
         splitDockWidget(programDock_, propertiesDock_, Qt::Horizontal);
         propertiesDock_->show();
         resizeDocks({programDock_, propertiesDock_}, {500, 280}, Qt::Horizontal);
+    }
+    // Una disposizione salvata prima del Mixer non lo conosce: lo si mette in scheda accanto alle Proprietà.
+    if (!state.isEmpty() && !s.value(QStringLiteral("finestra/conMixer"), false).toBool()) {
+        mixerDock_->setFloating(false);
+        tabifyDockWidget(propertiesDock_, mixerDock_);
+        propertiesDock_->raise();
+        mixerDock_->hide();  // resta nascosto finché non lo si apre dal menu Finestra
     }
     // Una disposizione salvata prima che la linea del tempo potesse stare solo in basso: la si rimette lì.
     if (!timelineDock_->isFloating() && dockWidgetArea(timelineDock_) != Qt::BottomDockWidgetArea)
