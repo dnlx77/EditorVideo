@@ -133,6 +133,31 @@ TEST_F(AudioMixerTest, TrackLevelAndSilencedTracks)
         ASSERT_NEAR(out[f * 2], sampleAudio(f) * 0.5, 1) << "fotogramma " << f;
 }
 
+TEST_F(AudioMixerTest, PeaksPerTrackForTheMeters)
+{
+    // Il picco di ogni traccia è quello che passa nel mix (livello compreso); una traccia che non suona non ha picchi.
+    AudioMixer mixer({segment("a.wav", 0.0, 1.0, 0.0), segment("b.wav", 0.0, 1.0, 0.0, 1), segment("a.wav", 0.0, 1.0, 0.0, 2)},
+                     {{0, 1.0f}, {1, 0.5f}, {2, 0.0f}});
+    EXPECT_TRUE(mixer.takePeaks().empty());
+    std::vector<std::int16_t> out;
+    mixer.render(0, 4800, out);
+    float expectedA = 0.0f;
+    float expectedB = 0.0f;
+    for (long long f = 0; f < 4800; ++f) {
+        expectedA = std::max(expectedA, std::abs(sampleAudio(f)) / 32768.0f);
+        expectedB = std::max(expectedB, std::abs(sampleAudio(f + 2 * kRate)) / 32768.0f);
+    }
+    auto peaks = mixer.takePeaks();
+    ASSERT_EQ(peaks.count(0), 1u);
+    ASSERT_EQ(peaks.count(1), 1u);
+    EXPECT_EQ(peaks.count(2), 0u);
+    EXPECT_NEAR(peaks[0][0], expectedA, 1e-3);
+    EXPECT_NEAR(peaks[0][1], expectedA, 1e-3);
+    EXPECT_GT(peaks[0][0], 0.0f);
+    EXPECT_NEAR(peaks[1][0], expectedB * 0.5f, 1e-2);
+    EXPECT_TRUE(mixer.takePeaks().empty()) << "dopo la lettura si azzerano";
+}
+
 TEST_F(AudioMixerTest, LevelChangesWithARampNotAJump)
 {
     AudioMixer mixer({segment("a.wav", 0.0, 2.0, 0.0)}, {{0, 1.0f}});

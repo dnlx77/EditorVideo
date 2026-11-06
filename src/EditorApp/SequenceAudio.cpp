@@ -67,6 +67,13 @@ void SequenceAudio::setTrackGains(const std::map<int, float>& gains)
         mixer_->setGains(gains);
 }
 
+std::map<int, std::array<float, 2>> SequenceAudio::takePeaks()
+{
+    if (running_ && mixer_)
+        return mixer_->takePeaks();
+    return {};
+}
+
 void SequenceAudio::setSegmentEnvelopes(std::vector<std::vector<core::LevelPoint>> envelopes)
 {
     if (running_ && mixer_)

@@ -3,6 +3,7 @@
 #include "EditorCore/MixSpec.h"
 #include "EditorCore/Project.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -46,6 +47,9 @@ public:
     // Le linee del livello dei tratti, una per tratto nello stesso ordine (al posto di quelle di prima): il valore al
     // tempo del file moltiplica il livello della traccia, campione per campione.
     void setEnvelopes(std::vector<std::vector<LevelPoint>> envelopes);
+    // I picchi (valore assoluto massimo, 0..1 prima del limitatore) di ogni traccia, sinistra e destra, nei blocchi
+    // resi dall'ultima chiamata; poi si azzerano. Per i vu-meter: si può chiamare da un altro thread.
+    std::map<int, std::array<float, 2>> takePeaks();
 
     // Scrive in `out` (stereo interlacciato, `frames` * 2 campioni) l'audio dal fotogramma `firstFrame` (contato dal
     // tempo 0 della sequenza). Dove non c'è niente: silenzio.

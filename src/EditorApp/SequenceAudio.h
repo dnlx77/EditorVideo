@@ -3,6 +3,7 @@
 #include "EditorApp/AudioOutput.h"
 #include "EditorCore/AudioMixer.h"
 
+#include <array>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -36,6 +37,8 @@ public:
     // Volume dell'anteprima (0-1), e livelli delle tracce che cambiano mentre si suona.
     void setVolume(float gain) { volume_ = gain; }
     void setTrackGains(const std::map<int, float>& gains);
+    // I picchi di ogni traccia dall'ultima chiamata (vedi AudioMixer::takePeaks); vuoto se non suona.
+    std::map<int, std::array<float, 2>> takePeaks();
     void setSegmentEnvelopes(std::vector<std::vector<core::LevelPoint>> envelopes);  // le linee del livello dei tratti
 
 private:
