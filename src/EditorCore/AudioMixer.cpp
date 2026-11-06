@@ -151,6 +151,7 @@ MixSpec mixSpecOf(const Project& project, bool closeGaps)
     }
     spec.gains = trackGainsOf(project.audioTracks());
     spec.pans = trackPansOf(project.audioTracks());
+    spec.masterGain = static_cast<float>(project.audioTracks().masterGain());
     spec.length = sequence.totalLength();
     if (!closeGaps) {
         for (const MixSegment& s : spec.segments)
@@ -307,11 +308,12 @@ struct AudioMixer::Shared
     std::mutex mutex;
     std::map<int, float> gains;
     std::map<int, float> pans;
+    float masterGain = 1.0f;
     std::vector<std::vector<LevelPoint>> envelopes;  // uno per tratto
     std::map<int, std::array<float, 2>> peaks;       // picchi (sinistro, destro) per traccia dall'ultimo takePeaks
 };
 
-AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, std::map<int, float> pans)
+AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, std::map<int, float> pans, float masterGain)
     : segments_(std::move(segments))
     , shared_(std::make_unique<Shared>())
 {
@@ -319,6 +321,8 @@ AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> ga
     applied_ = shared_->gains;
     shared_->pans = std::move(pans);
     appliedPans_ = shared_->pans;
+    shared_->masterGain = masterGain;
+    appliedMaster_ = masterGain;
     for (const MixSegment& s : segments_) {
         shared_->envelopes.push_back(s.envelope);
         first_.push_back(std::llround(s.position * kMixSampleRate));
@@ -344,6 +348,12 @@ std::map<int, std::array<float, 2>> AudioMixer::takePeaks()
     std::map<int, std::array<float, 2>> taken;
     taken.swap(shared_->peaks);
     return taken;
+}
+
+void AudioMixer::setMasterGain(float gain)
+{
+    std::lock_guard lock(shared_->mutex);
+    shared_->masterGain = gain;
 }
 
 void AudioMixer::setPans(const std::map<int, float>& pans)
@@ -380,11 +390,13 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
 {
     std::map<int, float> targets;
     std::map<int, float> panTargets;
+    float masterTarget = 1.0f;
     std::vector<std::vector<LevelPoint>> envelopes;
     {
         std::lock_guard lock(shared_->mutex);
         targets = shared_->gains;
         panTargets = shared_->pans;
+        masterTarget = shared_->masterGain;
         envelopes = shared_->envelopes;
     }
     std::vector<float>& acc = acc_;  // riusato a ogni blocco: niente allocazioni sul thread audio
@@ -431,6 +443,22 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
         applied_[trackId] = gain;
     for (const auto& [trackId, pan] : panTargets)
         appliedPans_[trackId] = pan;
+    // Il Master: moltiplica tutto il mix (con la rampa) e se ne misura il picco, prima del limitatore.
+    {
+        std::array<float, 2>& masterPeak = blockPeaks[kMasterTrackId];
+        const float m0 = appliedMaster_;
+        for (std::size_t i = 0; i < frames; ++i) {
+            const float t = frames > 1 ? static_cast<float>(i) / static_cast<float>(frames) : 1.0f;
+            const float g = m0 + (masterTarget - m0) * t;
+            if (g != 1.0f) {
+                acc[i * 2] *= g;
+                acc[i * 2 + 1] *= g;
+            }
+            masterPeak[0] = std::max(masterPeak[0], std::abs(acc[i * 2]));
+            masterPeak[1] = std::max(masterPeak[1], std::abs(acc[i * 2 + 1]));
+        }
+        appliedMaster_ = masterTarget;
+    }
     {
         std::lock_guard lock(shared_->mutex);
         for (const auto& [trackId, peak] : blockPeaks) {

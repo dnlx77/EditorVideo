@@ -1596,7 +1596,8 @@ bool ProgramMonitor::startAudio(double from)
     }
     applyVolume();
     core::AudioMixer mixer(core::mixSegmentsOf(project_), core::trackGainsOf(project_.audioTracks()),
-                           core::trackPansOf(project_.audioTracks()));
+                           core::trackPansOf(project_.audioTracks()),
+                           static_cast<float>(project_.audioTracks().masterGain()));
     const bool started = sequenceAudio_.start(std::move(mixer), from, programEnd(), speed_);
     player_->setAudioNote(started ? QString() : QStringLiteral("audio non disponibile"));
     return started;
@@ -1618,6 +1619,7 @@ void ProgramMonitor::audioMixChanged()
 {
     sequenceAudio_.setTrackGains(core::trackGainsOf(project_.audioTracks()));
     sequenceAudio_.setTrackPans(core::trackPansOf(project_.audioTracks()));
+    sequenceAudio_.setMasterGain(static_cast<float>(project_.audioTracks().masterGain()));
     sequenceAudio_.setSegmentEnvelopes(core::segmentEnvelopesOf(project_));
 }
 

@@ -3,6 +3,7 @@
 
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/MixerPanel.h"
+#include "EditorCore/AudioMixer.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/PropertiesPanel.h"
@@ -629,7 +630,12 @@ MainWindow::MainWindow(QWidget* parent)
     propertiesPanel_->setTextPage(textPanel_);
     propertiesDock_ = makeDock(QStringLiteral("Proprietà"), QStringLiteral("pannelloProprieta"), propertiesPanel_);
     mixerPanel_ = new MixerPanel;
-    mixerPanel_->onLevel = [this](int trackId, double db) { setTrackLevel(trackId, db); };
+    mixerPanel_->onLevel = [this](int trackId, double db) {
+        if (trackId == core::kMasterTrackId)
+            setMasterLevel(db);
+        else
+            setTrackLevel(trackId, db);
+    };
     mixerPanel_->onMuted = [this](int trackId, bool muted) { setTrackMuted(trackId, muted); };
     mixerPanel_->onSolo = [this](int trackId, bool solo) { setTrackSolo(trackId, solo); };
     mixerPanel_->onPan = [this](int trackId, double pan) { setTrackPan(trackId, pan); };
@@ -1431,6 +1437,7 @@ void MainWindow::refreshTimeline()
             strips.push_back({lane.trackId, lane.name, lane.levelDb, lane.muted, lane.solo, lane.audible,
                               audio.mix(lane.trackId).pan});
         mixerPanel_->setTracks(strips);
+        mixerPanel_->setMaster(audio.masterLevelDb());
     }
     timeline_->setAudioLanes(std::move(lanes));
     // Livelli di scritte, dal più basso al più alto.

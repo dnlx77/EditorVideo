@@ -168,6 +168,32 @@ TEST_F(AudioMixerTest, PanShiftsTheTrackBetweenLeftAndRight)
     }
 }
 
+TEST_F(AudioMixerTest, MasterLevelScalesTheWholeMixAndHasItsOwnPeak)
+{
+    AudioMixer mixer({segment("a.wav", 0.0, 1.0, 0.0), segment("b.wav", 0.0, 1.0, 0.0, 1)}, {{0, 1.0f}, {1, 1.0f}}, {}, 0.5f);
+    const auto out = renderAll(mixer, 1.0);
+    for (long long f = 0; f < kRate; ++f) {
+        const long long sum = static_cast<long long>(sampleAudio(f)) + sampleAudio(2 * kRate + f);
+        ASSERT_NEAR(out[f * 2], sum * 0.5, 2) << "fotogramma " << f;
+    }
+    // Il picco del Master è quello del mix già a metà livello; quello delle tracce no.
+    AudioMixer peaked({segment("a.wav", 0.0, 1.0, 0.0)}, {{0, 1.0f}}, {}, 0.5f);
+    std::vector<std::int16_t> block;
+    peaked.render(0, 4800, block);
+    auto peaks = peaked.takePeaks();
+    ASSERT_EQ(peaks.count(kMasterTrackId), 1u);
+    EXPECT_NEAR(peaks[kMasterTrackId][0], peaks[0][0] * 0.5f, 1e-4);
+    EXPECT_GT(peaks[0][0], 0.0f);
+
+    // Cambiato mentre suona: con la rampa.
+    AudioMixer moving({segment("a.wav", 0.0, 2.0, 0.0)}, {{0, 1.0f}});
+    moving.render(0, 4800, block);
+    moving.setMasterGain(0.0f);
+    moving.render(4800, 4800, block);
+    for (long long i = 0; i < 4800; ++i)
+        ASSERT_NEAR(block[i * 2], sampleAudio(4800 + i) * (1.0 - static_cast<double>(i) / 4800.0), 2) << "fotogramma " << i;
+}
+
 TEST_F(AudioMixerTest, PeaksPerTrackForTheMeters)
 {
     // Il picco di ogni traccia è quello che passa nel mix (livello compreso); una traccia che non suona non ha picchi.

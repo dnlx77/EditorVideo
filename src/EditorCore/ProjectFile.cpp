@@ -351,7 +351,10 @@ JsonValue audioTracksToJson(const std::filesystem::path& dir, const AudioTracks&
             item["suA1"] = true;
         tracks.emplace_back(std::move(item));
     }
-    return JsonValue::Object{{"A1", mixToJson(audio.mix(AudioTracks::kOriginalTrack))}, {"tracce", std::move(tracks)}};
+    JsonValue::Object root{{"A1", mixToJson(audio.mix(AudioTracks::kOriginalTrack))}, {"tracce", std::move(tracks)}};
+    if (audio.masterLevelDb() != 0.0)
+        root["master"] = JsonValue::Object{{"livello", audio.masterLevelDb()}};  // solo se non è a 0 dB
+    return root;
 }
 
 // Le scritte: colori come "#RRGGBBAA", grandezze e posizioni in frazioni del fotogramma, tempi in tick.
@@ -923,7 +926,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                 }
                 tracks.push_back(std::move(track));
             }
-            loaded.project.audioTracks().restore(mixFromJson(a["A1"]), std::move(tracks));
+            loaded.project.audioTracks().restore(mixFromJson(a["A1"]), std::move(tracks), mixFromJson(a["master"]).levelDb);
         }
 
         // Scritte: una scritta con durata troppo corta o prima di 0 rende rovinato il file; una sovrapposta a un'altra si scarta.

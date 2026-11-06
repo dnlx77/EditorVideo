@@ -253,6 +253,7 @@ public:
     void setTrackSolo(int trackId, bool solo);
     void setTrackLevel(int trackId, double db);
     void setTrackPan(int trackId, double pan);
+    void setMasterLevel(double db);
     void setJunctionLevel(const core::Project::Junction& junction, std::optional<double> db);  // pallino sulla giunzione
     void setEnvelope(bool fragment, int id, const std::vector<core::LevelPoint>& points);  // linea del livello di un pezzo o clip
     // Forme d'onda ancora da calcolare (0 = tutte pronte).

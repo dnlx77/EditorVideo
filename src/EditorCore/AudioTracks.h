@@ -90,6 +90,10 @@ public:
     static std::pair<float, float> panGains(double pan);
     // La linea del livello di una clip (normalizzata); false se la clip non c'è o non cambia nulla.
     bool setClipEnvelope(int clipId, std::vector<LevelPoint> points);
+    // Il livello del Master (tutto il mix insieme, dopo le tracce), in dB, limitato come quello delle tracce.
+    double masterLevelDb() const { return masterDb_; }
+    bool setMasterLevel(double db);
+    double masterGain() const { return dbToGain(masterDb_); }
     // Se la traccia si sente nel mix (muto e solo di tutte le tracce compresi).
     bool audible(int trackId) const;
     // Quanto si moltiplica il segnale della traccia nel mix: 0 se non si sente.
@@ -133,7 +137,7 @@ public:
 
     // Rimette tutto così com'è (es. riaprendo un progetto): tracce e clip ricevono id nuovi; le clip di ogni traccia
     // si mettono in ordine di posizione.
-    void restore(AudioMix original, std::vector<AudioTrack> tracks);
+    void restore(AudioMix original, std::vector<AudioTrack> tracks, double masterDb = 0.0);
     // Torna allo stato di `snapshot` (Annulla / Ripeti); gli id nuovi non riprendono quelli usati nel frattempo.
     void restoreEdits(const AudioTracks& snapshot);
     void clear();
@@ -143,12 +147,12 @@ public:
     // qui (vedi Project::audioNeedsMix).
     bool needsMix() const;
     // Nessuna traccia aggiunta e A1 com'è all'inizio.
-    bool isDefault() const { return tracks_.empty() && original_ == AudioMix{}; }
+    bool isDefault() const { return tracks_.empty() && original_ == AudioMix{} && masterDb_ == 0.0; }
     double endTime() const;  // fine dell'ultima clip, 0 senza clip
 
     bool operator==(const AudioTracks& other) const
     {
-        return original_ == other.original_ && tracks_ == other.tracks_;
+        return original_ == other.original_ && tracks_ == other.tracks_ && masterDb_ == other.masterDb_;
     }
 
 private:
@@ -165,6 +169,7 @@ private:
     static double freeSpot(const AudioTrack& track, double length, double desired, int ignoredClip);
 
     AudioMix original_;
+    double masterDb_ = 0.0;  // livello del Master
     std::vector<AudioTrack> tracks_;
     int nextTrackId_ = 1;
     int nextClipId_ = 1;
