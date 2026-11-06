@@ -35,6 +35,7 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="AudioEditTests.cpp" />
+    <ClCompile Include="AudioEffectTests.cpp" />
     <ClCompile Include="AudioMixerTests.cpp" />
     <ClCompile Include="MixExportTests.cpp" />
     <ClCompile Include="AudioTracksTests.cpp" />

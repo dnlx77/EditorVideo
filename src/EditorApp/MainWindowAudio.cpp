@@ -410,6 +410,15 @@ void MainWindow::setTrackSolo(int trackId, bool solo)
         recordMixEdit(solo ? QStringLiteral("Traccia in solo") : QStringLiteral("Traccia non più in solo"), before);
 }
 
+void MainWindow::setTrackEffects(int trackId, const std::vector<core::AudioEffect>& effects)
+{
+    const core::Project before = project_;
+    if (project_.audioTracks().setEffects(trackId, effects))
+        recordMixEdit(QStringLiteral("Effetti della traccia"), before);
+    else
+        refreshTimeline();
+}
+
 void MainWindow::setMasterLevel(double db)
 {
     const core::Project before = project_;

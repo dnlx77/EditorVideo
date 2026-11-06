@@ -126,6 +126,32 @@ bool AudioTracks::setMasterLevel(double db)
     return true;
 }
 
+const std::vector<AudioEffect>& AudioTracks::effects(int trackId) const
+{
+    static const std::vector<AudioEffect> none;
+    if (trackId == kMasterTrack)
+        return masterEffects_;
+    if (trackId == kOriginalTrack)
+        return original_.effects;
+    const AudioTrack* t = track(trackId);
+    return t == nullptr ? none : t->mix.effects;
+}
+
+bool AudioTracks::setEffects(int trackId, std::vector<AudioEffect> effects)
+{
+    for (AudioEffect& e : effects)
+        e = clampedEffect(e);
+    std::vector<AudioEffect>* target = nullptr;
+    if (trackId == kMasterTrack)
+        target = &masterEffects_;
+    else if (AudioMix* m = mutableMix(trackId))
+        target = &m->effects;
+    if (target == nullptr || *target == effects)
+        return false;
+    *target = std::move(effects);
+    return true;
+}
+
 bool AudioTracks::setMuted(int trackId, bool muted)
 {
     AudioMix* m = mutableMix(trackId);
@@ -173,7 +199,11 @@ bool AudioTracks::needsMix() const
 {
     if (isDefault())
         return false;
-    if (!audible(kOriginalTrack) || original_.levelDb != 0.0 || original_.pan != 0.0 || masterDb_ != 0.0)
+    const auto anyActive = [](const std::vector<AudioEffect>& list) {
+        return std::any_of(list.begin(), list.end(), [](const AudioEffect& e) { return e.active(); });
+    };
+    if (!audible(kOriginalTrack) || original_.levelDb != 0.0 || original_.pan != 0.0 || masterDb_ != 0.0
+        || anyActive(original_.effects) || anyActive(masterEffects_))
         return true;
     return std::any_of(tracks_.begin(), tracks_.end(), [](const AudioTrack& t) { return !t.clips.empty(); });
 }
@@ -480,9 +510,15 @@ int AudioTracks::removePath(const std::string& path)
     return count;
 }
 
-void AudioTracks::restore(AudioMix original, std::vector<AudioTrack> tracks, double masterDb)
+void AudioTracks::restore(AudioMix original, std::vector<AudioTrack> tracks, double masterDb,
+                          std::vector<AudioEffect> masterEffects)
 {
     original_ = original;
+    masterEffects_ = std::move(masterEffects);
+    for (AudioEffect& e : masterEffects_)
+        e = clampedEffect(e);
+    for (AudioEffect& e : original_.effects)
+        e = clampedEffect(e);
     masterDb_ = std::clamp(masterDb, kMinLevelDb, kMaxLevelDb);
     tracks_ = std::move(tracks);
     // Le clip libere di A1 (una sola traccia, in testa).
@@ -517,6 +553,7 @@ void AudioTracks::clear()
 {
     original_ = {};
     masterDb_ = 0.0;
+    masterEffects_.clear();
     tracks_.clear();
 }
 

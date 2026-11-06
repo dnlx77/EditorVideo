@@ -254,6 +254,7 @@ public:
     void setTrackLevel(int trackId, double db);
     void setTrackPan(int trackId, double pan);
     void setMasterLevel(double db);
+    void setTrackEffects(int trackId, const std::vector<core::AudioEffect>& effects);  // trackId -1 = Master
     void setJunctionLevel(const core::Project::Junction& junction, std::optional<double> db);  // pallino sulla giunzione
     void setEnvelope(bool fragment, int id, const std::vector<core::LevelPoint>& points);  // linea del livello di un pezzo o clip
     // Forme d'onda ancora da calcolare (0 = tutte pronte).

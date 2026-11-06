@@ -136,6 +136,16 @@ JsonValue mixToJson(const AudioMix& mix)
     JsonValue::Object json{{"livello", mix.levelDb}, {"muto", mix.muted}, {"solo", mix.solo}};
     if (mix.pan != 0.0)
         json["pan"] = mix.pan;  // solo se non è al centro: i progetti senza pan restano uguali a prima
+    if (!mix.effects.empty()) {
+        JsonValue::Array effects;
+        for (const AudioEffect& e : mix.effects) {
+            JsonValue::Array params;
+            for (double v : e.params)
+                params.emplace_back(v);
+            effects.emplace_back(JsonValue::Object{{"tipo", "equalizzatore"}, {"attivo", e.enabled}, {"parametri", std::move(params)}});
+        }
+        json["effetti"] = std::move(effects);
+    }
     return json;
 }
 
@@ -313,6 +323,31 @@ std::vector<LevelPoint> envelopeFromJson(const JsonValue& value)
     return normalizeEnvelope(std::move(points));
 }
 
+// Gli effetti di una traccia; un tipo che non si conosce si scarta (progetto di una versione più nuova).
+std::vector<AudioEffect> effectsFromJson(const JsonValue& value)
+{
+    std::vector<AudioEffect> effects;
+    if (!value.isArray())
+        return effects;
+    for (const JsonValue& item : value.asArray()) {
+        if (!item.isObject() || text(item["tipo"]) != "equalizzatore")
+            continue;
+        AudioEffect e;
+        e.kind = EffectKind::Equalizer;
+        e.enabled = !item["attivo"].isBool() || item["attivo"].asBool();
+        if (item["parametri"].isArray()) {
+            std::size_t i = 0;
+            for (const JsonValue& v : item["parametri"].asArray()) {
+                if (i < e.params.size() && v.isNumber())
+                    e.params[i] = v.asNumber();
+                ++i;
+            }
+        }
+        effects.push_back(clampedEffect(e));
+    }
+    return effects;
+}
+
 AudioMix mixFromJson(const JsonValue& value)
 {
     AudioMix mix;
@@ -324,6 +359,7 @@ AudioMix mixFromJson(const JsonValue& value)
     mix.solo = value["solo"].isBool() && value["solo"].asBool();
     if (value["pan"].isNumber())
         mix.pan = std::clamp(value["pan"].asNumber(), -1.0, 1.0);
+    mix.effects = effectsFromJson(value["effetti"]);
     return mix;
 }
 
@@ -352,8 +388,12 @@ JsonValue audioTracksToJson(const std::filesystem::path& dir, const AudioTracks&
         tracks.emplace_back(std::move(item));
     }
     JsonValue::Object root{{"A1", mixToJson(audio.mix(AudioTracks::kOriginalTrack))}, {"tracce", std::move(tracks)}};
-    if (audio.masterLevelDb() != 0.0)
-        root["master"] = JsonValue::Object{{"livello", audio.masterLevelDb()}};  // solo se non è a 0 dB
+    if (audio.masterLevelDb() != 0.0 || !audio.effects(AudioTracks::kMasterTrack).empty()) {
+        AudioMix master;  // solo se c'è qualcosa: livello diverso da 0 dB o effetti
+        master.levelDb = audio.masterLevelDb();
+        master.effects = audio.effects(AudioTracks::kMasterTrack);
+        root["master"] = mixToJson(master);
+    }
     return root;
 }
 
@@ -926,7 +966,8 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                 }
                 tracks.push_back(std::move(track));
             }
-            loaded.project.audioTracks().restore(mixFromJson(a["A1"]), std::move(tracks), mixFromJson(a["master"]).levelDb);
+            loaded.project.audioTracks().restore(mixFromJson(a["A1"]), std::move(tracks), mixFromJson(a["master"]).levelDb,
+                                                        mixFromJson(a["master"]).effects);
         }
 
         // Scritte: una scritta con durata troppo corta o prima di 0 rende rovinato il file; una sovrapposta a un'altra si scarta.

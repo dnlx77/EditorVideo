@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EditorCore/AudioEffect.h"
 #include "EditorCore/LevelEnvelope.h"
 #include "EditorCore/Sequence.h"
 #include "EditorCore/TimeUtil.h"
@@ -34,6 +35,7 @@ struct AudioMix
     double levelDb = 0.0;  // volume della traccia, in dB (0 = com'è nel file)
     bool muted = false;
     bool solo = false;
+    std::vector<AudioEffect> effects;  // gli effetti negli slot, nell'ordine in cui agiscono
     double pan = 0.0;  // da -1 (tutto a sinistra) a +1 (tutto a destra); 0 = centro, com'è nel file
 
     bool operator==(const AudioMix&) const = default;
@@ -62,6 +64,7 @@ class AudioTracks
 {
 public:
     static constexpr int kOriginalTrack = 0;  // id della traccia A1 (l'audio dei pezzi video)
+    static constexpr int kMasterTrack = -1;   // id del Master (solo per livello ed effetti)
     static constexpr double kMinLevelDb = kLevelMinDb;
     static constexpr double kMaxLevelDb = kLevelMaxDb;
 
@@ -94,6 +97,10 @@ public:
     double masterLevelDb() const { return masterDb_; }
     bool setMasterLevel(double db);
     double masterGain() const { return dbToGain(masterDb_); }
+    // Gli effetti di una traccia (kMasterTrack = Master); vuoto se la traccia non c'è. setEffects li sostituisce (parametri
+    // limitati); false se la traccia non c'è o non cambia nulla.
+    const std::vector<AudioEffect>& effects(int trackId) const;
+    bool setEffects(int trackId, std::vector<AudioEffect> effects);
     // Se la traccia si sente nel mix (muto e solo di tutte le tracce compresi).
     bool audible(int trackId) const;
     // Quanto si moltiplica il segnale della traccia nel mix: 0 se non si sente.
@@ -137,7 +144,8 @@ public:
 
     // Rimette tutto così com'è (es. riaprendo un progetto): tracce e clip ricevono id nuovi; le clip di ogni traccia
     // si mettono in ordine di posizione.
-    void restore(AudioMix original, std::vector<AudioTrack> tracks, double masterDb = 0.0);
+    void restore(AudioMix original, std::vector<AudioTrack> tracks, double masterDb = 0.0,
+                 std::vector<AudioEffect> masterEffects = {});
     // Torna allo stato di `snapshot` (Annulla / Ripeti); gli id nuovi non riprendono quelli usati nel frattempo.
     void restoreEdits(const AudioTracks& snapshot);
     void clear();
@@ -147,12 +155,13 @@ public:
     // qui (vedi Project::audioNeedsMix).
     bool needsMix() const;
     // Nessuna traccia aggiunta e A1 com'è all'inizio.
-    bool isDefault() const { return tracks_.empty() && original_ == AudioMix{} && masterDb_ == 0.0; }
+    bool isDefault() const { return tracks_.empty() && original_ == AudioMix{} && masterDb_ == 0.0 && masterEffects_.empty(); }
     double endTime() const;  // fine dell'ultima clip, 0 senza clip
 
     bool operator==(const AudioTracks& other) const
     {
-        return original_ == other.original_ && tracks_ == other.tracks_ && masterDb_ == other.masterDb_;
+        return original_ == other.original_ && tracks_ == other.tracks_ && masterDb_ == other.masterDb_
+            && masterEffects_ == other.masterEffects_;
     }
 
 private:
@@ -170,6 +179,7 @@ private:
 
     AudioMix original_;
     double masterDb_ = 0.0;  // livello del Master
+    std::vector<AudioEffect> masterEffects_;  // effetti del Master
     std::vector<AudioTrack> tracks_;
     int nextTrackId_ = 1;
     int nextClipId_ = 1;
