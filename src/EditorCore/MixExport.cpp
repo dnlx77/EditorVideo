@@ -53,7 +53,7 @@ int mixFileCount(const MixSpec& spec)
 double renderMixToFile(const MixSpec& spec, const std::string& path, const ExportProgress& progress, AudioCodec codec,
                        int bitRate)
 {
-    AudioMixer mixer(spec.segments, spec.gains);
+    AudioMixer mixer(spec.segments, spec.gains, spec.pans);
     const double seconds = std::max(spec.length, mixer.endTime());
     const long long totalFrames = std::max<long long>(1, std::llround(seconds * kMixSampleRate));
 

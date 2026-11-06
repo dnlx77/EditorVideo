@@ -67,6 +67,12 @@ void SequenceAudio::setTrackGains(const std::map<int, float>& gains)
         mixer_->setGains(gains);
 }
 
+void SequenceAudio::setTrackPans(const std::map<int, float>& pans)
+{
+    if (running_ && mixer_)
+        mixer_->setPans(pans);
+}
+
 std::map<int, std::array<float, 2>> SequenceAudio::takePeaks()
 {
     if (running_ && mixer_)

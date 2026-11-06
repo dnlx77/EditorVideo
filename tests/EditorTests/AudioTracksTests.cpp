@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 using namespace editor::core;
 
 namespace {
@@ -17,6 +19,29 @@ AudioClip clipOf(const char* path, double start, double end, double position, do
     clip.position = position;
     clip.sourceDuration = sourceDuration;
     return clip;
+}
+
+TEST(AudioTracks, PanIsLimitedAndNeedsAMixOnA1)
+{
+    AudioTracks audio;
+    const int a2 = audio.addTrack();
+    EXPECT_EQ(audio.mix(a2).pan, 0.0);
+    EXPECT_TRUE(audio.setPan(a2, 0.25));
+    EXPECT_FALSE(audio.setPan(a2, 0.25));
+    EXPECT_TRUE(audio.setPan(a2, 7.0));
+    EXPECT_EQ(audio.mix(a2).pan, 1.0);
+    EXPECT_FALSE(audio.setPan(99, 0.5));
+    EXPECT_FALSE(audio.setPan(a2, std::nan("")));
+    // Il pan di A1 cambia l'audio: non basta copiarlo com'è.
+    AudioTracks only;
+    EXPECT_FALSE(only.needsMix());
+    EXPECT_TRUE(only.setPan(AudioTracks::kOriginalTrack, -0.5));
+    EXPECT_TRUE(only.needsMix());
+    // Curva: al centro niente cambia, agli estremi si spegne un canale.
+    EXPECT_EQ(AudioTracks::panGains(0.0), (std::pair<float, float>{1.0f, 1.0f}));
+    EXPECT_EQ(AudioTracks::panGains(1.0), (std::pair<float, float>{0.0f, 1.0f}));
+    EXPECT_EQ(AudioTracks::panGains(-1.0), (std::pair<float, float>{1.0f, 0.0f}));
+    EXPECT_NEAR(AudioTracks::panGains(0.5).first, std::sqrt(0.5), 1e-6);
 }
 
 TEST(AudioTracks, TracksHaveNamesLevelsMuteAndSolo)

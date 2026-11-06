@@ -184,6 +184,126 @@ private:
     bool dragging_ = false;
 };
 
+// La manopola del pan: da S (sinistra) a D (destra), C al centro. Si gira trascinando (su/destra = verso destra), con la
+// rotella (Maiusc: passi piccoli); doppio clic = centro. Il valore si consegna al rilascio.
+class PanKnob : public QWidget
+{
+public:
+    explicit PanKnob(QWidget* parent = nullptr) : QWidget(parent)
+    {
+        setFixedHeight(54);
+        setMinimumWidth(48);
+        setFocusPolicy(Qt::WheelFocus);
+        setToolTip(QStringLiteral("Pan: trascina o rotella, doppio clic = centro"));
+    }
+    double value() const { return value_; }
+    bool dragging() const { return dragging_; }
+    void setValue(double v)
+    {
+        v = std::clamp(v, -1.0, 1.0);
+        if (v == value_)
+            return;
+        value_ = v;
+        setToolTip(text());
+        update();
+    }
+    QString text() const
+    {
+        const int percent = static_cast<int>(std::lround(std::abs(value_) * 100.0));
+        if (percent == 0)
+            return QStringLiteral("Pan: centro");
+        return QStringLiteral("Pan: %1% %2").arg(percent).arg(value_ < 0 ? QStringLiteral("sinistra") : QStringLiteral("destra"));
+    }
+    std::function<void(double)> onChanging;
+    std::function<void(double)> onCommit;
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QPalette& pal = palette();
+        const double d = 34;
+        const QRectF dial((width() - d) / 2.0, 2, d, d);
+        p.setPen(QPen(pal.color(QPalette::Shadow), 1));
+        p.setBrush(dragging_ ? pal.color(QPalette::Light) : pal.color(QPalette::Button));
+        p.drawEllipse(dial);
+        // Lancetta: 0 = su, ±135 gradi agli estremi.
+        const double angle = value_ * 135.0 * 3.14159265358979 / 180.0;
+        const QPointF c = dial.center();
+        p.setPen(QPen(pal.color(QPalette::Text), 2, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(c, QPointF(c.x() + std::sin(angle) * d * 0.4, c.y() - std::cos(angle) * d * 0.4));
+        QFont f = font();
+        f.setPointSizeF(std::max(7.0, f.pointSizeF() - 1.5));
+        p.setFont(f);
+        p.setPen(pal.color(QPalette::PlaceholderText));
+        const double y = dial.bottom() + 1;
+        p.drawText(QRectF(dial.left() - 14, y - 8, 14, 14), Qt::AlignCenter, QStringLiteral("S"));
+        p.drawText(QRectF(dial.right(), y - 8, 14, 14), Qt::AlignCenter, QStringLiteral("D"));
+        p.drawText(QRectF(c.x() - 7, y, 14, 14), Qt::AlignCenter, QStringLiteral("C"));
+    }
+    void mousePressEvent(QMouseEvent* e) override
+    {
+        if (e->button() != Qt::LeftButton)
+            return;
+        setFocus();
+        dragging_ = true;
+        lastX_ = e->position().x();
+        lastY_ = e->position().y();
+        update();
+    }
+    void mouseMoveEvent(QMouseEvent* e) override
+    {
+        if (!dragging_)
+            return;
+        const double delta = (e->position().x() - lastX_) - (e->position().y() - lastY_);
+        lastX_ = e->position().x();
+        lastY_ = e->position().y();
+        setValue(std::round((value_ + delta / 80.0) * 100.0) / 100.0);
+        if (onChanging)
+            onChanging(value_);
+    }
+    void mouseReleaseEvent(QMouseEvent* e) override
+    {
+        if (e->button() != Qt::LeftButton || !dragging_)
+            return;
+        dragging_ = false;
+        update();
+        if (onCommit)
+            onCommit(value_);
+    }
+    void mouseDoubleClickEvent(QMouseEvent* e) override
+    {
+        if (e->button() != Qt::LeftButton)
+            return;
+        dragging_ = false;
+        setValue(0.0);
+        if (onChanging)
+            onChanging(value_);
+        if (onCommit)
+            onCommit(value_);
+    }
+    void wheelEvent(QWheelEvent* e) override
+    {
+        const double step = (e->modifiers() & Qt::ShiftModifier) ? 0.01 : 0.05;
+        const double delta = e->angleDelta().y() == 0 ? e->angleDelta().x() : e->angleDelta().y();
+        if (delta == 0)
+            return;
+        setValue(std::round((value_ + (delta > 0 ? step : -step)) * 100.0) / 100.0);
+        if (onChanging)
+            onChanging(value_);
+        if (onCommit)
+            onCommit(value_);
+        e->accept();
+    }
+
+private:
+    double value_ = 0.0;
+    double lastX_ = 0.0;
+    double lastY_ = 0.0;
+    bool dragging_ = false;
+};
+
 // Il vu-meter stereo: due barre (sinistra e destra) con la stessa scala del fader, verde fino a -6 dB, giallo fino a 0,
 // rosso oltre; una lineetta tiene il picco per un attimo. Il livello scende piano (come i vu-meter veri).
 class Meter : public QWidget
@@ -277,6 +397,9 @@ public:
         col->setContentsMargins(4, 4, 4, 4);
         col->setSpacing(6);
 
+        pan_ = new PanKnob;
+        col->addWidget(pan_);
+
         auto* buttons = new QVBoxLayout;  // uno sopra l'altro: affiancati, in 100 px le scritte si tagliano
         buttons->setSpacing(4);
         solo_ = new QPushButton(QStringLiteral("SOLO"));
@@ -318,12 +441,22 @@ public:
     }
 
     int trackId() const { return trackId_; }
+    // Bordo intorno alla colonna.
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(QPen(palette().color(QPalette::Mid), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
+    }
     QString name() const { return label_->text(); }
     double level() const { return fader_->value(); }
     bool muted() const { return mute_->isChecked(); }
     bool solo() const { return solo_->isChecked(); }
     Fader* fader() const { return fader_; }
     Meter* meter() const { return meter_; }
+    PanKnob* pan() const { return pan_; }
     QDoubleSpinBox* readout() const { return readout_; }
     QPushButton* muteButton() const { return mute_; }
     QPushButton* soloButton() const { return solo_; }
@@ -343,6 +476,10 @@ public:
             if (panel->onLevel)
                 panel->onLevel(trackId_, db);
         });
+        pan_->onCommit = [this, panel](double pan) {
+            if (panel->onPan)
+                panel->onPan(trackId_, pan);
+        };
         connect(mute_, &QPushButton::clicked, this, [this, panel](bool on) {
             if (panel->onMuted)
                 panel->onMuted(trackId_, on);
@@ -361,6 +498,8 @@ public:
             if (!readout_->hasFocus())
                 readout_->setValue(t.levelDb);
         }
+        if (!pan_->dragging())
+            pan_->setValue(t.pan);
         mute_->setChecked(t.muted);
         solo_->setChecked(t.solo);
         // Una traccia che non si sente (muta, o altre in solo) ha il nome attenuato.
@@ -374,6 +513,7 @@ private:
     QPushButton* mute_ = nullptr;
     Fader* fader_ = nullptr;
     Meter* meter_ = nullptr;
+    PanKnob* pan_ = nullptr;
     QDoubleSpinBox* readout_ = nullptr;
     QLabel* label_ = nullptr;
 };

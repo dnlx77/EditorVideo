@@ -133,6 +133,41 @@ TEST_F(AudioMixerTest, TrackLevelAndSilencedTracks)
         ASSERT_NEAR(out[f * 2], sampleAudio(f) * 0.5, 1) << "fotogramma " << f;
 }
 
+TEST_F(AudioMixerTest, PanShiftsTheTrackBetweenLeftAndRight)
+{
+    // Al centro niente cambia; a destra la sinistra si spegne; a metà strada il canale che cala vale cos(45°).
+    AudioMixer centered({segment("a.wav", 0.0, 1.0, 0.0)}, {{0, 1.0f}}, {{0, 0.0f}});
+    auto out = renderAll(centered, 1.0);
+    for (long long f = 0; f < kRate; ++f)
+        ASSERT_EQ(out[f * 2], sampleAudio(f)) << "fotogramma " << f;
+
+    AudioMixer right({segment("a.wav", 0.0, 1.0, 0.0)}, {{0, 1.0f}}, {{0, 1.0f}});
+    out = renderAll(right, 1.0);
+    for (long long f = 0; f < kRate; ++f) {
+        ASSERT_EQ(out[f * 2], 0) << "la sinistra è spenta";
+        ASSERT_EQ(out[f * 2 + 1], sampleAudio(f)) << "fotogramma " << f;
+    }
+
+    AudioMixer half({segment("a.wav", 0.0, 1.0, 0.0)}, {{0, 1.0f}}, {{0, -0.5f}});
+    out = renderAll(half, 1.0);
+    for (long long f = 0; f < kRate; ++f) {
+        ASSERT_EQ(out[f * 2], sampleAudio(f));
+        ASSERT_NEAR(out[f * 2 + 1], sampleAudio(f) * std::sqrt(0.5), 1) << "fotogramma " << f;
+    }
+
+    // Cambiato mentre suona: con la rampa, senza salti.
+    AudioMixer moving({segment("a.wav", 0.0, 2.0, 0.0)}, {{0, 1.0f}});
+    std::vector<std::int16_t> block;
+    moving.render(0, 4800, block);
+    moving.setPans({{0, 1.0f}});
+    moving.render(4800, 4800, block);
+    for (long long i = 0; i < 4800; ++i) {
+        const double ramp = 1.0 - static_cast<double>(i) / 4800.0;  // la sinistra scende piano, non di colpo
+        ASSERT_NEAR(block[i * 2], sampleAudio(4800 + i) * ramp, 2) << "fotogramma " << i;
+        ASSERT_EQ(block[i * 2 + 1], sampleAudio(4800 + i)) << "la destra non cambia";
+    }
+}
+
 TEST_F(AudioMixerTest, PeaksPerTrackForTheMeters)
 {
     // Il picco di ogni traccia è quello che passa nel mix (livello compreso); una traccia che non suona non ha picchi.

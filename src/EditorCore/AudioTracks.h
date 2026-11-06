@@ -34,6 +34,7 @@ struct AudioMix
     double levelDb = 0.0;  // volume della traccia, in dB (0 = com'è nel file)
     bool muted = false;
     bool solo = false;
+    double pan = 0.0;  // da -1 (tutto a sinistra) a +1 (tutto a destra); 0 = centro, com'è nel file
 
     bool operator==(const AudioMix&) const = default;
 };
@@ -82,6 +83,11 @@ public:
     bool setLevel(int trackId, double db);
     bool setMuted(int trackId, bool muted);
     bool setSolo(int trackId, bool solo);
+    // Il pan della traccia, limitato a [-1, +1]. Al centro (0) l'audio non cambia; spostandolo si abbassa il canale
+    // opposto (vedi panGains).
+    bool setPan(int trackId, double pan);
+    // Quanto si moltiplicano sinistra e destra con il pan dato (curva a potenza costante: cos sul canale che si spegne).
+    static std::pair<float, float> panGains(double pan);
     // La linea del livello di una clip (normalizzata); false se la clip non c'è o non cambia nulla.
     bool setClipEnvelope(int clipId, std::vector<LevelPoint> points);
     // Se la traccia si sente nel mix (muto e solo di tutte le tracce compresi).
