@@ -2182,6 +2182,18 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 }
                 mixer->onLevel(core::kMasterTrackId, -6.0);
                 mixerOk = mixerOk && std::abs(audio.masterLevelDb() + 6.0) < 1e-9 && std::abs(mixer->masterLevelDb() + 6.0) < 1e-9;
+                {
+                    core::AudioEffect eq;
+                    eq.params = {2.0, 0.0, -3.0, 0.0};
+                    mixer->onEffects(track, {eq});
+                    mixer->onEffects(core::kMasterTrackId, {eq});
+                    mixerOk = mixerOk && audio.effects(track).size() == 1 && mixer->trackAt(1).effects.size() == 1
+                           && audio.effects(core::AudioTracks::kMasterTrack).size() == 1 && audio.needsMix();
+                    mixer->onEffects(track, {});
+                    mixer->onEffects(core::kMasterTrackId, {});
+                    mixerOk = mixerOk && audio.effects(track).empty() && audio.effects(core::AudioTracks::kMasterTrack).empty()
+                           && mixer->trackAt(1).effects.empty();
+                }
                 mixer->onPan(track, 0.5);
                 mixerOk = mixerOk && std::abs(audio.mix(track).pan - 0.5) < 1e-9 && std::abs(mixer->trackAt(1).pan - 0.5) < 1e-9
                        && audio.needsMix();
@@ -2197,7 +2209,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 std::fflush(stdout);
                 ok = ok && mixerOk;
                 bool undone = true;
-                for (int i = 0; i < 20 && !(audio.isDefault() && window->project().find(wavId) == nullptr); ++i)
+                for (int i = 0; i < 40 && !(audio.isDefault() && window->project().find(wavId) == nullptr); ++i)
                     undone = window->undo() && undone;
                 undone = undone && audio.isDefault() && sequence.fragments().size() == pieces;
                 std::printf("Mix audio: file solo audio rilasciato nel montaggio %s, con A %s, livello/solo/muto suonando %s, annulla %s\n",

@@ -21,7 +21,9 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project);
 // Quanto si moltiplica ogni traccia nel mix (A1 compresa), come AudioTracks::gain.
 std::map<int, float> trackGainsOf(const AudioTracks& tracks);
 // Id con cui `takePeaks` dà i picchi del Master (tutto il mix, dopo il livello del Master e prima del limitatore).
-inline constexpr int kMasterTrackId = -1;
+inline constexpr int kMasterTrackId = AudioTracks::kMasterTrack;
+// Gli effetti attivi di ogni traccia (A1 e Master compresi, con id kMasterTrackId); senza voce = nessun effetto.
+std::map<int, std::vector<AudioEffect>> trackEffectsOf(const AudioTracks& tracks);
 // Il pan di ogni traccia (A1 compresa), da -1 a +1.
 std::map<int, float> trackPansOf(const AudioTracks& tracks);
 // Tutto quello che serve per mixare il progetto (con gli spazi vuoti di A1 chiusi se `closeGaps`, come nel file esportato).
@@ -39,7 +41,7 @@ class AudioMixer
 {
 public:
     AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, std::map<int, float> pans = {},
-                float masterGain = 1.0f);
+                float masterGain = 1.0f, std::map<int, std::vector<AudioEffect>> effects = {});
     ~AudioMixer();
     AudioMixer(AudioMixer&&) noexcept;
     AudioMixer& operator=(AudioMixer&&) noexcept;
@@ -53,6 +55,8 @@ public:
     void setPans(const std::map<int, float>& pans);
     // Il livello del Master (moltiplicatore di tutto il mix), con la stessa rampa.
     void setMasterGain(float gain);
+    // Gli effetti attivi di ogni traccia (trackEffectsOf), anche mentre si suona. Per ora agisce il primo equalizzatore.
+    void setEffects(std::map<int, std::vector<AudioEffect>> effects);
     // Le linee del livello dei tratti, una per tratto nello stesso ordine (al posto di quelle di prima): il valore al
     // tempo del file moltiplica il livello della traccia, campione per campione.
     void setEnvelopes(std::vector<std::vector<LevelPoint>> envelopes);
@@ -79,6 +83,13 @@ private:
     std::map<int, float> applied_;    // livello arrivato alla fine dell'ultimo blocco, per la rampa
     std::map<int, float> appliedPans_;  // lo stesso per il pan
     float appliedMaster_ = 1.0f;        // e per il Master
+    struct EqState
+    {
+        EqualizerFilter filter;
+        std::vector<float> buffer;  // la somma della traccia in questo blocco, da filtrare
+    };
+    std::map<int, EqState> eq_;       // un equalizzatore per traccia (e per il Master)
+    long long nextExpected_ = -1;     // il fotogramma che seguirebbe l'ultimo blocco: se è un altro si è saltato
     double end_ = 0.0;
     std::vector<float> acc_;  // somma del blocco in lavorazione (render)
 };

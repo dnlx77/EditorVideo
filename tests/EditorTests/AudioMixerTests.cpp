@@ -194,6 +194,42 @@ TEST_F(AudioMixerTest, MasterLevelScalesTheWholeMixAndHasItsOwnPeak)
         ASSERT_NEAR(block[i * 2], sampleAudio(4800 + i) * (1.0 - static_cast<double>(i) / 4800.0), 2) << "fotogramma " << i;
 }
 
+TEST_F(AudioMixerTest, EqualizerOnATrackAndOnTheMaster)
+{
+    AudioEffect flat;  // tutto a 0 dB: non agisce, il suono resta uguale
+    AudioEffect eq;
+    eq.params = {0.0, 0.0, -12.0, 0.0};  // alti abbassati
+    const auto render = [&](std::map<int, std::vector<AudioEffect>> effects) {
+        AudioMixer mixer({segment("a.wav", 0.0, 1.0, 0.0)}, {{0, 1.0f}}, {}, 1.0f, std::move(effects));
+        return renderAll(mixer, 1.0);
+    };
+    const auto plain = render({});
+    const auto none = render({{0, {flat}}});
+    EXPECT_EQ(plain, none);
+    const auto onTrack = render({{0, {eq}}});
+    const auto onMaster = render({{kMasterTrackId, {eq}}});
+    EXPECT_NE(plain, onTrack);
+    EXPECT_EQ(onTrack, onMaster) << "con una sola traccia, il Master filtra lo stesso suono";
+    // Meno alti = meno differenza fra un campione e il successivo.
+    const auto roughness = [](const std::vector<std::int16_t>& v) {
+        double sum = 0;
+        for (std::size_t i = 1; i < v.size() / 2; ++i)
+            sum += std::abs(static_cast<double>(v[i * 2]) - v[(i - 1) * 2]);
+        return sum;
+    };
+    EXPECT_LT(roughness(onTrack), roughness(plain));
+    // Cambiati mentre suona.
+    AudioMixer mixer({segment("a.wav", 0.0, 2.0, 0.0)}, {{0, 1.0f}});
+    std::vector<std::int16_t> block;
+    mixer.render(0, 4800, block);
+    mixer.setEffects({{0, {eq}}});
+    mixer.render(4800, 4800, block);
+    mixer.setEffects({});
+    mixer.render(9600, 4800, block);
+    for (long long i = 0; i < 4800; ++i)
+        ASSERT_EQ(block[i * 2], sampleAudio(9600 + i)) << "senza effetti torna il suono originale";
+}
+
 TEST_F(AudioMixerTest, PeaksPerTrackForTheMeters)
 {
     // Il picco di ogni traccia è quello che passa nel mix (livello compreso); una traccia che non suona non ha picchi.

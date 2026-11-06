@@ -67,6 +67,12 @@ void SequenceAudio::setTrackGains(const std::map<int, float>& gains)
         mixer_->setGains(gains);
 }
 
+void SequenceAudio::setEffects(std::map<int, std::vector<core::AudioEffect>> effects)
+{
+    if (running_ && mixer_)
+        mixer_->setEffects(std::move(effects));
+}
+
 void SequenceAudio::setMasterGain(float gain)
 {
     if (running_ && mixer_)

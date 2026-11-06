@@ -4,14 +4,20 @@
 #include "EditorCore/AudioTracks.h"
 
 #include <QtCore/QEvent>
+#include <QtCore/QPointer>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QPainter>
 #include <QtGui/QWheelEvent>
+#include <QtWidgets/QCheckBox>
+#include <QtWidgets/QDialog>
 #include <QtWidgets/QDoubleSpinBox>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QScrollArea>
+#include <QtWidgets/QSlider>
+#include <QtWidgets/QStyle>
 #include <QtWidgets/QVBoxLayout>
 
 #include <algorithm>
@@ -58,7 +64,7 @@ class Fader : public QWidget
 public:
     explicit Fader(QWidget* parent = nullptr) : QWidget(parent)
     {
-        setMinimumSize(70, 160);
+        setMinimumSize(70, 90);
         setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
         setFocusPolicy(Qt::WheelFocus);
         setToolTip(QStringLiteral("Livello della traccia: trascina, rotella per 0,5 dB (Maiusc: 0,1 dB); doppio clic = 0 dB"));
@@ -385,6 +391,86 @@ private:
     double holdAge_[2] = {0.0, 0.0};
 };
 
+// La finestra di un equalizzatore: tre cursori (bassi, medi, alti) in dB. Si consegna il valore al rilascio di un cursore
+// (un solo passo di Annulla per movimento).
+class EqualizerDialog : public QDialog
+{
+public:
+    explicit EqualizerDialog(const QString& title, QWidget* parent) : QDialog(parent)
+    {
+        setWindowTitle(title);
+        setWindowFlag(Qt::WindowContextHelpButtonHint, false);
+        auto* layout = new QVBoxLayout(this);
+        enabled_ = new QCheckBox(QStringLiteral("Attivo"));
+        layout->addWidget(enabled_);
+        const char* names[3] = {"Bassi (120 Hz)", "Medi (1 kHz)", "Alti (6 kHz)"};
+        for (int i = 0; i < 3; ++i) {
+            auto* row = new QHBoxLayout;
+            auto* name = new QLabel(QString::fromUtf8(names[i]));
+            name->setMinimumWidth(100);
+            sliders_[i] = new QSlider(Qt::Horizontal);
+            sliders_[i]->setRange(static_cast<int>(core::kEffectMinDb * 2), static_cast<int>(core::kEffectMaxDb * 2));  // passi di 0,5 dB
+            sliders_[i]->setMinimumWidth(180);
+            values_[i] = new QLabel;
+            values_[i]->setMinimumWidth(56);
+            values_[i]->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            row->addWidget(name);
+            row->addWidget(sliders_[i], 1);
+            row->addWidget(values_[i]);
+            layout->addLayout(row);
+            connect(sliders_[i], &QSlider::valueChanged, this, [this, i](int v) {
+                values_[i]->setText(QStringLiteral("%1 dB").arg(v / 2.0, 0, 'f', 1));
+                if (!sliders_[i]->isSliderDown() && !updating_)
+                    commit();  // rotella o tastiera: subito
+            });
+            connect(sliders_[i], &QSlider::sliderReleased, this, [this] { commit(); });
+        }
+        auto* reset = new QPushButton(QStringLiteral("Azzera"));
+        layout->addWidget(reset, 0, Qt::AlignRight);
+        connect(reset, &QPushButton::clicked, this, [this] {
+            updating_ = true;
+            for (QSlider* s : sliders_)
+                s->setValue(0);
+            updating_ = false;
+            commit();
+        });
+        connect(enabled_, &QCheckBox::clicked, this, [this] { commit(); });
+    }
+
+    void setEffect(const core::AudioEffect& e)
+    {
+        updating_ = true;
+        enabled_->setChecked(e.enabled);
+        for (int i = 0; i < 3; ++i) {
+            if (!sliders_[i]->isSliderDown())
+                sliders_[i]->setValue(static_cast<int>(std::lround(e.params[static_cast<std::size_t>(i)] * 2.0)));
+        }
+        updating_ = false;
+    }
+    core::AudioEffect effect() const
+    {
+        core::AudioEffect e;
+        e.kind = core::EffectKind::Equalizer;
+        e.enabled = enabled_->isChecked();
+        for (int i = 0; i < 3; ++i)
+            e.params[static_cast<std::size_t>(i)] = sliders_[i]->value() / 2.0;
+        return e;
+    }
+    std::function<void(const core::AudioEffect&)> onChanged;
+    QSlider* slider(int i) const { return sliders_[i]; }
+
+private:
+    void commit()
+    {
+        if (onChanged)
+            onChanged(effect());
+    }
+    QCheckBox* enabled_ = nullptr;
+    QSlider* sliders_[3] = {};
+    QLabel* values_[3] = {};
+    bool updating_ = false;
+};
+
 }  // namespace
 
 // Una colonna del mixer.
@@ -397,6 +483,14 @@ public:
         auto* col = new QVBoxLayout(this);
         col->setContentsMargins(4, 4, 4, 4);
         col->setSpacing(6);
+
+        // Gli slot degli effetti, in cima: al più due righe (effetti o "+"), sempre con lo stesso spazio (i fader restano allineati).
+        slotBox_ = new QWidget;
+        slotBox_->setFixedHeight(2 * 24 + 3);
+        slotLayout_ = new QVBoxLayout(slotBox_);
+        slotLayout_->setContentsMargins(0, 0, 0, 0);
+        slotLayout_->setSpacing(3);
+        col->addWidget(slotBox_);
 
         pan_ = new PanKnob;
         col->addWidget(pan_);
@@ -471,8 +565,28 @@ public:
     QPushButton* muteButton() const { return mute_; }
     QPushButton* soloButton() const { return solo_; }
 
+    const std::vector<core::AudioEffect>& effects() const { return effects_; }
+    QWidget* slotBox() const { return slotBox_; }
+    EqualizerDialog* dialog() const { return dialog_; }
+    void openEqualizer()
+    {
+        const auto it = std::find_if(effects_.begin(), effects_.end(),
+                                     [](const core::AudioEffect& e) { return e.kind == core::EffectKind::Equalizer; });
+        if (it == effects_.end())
+            return;
+        if (!dialog_) {
+            dialog_ = new EqualizerDialog(QStringLiteral("Equalizzatore - %1").arg(label_->text()), window());
+            dialog_->setAttribute(Qt::WA_DeleteOnClose);
+            dialog_->onChanged = [this](const core::AudioEffect& e) { changeEffect(core::EffectKind::Equalizer, e); };
+        }
+        dialog_->setEffect(*it);
+        dialog_->show();
+        dialog_->raise();
+    }
+
     void wire(MixerPanel* panel)
     {
+        panel_ = panel;
         fader_->onChanging = [this](double db) {
             const QSignalBlocker block(readout_);
             readout_->setValue(db);
@@ -500,8 +614,95 @@ public:
         });
     }
 
+    // Cambia (o aggiunge) l'effetto di quel tipo e lo comunica.
+    void changeEffect(core::EffectKind kind, const core::AudioEffect& e)
+    {
+        std::vector<core::AudioEffect> list = effects_;
+        const auto it = std::find_if(list.begin(), list.end(), [&](const core::AudioEffect& x) { return x.kind == kind; });
+        if (it != list.end())
+            *it = e;
+        else
+            list.push_back(e);
+        emitEffects(std::move(list));
+    }
+    void emitEffects(std::vector<core::AudioEffect> list)
+    {
+        if (panel_ != nullptr && panel_->onEffects)
+            panel_->onEffects(trackId_, std::move(list));
+    }
+
+    // Rifà i pulsanti degli slot.
+    void rebuildSlots()
+    {
+        while (QLayoutItem* item = slotLayout_->takeAt(0)) {
+            delete item->widget();
+            delete item;
+        }
+        for (const core::AudioEffect& e : effects_) {
+            auto* b = new QPushButton(QString::fromUtf8(core::effectName(e.kind)));
+            b->setFixedHeight(24);
+            b->setFocusPolicy(Qt::NoFocus);
+            b->setContextMenuPolicy(Qt::CustomContextMenu);
+            b->setToolTip(QStringLiteral("Clic per i parametri, clic destro per escludere o togliere"));
+            // Arancione se agisce, come nel mixer di riferimento; grigio se escluso.
+            b->setStyleSheet(e.enabled ? QStringLiteral("QPushButton { background: #b4531c; color: white; border: 1px solid #7a3510; border-radius: 3px; }"
+                                                        "QPushButton:hover { background: #cc6122; }")
+                                       : QStringLiteral("QPushButton { color: gray; font-style: italic; }"));
+            const core::EffectKind kind = e.kind;
+            connect(b, &QPushButton::clicked, this, [this] { openEqualizer(); });
+            connect(b, &QPushButton::customContextMenuRequested, this, [this, kind, b](const QPoint& pos) {
+                QMenu menu;
+                const auto it = std::find_if(effects_.begin(), effects_.end(), [&](const core::AudioEffect& x) { return x.kind == kind; });
+                if (it == effects_.end())
+                    return;
+                QAction* toggle = menu.addAction(it->enabled ? QStringLiteral("Escludi") : QStringLiteral("Includi"));
+                QAction* remove = menu.addAction(QStringLiteral("Togli"));
+                QAction* chosen = menu.exec(b->mapToGlobal(pos));
+                if (chosen == toggle) {
+                    core::AudioEffect changed = *it;
+                    changed.enabled = !changed.enabled;
+                    changeEffect(kind, changed);
+                } else if (chosen == remove) {
+                    std::vector<core::AudioEffect> list = effects_;
+                    std::erase_if(list, [&](const core::AudioEffect& x) { return x.kind == kind; });
+                    emitEffects(std::move(list));
+                }
+            });
+            slotLayout_->addWidget(b);
+        }
+        // "+": gli effetti che ancora non ci sono.
+        const bool hasEqualizer = std::any_of(effects_.begin(), effects_.end(),
+                                              [](const core::AudioEffect& e) { return e.kind == core::EffectKind::Equalizer; });
+        if (!hasEqualizer && effects_.size() < 2) {
+            auto* plus = new QPushButton(QStringLiteral("+"));
+            plus->setFixedHeight(24);
+            plus->setFocusPolicy(Qt::NoFocus);
+            plus->setToolTip(QStringLiteral("Aggiungi un effetto"));
+            connect(plus, &QPushButton::clicked, this, [this, plus] {
+                QMenu menu;
+                QAction* eq = menu.addAction(QString::fromUtf8(core::effectName(core::EffectKind::Equalizer)));
+                if (menu.exec(plus->mapToGlobal(QPoint(0, plus->height()))) == eq)
+                    changeEffect(core::EffectKind::Equalizer, core::AudioEffect{});
+            });
+            slotLayout_->addWidget(plus);
+        }
+        slotLayout_->addStretch(1);
+    }
+
     void setTrack(const MixerPanel::Track& t)
     {
+        if (t.effects != effects_ || slotLayout_->count() == 0) {
+            effects_ = t.effects;
+            rebuildSlots();
+            if (dialog_) {
+                const auto it = std::find_if(effects_.begin(), effects_.end(),
+                                             [](const core::AudioEffect& e) { return e.kind == core::EffectKind::Equalizer; });
+                if (it != effects_.end())
+                    dialog_->setEffect(*it);
+                else
+                    dialog_->close();
+            }
+        }
         if (!fader_->dragging()) {
             fader_->setValue(t.levelDb);
             const QSignalBlocker block(readout_);
@@ -519,6 +720,11 @@ public:
 
 private:
     int trackId_;
+    MixerPanel* panel_ = nullptr;
+    std::vector<core::AudioEffect> effects_;
+    QWidget* slotBox_ = nullptr;
+    QVBoxLayout* slotLayout_ = nullptr;
+    QPointer<EqualizerDialog> dialog_;
     QPushButton* solo_ = nullptr;
     QPushButton* mute_ = nullptr;
     Fader* fader_ = nullptr;
@@ -544,19 +750,28 @@ MixerPanel::MixerPanel(QWidget* parent) : QWidget(parent)
     area->setWidget(content);
     outer->addWidget(area, 1);
     // Il Master sta a destra, fuori dall'elenco che scorre: si vede sempre.
+    // Come le altre colonne sta in un'area che scorre (in verticale): senza, la sua altezza minima impedirebbe di
+    // restringere il pannello e, agganciato accanto alle altre schede, toglierebbe spazio alla linea del tempo.
+    auto* masterArea = new QScrollArea;
+    masterArea->setWidgetResizable(true);
+    masterArea->setFrameShape(QFrame::NoFrame);
+    masterArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     auto* masterBox = new QWidget;
     auto* masterLayout = new QVBoxLayout(masterBox);
     masterLayout->setContentsMargins(0, 4, 4, 4);
     master_ = new MixerStrip(core::kMasterTrackId, QStringLiteral("Master"), masterBox, true);
     master_->wire(this);
     masterLayout->addWidget(master_);
-    outer->addWidget(masterBox);
+    masterArea->setWidget(masterBox);
+    masterArea->setFixedWidth(104 + 8 + masterArea->style()->pixelMetric(QStyle::PM_ScrollBarExtent));
+    outer->addWidget(masterArea);
     setMinimumWidth(240);
 }
 
-void MixerPanel::setMaster(double levelDb)
+void MixerPanel::setMaster(double levelDb, const std::vector<core::AudioEffect>& effects)
 {
     Track t;
+    t.effects = effects;
     t.trackId = core::kMasterTrackId;
     t.name = QStringLiteral("Master");
     t.levelDb = levelDb;

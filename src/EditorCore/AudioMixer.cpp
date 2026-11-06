@@ -152,6 +152,7 @@ MixSpec mixSpecOf(const Project& project, bool closeGaps)
     spec.gains = trackGainsOf(project.audioTracks());
     spec.pans = trackPansOf(project.audioTracks());
     spec.masterGain = static_cast<float>(project.audioTracks().masterGain());
+    spec.effects = trackEffectsOf(project.audioTracks());
     spec.length = sequence.totalLength();
     if (!closeGaps) {
         for (const MixSegment& s : spec.segments)
@@ -176,6 +177,25 @@ std::map<int, float> trackPansOf(const AudioTracks& tracks)
     for (const AudioTrack& track : tracks.tracks())
         pans[track.id] = static_cast<float>(track.mix.pan);
     return pans;
+}
+
+std::map<int, std::vector<AudioEffect>> trackEffectsOf(const AudioTracks& tracks)
+{
+    std::map<int, std::vector<AudioEffect>> effects;
+    const auto add = [&](int id) {
+        std::vector<AudioEffect> active;
+        for (const AudioEffect& e : tracks.effects(id)) {
+            if (e.active())
+                active.push_back(e);
+        }
+        if (!active.empty())
+            effects[id] = std::move(active);
+    };
+    add(AudioTracks::kOriginalTrack);
+    for (const AudioTrack& track : tracks.tracks())
+        add(track.id);
+    add(AudioTracks::kMasterTrack);
+    return effects;
 }
 
 std::vector<std::vector<LevelPoint>> segmentEnvelopesOf(const Project& project)
@@ -309,11 +329,13 @@ struct AudioMixer::Shared
     std::map<int, float> gains;
     std::map<int, float> pans;
     float masterGain = 1.0f;
+    std::map<int, std::vector<AudioEffect>> effects;  // effetti attivi per traccia (kMasterTrackId = Master)
     std::vector<std::vector<LevelPoint>> envelopes;  // uno per tratto
     std::map<int, std::array<float, 2>> peaks;       // picchi (sinistro, destro) per traccia dall'ultimo takePeaks
 };
 
-AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, std::map<int, float> pans, float masterGain)
+AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, std::map<int, float> pans, float masterGain,
+                       std::map<int, std::vector<AudioEffect>> effects)
     : segments_(std::move(segments))
     , shared_(std::make_unique<Shared>())
 {
@@ -322,6 +344,7 @@ AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> ga
     shared_->pans = std::move(pans);
     appliedPans_ = shared_->pans;
     shared_->masterGain = masterGain;
+    shared_->effects = std::move(effects);
     appliedMaster_ = masterGain;
     for (const MixSegment& s : segments_) {
         shared_->envelopes.push_back(s.envelope);
@@ -348,6 +371,12 @@ std::map<int, std::array<float, 2>> AudioMixer::takePeaks()
     std::map<int, std::array<float, 2>> taken;
     taken.swap(shared_->peaks);
     return taken;
+}
+
+void AudioMixer::setEffects(std::map<int, std::vector<AudioEffect>> effects)
+{
+    std::lock_guard lock(shared_->mutex);
+    shared_->effects = std::move(effects);
 }
 
 void AudioMixer::setMasterGain(float gain)
@@ -391,18 +420,39 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
     std::map<int, float> targets;
     std::map<int, float> panTargets;
     float masterTarget = 1.0f;
+    std::map<int, std::vector<AudioEffect>> effectTargets;
     std::vector<std::vector<LevelPoint>> envelopes;
     {
         std::lock_guard lock(shared_->mutex);
         targets = shared_->gains;
         panTargets = shared_->pans;
         masterTarget = shared_->masterGain;
+        effectTargets = shared_->effects;
         envelopes = shared_->envelopes;
     }
     std::vector<float>& acc = acc_;  // riusato a ogni blocco: niente allocazioni sul thread audio
     acc.assign(frames * 2, 0.0f);
     const long long blockEnd = firstFrame + static_cast<long long>(frames);
     std::map<int, std::array<float, 2>> blockPeaks;  // picco sinistro e destro di ogni traccia in questo blocco
+    // Equalizzatori: una traccia con un effetto attivo si somma prima in un suo buffer, poi si filtra e si aggiunge al mix.
+    if (firstFrame != nextExpected_) {
+        for (auto& [id, state] : eq_)
+            state.filter.reset();  // un salto: lo stato del filtro non vale più
+    }
+    nextExpected_ = blockEnd;
+    std::map<int, std::vector<float>*> trackBuffers;
+    for (const auto& [id, list] : effectTargets) {
+        if (id == kMasterTrackId)
+            continue;
+        const auto first = std::find_if(list.begin(), list.end(), [](const AudioEffect& e) { return e.kind == EffectKind::Equalizer; });
+        if (first == list.end())
+            continue;
+        EqState& state = eq_[id];
+        state.filter.setGains(first->params[0], first->params[1], first->params[2], kMixSampleRate);
+        std::vector<float>& buffer = state.buffer;
+        buffer.assign(frames * 2, 0.0f);
+        trackBuffers[id] = &buffer;
+    }
     for (std::size_t i = 0; i < segments_.size(); ++i) {
         const long long segFirst = first_[i];
         const long long segEnd = segFirst + length_[i];
@@ -435,9 +485,32 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
             mutedFrames.emplace_back(segFirst + static_cast<long long>(std::ceil((m.start - segment.fileStart) * kMixSampleRate)),
                                      segFirst + static_cast<long long>(std::ceil((m.end - segment.fileStart) * kMixSampleRate)));
         }
-        readers_[i]->read(segment, segFirst, from, static_cast<std::size_t>(to - from), acc,
-                          static_cast<std::size_t>(from - firstFrame), frames, g0, g1, mutedFrames,
-                          envelopes[i], blockPeaks[segment.trackId].data(), {l0, r0, l1, r1});
+        const auto buffer = trackBuffers.find(segment.trackId);
+        float unusedPeak[2] = {0.0f, 0.0f};  // con un effetto il picco si misura dopo, sul suono filtrato
+        readers_[i]->read(segment, segFirst, from, static_cast<std::size_t>(to - from),
+                          buffer != trackBuffers.end() ? *buffer->second : acc, static_cast<std::size_t>(from - firstFrame),
+                          frames, g0, g1, mutedFrames, envelopes[i],
+                          buffer != trackBuffers.end() ? unusedPeak : blockPeaks[segment.trackId].data(), {l0, r0, l1, r1});
+    }
+    for (const auto& [id, buffer] : trackBuffers) {
+        eq_[id].filter.process(buffer->data(), frames);
+        std::array<float, 2>& peak = blockPeaks[id];
+        for (std::size_t i = 0; i < frames; ++i) {
+            peak[0] = std::max(peak[0], std::abs((*buffer)[i * 2]));
+            peak[1] = std::max(peak[1], std::abs((*buffer)[i * 2 + 1]));
+            acc[i * 2] += (*buffer)[i * 2];
+            acc[i * 2 + 1] += (*buffer)[i * 2 + 1];
+        }
+    }
+    // L'equalizzatore del Master agisce su tutto il mix, prima del suo livello.
+    if (const auto master = effectTargets.find(kMasterTrackId); master != effectTargets.end()) {
+        const auto first = std::find_if(master->second.begin(), master->second.end(),
+                                        [](const AudioEffect& e) { return e.kind == EffectKind::Equalizer; });
+        if (first != master->second.end()) {
+            EqState& state = eq_[kMasterTrackId];
+            state.filter.setGains(first->params[0], first->params[1], first->params[2], kMixSampleRate);
+            state.filter.process(acc.data(), frames);
+        }
     }
     for (const auto& [trackId, gain] : targets)
         applied_[trackId] = gain;

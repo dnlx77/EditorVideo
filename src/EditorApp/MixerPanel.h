@@ -1,5 +1,7 @@
 #pragma once
 
+#include "EditorCore/AudioEffect.h"
+
 #include <QtWidgets/QWidget>
 
 #include <array>
@@ -27,6 +29,7 @@ public:
         bool solo = false;
         bool audible = true;  // se la traccia si sente nel mix (muto e solo di tutte le tracce compresi)
         double pan = 0.0;     // da -1 (sinistra) a +1 (destra)
+        std::vector<core::AudioEffect> effects;  // gli effetti negli slot
     };
 
     explicit MixerPanel(QWidget* parent = nullptr);
@@ -41,7 +44,7 @@ public:
     double meterDb(int index, int channel) const;  // livello mostrato, in dB
     // Il Master (una colonna a parte, a destra): il suo livello e il suo vu-meter. Il cambio del livello arriva a
     // onLevel con trackId core::kMasterTrackId.
-    void setMaster(double levelDb);
+    void setMaster(double levelDb, const std::vector<core::AudioEffect>& effects = {});
     double masterLevelDb() const;
     double masterMeterDb(int channel) const;
     int stripCount() const { return static_cast<int>(strips_.size()); }
@@ -51,6 +54,8 @@ public:
     std::function<void(int trackId, bool muted)> onMuted;
     std::function<void(int trackId, bool solo)> onSolo;
     std::function<void(int trackId, double pan)> onPan;
+    // Gli effetti di una traccia (o del Master) cambiati dall'utente: la lista nuova, intera.
+    std::function<void(int trackId, const std::vector<core::AudioEffect>& effects)> onEffects;
 
 private:
     QHBoxLayout* layout_ = nullptr;
