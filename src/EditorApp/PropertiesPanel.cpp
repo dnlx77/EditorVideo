@@ -286,8 +286,18 @@ QWidget* PropertiesPanel::buildTransformPage()
     posY_ = addRow(position, QStringLiteral("Y"), -core::kMaxPosition, core::kMaxPosition, 1.0, 1, QStringLiteral(" px"), 0, 0, 1.0, "posizioneY");
     posX_.spin->setToolTip(QStringLiteral("Dal centro del fotogramma: positiva verso destra"));
     posY_.spin->setToolTip(QStringLiteral("Dal centro del fotogramma: positiva verso il basso"));
-    connect(posX_.spin, &QDoubleSpinBox::valueChanged, this, [this](double v) { edited("posizioneX", [v](core::Transform& t) { t.posX = v; }); });
-    connect(posY_.spin, &QDoubleSpinBox::valueChanged, this, [this](double v) { edited("posizioneY", [v](core::Transform& t) { t.posY = v; }); });
+    connect(posX_.spin, &QDoubleSpinBox::valueChanged, this, [this](double v) {
+        if (textMode_ && !updating_ && onTextPosition)
+            onTextPosition(true, v);
+        else
+            edited("posizioneX", [v](core::Transform& t) { t.posX = v; });
+    });
+    connect(posY_.spin, &QDoubleSpinBox::valueChanged, this, [this](double v) {
+        if (textMode_ && !updating_ && onTextPosition)
+            onTextPosition(false, v);
+        else
+            edited("posizioneY", [v](core::Transform& t) { t.posY = v; });
+    });
 
     // Rotazione
     QVBoxLayout* rotation = group(QStringLiteral("Rotazione"), "rotazione", core::AnimGroup::Rotation, [](core::Transform& t) { t.rotation = 0.0; });
@@ -492,6 +502,22 @@ void PropertiesPanel::attachBody(bool toText)
         scroll->setWidget(body_);
     }
     textMode_ = toText;
+    // La posizione: in px dal centro per i pezzi video, in % del fotogramma per le scritte.
+    for (Row* row : {&posX_, &posY_}) {
+        const QSignalBlocker block(row->spin);
+        if (toText) {
+            row->spin->setRange(-300.0, 400.0);
+            row->spin->setDecimals(1);
+            row->spin->setSuffix(QStringLiteral(" %"));
+        } else {
+            row->spin->setRange(-core::kMaxPosition, core::kMaxPosition);
+            row->spin->setSuffix(QStringLiteral(" px"));
+        }
+    }
+    posX_.spin->setToolTip(toText ? QStringLiteral("Dove sta la scritta nel fotogramma: 0 % è il bordo sinistro, 100 % il destro")
+                                  : QStringLiteral("Dal centro del fotogramma: positiva verso destra"));
+    posY_.spin->setToolTip(toText ? QStringLiteral("Dove sta la scritta nel fotogramma: 0 % è il bordo alto, 100 % il basso")
+                                  : QStringLiteral("Dal centro del fotogramma: positiva verso il basso"));
     // Per le scritte: titolo «Trasforma», senza ritaglio, Adatta/Riempi e panoramiche.
     textHeading_->setVisible(toText);
     cropSeparator_->setVisible(!toText);
@@ -503,10 +529,20 @@ void PropertiesPanel::attachBody(bool toText)
     body_->show();
 }
 
-void PropertiesPanel::showTextTransform(const core::Transform& t, const AnimationState& animation)
+void PropertiesPanel::showTextTransform(const core::Transform& t, const AnimationState& animation, double centerX, double centerY,
+                                        int frameWidth, int frameHeight)
 {
     attachBody(true);
-    updateTransformControls(t, 1, animation);
+    textCenterX_ = centerX;
+    textCenterY_ = centerY;
+    textFrameW_ = std::max(1, frameWidth);
+    textFrameH_ = std::max(1, frameHeight);
+    // La posizione si mostra come nel fotogramma (in %), non come spostamento dal centro di stile.
+    core::Transform shown = t;
+    shown.posX = (t.posX / textFrameW_ + centerX) * 100.0;
+    shown.posY = (t.posY / textFrameH_ + centerY) * 100.0;
+    updateTransformControls(shown, 1, animation);
+    shown_ = t;
     showText();
 }
 

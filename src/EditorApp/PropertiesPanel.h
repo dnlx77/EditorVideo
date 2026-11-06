@@ -55,7 +55,11 @@ public:
     // La pagina delle scritte con in più la sezione «Trasforma» (scala, posizione, rotazione, specchio, opacità, con rombi e mini
     // linea del tempo: gli stessi controlli dei pezzi video, senza ritaglio) in fondo all'editor della scritta. I valori sono
     // quelli della trasformazione della scritta sul cursore.
-    void showTextTransform(const core::Transform& transform, const AnimationState& animation);
+    // La scritta ha una sola posizione: quella vera nel fotogramma, in % (centro di stile + spostamento). `centerX/centerY` sono il
+    // centro di stile (0..1) e `frameWidth/frameHeight` il fotogramma; la modifica di X o Y arriva a `onTextPosition`.
+    void showTextTransform(const core::Transform& transform, const AnimationState& animation, double centerX, double centerY, int frameWidth,
+                           int frameHeight);
+    std::function<void(bool isX, double percent)> onTextPosition;
     bool showingTransform() const;
     // La pagina delle scritte (l'editor, già costruito): il pannello ne prende possesso. showText() la mostra.
     void setTextPage(QWidget* page);
@@ -154,6 +158,10 @@ private:
     bool textMode_ = false;
     AnimMiniTimeline* mini_ = nullptr;
     core::Transform shown_;
+    double textCenterX_ = 0.5;  // (solo per le scritte) centro di stile e fotogramma, per passare da % a spostamento
+    double textCenterY_ = 0.5;
+    int textFrameW_ = 1920;
+    int textFrameH_ = 1080;
     bool updating_ = false;
 };
 

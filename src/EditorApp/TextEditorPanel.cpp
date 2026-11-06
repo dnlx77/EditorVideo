@@ -292,21 +292,28 @@ void TextEditorPanel::build()
             button->setToolTip(QString::fromUtf8(names[row][col]));
             button->setObjectName(QStringLiteral("posto%1%2").arg(row).arg(col));
             button->setFixedSize(20, 18);
-            connect(button, &QToolButton::clicked, this, [this, x = xs[col], y = ys[row]] { setPosition(x, y); });
+            connect(button, &QToolButton::clicked, this, [this, x = xs[col], y = ys[row]] {
+                if (onPositionPreset)
+                    onPositionPreset(x, y);
+                else
+                    setPosition(x, y);
+            });
             presets->addWidget(button, row, col);
         }
     }
     whereGrid->addLayout(presets, 0, 0, 3, 1);
-    whereGrid->addWidget(new QLabel(QStringLiteral("Centro X")), 0, 1);
-    whereGrid->addWidget(centerX_, 0, 2);
-    whereGrid->addWidget(new QLabel(QStringLiteral("Centro Y")), 1, 1);
-    whereGrid->addWidget(centerY_, 1, 2);
-    whereGrid->addWidget(new QLabel(QStringLiteral("Durata")), 2, 1);
-    whereGrid->addWidget(length_, 2, 2);
-    whereGrid->addWidget(new QLabel(QStringLiteral("Compare")), 3, 1);
-    whereGrid->addWidget(fadeIn_, 3, 2);
-    whereGrid->addWidget(new QLabel(QStringLiteral("Sparisce")), 4, 1);
-    whereGrid->addWidget(fadeOut_, 4, 2);
+    // La posizione esatta è nella sezione «Trasforma» (con i rombi): qui restano i nove punti fissi; i campi del centro di stile
+    // restano nascosti perché sono il dato dello stile.
+    centerX_->setParent(where);
+    centerY_->setParent(where);
+    centerX_->hide();
+    centerY_->hide();
+    whereGrid->addWidget(new QLabel(QStringLiteral("Durata")), 0, 1);
+    whereGrid->addWidget(length_, 0, 2);
+    whereGrid->addWidget(new QLabel(QStringLiteral("Compare")), 1, 1);
+    whereGrid->addWidget(fadeIn_, 1, 2);
+    whereGrid->addWidget(new QLabel(QStringLiteral("Sparisce")), 2, 1);
+    whereGrid->addWidget(fadeOut_, 2, 2);
 
     controls_ = new QWidget;
     auto* controlsLayout = new QVBoxLayout(controls_);
