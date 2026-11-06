@@ -17,6 +17,7 @@
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QScrollArea>
 #include <QtWidgets/QSlider>
+#include <QtWidgets/QStyle>
 #include <QtWidgets/QVBoxLayout>
 
 #include <algorithm>
@@ -63,7 +64,7 @@ class Fader : public QWidget
 public:
     explicit Fader(QWidget* parent = nullptr) : QWidget(parent)
     {
-        setMinimumSize(70, 160);
+        setMinimumSize(70, 90);
         setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
         setFocusPolicy(Qt::WheelFocus);
         setToolTip(QStringLiteral("Livello della traccia: trascina, rotella per 0,5 dB (Maiusc: 0,1 dB); doppio clic = 0 dB"));
@@ -749,13 +750,21 @@ MixerPanel::MixerPanel(QWidget* parent) : QWidget(parent)
     area->setWidget(content);
     outer->addWidget(area, 1);
     // Il Master sta a destra, fuori dall'elenco che scorre: si vede sempre.
+    // Come le altre colonne sta in un'area che scorre (in verticale): senza, la sua altezza minima impedirebbe di
+    // restringere il pannello e, agganciato accanto alle altre schede, toglierebbe spazio alla linea del tempo.
+    auto* masterArea = new QScrollArea;
+    masterArea->setWidgetResizable(true);
+    masterArea->setFrameShape(QFrame::NoFrame);
+    masterArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     auto* masterBox = new QWidget;
     auto* masterLayout = new QVBoxLayout(masterBox);
     masterLayout->setContentsMargins(0, 4, 4, 4);
     master_ = new MixerStrip(core::kMasterTrackId, QStringLiteral("Master"), masterBox, true);
     master_->wire(this);
     masterLayout->addWidget(master_);
-    outer->addWidget(masterBox);
+    masterArea->setWidget(masterBox);
+    masterArea->setFixedWidth(104 + 8 + masterArea->style()->pixelMetric(QStyle::PM_ScrollBarExtent));
+    outer->addWidget(masterArea);
     setMinimumWidth(240);
 }
 
