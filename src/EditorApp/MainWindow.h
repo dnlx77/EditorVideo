@@ -222,6 +222,9 @@ public:
     void keepTextStyles(const std::vector<core::NamedTextStyle>& styles);
     // La scritta trascinata sull'immagine del monitor: nuovo centro (0..1 del fotogramma).
     bool moveTextOnScreen(int clipId, double centerX, double centerY);
+    // La posizione vera della scritta scelta (frazioni del fotogramma; un asse solo se l'altro è vuoto). Con la posizione animata
+    // l'asse animato prende una chiave sul cursore; altrimenti la posizione va nel centro di stile e lo spostamento torna a zero.
+    bool setTextPosition(std::optional<double> x, std::optional<double> y);
     // Transizioni (MainWindowTransitions.cpp)
     void refreshTransitions();  // le rimette sulla linea del tempo
     bool canDropTransition(int beforeFragment) const;

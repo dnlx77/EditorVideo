@@ -50,7 +50,11 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
                 state.groups[static_cast<std::size_t>(g)] =
                     core::groupState(target.animation, static_cast<core::AnimGroup>(g), target.fileTime, target.from, target.to);
             propertiesFollowCursor_ = true;
-            propertiesPanel_->showTextTransform(core::evaluateTransform(target.base, target.animation, target.fileTime), state);
+            const core::TextClip* textClip = project_.textTracks().find(target.id);
+            const QSize frame = frameSize();
+            propertiesPanel_->showTextTransform(core::evaluateTransform(target.base, target.animation, target.fileTime), state,
+                                                textClip != nullptr ? textClip->style.centerX : 0.5,
+                                                textClip != nullptr ? textClip->style.centerY : 0.5, frame.width(), frame.height());
             std::vector<AnimMiniTimeline::Mark> marks;
             for (int g = 0; g < core::kAnimGroupCount; ++g) {
                 const auto group = static_cast<core::AnimGroup>(g);
@@ -235,6 +239,62 @@ bool MainWindow::writeAnimTarget(const AnimTarget& target, const core::Transform
     const int a = project_.setTransform({target.id}, base);
     const int b = project_.setAnimation({target.id}, animation);
     return a + b > 0;
+}
+
+bool MainWindow::setTextPosition(std::optional<double> x, std::optional<double> y)
+{
+    const AnimTarget target = animationTarget();
+    if (!target.valid || !target.text || (!x && !y))
+        return false;
+    const core::TextClip* clip = project_.textTracks().find(target.id);
+    if (clip == nullptr)
+        return false;
+    const QSize frame = frameSize();
+    const bool animX = target.animation.animated(core::AnimParam::PosX);
+    const bool animY = target.animation.animated(core::AnimParam::PosY);
+    core::Transform base = target.base;
+    core::TransformAnimation animation = target.animation;
+    core::TextStyle style = clip->style;
+    // Un asse non animato: la posizione va nel centro di stile (la scritta resta dove la si vede) e lo spostamento si azzera.
+    if (x && !animX) {
+        style.centerX = *x;
+        base.posX = 0.0;
+    }
+    if (y && !animY) {
+        style.centerY = *y;
+        base.posY = 0.0;
+    }
+    // Un asse animato: la chiave sul cursore (lo spostamento è la differenza dal centro di stile).
+    if ((x && animX) || (y && animY)) {
+        if (!target.inside)
+            return false;
+        const core::Transform shown = core::evaluateTransform(base, animation, target.fileTime);
+        core::Transform edited = shown;
+        if (x && animX)
+            edited.posX = (*x - style.centerX) * frame.width();
+        if (y && animY)
+            edited.posY = (*y - style.centerY) * frame.height();
+        core::applyEditWithKeys(animation, base, shown, edited, target.fileTime);
+    }
+    base = core::normalized(base);
+    if (style == clip->style && base == clip->transform && animation == clip->animation)
+        return false;
+    const core::Project before = project_;
+    core::TextTracks& tracks = project_.textTracks();
+    tracks.setStyle(target.id, style);
+    tracks.setTransform(target.id, base);
+    tracks.setAnimation(target.id, animation);
+    const std::string key = std::string("posizioneScritta") + (x ? "X" : "") + (y ? "Y" : "") + ":" + std::to_string(target.id) + ":"
+                            + std::to_string(std::lround(target.fileTime * 1000.0));
+    const bool continues = transformMergeKey_ == key && transformMergeCount_ == history_.undoCount() && history_.canUndo()
+                        && history_.undoLabel() == "Posizione della scritta" && !history_.canRedo();
+    if (continues && history_.amend())
+        sequenceChanged();
+    else
+        recordEdit(QStringLiteral("Posizione della scritta"), before);
+    transformMergeKey_ = key;
+    transformMergeCount_ = history_.undoCount();
+    return true;
 }
 
 bool MainWindow::applyTransformEdit(const std::function<void(core::Transform&)>& edit, const std::string& field)

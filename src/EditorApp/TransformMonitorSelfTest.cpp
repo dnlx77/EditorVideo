@@ -807,6 +807,52 @@ int runManipTest(const QStringList& args, qsizetype at)
                             }
                         }
                     }
+                    // --- Una sola posizione per la scritta: quella vera nel fotogramma, in % (centro di stile + spostamento).
+                    {
+                        QDoubleSpinBox* posX = nullptr;
+                        QDoubleSpinBox* posY = nullptr;
+                        for (QDoubleSpinBox* spin : panel->findChildren<QDoubleSpinBox*>(QStringLiteral("posizioneX")))
+                            posX = spin->isVisibleTo(panel) ? spin : posX;
+                        for (QDoubleSpinBox* spin : panel->findChildren<QDoubleSpinBox*>(QStringLiteral("posizioneY")))
+                            posY = spin->isVisibleTo(panel) ? spin : posY;
+                        check(posX != nullptr && posY != nullptr, "la scritta ha una sola posizione visibile (X e Y)");
+                        auto* grid = window.textPanel()->findChild<QToolButton*>(QStringLiteral("posto00"));  // in alto a sinistra: 20 %, 12 %
+                        if (posX != nullptr && posY != nullptr && grid != nullptr) {
+                            const double frameW = window.project().format().video()->width;
+                            const double frameH = window.project().format().video()->height;
+                            seek(start + 0.5);
+                            const double cy = clipNow().style.centerY;
+                            check(std::abs(posX->value() - (clipNow().style.centerX + clipNow().transform.posX / frameW) * 100.0) < 0.2
+                                      && std::abs(posY->value() - (cy + clipNow().transform.posY / frameH) * 100.0) < 0.2,
+                                  "la posizione mostrata è centro di stile più spostamento, in % del fotogramma");
+                            grid->click();
+                            QCoreApplication::processEvents();
+                            check(std::abs(clipNow().style.centerX - 0.2) < 1e-9 && std::abs(clipNow().style.centerY - 0.12) < 1e-9
+                                      && std::abs(clipNow().transform.posX) < 1e-9 && std::abs(clipNow().transform.posY) < 1e-9,
+                                  "un punto fisso mette la posizione nel centro di stile e azzera lo spostamento");
+                            check(std::abs(posX->value() - 20.0) < 0.2 && std::abs(posY->value() - 12.0) < 0.2, "il pannello mostra 20 % e 12 %");
+                            posX->setValue(35.0);
+                            QCoreApplication::processEvents();
+                            check(std::abs(clipNow().style.centerX - 0.35) < 1e-9 && std::abs(clipNow().transform.posX) < 1e-9,
+                                  "scrivere la X nel campo cambia la posizione (non animata)");
+                            // Con la posizione animata la X scritta nel campo mette una chiave sul cursore (spostamento dal centro di stile).
+                            window.editAnimationKeys(QStringLiteral("prova posizione"), [&](core::TransformAnimation& a, core::Transform&) {
+                                core::setKey(a, core::AnimParam::PosX, {.time = 0.2, .value = 0.0});
+                                core::setKey(a, core::AnimParam::PosX, {.time = 2.0, .value = 100.0});
+                                return true;
+                            });
+                            seek(start + 1.0);
+                            posX->setValue(60.0);
+                            QCoreApplication::processEvents();
+                            const core::AnimKey* k = core::findKey(clipNow().animation, core::AnimParam::PosX, 1.0);
+                            check(k != nullptr && std::abs(k->value - (0.60 - 0.35) * frameW) < 0.5 && std::abs(clipNow().style.centerX - 0.35) < 1e-9,
+                                  "con la posizione animata la X scritta mette la chiave sul cursore");
+                            window.undo();
+                            window.undo();
+                            window.undo();
+                            QCoreApplication::processEvents();
+                        }
+                    }
                     // --- La riga dei rombi sotto la scritta e le maniglie sul monitor (S4).
                     {
                         SequenceTimeline* line = window.sequenceTimeline();

@@ -63,6 +63,8 @@ public:
     void setExtraSection(QWidget* widget);
     QWidget* takeExtraSection();
     std::function<void(const core::TextClip&)> onEdited;  // un controllo è cambiato (il progetto non usa moc)
+    // I nove punti fissi: se c'è, prende lui la posizione (frazioni del fotogramma); altrimenti si cambia il centro di stile qui.
+    std::function<void(double x, double y)> onPositionPreset;
     std::function<void(const std::vector<core::NamedTextStyle>&)> onStylesChanged;  // salvato o tolto uno stile
 
 private:

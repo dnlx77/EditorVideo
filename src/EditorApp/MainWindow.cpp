@@ -573,6 +573,7 @@ MainWindow::MainWindow(QWidget* parent)
     filesDock_ = makeDock(QStringLiteral("File del progetto"), QStringLiteral("pannelloFile"), leftTabs_);
     // L'editor della scritta scelta sta nel pannello Proprietà (le modifiche valgono subito e si vedono nel Montaggio).
     textPanel_ = new TextEditorPanel;
+    textPanel_->onPositionPreset = [this](double x, double y) { setTextPosition(x, y); };
     textPanel_->onEdited = [this](const core::TextClip& edited) { applyTextEdit(edited, nullptr, true); };
     textPanel_->onStylesChanged = [this](const std::vector<core::NamedTextStyle>& styles) {
         const core::Project before = project_;
@@ -589,6 +590,9 @@ MainWindow::MainWindow(QWidget* parent)
     propertiesPanel_->onTransitionEdit = [this](const std::string& type, const core::TransitionParams& params, double duration,
                                                 bool crossfadeAudio, const std::string& field) {
         applyTransitionEdit(type, params, duration, crossfadeAudio, field);
+    };
+    propertiesPanel_->onTextPosition = [this](bool isX, double percent) {
+        setTextPosition(isX ? std::optional<double>(percent / 100.0) : std::nullopt, isX ? std::nullopt : std::optional<double>(percent / 100.0));
     };
     propertiesPanel_->onFit = [this](bool fill) { fitSelectedPieces(fill); };
     propertiesPanel_->onAnimationPreset = [this](core::AnimPreset preset) {
