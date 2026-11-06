@@ -38,6 +38,7 @@ public:
     void setVolume(float gain) { volume_ = gain; }
     void setTrackGains(const std::map<int, float>& gains);
     void setTrackPans(const std::map<int, float>& pans);
+    void setMasterGain(float gain);
     // I picchi di ogni traccia dall'ultima chiamata (vedi AudioMixer::takePeaks); vuoto se non suona.
     std::map<int, std::array<float, 2>> takePeaks();
     void setSegmentEnvelopes(std::vector<std::vector<core::LevelPoint>> envelopes);  // le linee del livello dei tratti

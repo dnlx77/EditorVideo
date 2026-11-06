@@ -34,11 +34,16 @@ public:
     // Mette le tracce. Se sono le stesse (id e nomi) si aggiornano solo i valori, senza toccare la colonna che l'utente
     // sta trascinando.
     void setTracks(const std::vector<Track>& tracks);
-    // I picchi (0..1, sinistra e destra) di ogni traccia nell'ultimo intervallo di `seconds` secondi (AudioMixer::takePeaks):
+    // I picchi (0..1, sinistra e destra) di ogni traccia (e del Master, con id core::kMasterTrackId) nell'ultimo intervallo di `seconds` secondi (AudioMixer::takePeaks):
     // le barre salgono subito e scendono piano. Una traccia senza picchi scende verso il silenzio.
     void feedPeaks(const std::map<int, std::array<float, 2>>& peaks, double seconds);
     void resetMeters();                    // tutte a zero (riproduzione ferma)
     double meterDb(int index, int channel) const;  // livello mostrato, in dB
+    // Il Master (una colonna a parte, a destra): il suo livello e il suo vu-meter. Il cambio del livello arriva a
+    // onLevel con trackId core::kMasterTrackId.
+    void setMaster(double levelDb);
+    double masterLevelDb() const;
+    double masterMeterDb(int channel) const;
     int stripCount() const { return static_cast<int>(strips_.size()); }
     const Track& trackAt(int index) const { return tracks_[static_cast<std::size_t>(index)]; }  // com'è mostrata
 
@@ -50,6 +55,7 @@ public:
 private:
     QHBoxLayout* layout_ = nullptr;
     std::vector<MixerStrip*> strips_;
+    MixerStrip* master_ = nullptr;
     std::vector<Track> tracks_;
 };
 

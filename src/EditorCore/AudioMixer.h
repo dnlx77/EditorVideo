@@ -20,6 +20,8 @@ class AudioDecoder;
 std::vector<MixSegment> mixSegmentsOf(const Project& project);
 // Quanto si moltiplica ogni traccia nel mix (A1 compresa), come AudioTracks::gain.
 std::map<int, float> trackGainsOf(const AudioTracks& tracks);
+// Id con cui `takePeaks` dà i picchi del Master (tutto il mix, dopo il livello del Master e prima del limitatore).
+inline constexpr int kMasterTrackId = -1;
 // Il pan di ogni traccia (A1 compresa), da -1 a +1.
 std::map<int, float> trackPansOf(const AudioTracks& tracks);
 // Tutto quello che serve per mixare il progetto (con gli spazi vuoti di A1 chiusi se `closeGaps`, come nel file esportato).
@@ -36,7 +38,8 @@ std::vector<std::vector<LevelPoint>> segmentEnvelopesOf(const Project& project);
 class AudioMixer
 {
 public:
-    AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, std::map<int, float> pans = {});
+    AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, std::map<int, float> pans = {},
+                float masterGain = 1.0f);
     ~AudioMixer();
     AudioMixer(AudioMixer&&) noexcept;
     AudioMixer& operator=(AudioMixer&&) noexcept;
@@ -48,6 +51,8 @@ public:
     void setGains(const std::map<int, float>& gains);
     // Il pan delle tracce (-1 sinistra .. +1 destra, assente = centro); cambia con la stessa rampa del livello.
     void setPans(const std::map<int, float>& pans);
+    // Il livello del Master (moltiplicatore di tutto il mix), con la stessa rampa.
+    void setMasterGain(float gain);
     // Le linee del livello dei tratti, una per tratto nello stesso ordine (al posto di quelle di prima): il valore al
     // tempo del file moltiplica il livello della traccia, campione per campione.
     void setEnvelopes(std::vector<std::vector<LevelPoint>> envelopes);
@@ -73,6 +78,7 @@ private:
     std::unique_ptr<Shared> shared_;  // livelli (condivisi con altri thread)
     std::map<int, float> applied_;    // livello arrivato alla fine dell'ultimo blocco, per la rampa
     std::map<int, float> appliedPans_;  // lo stesso per il pan
+    float appliedMaster_ = 1.0f;        // e per il Master
     double end_ = 0.0;
     std::vector<float> acc_;  // somma del blocco in lavorazione (render)
 };

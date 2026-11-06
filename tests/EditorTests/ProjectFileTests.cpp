@@ -414,6 +414,7 @@ TEST_F(ProjectFileTest, AudioTracksAreSavedWithLevelsMuteAndSolo)
     audio.setSolo(a2, true);
     audio.setMuted(a3, true);
     audio.setPan(a2, -0.4);
+    audio.setMasterLevel(-4.5);
     ASSERT_NE(audio.add(a2, AudioClip{0, file("voce.wav"), 0.5, 2.0 + 1.0 / 48000, 1.0, 9.5}), 0);
     ASSERT_NE(audio.add(a2, AudioClip{0, file("musica.mp3"), 10.0, 70.0, 4.0, 181.3}), 0);
     ASSERT_NE(audio.add(a3, AudioClip{0, file("effetto.wav"), 0.0, 1001.0 / 30000, 2.5, 0.0}), 0);
@@ -427,6 +428,7 @@ TEST_F(ProjectFileTest, AudioTracksAreSavedWithLevelsMuteAndSolo)
     EXPECT_NE(text.find("\"tracceAudio\""), std::string::npos);
     EXPECT_NE(text.find("\"livello\": -12.25"), std::string::npos) << text;
     EXPECT_NE(text.find("\"pan\": -0.4"), std::string::npos) << text;
+    EXPECT_NE(text.find("\"master\""), std::string::npos) << text;
     EXPECT_EQ(text.find("\"pan\": 0"), std::string::npos) << "il pan al centro non si scrive";
     EXPECT_NE(text.find("\"linea\""), std::string::npos) << text;
     EXPECT_EQ(text.find("calamita"), std::string::npos) << text;

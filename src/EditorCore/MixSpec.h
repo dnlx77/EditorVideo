@@ -39,6 +39,7 @@ struct MixSpec
 {
     std::vector<MixSegment> segments;
     std::map<int, float> gains;  // moltiplicatore di ogni traccia (A1 compresa), 0 = non si sente
+    float masterGain = 1.0f;     // il livello del Master, moltiplica tutto il mix prima del limitatore
     std::map<int, float> pans;   // pan di ogni traccia (-1 sinistra .. +1 destra), assente = centro
     double length = 0.0;  // durata della sequenza, in secondi (l'audio esportato dura almeno quanto lei)
 };

@@ -115,6 +115,17 @@ std::pair<float, float> AudioTracks::panGains(double pan)
     return pan > 0.0 ? std::pair<float, float>{falling, 1.0f} : std::pair<float, float>{1.0f, falling};
 }
 
+bool AudioTracks::setMasterLevel(double db)
+{
+    if (!std::isfinite(db))
+        return false;
+    db = std::clamp(db, kMinLevelDb, kMaxLevelDb);
+    if (masterDb_ == db)
+        return false;
+    masterDb_ = db;
+    return true;
+}
+
 bool AudioTracks::setMuted(int trackId, bool muted)
 {
     AudioMix* m = mutableMix(trackId);
@@ -162,7 +173,7 @@ bool AudioTracks::needsMix() const
 {
     if (isDefault())
         return false;
-    if (!audible(kOriginalTrack) || original_.levelDb != 0.0 || original_.pan != 0.0)
+    if (!audible(kOriginalTrack) || original_.levelDb != 0.0 || original_.pan != 0.0 || masterDb_ != 0.0)
         return true;
     return std::any_of(tracks_.begin(), tracks_.end(), [](const AudioTrack& t) { return !t.clips.empty(); });
 }
@@ -469,9 +480,10 @@ int AudioTracks::removePath(const std::string& path)
     return count;
 }
 
-void AudioTracks::restore(AudioMix original, std::vector<AudioTrack> tracks)
+void AudioTracks::restore(AudioMix original, std::vector<AudioTrack> tracks, double masterDb)
 {
     original_ = original;
+    masterDb_ = std::clamp(masterDb, kMinLevelDb, kMaxLevelDb);
     tracks_ = std::move(tracks);
     // Le clip libere di A1 (una sola traccia, in testa).
     std::stable_partition(tracks_.begin(), tracks_.end(), [](const AudioTrack& t) { return t.host; });
@@ -504,6 +516,7 @@ void AudioTracks::restoreEdits(const AudioTracks& snapshot)
 void AudioTracks::clear()
 {
     original_ = {};
+    masterDb_ = 0.0;
     tracks_.clear();
 }
 

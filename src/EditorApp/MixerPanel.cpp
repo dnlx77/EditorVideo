@@ -1,5 +1,6 @@
 #include "EditorApp/MixerPanel.h"
 
+#include "EditorCore/AudioMixer.h"
 #include "EditorCore/AudioTracks.h"
 
 #include <QtCore/QEvent>
@@ -390,7 +391,7 @@ private:
 class MixerStrip : public QWidget
 {
 public:
-    MixerStrip(int trackId, const QString& name, QWidget* parent) : QWidget(parent), trackId_(trackId)
+    MixerStrip(int trackId, const QString& name, QWidget* parent, bool master = false) : QWidget(parent), trackId_(trackId)
     {
         setFixedWidth(104);
         auto* col = new QVBoxLayout(this);
@@ -431,6 +432,15 @@ public:
         readout_->setToolTip(QStringLiteral("Il livello in dB: si può scrivere"));
         col->addWidget(readout_);
 
+        if (master) {
+            // Il Master non ha pan, muto e solo: i posti restano (il fader sta alla stessa altezza delle altre colonne).
+            for (QWidget* w : std::initializer_list<QWidget*>{pan_, solo_, mute_}) {
+                QSizePolicy policy = w->sizePolicy();
+                policy.setRetainSizeWhenHidden(true);
+                w->setSizePolicy(policy);
+                w->hide();
+            }
+        }
         label_ = new QLabel(name);
         label_->setAlignment(Qt::AlignCenter);
         QFont f = label_->font();
@@ -520,8 +530,9 @@ private:
 
 MixerPanel::MixerPanel(QWidget* parent) : QWidget(parent)
 {
-    auto* outer = new QVBoxLayout(this);
+    auto* outer = new QHBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
     auto* area = new QScrollArea;
     area->setWidgetResizable(true);
     area->setFrameShape(QFrame::NoFrame);
@@ -531,12 +542,46 @@ MixerPanel::MixerPanel(QWidget* parent) : QWidget(parent)
     layout_->setSpacing(6);
     layout_->addStretch(1);
     area->setWidget(content);
-    outer->addWidget(area);
-    setMinimumWidth(120);
+    outer->addWidget(area, 1);
+    // Il Master sta a destra, fuori dall'elenco che scorre: si vede sempre.
+    auto* masterBox = new QWidget;
+    auto* masterLayout = new QVBoxLayout(masterBox);
+    masterLayout->setContentsMargins(0, 4, 4, 4);
+    master_ = new MixerStrip(core::kMasterTrackId, QStringLiteral("Master"), masterBox, true);
+    master_->wire(this);
+    masterLayout->addWidget(master_);
+    outer->addWidget(masterBox);
+    setMinimumWidth(240);
+}
+
+void MixerPanel::setMaster(double levelDb)
+{
+    Track t;
+    t.trackId = core::kMasterTrackId;
+    t.name = QStringLiteral("Master");
+    t.levelDb = levelDb;
+    master_->setTrack(t);
+}
+
+double MixerPanel::masterLevelDb() const
+{
+    return master_->level();
+}
+
+double MixerPanel::masterMeterDb(int channel) const
+{
+    return master_->meter()->levelDb(channel);
 }
 
 void MixerPanel::feedPeaks(const std::map<int, std::array<float, 2>>& peaks, double seconds)
 {
+    {
+        const auto it = peaks.find(core::kMasterTrackId);
+        if (it != peaks.end())
+            master_->meter()->feed(it->second[0], it->second[1], seconds);
+        else
+            master_->meter()->feed(0.0f, 0.0f, seconds);
+    }
     for (MixerStrip* s : strips_) {
         const auto it = peaks.find(s->trackId());
         if (it != peaks.end())
@@ -553,6 +598,7 @@ double MixerPanel::meterDb(int index, int channel) const
 
 void MixerPanel::resetMeters()
 {
+    master_->meter()->reset();
     for (MixerStrip* s : strips_)
         s->meter()->reset();
 }

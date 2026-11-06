@@ -21,6 +21,26 @@ AudioClip clipOf(const char* path, double start, double end, double position, do
     return clip;
 }
 
+TEST(AudioTracks, MasterLevelIsLimitedAndCountsAsAChange)
+{
+    AudioTracks audio;
+    EXPECT_EQ(audio.masterLevelDb(), 0.0);
+    EXPECT_NEAR(audio.masterGain(), 1.0, 1e-12);
+    EXPECT_TRUE(audio.setMasterLevel(-6.0));
+    EXPECT_FALSE(audio.setMasterLevel(-6.0));
+    EXPECT_FALSE(audio.isDefault());
+    EXPECT_TRUE(audio.needsMix()) << "un Master diverso da 0 dB cambia l'audio: non basta copiarlo";
+    EXPECT_NEAR(audio.masterGain(), std::pow(10.0, -6.0 / 20.0), 1e-9);
+    EXPECT_TRUE(audio.setMasterLevel(99.0));
+    EXPECT_EQ(audio.masterLevelDb(), AudioTracks::kMaxLevelDb);
+    EXPECT_FALSE(audio.setMasterLevel(std::nan("")));
+    AudioTracks other;
+    EXPECT_NE(audio, other);
+    audio.clear();
+    EXPECT_EQ(audio.masterLevelDb(), 0.0);
+    EXPECT_TRUE(audio.isDefault());
+}
+
 TEST(AudioTracks, PanIsLimitedAndNeedsAMixOnA1)
 {
     AudioTracks audio;
