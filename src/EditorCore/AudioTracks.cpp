@@ -95,6 +95,26 @@ bool AudioTracks::setLevel(int trackId, double db)
     return true;
 }
 
+bool AudioTracks::setPan(int trackId, double pan)
+{
+    AudioMix* m = mutableMix(trackId);
+    if (m == nullptr || !std::isfinite(pan))
+        return false;
+    pan = std::clamp(pan, -1.0, 1.0);
+    if (m->pan == pan)
+        return false;
+    m->pan = pan;
+    return true;
+}
+
+std::pair<float, float> AudioTracks::panGains(double pan)
+{
+    pan = std::clamp(pan, -1.0, 1.0);
+    constexpr double kHalfPi = 1.57079632679489661923;
+    const float falling = pan == 1.0 || pan == -1.0 ? 0.0f : static_cast<float>(std::cos(std::abs(pan) * kHalfPi));
+    return pan > 0.0 ? std::pair<float, float>{falling, 1.0f} : std::pair<float, float>{1.0f, falling};
+}
+
 bool AudioTracks::setMuted(int trackId, bool muted)
 {
     AudioMix* m = mutableMix(trackId);
@@ -142,7 +162,7 @@ bool AudioTracks::needsMix() const
 {
     if (isDefault())
         return false;
-    if (!audible(kOriginalTrack) || original_.levelDb != 0.0)
+    if (!audible(kOriginalTrack) || original_.levelDb != 0.0 || original_.pan != 0.0)
         return true;
     return std::any_of(tracks_.begin(), tracks_.end(), [](const AudioTrack& t) { return !t.clips.empty(); });
 }

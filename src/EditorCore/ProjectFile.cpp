@@ -134,6 +134,8 @@ std::string text(const JsonValue& value)
 JsonValue mixToJson(const AudioMix& mix)
 {
     JsonValue::Object json{{"livello", mix.levelDb}, {"muto", mix.muted}, {"solo", mix.solo}};
+    if (mix.pan != 0.0)
+        json["pan"] = mix.pan;  // solo se non è al centro: i progetti senza pan restano uguali a prima
     return json;
 }
 
@@ -320,6 +322,8 @@ AudioMix mixFromJson(const JsonValue& value)
         mix.levelDb = std::clamp(value["livello"].asNumber(), AudioTracks::kMinLevelDb, AudioTracks::kMaxLevelDb);
     mix.muted = value["muto"].isBool() && value["muto"].asBool();
     mix.solo = value["solo"].isBool() && value["solo"].asBool();
+    if (value["pan"].isNumber())
+        mix.pan = std::clamp(value["pan"].asNumber(), -1.0, 1.0);
     return mix;
 }
 

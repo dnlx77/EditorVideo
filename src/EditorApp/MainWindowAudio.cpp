@@ -410,6 +410,15 @@ void MainWindow::setTrackSolo(int trackId, bool solo)
         recordMixEdit(solo ? QStringLiteral("Traccia in solo") : QStringLiteral("Traccia non più in solo"), before);
 }
 
+void MainWindow::setTrackPan(int trackId, double pan)
+{
+    const core::Project before = project_;
+    if (project_.audioTracks().setPan(trackId, pan))
+        recordMixEdit(QStringLiteral("Pan della traccia"), before);
+    else
+        refreshTimeline();  // la manopola torna dov'era
+}
+
 void MainWindow::setTrackLevel(int trackId, double db)
 {
     const core::Project before = project_;

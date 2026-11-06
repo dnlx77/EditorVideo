@@ -26,6 +26,7 @@ public:
         bool muted = false;
         bool solo = false;
         bool audible = true;  // se la traccia si sente nel mix (muto e solo di tutte le tracce compresi)
+        double pan = 0.0;     // da -1 (sinistra) a +1 (destra)
     };
 
     explicit MixerPanel(QWidget* parent = nullptr);
@@ -44,6 +45,7 @@ public:
     std::function<void(int trackId, double db)> onLevel;
     std::function<void(int trackId, bool muted)> onMuted;
     std::function<void(int trackId, bool solo)> onSolo;
+    std::function<void(int trackId, double pan)> onPan;
 
 private:
     QHBoxLayout* layout_ = nullptr;

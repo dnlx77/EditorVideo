@@ -150,6 +150,7 @@ MixSpec mixSpecOf(const Project& project, bool closeGaps)
                          [](const MixSegment& a, const MixSegment& b) { return a.position < b.position; });
     }
     spec.gains = trackGainsOf(project.audioTracks());
+    spec.pans = trackPansOf(project.audioTracks());
     spec.length = sequence.totalLength();
     if (!closeGaps) {
         for (const MixSegment& s : spec.segments)
@@ -165,6 +166,15 @@ std::map<int, float> trackGainsOf(const AudioTracks& tracks)
     for (const AudioTrack& track : tracks.tracks())
         gains[track.id] = static_cast<float>(tracks.gain(track.id));
     return gains;
+}
+
+std::map<int, float> trackPansOf(const AudioTracks& tracks)
+{
+    std::map<int, float> pans;
+    pans[AudioTracks::kOriginalTrack] = static_cast<float>(tracks.mix(AudioTracks::kOriginalTrack).pan);
+    for (const AudioTrack& track : tracks.tracks())
+        pans[track.id] = static_cast<float>(track.mix.pan);
+    return pans;
 }
 
 std::vector<std::vector<LevelPoint>> segmentEnvelopesOf(const Project& project)
@@ -194,7 +204,7 @@ struct AudioMixer::Reader
     void read(const MixSegment& segment, long long segmentFirst, long long from, std::size_t count,
               std::vector<float>& acc, std::size_t offset, std::size_t totalFrames, float g0, float g1,
               const std::vector<std::pair<long long, long long>>& mutedFrames,
-              const std::vector<LevelPoint>& envelope, float* peak)
+              const std::vector<LevelPoint>& envelope, float* peak, const std::array<float, 4>& pan)
     {
         if (failed)
             return;
@@ -272,8 +282,11 @@ struct AudioMixer::Reader
                     gain *= std::sin(1.5707963f * static_cast<float>(left) / static_cast<float>(fadeOutFrames));
             }
             const std::size_t src = (pendingPos + i) * kMixChannels;
-            const float left = pending[src] * (1.0f / 32768.0f) * gain;
-            const float right = pending[src + 1] * (1.0f / 32768.0f) * gain;
+            // Pan: sinistra e destra con la loro rampa (pan[0], pan[1] all'inizio del blocco, pan[2], pan[3] alla fine).
+            const float panLeft = pan[0] + (pan[2] - pan[0]) * t;
+            const float panRight = pan[1] + (pan[3] - pan[1]) * t;
+            const float left = pending[src] * (1.0f / 32768.0f) * gain * panLeft;
+            const float right = pending[src + 1] * (1.0f / 32768.0f) * gain * panRight;
             acc[at * 2] += left;
             acc[at * 2 + 1] += right;
             peak[0] = std::max(peak[0], std::abs(left));
@@ -293,16 +306,19 @@ struct AudioMixer::Shared
 {
     std::mutex mutex;
     std::map<int, float> gains;
+    std::map<int, float> pans;
     std::vector<std::vector<LevelPoint>> envelopes;  // uno per tratto
     std::map<int, std::array<float, 2>> peaks;       // picchi (sinistro, destro) per traccia dall'ultimo takePeaks
 };
 
-AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains)
+AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, std::map<int, float> pans)
     : segments_(std::move(segments))
     , shared_(std::make_unique<Shared>())
 {
     shared_->gains = std::move(gains);
     applied_ = shared_->gains;
+    shared_->pans = std::move(pans);
+    appliedPans_ = shared_->pans;
     for (const MixSegment& s : segments_) {
         shared_->envelopes.push_back(s.envelope);
         first_.push_back(std::llround(s.position * kMixSampleRate));
@@ -328,6 +344,12 @@ std::map<int, std::array<float, 2>> AudioMixer::takePeaks()
     std::map<int, std::array<float, 2>> taken;
     taken.swap(shared_->peaks);
     return taken;
+}
+
+void AudioMixer::setPans(const std::map<int, float>& pans)
+{
+    std::lock_guard lock(shared_->mutex);
+    shared_->pans = pans;
 }
 
 void AudioMixer::setGains(const std::map<int, float>& gains)
@@ -357,10 +379,12 @@ float AudioMixer::limit(float value)
 void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<std::int16_t>& out)
 {
     std::map<int, float> targets;
+    std::map<int, float> panTargets;
     std::vector<std::vector<LevelPoint>> envelopes;
     {
         std::lock_guard lock(shared_->mutex);
         targets = shared_->gains;
+        panTargets = shared_->pans;
         envelopes = shared_->envelopes;
     }
     std::vector<float>& acc = acc_;  // riusato a ogni blocco: niente allocazioni sul thread audio
@@ -386,6 +410,12 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
         const float g0 = before != applied_.end() ? before->second : g1;
         if (g0 == 0.0f && g1 == 0.0f)
             continue;  // traccia che non si sente: nemmeno si legge
+        const auto panTo = panTargets.find(segment.trackId);
+        const auto panFrom = appliedPans_.find(segment.trackId);
+        const float p1 = panTo != panTargets.end() ? panTo->second : 0.0f;
+        const float p0 = panFrom != appliedPans_.end() ? panFrom->second : 0.0f;  // senza pan noto: era al centro
+        const auto [l0, r0] = AudioTracks::panGains(p0);
+        const auto [l1, r1] = AudioTracks::panGains(p1);
         const long long from = std::max(firstFrame, segFirst);
         const long long to = std::min(blockEnd, segEnd);
         std::vector<std::pair<long long, long long>> mutedFrames;
@@ -395,10 +425,12 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
         }
         readers_[i]->read(segment, segFirst, from, static_cast<std::size_t>(to - from), acc,
                           static_cast<std::size_t>(from - firstFrame), frames, g0, g1, mutedFrames,
-                          envelopes[i], blockPeaks[segment.trackId].data());
+                          envelopes[i], blockPeaks[segment.trackId].data(), {l0, r0, l1, r1});
     }
     for (const auto& [trackId, gain] : targets)
         applied_[trackId] = gain;
+    for (const auto& [trackId, pan] : panTargets)
+        appliedPans_[trackId] = pan;
     {
         std::lock_guard lock(shared_->mutex);
         for (const auto& [trackId, peak] : blockPeaks) {

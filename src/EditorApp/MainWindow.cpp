@@ -632,6 +632,7 @@ MainWindow::MainWindow(QWidget* parent)
     mixerPanel_->onLevel = [this](int trackId, double db) { setTrackLevel(trackId, db); };
     mixerPanel_->onMuted = [this](int trackId, bool muted) { setTrackMuted(trackId, muted); };
     mixerPanel_->onSolo = [this](int trackId, bool solo) { setTrackSolo(trackId, solo); };
+    mixerPanel_->onPan = [this](int trackId, double pan) { setTrackPan(trackId, pan); };
     mixerDock_ = makeDock(QStringLiteral("Mixer"), QStringLiteral("pannelloMixer"), mixerPanel_);
     // I vu-meter: ogni 40 ms si prendono i picchi dell'audio che suona (solo se il pannello si vede).
     meterTimer_ = new QTimer(this);
@@ -1427,7 +1428,8 @@ void MainWindow::refreshTimeline()
     {
         std::vector<MixerPanel::Track> strips;
         for (const SequenceTimeline::AudioLane& lane : lanes)
-            strips.push_back({lane.trackId, lane.name, lane.levelDb, lane.muted, lane.solo, lane.audible});
+            strips.push_back({lane.trackId, lane.name, lane.levelDb, lane.muted, lane.solo, lane.audible,
+                              audio.mix(lane.trackId).pan});
         mixerPanel_->setTracks(strips);
     }
     timeline_->setAudioLanes(std::move(lanes));

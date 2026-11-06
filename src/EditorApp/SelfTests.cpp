@@ -2180,6 +2180,9 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                            && !audio.mix(core::AudioTracks::kOriginalTrack).muted && !audio.mix(track).solo
                            && std::abs(mixer->trackAt(1).levelDb + 3.0) < 1e-9 && !mixer->trackAt(0).muted;
                 }
+                mixer->onPan(track, 0.5);
+                mixerOk = mixerOk && std::abs(audio.mix(track).pan - 0.5) < 1e-9 && std::abs(mixer->trackAt(1).pan - 0.5) < 1e-9
+                       && audio.needsMix();
                 // Vu-meter: salgono subito al picco (0,5 = -6 dB) e senza altri picchi scendono piano.
                 mixer->feedPeaks({{track, {0.5f, 0.25f}}}, 0.04);
                 const bool meterUp = std::abs(mixer->meterDb(1, 0) + 6.02) < 0.1 && std::abs(mixer->meterDb(1, 1) + 12.04) < 0.1
