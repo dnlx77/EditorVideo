@@ -14,6 +14,7 @@
 #include <QtWidgets/QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace editor::app {
@@ -22,6 +23,32 @@ namespace {
 
 constexpr double kMinDb = core::AudioTracks::kMinLevelDb;
 constexpr double kMaxDb = core::AudioTracks::kMaxLevelDb;
+
+// Le tacche della scala in dB (le stesse di fader e vu-meter, come nello screenshot di riferimento): i tratti fra una
+// tacca e l'altra sono uguali, con interpolazione lineare in mezzo.
+const std::vector<double>& scaleMarks()
+{
+    static const std::vector<double> m = {12, 6, 0, -6, -12, -20, -30, -40, -60};
+    return m;
+}
+// Da dB a frazione dell'altezza della guida: 0 in alto (+12), 1 in basso (-60).
+double dbFraction(double db)
+{
+    const auto& m = scaleMarks();
+    db = std::clamp(db, kMinDb, kMaxDb);
+    for (std::size_t i = 0; i + 1 < m.size(); ++i) {
+        if (db <= m[i] && db >= m[i + 1])
+            return (static_cast<double>(i) + (m[i] - db) / (m[i] - m[i + 1])) / static_cast<double>(m.size() - 1);
+    }
+    return 1.0;
+}
+double fractionDb(double f)
+{
+    const auto& m = scaleMarks();
+    const double pos = std::clamp(f, 0.0, 1.0) * static_cast<double>(m.size() - 1);
+    const std::size_t i = std::min(static_cast<std::size_t>(pos), m.size() - 2);
+    return m[i] + (m[i + 1] - m[i]) * (pos - static_cast<double>(i));
+}
 
 // Il fader: una guida verticale con le tacche in dB e il cursore. Trascinando si vede il valore, che si consegna al
 // rilascio (un solo passo di Annulla per movimento, come il cursore del livello nella linea del tempo).
@@ -51,35 +78,18 @@ public:
     std::function<void(double)> onCommit;    // il valore definitivo
 
 protected:
-    // Dalla scala in dB alla posizione: i tratti fra le tacche sono uguali (come nello screenshot di riferimento:
-    // +12 +6 0 -6 -12 -20 -30 -40 -60), con interpolazione lineare fra una tacca e l'altra.
-    static const std::vector<double>& marks()
-    {
-        static const std::vector<double> m = {12, 6, 0, -6, -12, -20, -30, -40, -60};
-        return m;
-    }
+    static const std::vector<double>& marks() { return scaleMarks(); }
     double cx() const { return width() * 0.64; }
     QRectF track() const { return QRectF(cx() - 3, 10, 6, height() - 20); }
     double toY(double db) const
     {
-        const auto& m = marks();
         const QRectF t = track();
-        db = std::clamp(db, kMinDb, kMaxDb);
-        for (std::size_t i = 0; i + 1 < m.size(); ++i) {
-            if (db <= m[i] && db >= m[i + 1]) {
-                const double f = (m[i] - db) / (m[i] - m[i + 1]);
-                return t.top() + (static_cast<double>(i) + f) / static_cast<double>(m.size() - 1) * t.height();
-            }
-        }
-        return t.bottom();
+        return t.top() + dbFraction(db) * t.height();
     }
     double toDb(double y) const
     {
-        const auto& m = marks();
         const QRectF t = track();
-        const double pos = std::clamp((y - t.top()) / t.height(), 0.0, 1.0) * static_cast<double>(m.size() - 1);
-        const std::size_t i = std::min(static_cast<std::size_t>(pos), m.size() - 2);
-        return m[i] + (m[i + 1] - m[i]) * (pos - static_cast<double>(i));
+        return fractionDb((y - t.top()) / t.height());
     }
 
     void paintEvent(QPaintEvent*) override
@@ -174,6 +184,86 @@ private:
     bool dragging_ = false;
 };
 
+// Il vu-meter stereo: due barre (sinistra e destra) con la stessa scala del fader, verde fino a -6 dB, giallo fino a 0,
+// rosso oltre; una lineetta tiene il picco per un attimo. Il livello scende piano (come i vu-meter veri).
+class Meter : public QWidget
+{
+public:
+    explicit Meter(QWidget* parent = nullptr) : QWidget(parent)
+    {
+        setFixedWidth(22);
+        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+        setToolTip(QStringLiteral("Livello di picco della traccia, sinistra e destra"));
+    }
+
+    // `peak` è il picco (0..1) dall'ultimo aggiornamento, `seconds` il tempo passato.
+    void feed(float left, float right, double seconds)
+    {
+        const std::array<float, 2> in = {left, right};
+        for (int c = 0; c < 2; ++c) {
+            const double db = in[static_cast<std::size_t>(c)] > 1e-6f ? 20.0 * std::log10(in[static_cast<std::size_t>(c)]) : kMinDb;
+            double& level = level_[c];
+            level = std::max(db, level - kFallDbPerSecond * seconds);
+            level = std::max(level, kMinDb);
+            if (level >= hold_[c]) {
+                hold_[c] = level;
+                holdAge_[c] = 0.0;
+            } else {
+                holdAge_[c] += seconds;
+                if (holdAge_[c] > kHoldSeconds)
+                    hold_[c] = std::max(level, hold_[c] - kFallDbPerSecond * seconds);
+            }
+        }
+        update();
+    }
+    void reset()
+    {
+        level_[0] = level_[1] = hold_[0] = hold_[1] = kMinDb;
+        update();
+    }
+    double levelDb(int channel) const { return level_[channel]; }
+    double holdDb(int channel) const { return hold_[channel]; }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        const QPalette& pal = palette();
+        const double top = 10;
+        const double height = this->height() - 20;
+        const double barWidth = 8;
+        const double gap = 2;
+        const double x0 = (width() - 2 * barWidth - gap) / 2.0;
+        for (int c = 0; c < 2; ++c) {
+            const QRectF bar(x0 + c * (barWidth + gap), top, barWidth, height);
+            p.fillRect(bar, pal.color(QPalette::Dark));
+            const auto fill = [&](double fromDb, double toDb, const QColor& color) {
+                const double hi = std::min(toDb, level_[c]);
+                if (hi <= fromDb)
+                    return;
+                const double y1 = top + dbFraction(hi) * height;
+                const double y2 = top + dbFraction(fromDb) * height;
+                p.fillRect(QRectF(bar.left(), y1, barWidth, y2 - y1), color);
+            };
+            fill(kMinDb, -6.0, QColor(46, 204, 64));
+            fill(-6.0, 0.0, QColor(240, 196, 25));
+            fill(0.0, kMaxDb, QColor(230, 57, 70));
+            if (hold_[c] > kMinDb + 0.5) {
+                const double y = top + dbFraction(hold_[c]) * height;
+                p.fillRect(QRectF(bar.left(), y - 1, barWidth, 2),
+                           hold_[c] > 0.0 ? QColor(230, 57, 70) : pal.color(QPalette::Text));
+            }
+        }
+    }
+
+private:
+    static constexpr double kFallDbPerSecond = 40.0;
+    static constexpr double kHoldSeconds = 1.2;
+    double level_[2] = {kMinDb, kMinDb};
+    double hold_[2] = {kMinDb, kMinDb};
+    double holdAge_[2] = {0.0, 0.0};
+};
+
 }  // namespace
 
 // Una colonna del mixer.
@@ -182,20 +272,18 @@ class MixerStrip : public QWidget
 public:
     MixerStrip(int trackId, const QString& name, QWidget* parent) : QWidget(parent), trackId_(trackId)
     {
-        setFixedWidth(96);
+        setFixedWidth(104);
         auto* col = new QVBoxLayout(this);
         col->setContentsMargins(4, 4, 4, 4);
         col->setSpacing(6);
 
-        auto* buttons = new QHBoxLayout;
+        auto* buttons = new QVBoxLayout;  // uno sopra l'altro: affiancati, in 100 px le scritte si tagliano
         buttons->setSpacing(4);
         solo_ = new QPushButton(QStringLiteral("SOLO"));
         mute_ = new QPushButton(QStringLiteral("MUTE"));
         for (QPushButton* b : {solo_, mute_}) {
             b->setCheckable(true);
             b->setFocusPolicy(Qt::NoFocus);
-            b->setMinimumWidth(0);
-            b->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
             buttons->addWidget(b);
         }
         solo_->setToolTip(QStringLiteral("Solo: si sentono solo le tracce in solo"));
@@ -203,7 +291,12 @@ public:
         col->addLayout(buttons);
 
         fader_ = new Fader;
-        col->addWidget(fader_, 1);
+        meter_ = new Meter;
+        auto* faderRow = new QHBoxLayout;
+        faderRow->setSpacing(0);
+        faderRow->addWidget(fader_, 1);
+        faderRow->addWidget(meter_);
+        col->addLayout(faderRow, 1);
 
         readout_ = new QDoubleSpinBox;
         readout_->setRange(kMinDb, kMaxDb);
@@ -230,6 +323,7 @@ public:
     bool muted() const { return mute_->isChecked(); }
     bool solo() const { return solo_->isChecked(); }
     Fader* fader() const { return fader_; }
+    Meter* meter() const { return meter_; }
     QDoubleSpinBox* readout() const { return readout_; }
     QPushButton* muteButton() const { return mute_; }
     QPushButton* soloButton() const { return solo_; }
@@ -279,6 +373,7 @@ private:
     QPushButton* solo_ = nullptr;
     QPushButton* mute_ = nullptr;
     Fader* fader_ = nullptr;
+    Meter* meter_ = nullptr;
     QDoubleSpinBox* readout_ = nullptr;
     QLabel* label_ = nullptr;
 };
@@ -298,6 +393,28 @@ MixerPanel::MixerPanel(QWidget* parent) : QWidget(parent)
     area->setWidget(content);
     outer->addWidget(area);
     setMinimumWidth(120);
+}
+
+void MixerPanel::feedPeaks(const std::map<int, std::array<float, 2>>& peaks, double seconds)
+{
+    for (MixerStrip* s : strips_) {
+        const auto it = peaks.find(s->trackId());
+        if (it != peaks.end())
+            s->meter()->feed(it->second[0], it->second[1], seconds);
+        else
+            s->meter()->feed(0.0f, 0.0f, seconds);
+    }
+}
+
+double MixerPanel::meterDb(int index, int channel) const
+{
+    return strips_[static_cast<std::size_t>(index)]->meter()->levelDb(channel);
+}
+
+void MixerPanel::resetMeters()
+{
+    for (MixerStrip* s : strips_)
+        s->meter()->reset();
 }
 
 void MixerPanel::setTracks(const std::vector<Track>& tracks)

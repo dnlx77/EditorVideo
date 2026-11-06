@@ -3,6 +3,7 @@
 #include "EditorCore/AudioDecoder.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace editor::core {
@@ -193,7 +194,7 @@ struct AudioMixer::Reader
     void read(const MixSegment& segment, long long segmentFirst, long long from, std::size_t count,
               std::vector<float>& acc, std::size_t offset, std::size_t totalFrames, float g0, float g1,
               const std::vector<std::pair<long long, long long>>& mutedFrames,
-              const std::vector<LevelPoint>& envelope)
+              const std::vector<LevelPoint>& envelope, float* peak)
     {
         if (failed)
             return;
@@ -271,8 +272,12 @@ struct AudioMixer::Reader
                     gain *= std::sin(1.5707963f * static_cast<float>(left) / static_cast<float>(fadeOutFrames));
             }
             const std::size_t src = (pendingPos + i) * kMixChannels;
-            acc[at * 2] += pending[src] * (1.0f / 32768.0f) * gain;
-            acc[at * 2 + 1] += pending[src + 1] * (1.0f / 32768.0f) * gain;
+            const float left = pending[src] * (1.0f / 32768.0f) * gain;
+            const float right = pending[src + 1] * (1.0f / 32768.0f) * gain;
+            acc[at * 2] += left;
+            acc[at * 2 + 1] += right;
+            peak[0] = std::max(peak[0], std::abs(left));
+            peak[1] = std::max(peak[1], std::abs(right));
         }
         // Anche se il file è finito prima (o non si legge più): si va avanti, il resto è silenzio.
         pendingPos += have;
@@ -289,6 +294,7 @@ struct AudioMixer::Shared
     std::mutex mutex;
     std::map<int, float> gains;
     std::vector<std::vector<LevelPoint>> envelopes;  // uno per tratto
+    std::map<int, std::array<float, 2>> peaks;       // picchi (sinistro, destro) per traccia dall'ultimo takePeaks
 };
 
 AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains)
@@ -314,6 +320,14 @@ void AudioMixer::setGain(int trackId, float gain)
 {
     std::lock_guard lock(shared_->mutex);
     shared_->gains[trackId] = gain;
+}
+
+std::map<int, std::array<float, 2>> AudioMixer::takePeaks()
+{
+    std::lock_guard lock(shared_->mutex);
+    std::map<int, std::array<float, 2>> taken;
+    taken.swap(shared_->peaks);
+    return taken;
 }
 
 void AudioMixer::setGains(const std::map<int, float>& gains)
@@ -352,6 +366,7 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
     std::vector<float>& acc = acc_;  // riusato a ogni blocco: niente allocazioni sul thread audio
     acc.assign(frames * 2, 0.0f);
     const long long blockEnd = firstFrame + static_cast<long long>(frames);
+    std::map<int, std::array<float, 2>> blockPeaks;  // picco sinistro e destro di ogni traccia in questo blocco
     for (std::size_t i = 0; i < segments_.size(); ++i) {
         const long long segFirst = first_[i];
         const long long segEnd = segFirst + length_[i];
@@ -380,10 +395,18 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
         }
         readers_[i]->read(segment, segFirst, from, static_cast<std::size_t>(to - from), acc,
                           static_cast<std::size_t>(from - firstFrame), frames, g0, g1, mutedFrames,
-                          envelopes[i]);
+                          envelopes[i], blockPeaks[segment.trackId].data());
     }
     for (const auto& [trackId, gain] : targets)
         applied_[trackId] = gain;
+    {
+        std::lock_guard lock(shared_->mutex);
+        for (const auto& [trackId, peak] : blockPeaks) {
+            std::array<float, 2>& kept = shared_->peaks[trackId];
+            kept[0] = std::max(kept[0], peak[0]);
+            kept[1] = std::max(kept[1], peak[1]);
+        }
+    }
 
     out.resize(frames * 2);
     for (std::size_t i = 0; i < frames * 2; ++i)

@@ -48,6 +48,8 @@ public:
     void sequenceChanged();
     // Livello, muto o solo di una traccia audio cambiati: si sente subito, senza fermare la riproduzione.
     void audioMixChanged();
+    // I picchi di ogni traccia audio dall'ultima chiamata, per i vu-meter del Mixer (vuoto se l'audio non suona).
+    std::map<int, std::array<float, 2>> takeTrackPeaks() { return sequenceAudio_.takePeaks(); }
     void seekTo(double seconds);  // tempo della sequenza
     double programEnd() const;  // fine del programma: ultimo pezzo, scritta, pezzo di livello o clip audio
     bool hasProgram() const;  // c'è qualcosa da riprodurre: pezzi su V1, oppure solo scritte, livelli o clip audio

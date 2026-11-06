@@ -633,6 +633,11 @@ MainWindow::MainWindow(QWidget* parent)
     mixerPanel_->onMuted = [this](int trackId, bool muted) { setTrackMuted(trackId, muted); };
     mixerPanel_->onSolo = [this](int trackId, bool solo) { setTrackSolo(trackId, solo); };
     mixerDock_ = makeDock(QStringLiteral("Mixer"), QStringLiteral("pannelloMixer"), mixerPanel_);
+    // I vu-meter: ogni 40 ms si prendono i picchi dell'audio che suona (solo se il pannello si vede).
+    meterTimer_ = new QTimer(this);
+    meterTimer_->setInterval(40);
+    connect(meterTimer_, &QTimer::timeout, this, [this] { updateMeters(); });
+    meterTimer_->start();
     timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),
                              sequencePanel);
     // Spiegazioni, nel suggerimento sul titolo del pannello (vedi eventFilter).
@@ -1314,6 +1319,18 @@ std::optional<double> MainWindow::knownFrameDurationOf(int clipId) const
 double MainWindow::frameDurationOf(int clipId) const
 {
     return knownFrameDurationOf(clipId).value_or(1.0 / 30);  // non si sa ancora (o solo audio): un trentesimo di secondo
+}
+
+void MainWindow::updateMeters()
+{
+    if (mixerPanel_ == nullptr || program_ == nullptr || !mixerPanel_->isVisible()) {
+        meterClock_.invalidate();
+        return;
+    }
+    const double seconds = meterClock_.isValid() ? static_cast<double>(meterClock_.restart()) / 1000.0 : 0.04;
+    if (!meterClock_.isValid())
+        meterClock_.start();
+    mixerPanel_->feedPeaks(program_->takeTrackPeaks(), std::min(seconds, 0.25));
 }
 
 void MainWindow::refreshTimeline()
