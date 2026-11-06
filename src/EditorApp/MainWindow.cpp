@@ -2,6 +2,7 @@
 #include "EditorApp/CurveEditorDialog.h"
 
 #include "EditorApp/MainWindowShared.h"
+#include "EditorApp/MixerPanel.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/PropertiesPanel.h"
@@ -627,6 +628,11 @@ MainWindow::MainWindow(QWidget* parent)
     }
     propertiesPanel_->setTextPage(textPanel_);
     propertiesDock_ = makeDock(QStringLiteral("Proprietà"), QStringLiteral("pannelloProprieta"), propertiesPanel_);
+    mixerPanel_ = new MixerPanel;
+    mixerPanel_->onLevel = [this](int trackId, double db) { setTrackLevel(trackId, db); };
+    mixerPanel_->onMuted = [this](int trackId, bool muted) { setTrackMuted(trackId, muted); };
+    mixerPanel_->onSolo = [this](int trackId, bool solo) { setTrackSolo(trackId, solo); };
+    mixerDock_ = makeDock(QStringLiteral("Mixer"), QStringLiteral("pannelloMixer"), mixerPanel_);
     timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),
                              sequencePanel);
     // Spiegazioni, nel suggerimento sul titolo del pannello (vedi eventFilter).
@@ -636,6 +642,7 @@ MainWindow::MainWindow(QWidget* parent)
     sourceDock_->setProperty("spiegazione", QStringLiteral("Il file scelto: segna I e O, poi A per metterlo nel montaggio"));
     programDock_->setProperty("spiegazione", QStringLiteral("Il risultato: i pezzi del montaggio uno dopo l'altro"));
     propertiesDock_->setProperty("spiegazione", QStringLiteral("Le proprietà dell'oggetto scelto sulla linea del tempo: per un pezzo video scala, posizione, rotazione e ritaglio"));
+    mixerDock_->setProperty("spiegazione", QStringLiteral("Livello, muto e solo di ogni traccia audio: come le intestazioni delle corsie sulla linea del tempo"));
     auto* center = new QWidget(this);
     center->hide();
     setCentralWidget(center);
@@ -719,7 +726,7 @@ MainWindow::MainWindow(QWidget* parent)
                 applyTimelineHeight();
         });
     });
-    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, propertiesDock_})
+    for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, propertiesDock_, mixerDock_})
         dock->setAllowedAreas(Qt::TopDockWidgetArea | Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     // Il titolo di un pannello agganciato si evidenzia con il mouse sopra (cursore a mano: da lì si trascina). I pannelli
     // staccati tengono il titolo di Windows, con la sua cornice (e il ridimensionamento dagli angoli).
@@ -1399,6 +1406,12 @@ void MainWindow::refreshTimeline()
                                           c.start, waveforms_->get(c.path), c.envelope});
             ++audioClips;
         }
+    }
+    {
+        std::vector<MixerPanel::Track> strips;
+        for (const SequenceTimeline::AudioLane& lane : lanes)
+            strips.push_back({lane.trackId, lane.name, lane.levelDb, lane.muted, lane.solo, lane.audible});
+        mixerPanel_->setTracks(strips);
     }
     timeline_->setAudioLanes(std::move(lanes));
     // Livelli di scritte, dal più basso al più alto.

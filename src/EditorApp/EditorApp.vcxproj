@@ -51,6 +51,7 @@
     <ClInclude Include="AudioOutput.h" />
     <ClInclude Include="CurveEditorDialog.h" />
     <ClInclude Include="MainWindow.h" />
+    <ClInclude Include="MixerPanel.h" />
     <ClInclude Include="MainWindowShared.h" />
     <ClInclude Include="PlayerWidget.h" />
     <ClInclude Include="ProgramMonitor.h" />
@@ -82,6 +83,7 @@
     <ClCompile Include="CurveEditorDialog.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainWindow.cpp" />
+    <ClCompile Include="MixerPanel.cpp" />
     <ClCompile Include="MainWindowAudio.cpp" />
     <ClCompile Include="MainWindowDock.cpp" />
     <ClCompile Include="MainWindowExport.cpp" />

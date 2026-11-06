@@ -46,6 +46,7 @@ class WaveformStore;
 class ProgramMonitor;
 class TextEditorPanel;
 class PropertiesPanel;
+class MixerPanel;
 class TransitionListPanel;
 class GroupListPanel;
 class TransitionPreviewWidget;
@@ -198,6 +199,8 @@ public:
     bool applyKeyCurve(core::AnimGroup group, double time, const std::array<double, 4>& c);
     void refreshKeyRow();  // la riga dei rombi sulla linea del tempo segue il pezzo scelto
     PropertiesPanel* propertiesPanel() const { return propertiesPanel_; }
+    MixerPanel* mixerPanel() const { return mixerPanel_; }
+    QDockWidget* mixerDock() const { return mixerDock_; }
     // Cambia la trasformazione dei pezzi video scelti con `edit` (un campo alla volta: `field` unisce le modifiche di
     // seguito dello stesso campo in una voce di Annulla). false se nessun pezzo è cambiato.
     bool applyTransformEdit(const std::function<void(core::Transform&)>& edit, const std::string& field);
@@ -367,7 +370,10 @@ private:
             action(*player_);
     }
     // I quattro pannelli, per i cicli che li trattano tutti.
-    std::array<QDockWidget*, 5> docks() const { return {filesDock_, sourceDock_, programDock_, propertiesDock_, timelineDock_}; }
+    std::array<QDockWidget*, 6> docks() const
+    {
+        return {filesDock_, sourceDock_, programDock_, propertiesDock_, mixerDock_, timelineDock_};
+    }
     // Audio, formato e ricodifica con cui si esporta o si calcola l'anteprima dell'esportazione.
     struct ExportSettings
     {
@@ -434,6 +440,8 @@ private:
     QDockWidget* propertiesDock_ = nullptr;
     TextEditorPanel* textPanel_ = nullptr;
     PropertiesPanel* propertiesPanel_ = nullptr;
+    MixerPanel* mixerPanel_ = nullptr;
+    QDockWidget* mixerDock_ = nullptr;
     std::string transitionMergeKey_;         // come transformMergeKey_, per le modifiche delle transizioni
     std::size_t transitionMergeCount_ = 0;
     bool propertiesFollowCursor_ = false;  // il pannello mostra un pezzo scelto da solo: i valori e i rombi seguono il cursore
