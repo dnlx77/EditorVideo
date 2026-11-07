@@ -6,6 +6,7 @@
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Playback.h"
+#include "EditorCore/StillImage.h"
 #include "EditorCore/TimeStretch.h"
 #include "EditorCore/VideoDecoder.h"
 
@@ -32,6 +33,8 @@ namespace editor::app {
 namespace {
 
 constexpr std::size_t kMaxQueuedFrames = 8;
+// Lunghezza della linea del tempo della Sorgente per un'immagine, in secondi.
+constexpr double kStillSourceView = 10.0;
 // All'indietro si decodifica in avanti un blocco alla volta, poi lo si mostra al contrario: al massimo questi
 // fotogrammi (sono immagini grandi) o questi secondi per blocco.
 constexpr std::size_t kReverseBlockFrames = 24;
@@ -473,6 +476,10 @@ void PlayerWidget::openFile(const QString& path)
     openAudio(std::move(own));  // nessun thread è ancora partito: il decoder passa al thread dell'audio solo con play()
 
     duration_ = std::max({0.0, video_ ? video_->durationSeconds() : 0.0, ownAudioDuration_});
+    // Un'immagine nel monitor Sorgente si guarda su una linea del tempo corta (nel file può durare un'ora): IN e OUT dicono
+    // quanto sarà lungo il pezzo, che poi si allunga nella timeline.
+    if (core::isImagePath(utf8Path))
+        duration_ = std::min(duration_, kStillSourceView);
     timeline_->setDuration(duration_);
     position_ = 0.0;
     displayedTime_ = 0.0;

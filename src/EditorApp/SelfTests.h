@@ -47,6 +47,9 @@ int runTransitionTest(const QStringList& arguments, qsizetype at);
 int runTransformTest(const QStringList& arguments, qsizetype at);
 int runLayerTest(const QStringList& arguments, qsizetype at);
 int runLayerMonitorTest(const QStringList& arguments, qsizetype at);
+
+// --image-test: le immagini fisse nel montaggio (V1 e livelli) si vedono nel monitor (vedi ImageSelfTest.cpp).
+int runImageTest(const QStringList& arguments, qsizetype at);
 int runManipTest(const QStringList& arguments, qsizetype at);
 
 // --export-panel-test: la finestra "Esporta" con un riepilogo inventato: avviso di sovrascrittura, destinazioni che non

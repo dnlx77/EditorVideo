@@ -180,6 +180,26 @@ ProjectFormat formatOf(const MediaSignature& signature)
     return {signature.fileName, signature.streams};
 }
 
+ProjectFormat defaultProjectFormat()
+{
+    StreamSignature video;
+    video.kind = StreamKind::Video;
+    video.codec = "h264";
+    video.profile = "High";
+    video.width = 1920;
+    video.height = 1080;
+    video.pixelFormat = "yuv420p";
+    video.frameRate = 30.0;
+    StreamSignature audio;
+    audio.kind = StreamKind::Audio;
+    audio.codec = "aac";
+    audio.profile = "LC";
+    audio.sampleRate = 48000;
+    audio.channels = 2;
+    audio.channelLayout = "stereo";
+    return {"Predefinito (1920x1080, 30 fps)", {video, audio}};
+}
+
 ClipFitResult classifyClip(const MediaSignature& clip, const ProjectFormat& format, bool withAudio)
 {
     MediaSignature ref{"", format.sourceName, format.streams};

@@ -55,6 +55,7 @@
     <ClInclude Include="MixerPanel.h" />
     <ClInclude Include="MainWindowShared.h" />
     <ClInclude Include="PlayerWidget.h" />
+    <ClInclude Include="QtImageLoader.h" />
     <ClInclude Include="ProgramMonitor.h" />
     <ClInclude Include="ProxyManager.h" />
     <ClInclude Include="QtTextRenderer.h" />
@@ -104,6 +105,8 @@
     <ClCompile Include="TransformSelfTest.cpp" />
     <ClCompile Include="TransformMonitorSelfTest.cpp" />
     <ClCompile Include="LayerSelfTest.cpp" />
+    <ClCompile Include="ImageSelfTest.cpp" />
+    <ClCompile Include="QtImageLoader.cpp" />
     <ClCompile Include="ExportDialog.cpp" />
     <ClCompile Include="ExportSelfTest.cpp" />
     <ClCompile Include="GroupListPanel.cpp" />

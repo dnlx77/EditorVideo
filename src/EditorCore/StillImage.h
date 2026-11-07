@@ -2,6 +2,7 @@
 
 #include "EditorCore/VideoDecoder.h"
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -31,6 +32,12 @@ struct ImageSize
 // Apre l'immagine e ne dà la misura com'è mostrata (orientamento EXIF applicato); std::nullopt se il file non esiste o
 // non è un'immagine leggibile.
 std::optional<ImageSize> inspectImage(const std::string& utf8Path);
+
+// Un lettore di riserva per i formati che l'FFmpeg di questa build non sa leggere (es. il PNG, che vuole zlib): riceve il
+// percorso e restituisce l'immagine intera già orientata (BGRA non premoltiplicato), nullptr se non la legge. L'applicazione
+// lo imposta all'avvio con Qt (vedi QtImageLoader.h); senza, si usa solo FFmpeg.
+using ImageLoader = std::function<std::shared_ptr<VideoFrame>(const std::string& utf8Path)>;
+void setImageLoader(ImageLoader loader);
 
 // Legge l'immagine in un fotogramma BGRA (trasparenza non premoltiplicata, come i fotogrammi dei video), con l'orientamento
 // EXIF applicato; time = 0. Se maxWidth e maxHeight sono > 0 e l'immagine è più grande si rimpicciolisce (proporzioni

@@ -10,6 +10,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <mutex>
 
 namespace editor::core {
 
@@ -86,7 +87,25 @@ bool decodeFirstFrame(const std::string& utf8Path, Orientation& orientation, int
     return true;
 }
 
+std::mutex& loaderMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+ImageLoader& loaderSlot()
+{
+    static ImageLoader loader;
+    return loader;
+}
+
 }  // namespace
+
+void setImageLoader(ImageLoader loader)
+{
+    std::lock_guard<std::mutex> lock(loaderMutex());
+    loaderSlot() = std::move(loader);
+}
 
 const std::vector<std::string>& imageExtensions()
 {
@@ -100,7 +119,7 @@ bool isImagePath(const std::string& utf8Path)
     return std::find(known.begin(), known.end(), extensionOf(utf8Path)) != known.end();
 }
 
-std::shared_ptr<VideoFrame> loadImage(const std::string& utf8Path, int maxWidth, int maxHeight)
+static std::shared_ptr<VideoFrame> loadWithFfmpeg(const std::string& utf8Path)
 {
     try {
         Orientation orientation;
@@ -141,30 +160,54 @@ std::shared_ptr<VideoFrame> loadImage(const std::string& utf8Path, int maxWidth,
             }
         }
 
-        if (maxWidth > 0 && maxHeight > 0 && (outW > maxWidth || outH > maxHeight)) {
-            const double scale = std::min(static_cast<double>(maxWidth) / outW, static_cast<double>(maxHeight) / outH);
-            const int w = std::max(1, static_cast<int>(std::lround(outW * scale)));
-            const int h = std::max(1, static_cast<int>(std::lround(outH * scale)));
-            std::unique_ptr<SwsContext, SwsDeleter> shrink(sws_getContext(outW, outH, AV_PIX_FMT_BGRA, w, h,
-                                                                           AV_PIX_FMT_BGRA, SWS_AREA, nullptr, nullptr, nullptr));
-            if (shrink) {
-                auto small = std::make_shared<VideoFrame>();
-                small->width = w;
-                small->height = h;
-                small->stride = w * 4;
-                small->pixels.resize(static_cast<std::size_t>(w) * h * 4);
-                const std::uint8_t* src[4] = {frame->pixels.data(), nullptr, nullptr, nullptr};
-                const int srcStride[4] = {frame->stride, 0, 0, 0};
-                std::uint8_t* smallDst[4] = {small->pixels.data(), nullptr, nullptr, nullptr};
-                const int smallStride[4] = {small->stride, 0, 0, 0};
-                sws_scale(shrink.get(), src, srcStride, 0, outH, smallDst, smallStride);
-                return small;
-            }
-        }
         return frame;
     } catch (const std::exception&) {
         return nullptr;
     }
+}
+
+std::shared_ptr<VideoFrame> loadImage(const std::string& utf8Path, int maxWidth, int maxHeight)
+{
+    std::shared_ptr<VideoFrame> frame = loadWithFfmpeg(utf8Path);
+    if (!frame) {
+        ImageLoader loader;
+        {
+            std::lock_guard<std::mutex> lock(loaderMutex());
+            loader = loaderSlot();
+        }
+        if (loader) {
+            try {
+                frame = loader(utf8Path);
+            } catch (const std::exception&) {
+                frame = nullptr;
+            }
+        }
+    }
+    if (!frame || frame->width <= 0 || frame->height <= 0)
+        return nullptr;
+    const int outW = frame->width;
+    const int outH = frame->height;
+    if (maxWidth > 0 && maxHeight > 0 && (outW > maxWidth || outH > maxHeight)) {
+        const double scale = std::min(static_cast<double>(maxWidth) / outW, static_cast<double>(maxHeight) / outH);
+        const int w = std::max(1, static_cast<int>(std::lround(outW * scale)));
+        const int h = std::max(1, static_cast<int>(std::lround(outH * scale)));
+        std::unique_ptr<SwsContext, SwsDeleter> shrink(sws_getContext(outW, outH, AV_PIX_FMT_BGRA, w, h,
+                                                                       AV_PIX_FMT_BGRA, SWS_AREA, nullptr, nullptr, nullptr));
+        if (shrink) {
+            auto small = std::make_shared<VideoFrame>();
+            small->width = w;
+            small->height = h;
+            small->stride = w * 4;
+            small->pixels.resize(static_cast<std::size_t>(w) * h * 4);
+            const std::uint8_t* src[4] = {frame->pixels.data(), nullptr, nullptr, nullptr};
+            const int srcStride[4] = {frame->stride, 0, 0, 0};
+            std::uint8_t* smallDst[4] = {small->pixels.data(), nullptr, nullptr, nullptr};
+            const int smallStride[4] = {small->stride, 0, 0, 0};
+            sws_scale(shrink.get(), src, srcStride, 0, outH, smallDst, smallStride);
+            return small;
+        }
+    }
+    return frame;
 }
 
 std::optional<ImageSize> inspectImage(const std::string& utf8Path)

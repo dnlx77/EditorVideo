@@ -60,6 +60,9 @@ struct ProjectFormat
 
 ProjectFormat formatOf(const MediaSignature& signature);
 
+// Il formato di un progetto che non ha ancora nessun video (ha solo immagini): 1920x1080 a 30 fps, H.264, audio AAC 48 kHz stereo.
+ProjectFormat defaultProjectFormat();
+
 // Come può entrare nel file esportato un pezzo di un file, rispetto al formato del progetto.
 enum class ClipFit
 {

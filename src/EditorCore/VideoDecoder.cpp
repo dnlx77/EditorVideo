@@ -3,6 +3,7 @@
 #include "EditorCore/Proxy.h"
 
 #include "EditorCore/FfmpegUtil.h"
+#include "EditorCore/StillImage.h"
 
 extern "C" {
 #include <libavutil/hwcontext.h>
@@ -109,6 +110,50 @@ struct VideoDecoder::Impl : OpenedStream
     std::unique_ptr<SwsContext, SwsDeleter> sws;
     std::optional<ColorSetup> colorSetup;  // vuoto = da impostare (contesto nuovo)
     std::shared_ptr<FramePool> pool = std::make_shared<FramePool>();
+
+    // Immagine fissa (vedi StillImage.h): niente file aperto, il fotogramma è sempre lo stesso a qualsiasi tempo.
+    bool still = false;
+    std::shared_ptr<VideoFrame> stillSource;  // l'immagine intera (al massimo kStillMaxSide per lato)
+    std::shared_ptr<VideoFrame> stillScaled;  // alla misura di uscita attuale
+    std::shared_ptr<VideoFrame> stillLast;    // l'ultimo fotogramma dato (stesso tempo = stesso oggetto)
+    double stillNext = 0.0;                   // tempo del prossimo fotogramma di nextFrame()
+    static constexpr double kStillFps = 25.0;
+    static constexpr int kStillMaxSide = 4096;
+
+    // Il fotogramma dell'immagine al tempo `seconds`, alla misura di uscita.
+    std::shared_ptr<VideoFrame> stillFrame(double seconds)
+    {
+        const auto [w, h] = outputSize();
+        if (!stillScaled || stillScaled->width != w || stillScaled->height != h) {
+            stillLast.reset();
+            if (stillSource->width == w && stillSource->height == h) {
+                stillScaled = stillSource;
+            } else {
+                auto scaled = std::make_shared<VideoFrame>();
+                scaled->width = w;
+                scaled->height = h;
+                scaled->stride = w * 4;
+                scaled->pixels.resize(static_cast<std::size_t>(w) * h * 4);
+                std::unique_ptr<SwsContext, SwsDeleter> scale(
+                    sws_getContext(stillSource->width, stillSource->height, AV_PIX_FMT_BGRA, w, h, AV_PIX_FMT_BGRA,
+                                   (w < stillSource->width ? SWS_AREA : SWS_BILINEAR), nullptr, nullptr, nullptr));
+                if (!scale)
+                    throw MediaError("Conversione dell'immagine non supportata.");
+                const std::uint8_t* src[4] = {stillSource->pixels.data(), nullptr, nullptr, nullptr};
+                const int srcStride[4] = {stillSource->stride, 0, 0, 0};
+                std::uint8_t* dst[4] = {scaled->pixels.data(), nullptr, nullptr, nullptr};
+                const int dstStride[4] = {scaled->stride, 0, 0, 0};
+                sws_scale(scale.get(), src, srcStride, 0, stillSource->height, dst, dstStride);
+                stillScaled = std::move(scaled);
+            }
+        }
+        if (stillLast && stillLast->time == seconds)
+            return stillLast;
+        auto frame = std::make_shared<VideoFrame>(*stillScaled);
+        frame->time = seconds;
+        stillLast = frame;
+        return frame;
+    }
 
     double fps = 0.0;
     double displayWidth = 0.0;  // larghezza con il rapporto d'aspetto dei pixel applicato
@@ -490,6 +535,17 @@ VideoDecoder::VideoDecoder(const std::string& utf8Path, const Options& options)
     : impl_(std::make_unique<Impl>())
 {
     Impl& d = *impl_;
+    if (isImagePath(utf8Path)) {
+        d.still = true;
+        d.stillSource = loadImage(utf8Path, Impl::kStillMaxSide, Impl::kStillMaxSide);
+        if (!d.stillSource)
+            throw MediaError("Impossibile aprire l'immagine: " + utf8Path);
+        d.fps = Impl::kStillFps;
+        d.displayWidth = d.stillSource->width;
+        d.displayHeight = d.stillSource->height;
+        d.fitInto(options.maxWidth, options.maxHeight, false);
+        return;
+    }
     d.hardwareAllowed = options.allowHardware;
     d.readAheadEnabled = options.readAhead;
     if (!d.packet || !d.frame || !d.previous || !d.transferred)
@@ -531,6 +587,8 @@ std::string VideoDecoder::decoderDescription() const
 
 double VideoDecoder::durationSeconds() const
 {
+    if (impl_->still)
+        return kStillDuration;
     return durationOf(impl_->fmt.get(), impl_->stream);
 }
 
@@ -557,11 +615,17 @@ int VideoDecoder::outputHeight() const
 
 std::pair<double, double> VideoDecoder::cachedRange() const
 {
+    if (impl_->still)
+        return {0.0, 0.0};
     return {impl_->rangeFrom.load(), impl_->rangeTo.load()};
 }
 
 std::shared_ptr<VideoFrame> VideoDecoder::seek(double seconds)
 {
+    if (impl_->still) {
+        impl_->stillNext = std::max(0.0, seconds) + 1.0 / Impl::kStillFps;
+        return impl_->stillFrame(std::max(0.0, seconds));
+    }
     try {
         return impl_->seekImpl(seconds);
     } catch (const HardwareFailure&) {
@@ -572,6 +636,13 @@ std::shared_ptr<VideoFrame> VideoDecoder::seek(double seconds)
 
 std::shared_ptr<VideoFrame> VideoDecoder::nextFrame()
 {
+    if (impl_->still) {
+        if (impl_->stillNext > kStillDuration)
+            return nullptr;
+        const double time = impl_->stillNext;
+        impl_->stillNext += 1.0 / Impl::kStillFps;
+        return impl_->stillFrame(time);
+    }
     try {
         return impl_->nextImpl();
     } catch (const HardwareFailure&) {
