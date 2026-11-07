@@ -934,6 +934,12 @@ void SequenceTimeline::dropEvent(QDropEvent* event)
     if (files.isEmpty())
         return;
     event->acceptProposedAction();
+    if (const int layer = textLaneAt(event->position().y()); layer >= 0 && lane <= 0) {
+        // Su un livello video (V2, V3...): i file vi entrano nel punto di rilascio.
+        if (onLayerFilesDropped)
+            onLayerFilesDropped(files, textLanes_[static_cast<std::size_t>(layer)].layerId, at);
+        return;
+    }
     if (lane > 0) {
         if (onAudioFilesDropped)
             onAudioFilesDropped(files, lanes_[static_cast<std::size_t>(lane)].trackId, at);

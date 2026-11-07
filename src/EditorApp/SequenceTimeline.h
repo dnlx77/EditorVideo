@@ -296,6 +296,7 @@ public:
     std::function<void(int clipId, bool atStart, double value, bool ripple)> onAudioTrim;
     // File trascinati su una traccia aggiunta: vanno su quella traccia a partire da `seconds` della sequenza.
     std::function<void(const QStringList& paths, int trackId, double seconds)> onAudioFilesDropped;
+    std::function<void(const QStringList& paths, int layerId, double seconds)> onLayerFilesDropped;  // file lasciati su V2, V3...
     // Miniatura del file `clipId` al tempo `sourceTime` (nei tempi del file); un'immagine vuota se non è ancora
     // pronta (chi la fornisce la prepara in background e poi chiede di ridisegnare).
     std::function<QImage(int clipId, double sourceTime)> thumbnailFor;

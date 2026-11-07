@@ -427,6 +427,9 @@ MainWindow::MainWindow(QWidget* parent)
     timeline_->onAudioFilesDropped = [this](const QStringList& paths, int trackId, double seconds) {
         addAudioFiles(paths, trackId, seconds);
     };
+    timeline_->onLayerFilesDropped = [this](const QStringList& paths, int layerId, double seconds) {
+        addFilesToLayer(paths, layerId, seconds);
+    };
     // Scritte (step T3).
     timeline_->onTextClipSelected = [this](int) {
         setProgramActive(true);
@@ -962,6 +965,83 @@ void MainWindow::addToLayer()
                                  .arg(qs(layers.layerName(layerId)), timeText(piece.position),
                                       audioClip != 0 ? QStringLiteral(", con il suo audio in gruppo") : QString()),
                              8000);
+}
+
+void MainWindow::addFilesToLayer(const QStringList& paths, int layerId, double seconds)
+{
+    std::vector<std::string> utf8;
+    for (const QString& path : paths)
+        utf8.push_back(nativeAbsoluteUtf8(path));
+    core::DropPlan plan = core::planDrop(utf8, project_, core::inspectMedia);
+    if (plan.project) {
+        if (maybeSave())
+            openProject(qs(*plan.project));
+        return;
+    }
+    std::vector<core::DroppedMedia> video;
+    int audioOnly = 0;
+    for (const core::DroppedMedia& media : plan.media) {
+        if (core::isAudioOnly(media.path))
+            ++audioOnly;
+        else
+            video.push_back(media);
+    }
+    if (video.empty()) {
+        player_->showNote(audioOnly > 0 ? QStringLiteral("Un file solo audio non va su un livello video: trascinalo su una traccia audio.")
+                                        : QStringLiteral("Nessun video o immagine leggibile."));
+        return;
+    }
+    const core::Project before = project_;
+    const std::vector<int> ids = core::applyDrop(project_, video, -1);
+    core::TextTracks& layers = project_.textTracks();
+    double at = std::max(0.0, seconds);
+    int added = 0;
+    int lastPiece = 0;
+    for (std::size_t i = 0; i < video.size(); ++i) {
+        if (video[i].existingClipId == 0)
+            analyzeNewFile(ids[i], video[i].path);
+        const core::Clip* clip = project_.find(ids[i]);
+        if (clip == nullptr)
+            continue;
+        const double duration = clip->analyzed ? clip->duration : video[i].duration;
+        core::LayerPiece piece;
+        piece.clipId = clip->id;
+        piece.start = clip->still ? core::kStillCenter : 0.0;
+        piece.end = piece.start + (clip->still ? core::kStillDefaultLength : duration);
+        piece.position = at;
+        if (!(piece.length() >= core::TextTracks::kMinLength))
+            continue;
+        // Il livello dove è stato lasciato se ci sta, poi gli altri, poi uno nuovo.
+        int target = 0;
+        std::vector<int> candidates{layerId};
+        for (const core::TextLayer& layer : layers.layers())
+            candidates.push_back(layer.id);
+        for (const int candidate : candidates) {
+            if (layers.layer(candidate) != nullptr && layers.canPlace(candidate, piece.position, piece.length())) {
+                target = candidate;
+                break;
+            }
+        }
+        if (target == 0)
+            target = layers.addLayer();
+        if (const int id = project_.addLayerPiece(target, piece, true); id != 0) {
+            ++added;
+            lastPiece = id;
+            at = piece.position + piece.length();
+        }
+    }
+    if (added == 0 && project_.clips().size() == before.clips().size()) {
+        project_ = before;
+        return;
+    }
+    recordEdit(QStringLiteral("Aggiungi pezzi su un livello"), before);
+    if (lastPiece != 0) {
+        timeline_->setSelectedTextClip(lastPiece);
+        setProgramActive(true);
+    }
+    refreshClipList();
+    startNextProbe();
+    statusBar()->showMessage(QStringLiteral("Aggiunti %1 pezzi al livello").arg(added), 6000);
 }
 
 void MainWindow::cutFromSequence()
