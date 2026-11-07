@@ -118,7 +118,7 @@ MainWindow::MainWindow(QWidget* parent)
     clipList_->installEventFilter(this);
     connect(clipList_, &QListWidget::itemClicked, this, [this](QListWidgetItem*) { showSourcePlayer(); });
     connect(clipList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* item) {
-        if (item != nullptr && !updatingList_) {
+        if (item != nullptr && !updatingList_ && item->data(Qt::UserRole).toInt() > 0) {  // le intestazioni non sono file
             setProgramActive(false);
             selectClip(item->data(Qt::UserRole).toInt());
         }
@@ -426,6 +426,9 @@ MainWindow::MainWindow(QWidget* parent)
     };
     timeline_->onAudioFilesDropped = [this](const QStringList& paths, int trackId, double seconds) {
         addAudioFiles(paths, trackId, seconds);
+    };
+    timeline_->onLayerFilesDropped = [this](const QStringList& paths, int layerId, double seconds) {
+        addFilesToLayer(paths, layerId, seconds);
     };
     // Scritte (step T3).
     timeline_->onTextClipSelected = [this](int) {
@@ -964,6 +967,83 @@ void MainWindow::addToLayer()
                              8000);
 }
 
+void MainWindow::addFilesToLayer(const QStringList& paths, int layerId, double seconds)
+{
+    std::vector<std::string> utf8;
+    for (const QString& path : paths)
+        utf8.push_back(nativeAbsoluteUtf8(path));
+    core::DropPlan plan = core::planDrop(utf8, project_, core::inspectMedia);
+    if (plan.project) {
+        if (maybeSave())
+            openProject(qs(*plan.project));
+        return;
+    }
+    std::vector<core::DroppedMedia> video;
+    int audioOnly = 0;
+    for (const core::DroppedMedia& media : plan.media) {
+        if (core::isAudioOnly(media.path))
+            ++audioOnly;
+        else
+            video.push_back(media);
+    }
+    if (video.empty()) {
+        player_->showNote(audioOnly > 0 ? QStringLiteral("Un file solo audio non va su un livello video: trascinalo su una traccia audio.")
+                                        : QStringLiteral("Nessun video o immagine leggibile."));
+        return;
+    }
+    const core::Project before = project_;
+    const std::vector<int> ids = core::applyDrop(project_, video, -1);
+    core::TextTracks& layers = project_.textTracks();
+    double at = std::max(0.0, seconds);
+    int added = 0;
+    int lastPiece = 0;
+    for (std::size_t i = 0; i < video.size(); ++i) {
+        if (video[i].existingClipId == 0)
+            analyzeNewFile(ids[i], video[i].path);
+        const core::Clip* clip = project_.find(ids[i]);
+        if (clip == nullptr)
+            continue;
+        const double duration = clip->analyzed ? clip->duration : video[i].duration;
+        core::LayerPiece piece;
+        piece.clipId = clip->id;
+        piece.start = clip->still ? core::kStillCenter : 0.0;
+        piece.end = piece.start + (clip->still ? core::kStillDefaultLength : duration);
+        piece.position = at;
+        if (!(piece.length() >= core::TextTracks::kMinLength))
+            continue;
+        // Il livello dove è stato lasciato se ci sta, poi gli altri, poi uno nuovo.
+        int target = 0;
+        std::vector<int> candidates{layerId};
+        for (const core::TextLayer& layer : layers.layers())
+            candidates.push_back(layer.id);
+        for (const int candidate : candidates) {
+            if (layers.layer(candidate) != nullptr && layers.canPlace(candidate, piece.position, piece.length())) {
+                target = candidate;
+                break;
+            }
+        }
+        if (target == 0)
+            target = layers.addLayer();
+        if (const int id = project_.addLayerPiece(target, piece, true); id != 0) {
+            ++added;
+            lastPiece = id;
+            at = piece.position + piece.length();
+        }
+    }
+    if (added == 0 && project_.clips().size() == before.clips().size()) {
+        project_ = before;
+        return;
+    }
+    recordEdit(QStringLiteral("Aggiungi pezzi su un livello"), before);
+    if (lastPiece != 0) {
+        timeline_->setSelectedTextClip(lastPiece);
+        setProgramActive(true);
+    }
+    refreshClipList();
+    startNextProbe();
+    statusBar()->showMessage(QStringLiteral("Aggiunti %1 pezzi al livello").arg(added), 6000);
+}
+
 void MainWindow::cutFromSequence()
 {
     const core::Clip* clip = project_.find(currentClipId_);
@@ -1443,7 +1523,7 @@ void MainWindow::refreshTimeline()
                           f.clipId, clip ? waveforms_->get(clip->path) : nullptr, f.gap});
         if (clip != nullptr)
             blocks.back().proxyDivisor = proxies_->sourceDivisor(qs(clip->path));
-        blocks.back().audioDetached = f.detached;
+        blocks.back().audioDetached = f.detached || (clip != nullptr && clip->still);  // un'immagine non ha audio: niente blocco su A1
         core::Transform fixed = f.transform;  // i parametri animati si descrivono a parte (da dove a dove vanno)
         for (std::size_t p = 0; p < core::kAnimParamCount; ++p) {
             if (f.animation.animated(static_cast<core::AnimParam>(p)))
@@ -2367,7 +2447,7 @@ void MainWindow::removeClip(int id, const QString& undoLabel)
 int MainWindow::selectedClipId() const
 {
     const QListWidgetItem* item = clipList_->currentItem();
-    return item != nullptr ? item->data(Qt::UserRole).toInt() : 0;
+    return item != nullptr ? std::max(0, item->data(Qt::UserRole).toInt()) : 0;
 }
 
 void MainWindow::refreshClipList()
@@ -2378,20 +2458,62 @@ void MainWindow::refreshClipList()
     std::map<int, int> uses;  // pezzi nel montaggio per file
     for (const core::Fragment& f : project_.sequence().fragments())
         ++uses[f.clipId];
-    // Con gli stessi file nello stesso ordine si aggiornano le righe che ci sono (restano scorrimento e selezione),
-    // altrimenti si rifà l'elenco.
+    // I file sono raggruppati per tipo (Video, Immagini, Audio), ognuno sotto la sua intestazione (id -1, -2, -3).
     const auto& clips = project_.clips();
-    bool sameFiles = clipList_->count() == static_cast<int>(clips.size());
+    std::vector<const core::Clip*> groups[3];
+    for (const core::Clip& clip : clips) {
+        int kind = 0;
+        if (clip.still) {
+            kind = 1;
+        } else if (const core::MediaSignature* signature = clip.analyzed ? signatureFor(clip.path) : nullptr;
+                   signature != nullptr && core::findStream(signature->streams, core::StreamKind::Video) == nullptr
+                   && core::findStream(signature->streams, core::StreamKind::Audio) != nullptr) {
+            kind = 2;
+        }
+        groups[kind].push_back(&clip);
+    }
+    static const char* const titles[3] = {"Video", "Immagini", "Audio"};
+    struct Row
+    {
+        int id;  // file; intestazione = -1 - gruppo
+        const core::Clip* clip;
+        int group;
+    };
+    std::vector<Row> rows;
+    for (int g = 0; g < 3; ++g) {
+        if (groups[g].empty())
+            continue;
+        rows.push_back({-1 - g, nullptr, g});
+        for (const core::Clip* clip : groups[g])
+            rows.push_back({clip->id, clip, g});
+    }
+    // Con le stesse righe nello stesso ordine si aggiornano quelle che ci sono (restano scorrimento e selezione),
+    // altrimenti si rifà l'elenco.
+    bool sameFiles = clipList_->count() == static_cast<int>(rows.size());
     for (int row = 0; sameFiles && row < clipList_->count(); ++row)
-        sameFiles = clipList_->item(row)->data(Qt::UserRole).toInt() == clips[static_cast<std::size_t>(row)].id;
+        sameFiles = clipList_->item(row)->data(Qt::UserRole).toInt() == rows[static_cast<std::size_t>(row)].id;
     if (!sameFiles)
         clipList_->clear();
     QListWidgetItem* current = nullptr;
-    for (std::size_t row = 0; row < clips.size(); ++row) {
-        const core::Clip& clip = clips[row];
+    for (std::size_t row = 0; row < rows.size(); ++row) {
+        QListWidgetItem* item = sameFiles ? clipList_->item(static_cast<int>(row)) : new QListWidgetItem;
+        if (rows[row].clip == nullptr) {
+            const QString title = QStringLiteral("%1 (%2)").arg(QString::fromUtf8(titles[rows[row].group])).arg(groups[rows[row].group].size());
+            if (item->text() != title)
+                item->setText(title);
+            item->setData(Qt::UserRole, rows[row].id);
+            item->setFlags(Qt::ItemIsEnabled);
+            QFont font = item->font();
+            font.setBold(true);
+            item->setFont(font);
+            if (!sameFiles)
+                clipList_->addItem(item);
+            continue;
+        }
+        const core::Clip& clip = *rows[row].clip;
         const auto found = uses.find(clip.id);
         const int count = found != uses.end() ? found->second : 0;
-        QString detail = clip.analyzed ? timeText(clip.duration) : QStringLiteral("analisi in corso...");
+        QString detail = clip.still ? QStringLiteral("immagine") : (clip.analyzed ? timeText(clip.duration) : QStringLiteral("analisi in corso..."));
         if (count > 0)
             detail += QStringLiteral(", %1 pezzi nel montaggio").arg(count);
         if (const int divisor = proxies_->divisor(qs(clip.path)); divisor > 1) {
@@ -2401,8 +2523,7 @@ void MainWindow::refreshClipList()
             else if (proxies_->hasProxy(path))
                 detail += QStringLiteral(", proxy 1/%1").arg(divisor);
         }
-        const QString text = QStringLiteral("%1  —  %2").arg(fileNameOf(clip.path), detail);
-        QListWidgetItem* item = sameFiles ? clipList_->item(static_cast<int>(row)) : new QListWidgetItem;
+        const QString text = QStringLiteral("    %1  —  %2").arg(fileNameOf(clip.path), detail);
         if (item->text() != text)
             item->setText(text);
         item->setData(Qt::UserRole, clip.id);

@@ -148,6 +148,7 @@ public:
     // File audio (anche video, di cui si usa l'audio) sulla traccia `trackId` dal punto `seconds` della sequenza, uno
     // dopo l'altro dove c'è posto; i file entrano anche nell'elenco dei file. Restituisce quante clip ha messo.
     int addAudioFiles(const QStringList& paths, int trackId, double seconds);
+    void addFilesToLayer(const QStringList& paths, int layerId, double seconds);  // video e immagini lasciati su un livello
     bool moveAudioClip(int clipId, int trackId, double position);
     bool trimAudioClip(int clipId, bool atStart, double value, bool ripple);
     // Scritte (step T3): livelli e scritte sopra la corsia video.

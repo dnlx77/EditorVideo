@@ -375,6 +375,20 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
         if (plan.videoChanged)
             plan.reencode.assign(clips.size(), true);
     }
+    // Un formato senza parametri di codifica (il formato predefinito di un progetto di sole immagini, vedi
+    // defaultProjectFormat) lo decide l'encoder quando parte l'esportazione, come per un cambio di video voluto: tutto si ricodifica.
+    if (checkFormat && !plan.videoChanged) {
+        for (StreamSignature& s : plan.reference.streams) {
+            if (s.kind != StreamKind::Video)
+                continue;
+            if ((s.codec == "h264" || s.codec == "hevc") && s.extradata.empty()) {
+                s.profile.clear();
+                plan.videoChanged = true;
+                plan.reencode.assign(clips.size(), true);
+            }
+            break;
+        }
+    }
     // Un formato AV1 non ripete i parametri nel flusso: pezzi copiati e pezzi ricodificati non si possono mescolare. Con
     // "Ricodifica tutto" si ricodifica tutto, come per un cambio di video (parametri dati dall'encoder).
     if (reencodeAll && !plan.videoChanged) {
