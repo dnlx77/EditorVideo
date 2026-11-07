@@ -2,6 +2,7 @@
 
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/KeyframeCache.h"
+#include "EditorCore/PathUtil.h"
 #include "EditorCore/StillImage.h"
 
 #include <algorithm>
@@ -104,6 +105,29 @@ ProbeCancelled::ProbeCancelled()
 
 MediaInfo probeFile(const std::string& utf8Path, const std::atomic<bool>* cancel, const std::string& keyframeCacheFolder)
 {
+    if (isImagePath(utf8Path)) {
+        // Un'immagine non ha fotogrammi chiave né una durata: si può allungare fin dove dice kStillDuration. Si legge con
+        // loadImage (FFmpeg, o il lettore di riserva dell'applicazione), non con il demuxer.
+        const auto size = inspectImage(utf8Path);
+        if (!size)
+            throw ProbeError("Impossibile leggere l'immagine: " + utf8Path);
+        MediaInfo info;
+        info.path = utf8Path;
+        info.formatName = "immagine";
+        info.formatLongName = "Immagine fissa";
+        info.durationSeconds = kStillDuration;
+        StreamInfo stream;
+        stream.index = 0;
+        stream.kind = StreamKind::Video;
+        stream.codec = lowercase(utf8FromPath(pathFromUtf8(utf8Path).extension())).substr(1);
+        stream.width = size->width;
+        stream.height = size->height;
+        stream.durationSeconds = kStillDuration;
+        info.streams.push_back(std::move(stream));
+        info.keyframeStreamIndex = 0;
+        return info;
+    }
+
     FormatContextPtr fmt = openInput(utf8Path, cancel);
 
     MediaInfo info;
@@ -118,13 +142,7 @@ MediaInfo probeFile(const std::string& utf8Path, const std::atomic<bool>* cancel
         info.streams.push_back(describeStream(fmt.get(), fmt->streams[i]));
 
     info.keyframeStreamIndex = findMainStream(fmt.get(), AVMEDIA_TYPE_VIDEO);
-    if (info.keyframeStreamIndex >= 0 && isImagePath(utf8Path)) {
-        // Un'immagine non ha fotogrammi chiave né una durata: si può allungare fin dove dice kStillDuration.
-        info.durationSeconds = kStillDuration;
-        for (StreamInfo& stream : info.streams)
-            if (stream.index == info.keyframeStreamIndex)
-                stream.durationSeconds = kStillDuration;
-    } else if (info.keyframeStreamIndex >= 0) {
+    if (info.keyframeStreamIndex >= 0) {
         // Se i fotogrammi chiave di questo file (così com'è ora) sono già stati salvati, non serve scorrerlo tutto.
         int cachedStream = -1;
         std::vector<double> cachedTimes;

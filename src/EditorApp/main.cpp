@@ -1,4 +1,5 @@
 #include "EditorApp/MainWindow.h"
+#include "EditorApp/QtImageLoader.h"
 #include "EditorApp/SelfTests.h"
 #include "EditorCore/ProjectFile.h"
 
@@ -18,6 +19,7 @@ int main(int argc, char* argv[])
 
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("EditorVideo"));
+    editor::app::installQtImageLoader();
 
     // I percorsi si leggono da QApplication::arguments(): argv su Windows perde le lettere accentate.
     const QStringList arguments = QApplication::arguments();

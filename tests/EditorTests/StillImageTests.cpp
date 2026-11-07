@@ -274,4 +274,41 @@ TEST_F(StillImageTest, LayerPlaybackShowsTheImage)
     EXPECT_EQ(frame->width, 8);
 }
 
+TEST_F(StillImageTest, FallbackLoaderReadsWhatFfmpegCannot)
+{
+    // Un file che FFmpeg non legge (non è un vero PNG) ma il lettore di riserva sì: come il PNG nella build di Windows.
+    std::FILE* f = std::fopen(path("riserva.png").c_str(), "wb");
+    ASSERT_NE(f, nullptr);
+    std::fputs("dati che solo il lettore di riserva capisce", f);
+    std::fclose(f);
+    EXPECT_EQ(loadImage(path("riserva.png")), nullptr);
+    EXPECT_FALSE(inspectImage(path("riserva.png")).has_value());
+
+    setImageLoader([](const std::string&) {
+        auto frame = std::make_shared<VideoFrame>();
+        frame->width = 20;
+        frame->height = 10;
+        frame->stride = 80;
+        frame->pixels.assign(800, 200);
+        return frame;
+    });
+    const auto frame = loadImage(path("riserva.png"));
+    ASSERT_NE(frame, nullptr);
+    EXPECT_EQ(frame->width, 20);
+    const auto shrunk = loadImage(path("riserva.png"), 10, 10);
+    ASSERT_NE(shrunk, nullptr);
+    EXPECT_EQ(shrunk->width, 10);
+    EXPECT_EQ(shrunk->height, 5);
+    // La probe e il decodificatore passano dallo stesso lettore.
+    const MediaInfo info = probeFile(path("riserva.png"));
+    ASSERT_EQ(info.streams.size(), 1u);
+    EXPECT_EQ(info.streams[0].width, 20);
+    EXPECT_EQ(info.durationSeconds, kStillDuration);
+    VideoDecoder decoder(path("riserva.png"), {.allowHardware = false});
+    EXPECT_EQ(decoder.outputWidth(), 20);
+    ASSERT_NE(decoder.seek(2.0), nullptr);
+    setImageLoader(nullptr);
+    EXPECT_EQ(loadImage(path("riserva.png")), nullptr);
+}
+
 }  // namespace
