@@ -78,6 +78,7 @@
     <ClInclude Include="SegmentExport.h" />
     <ClInclude Include="SegmentExportInternal.h" />
     <ClInclude Include="Sequence.h" />
+    <ClInclude Include="StillImage.h" />
     <ClInclude Include="Thumbnails.h" />
     <ClInclude Include="TimeStretch.h" />
     <ClInclude Include="TimelineZoom.h" />
@@ -129,6 +130,7 @@
     <ClCompile Include="SegmentExport.cpp" />
     <ClCompile Include="SegmentExportJob.cpp" />
     <ClCompile Include="Sequence.cpp" />
+    <ClCompile Include="StillImage.cpp" />
     <ClCompile Include="Thumbnails.cpp" />
     <ClCompile Include="TimeStretch.cpp" />
     <ClCompile Include="TimelineZoom.cpp" />

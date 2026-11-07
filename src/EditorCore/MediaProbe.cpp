@@ -2,6 +2,7 @@
 
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/KeyframeCache.h"
+#include "EditorCore/StillImage.h"
 
 #include <algorithm>
 #include <cmath>
@@ -117,7 +118,13 @@ MediaInfo probeFile(const std::string& utf8Path, const std::atomic<bool>* cancel
         info.streams.push_back(describeStream(fmt.get(), fmt->streams[i]));
 
     info.keyframeStreamIndex = findMainStream(fmt.get(), AVMEDIA_TYPE_VIDEO);
-    if (info.keyframeStreamIndex >= 0) {
+    if (info.keyframeStreamIndex >= 0 && isImagePath(utf8Path)) {
+        // Un'immagine non ha fotogrammi chiave né una durata: si può allungare fin dove dice kStillDuration.
+        info.durationSeconds = kStillDuration;
+        for (StreamInfo& stream : info.streams)
+            if (stream.index == info.keyframeStreamIndex)
+                stream.durationSeconds = kStillDuration;
+    } else if (info.keyframeStreamIndex >= 0) {
         // Se i fotogrammi chiave di questo file (così com'è ora) sono già stati salvati, non serve scorrerlo tutto.
         int cachedStream = -1;
         std::vector<double> cachedTimes;
