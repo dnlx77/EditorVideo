@@ -1,6 +1,7 @@
 #include "EditorCore/Compatibility.h"
 
 #include "EditorCore/FfmpegUtil.h"
+#include "EditorCore/StillImage.h"
 #include "EditorCore/H264Params.h"
 #include "EditorCore/PathUtil.h"
 
@@ -128,6 +129,23 @@ void compareFile(const MediaSignature& clip, const MediaSignature& ref, std::vec
 
 MediaSignature readMediaSignature(const std::string& utf8Path)
 {
+    if (isImagePath(utf8Path)) {
+        // Un'immagine: un solo flusso video con le sue misure (si legge con loadImage, non col demuxer).
+        const auto size = inspectImage(utf8Path);
+        if (!size)
+            throw MediaError("Impossibile leggere l'immagine: " + utf8Path);
+        MediaSignature signature;
+        signature.path = utf8Path;
+        signature.fileName = fileNameOf(utf8Path);
+        StreamSignature s;
+        s.kind = StreamKind::Video;
+        s.codec = "immagine";
+        s.width = size->width;
+        s.height = size->height;
+        s.pixelFormat = "bgra";
+        signature.streams.push_back(std::move(s));
+        return signature;
+    }
     FormatContextPtr fmt = openInput(utf8Path);
     MediaSignature signature;
     signature.path = utf8Path;

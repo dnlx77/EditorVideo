@@ -400,14 +400,15 @@ void SequenceTimeline::paintVideo(QPainter& p)
         if (b.fit != 0 && r.width() > 22) {
             const QRectF badge(QPointF(r.right() - 17, r.top() + 3), QSizeF(14, 14));
             p.setPen(Qt::NoPen);
-            p.setBrush(b.fit == 1 ? QColor(232, 176, 44) : QColor(222, 62, 52));
+            p.setBrush(b.fit == 1 ? QColor(232, 176, 44) : b.fit == 3 ? QColor(70, 130, 200) : QColor(222, 62, 52));
             p.drawEllipse(badge);
             QFont bold = p.font();
             bold.setBold(true);
             p.save();
             p.setFont(bold);
             p.setPen(b.fit == 1 ? Qt::black : Qt::white);
-            p.drawText(badge, Qt::AlignCenter, b.fit == 1 ? QStringLiteral("P") : QStringLiteral("R"));
+            p.drawText(badge, Qt::AlignCenter,
+                       b.fit == 1 ? QStringLiteral("P") : b.fit == 3 ? QStringLiteral("I") : QStringLiteral("R"));
             p.restore();
         }
         // Segno in alto a destra (a sinistra di P/R), celeste come la barretta della cache: l'anteprima legge dal proxy,

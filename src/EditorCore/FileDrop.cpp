@@ -141,7 +141,8 @@ std::vector<int> applyDrop(Project& project, const std::vector<DroppedMedia>& me
         const double duration = clip != nullptr && clip->analyzed ? clip->duration : m.duration;
         // Un'immagine entra con la durata predefinita (nel file potrebbe durare un'ora).
         const double length = clip != nullptr && clip->still ? kStillDefaultLength : duration;
-        const int fragment = project.sequence().insert(at, id, 0.0, length);
+        const double start = clip != nullptr && clip->still ? kStillCenter : 0.0;
+        const int fragment = project.sequence().insert(at, id, start, start + length);
         if (fragment != 0) {
             if (fragments != nullptr)
                 fragments->push_back(fragment);

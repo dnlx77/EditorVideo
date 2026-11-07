@@ -510,7 +510,7 @@ int Project::unlinkAudio(int fragmentId, int* track)
 {
     const Fragment* f = sequence_.find(fragmentId);
     const Clip* source = f != nullptr ? find(f->clipId) : nullptr;
-    if (source == nullptr)
+    if (source == nullptr || source->still)  // un'immagine non ha audio da scollegare
         return 0;
     // Già tutto silenziato: niente da scollegare.
     if (f->muted.size() == 1 && f->muted.front().start <= f->start + 1e-9 && f->muted.front().end >= f->end - 1e-9)
@@ -593,7 +593,7 @@ int Project::addLayerPiece(int layerId, const LayerPiece& piece, bool withAudio,
         *audioClip = 0;
     const Clip* source = find(piece.clipId);
     const int id = text_.addPiece(layerId, piece);
-    if (id == 0 || !withAudio || source == nullptr)
+    if (id == 0 || !withAudio || source == nullptr || source->still)  // un'immagine non ha audio
         return id;
     AudioClip clip;
     clip.path = source->path;
@@ -639,7 +639,7 @@ int Project::liftToLayer(int fragmentId, int layerId, double position, int* audi
         return 0;
     }
     int clipId = 0;
-    if (!fragment.detached) {
+    if (!fragment.detached && !source->still) {
         AudioClip clip;
         clip.path = source->path;
         clip.start = fragment.start;
@@ -684,7 +684,10 @@ int Project::lowerToV1(int pieceId, double position, bool push, int* audioClip)
     text_.removePiece(pieceId);
     sequence_.setTransform(id, piece.transform);
     sequence_.setAnimation(id, piece.animation);
-    if (clipId == 0) {
+    const Clip* lowered = find(piece.clipId);
+    if (clipId == 0 && lowered != nullptr && lowered->still) {
+        // Un'immagine non ha audio: niente da collegare né da silenziare.
+    } else if (clipId == 0) {
         // Il pezzo non ha un audio suo (era scollegato, o è stato messo senza audio): in V1 resta muto, senza un audio
         // collegato nuovo che si sommerebbe alla clip libera che magari c'è ancora.
         const double from = sequence_.startOf(sequence_.indexOf(id));
@@ -733,7 +736,7 @@ bool Project::relinkAudio(int fragmentId)
 {
     const Fragment* f = sequence_.find(fragmentId);
     const Clip* source = f != nullptr ? find(f->clipId) : nullptr;
-    if (source == nullptr)
+    if (source == nullptr || source->still)
         return false;
     const double from = sequence_.startOf(sequence_.indexOf(fragmentId));
     const double to = from + f->length();
