@@ -29,6 +29,8 @@ public:
     void setEffect(const core::AudioEffect& effect);
     core::AudioEffect effect() const;
     std::function<void(const core::AudioEffect&)> onChanged;
+    // Lo spettro dell'audio che passa (core::spectrumDb), disegnato dietro la curva; vuoto = non suona.
+    void setSpectrum(const std::vector<float>& db);
 
     // I preset di fabbrica e quelli salvati dall'utente (nome, bande).
     struct Preset

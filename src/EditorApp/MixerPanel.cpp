@@ -598,20 +598,42 @@ public:
         plus_ = new QPushButton(QStringLiteral("+"));
         plus_->setFixedHeight(24);
         plus_->setFocusPolicy(Qt::NoFocus);
-        plus_->setToolTip(QStringLiteral("Aggiungi un effetto"));
+        plus_->setEnabled(!addableEffects().empty());
+        plus_->setToolTip(addableEffects().empty() ? QStringLiteral("Tutti gli effetti sono già presenti") : QStringLiteral("Aggiungi un effetto"));
         connect(plus_, &QPushButton::clicked, this, [this] { addEffectMenu(); });
         slotLayout_->addWidget(plus_);
         slotLayout_->addStretch(1);
     }
-    // Il menu del "+": gli effetti che si possono aggiungere (anche più di uno dello stesso tipo).
+    // Gli effetti che si possono ancora aggiungere: ognuno una sola volta per traccia.
+    std::vector<core::EffectKind> addableEffects() const
+    {
+        std::vector<core::EffectKind> list;
+        for (const core::EffectKind kind : {core::EffectKind::Equalizer}) {
+            const bool present = std::any_of(effects_.begin(), effects_.end(), [&](const core::AudioEffect& e) { return e.kind == kind; });
+            if (!present)
+                list.push_back(kind);
+        }
+        return list;
+    }
+    // Il menu del "+": gli effetti che ancora non ci sono.
     void addEffectMenu()
     {
+        const std::vector<core::EffectKind> addable = addableEffects();
+        if (addable.empty())
+            return;
         QMenu menu;
-        QAction* eq = menu.addAction(QString::fromUtf8(core::effectName(core::EffectKind::Equalizer)));
-        if (menu.exec(plus_->mapToGlobal(QPoint(0, plus_->height()))) == eq) {
-            std::vector<core::AudioEffect> list = effects_;
-            list.push_back(core::AudioEffect{});
-            emitEffects(std::move(list));
+        std::vector<QAction*> actions;
+        for (const core::EffectKind kind : addable)
+            actions.push_back(menu.addAction(QString::fromUtf8(core::effectName(kind))));
+        const QAction* chosen = menu.exec(plus_->mapToGlobal(QPoint(0, plus_->height())));
+        for (std::size_t i = 0; chosen != nullptr && i < actions.size(); ++i) {
+            if (chosen == actions[i]) {
+                core::AudioEffect added;
+                added.kind = addable[i];
+                std::vector<core::AudioEffect> list = effects_;
+                list.push_back(added);
+                emitEffects(std::move(list));
+            }
         }
     }
     QPushButton* plusButton() const { return plus_; }
@@ -703,6 +725,27 @@ void MixerPanel::setMaster(double levelDb, const std::vector<core::AudioEffect>&
     t.name = QStringLiteral("Master");
     t.levelDb = levelDb;
     master_->setTrack(t);
+}
+
+int MixerPanel::spectrumTrack() const
+{
+    if (master_->dialog() != nullptr && master_->dialog()->isVisible())
+        return core::kMasterTrackId;
+    for (const MixerStrip* s : strips_) {
+        if (s->dialog() != nullptr && s->dialog()->isVisible())
+            return s->trackId();
+    }
+    return core::AudioMixer::kNoSpectrum;
+}
+
+void MixerPanel::feedSpectrum(int trackId, const std::vector<float>& db)
+{
+    MixerStrip* target = trackId == core::kMasterTrackId ? master_ : nullptr;
+    for (MixerStrip* s : strips_)
+        if (s->trackId() == trackId)
+            target = s;
+    if (target != nullptr && target->dialog() != nullptr)
+        target->dialog()->setSpectrum(db);
 }
 
 double MixerPanel::masterLevelDb() const

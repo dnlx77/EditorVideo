@@ -332,7 +332,26 @@ struct AudioMixer::Shared
     std::map<int, std::vector<AudioEffect>> effects;  // effetti attivi per traccia (kMasterTrackId = Master)
     std::vector<std::vector<LevelPoint>> envelopes;  // uno per tratto
     std::map<int, std::array<float, 2>> peaks;       // picchi (sinistro, destro) per traccia dall'ultimo takePeaks
+    int watchId = AudioMixer::kNoSpectrum;           // la traccia di cui si tengono i campioni per lo spettro
+    std::vector<float> ring = std::vector<float>(8192, 0.0f);  // gli ultimi campioni mono, in cerchio
+    std::size_t ringPos = 0;       // dove va il prossimo
+    std::size_t ringFilled = 0;    // quanti sono validi (al massimo ring.size())
 };
+
+namespace {
+
+// Aggiunge al cerchio la media di sinistra e destra di `frames` fotogrammi stereo (con il mutex già preso).
+template <typename Shared>
+void pushSamples(Shared& s, const float* stereo, std::size_t frames)
+{
+    for (std::size_t i = 0; i < frames; ++i) {
+        s.ring[s.ringPos] = 0.5f * (stereo[i * 2] + stereo[i * 2 + 1]);
+        s.ringPos = (s.ringPos + 1) % s.ring.size();
+    }
+    s.ringFilled = std::min(s.ring.size(), s.ringFilled + frames);
+}
+
+}  // namespace
 
 AudioMixer::AudioMixer(std::vector<MixSegment> segments, std::map<int, float> gains, std::map<int, float> pans, float masterGain,
                        std::map<int, std::vector<AudioEffect>> effects)
@@ -371,6 +390,28 @@ std::map<int, std::array<float, 2>> AudioMixer::takePeaks()
     std::map<int, std::array<float, 2>> taken;
     taken.swap(shared_->peaks);
     return taken;
+}
+
+void AudioMixer::setSpectrumWatch(int trackId)
+{
+    std::lock_guard lock(shared_->mutex);
+    if (shared_->watchId != trackId) {
+        shared_->watchId = trackId;
+        shared_->ringFilled = 0;
+    }
+}
+
+bool AudioMixer::takeSpectrumSamples(std::vector<float>& out, std::size_t count)
+{
+    std::lock_guard lock(shared_->mutex);
+    if (shared_->watchId == kNoSpectrum || count > shared_->ring.size() || shared_->ringFilled < count)
+        return false;
+    out.resize(count);
+    const std::size_t size = shared_->ring.size();
+    const std::size_t start = (shared_->ringPos + size - count) % size;
+    for (std::size_t i = 0; i < count; ++i)
+        out[i] = shared_->ring[(start + i) % size];
+    return true;
 }
 
 void AudioMixer::setEffects(std::map<int, std::vector<AudioEffect>> effects)
@@ -422,8 +463,10 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
     float masterTarget = 1.0f;
     std::map<int, std::vector<AudioEffect>> effectTargets;
     std::vector<std::vector<LevelPoint>> envelopes;
+    int watchId = kNoSpectrum;
     {
         std::lock_guard lock(shared_->mutex);
+        watchId = shared_->watchId;
         targets = shared_->gains;
         panTargets = shared_->pans;
         masterTarget = shared_->masterGain;
@@ -465,6 +508,13 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
         buffer.assign(frames * 2, 0.0f);
         trackBuffers[id] = &buffer;
     }
+    // La traccia di cui si vede lo spettro ha sempre il suo buffer (anche senza effetti), per poterla misurare da sola.
+    if (watchId != kNoSpectrum && watchId != kMasterTrackId && trackBuffers.find(watchId) == trackBuffers.end()) {
+        std::vector<float>& buffer = eq_[watchId].buffer;
+        buffer.assign(frames * 2, 0.0f);
+        trackBuffers[watchId] = &buffer;
+    }
+    std::vector<float>* watched = nullptr;
     for (std::size_t i = 0; i < segments_.size(); ++i) {
         const long long segFirst = first_[i];
         const long long segEnd = segFirst + length_[i];
@@ -506,6 +556,8 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
     }
     for (const auto& [id, buffer] : trackBuffers) {
         equalize(id, effectTargets[id], buffer->data());
+        if (id == watchId)
+            watched = buffer;
         std::array<float, 2>& peak = blockPeaks[id];
         for (std::size_t i = 0; i < frames; ++i) {
             peak[0] = std::max(peak[0], std::abs((*buffer)[i * 2]));
@@ -539,6 +591,12 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
     }
     {
         std::lock_guard lock(shared_->mutex);
+        if (shared_->watchId == watchId) {  // (se nel frattempo è cambiata, questi campioni non servono più)
+            if (watched != nullptr)
+                pushSamples(*shared_, watched->data(), frames);
+            else if (watchId == kMasterTrackId)
+                pushSamples(*shared_, acc.data(), frames);
+        }
         for (const auto& [trackId, peak] : blockPeaks) {
             std::array<float, 2>& kept = shared_->peaks[trackId];
             kept[0] = std::max(kept[0], peak[0]);

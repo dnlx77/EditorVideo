@@ -63,6 +63,13 @@ public:
     // I picchi (valore assoluto massimo, 0..1 prima del limitatore) di ogni traccia, sinistra e destra, nei blocchi
     // resi dall'ultima chiamata; poi si azzerano. Per i vu-meter: si può chiamare da un altro thread.
     std::map<int, std::array<float, 2>> takePeaks();
+    // Lo spettro: si tiene d'occhio una sola traccia (o il Master, kMasterTrackId); `kNoSpectrum` = nessuna. Dei blocchi
+    // resi si conservano gli ultimi campioni (mono, dopo gli effetti della traccia; per il Master dopo il suo livello).
+    static constexpr int kNoSpectrum = -1000;
+    void setSpectrumWatch(int trackId);
+    // Gli ultimi `count` campioni mono della traccia tenuta d'occhio, dal più vecchio; false se non ce ne sono ancora
+    // abbastanza (o nessuna traccia è tenuta d'occhio). Si può chiamare da un altro thread.
+    bool takeSpectrumSamples(std::vector<float>& out, std::size_t count);
 
     // Scrive in `out` (stereo interlacciato, `frames` * 2 campioni) l'audio dal fotogramma `firstFrame` (contato dal
     // tempo 0 della sequenza). Dove non c'è niente: silenzio.
