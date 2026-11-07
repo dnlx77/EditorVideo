@@ -436,20 +436,32 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
     std::map<int, std::array<float, 2>> blockPeaks;  // picco sinistro e destro di ogni traccia in questo blocco
     // Equalizzatori: una traccia con un effetto attivo si somma prima in un suo buffer, poi si filtra e si aggiunge al mix.
     if (firstFrame != nextExpected_) {
-        for (auto& [id, state] : eq_)
-            state.filter.reset();  // un salto: lo stato del filtro non vale più
+        for (auto& [id, state] : eq_) {
+            for (EqualizerFilter& filter : state.filters)
+                filter.reset();  // un salto: lo stato dei filtri non vale più
+        }
     }
     nextExpected_ = blockEnd;
+    const auto isEqualizer = [](const AudioEffect& e) { return e.kind == EffectKind::Equalizer; };
+    // Passa `data` in tutti gli equalizzatori attivi della lista, nell'ordine (uno stato per equalizzatore).
+    const auto equalize = [&](int id, const std::vector<AudioEffect>& list, float* data) {
+        EqState& state = eq_[id];
+        std::size_t n = 0;
+        for (const AudioEffect& e : list) {
+            if (!isEqualizer(e))
+                continue;
+            if (state.filters.size() <= n)
+                state.filters.emplace_back();
+            state.filters[n].setBands(e.bands, kMixSampleRate);
+            state.filters[n].process(data, frames);
+            ++n;
+        }
+    };
     std::map<int, std::vector<float>*> trackBuffers;
     for (const auto& [id, list] : effectTargets) {
-        if (id == kMasterTrackId)
+        if (id == kMasterTrackId || !std::any_of(list.begin(), list.end(), isEqualizer))
             continue;
-        const auto first = std::find_if(list.begin(), list.end(), [](const AudioEffect& e) { return e.kind == EffectKind::Equalizer; });
-        if (first == list.end())
-            continue;
-        EqState& state = eq_[id];
-        state.filter.setGains(first->params[0], first->params[1], first->params[2], kMixSampleRate);
-        std::vector<float>& buffer = state.buffer;
+        std::vector<float>& buffer = eq_[id].buffer;
         buffer.assign(frames * 2, 0.0f);
         trackBuffers[id] = &buffer;
     }
@@ -493,7 +505,7 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
                           buffer != trackBuffers.end() ? unusedPeak : blockPeaks[segment.trackId].data(), {l0, r0, l1, r1});
     }
     for (const auto& [id, buffer] : trackBuffers) {
-        eq_[id].filter.process(buffer->data(), frames);
+        equalize(id, effectTargets[id], buffer->data());
         std::array<float, 2>& peak = blockPeaks[id];
         for (std::size_t i = 0; i < frames; ++i) {
             peak[0] = std::max(peak[0], std::abs((*buffer)[i * 2]));
@@ -503,15 +515,8 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
         }
     }
     // L'equalizzatore del Master agisce su tutto il mix, prima del suo livello.
-    if (const auto master = effectTargets.find(kMasterTrackId); master != effectTargets.end()) {
-        const auto first = std::find_if(master->second.begin(), master->second.end(),
-                                        [](const AudioEffect& e) { return e.kind == EffectKind::Equalizer; });
-        if (first != master->second.end()) {
-            EqState& state = eq_[kMasterTrackId];
-            state.filter.setGains(first->params[0], first->params[1], first->params[2], kMixSampleRate);
-            state.filter.process(acc.data(), frames);
-        }
-    }
+    if (const auto master = effectTargets.find(kMasterTrackId); master != effectTargets.end())
+        equalize(kMasterTrackId, master->second, acc.data());
     for (const auto& [trackId, gain] : targets)
         applied_[trackId] = gain;
     for (const auto& [trackId, pan] : panTargets)

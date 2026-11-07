@@ -11,13 +11,22 @@ using namespace editor::core;
 
 namespace {
 
-// Ampiezza di uscita (a regime) di un seno a `hz` passato dal filtro con i guadagni dati, rispetto all'ingresso.
-double gainAt(double hz, double lowDb, double midDb, double highDb)
+constexpr int kRate = 48000;
+
+// Le sei bande di partenza con un cambio a una sola (indice 0-based).
+std::vector<EqBand> bandsWith(std::size_t index, EqBand band)
 {
-    constexpr int kRate = 48000;
+    std::vector<EqBand> bands = defaultEqBands();
+    bands[index] = band;
+    return bands;
+}
+
+// Ampiezza di uscita (a regime) di un seno a `hz` passato dal filtro con le bande date, rispetto all'ingresso.
+double gainAt(double hz, const std::vector<EqBand>& bands)
+{
     constexpr double kPi = 3.14159265358979323846;
     EqualizerFilter filter;
-    filter.setGains(lowDb, midDb, highDb, kRate);
+    filter.setBands(bands, kRate);
     std::vector<float> samples(kRate * 2);
     for (int i = 0; i < kRate; ++i) {
         const float v = static_cast<float>(0.25 * std::sin(2.0 * kPi * hz * i / kRate));
@@ -31,37 +40,65 @@ double gainAt(double hz, double lowDb, double midDb, double highDb)
     return peak / 0.25;
 }
 
+double db(double ratio) { return 20.0 * std::log10(ratio); }
+
 }  // namespace
 
-TEST(AudioEffect, FlatEqualizerChangesNothing)
+TEST(AudioEffect, DefaultEqualizerChangesNothing)
 {
-    EXPECT_NEAR(gainAt(1000.0, 0, 0, 0), 1.0, 1e-3);
-    AudioEffect flat;
-    EXPECT_FALSE(flat.active());
-    flat.params[1] = 3.0;
-    EXPECT_TRUE(flat.active());
-    flat.enabled = false;
-    EXPECT_FALSE(flat.active()) << "escluso non agisce";
+    const std::vector<EqBand> bands = defaultEqBands();
+    ASSERT_EQ(bands.size(), kEqBandCount);
+    EXPECT_NEAR(gainAt(1000.0, bands), 1.0, 1e-3);
+    AudioEffect eq;
+    EXPECT_FALSE(eq.active()) << "senza guadagni e con i tagli spenti non agisce";
+    eq.bands[2].gainDb = 3.0;
+    EXPECT_TRUE(eq.active());
+    eq.enabled = false;
+    EXPECT_FALSE(eq.active()) << "escluso non agisce";
+    EXPECT_FALSE(bands[0].enabled);
+    EXPECT_FALSE(bands[5].enabled);
 }
 
-TEST(AudioEffect, EachBandMovesItsOwnRegion)
+TEST(AudioEffect, EachBandTypeActsWhereItShould)
 {
-    EXPECT_NEAR(gainAt(40.0, 12, 0, 0), std::pow(10.0, 12.0 / 20.0), 0.35) << "bassi";
-    EXPECT_NEAR(gainAt(1000.0, 0, 6, 0), std::pow(10.0, 6.0 / 20.0), 0.05) << "medi";
-    EXPECT_NEAR(gainAt(15000.0, 0, 0, -12), std::pow(10.0, -12.0 / 20.0), 0.05) << "alti";
-    EXPECT_NEAR(gainAt(1000.0, 12, 0, 12), 1.0, 0.12) << "le bande laterali non toccano i medi";
-    EXPECT_LT(gainAt(1000.0, 0, -12, 0), 0.3);
+    EXPECT_NEAR(db(gainAt(1000.0, bandsWith(2, {EqBandType::Bell, true, 1000.0, 6.0, 0.71}))), 6.0, 0.3) << "campana";
+    EXPECT_LT(db(gainAt(40.0, bandsWith(1, {EqBandType::LowShelf, true, 200.0, -12.0, 0.71}))), -9.0) << "shelf bassi";
+    EXPECT_NEAR(db(gainAt(5000.0, bandsWith(1, {EqBandType::LowShelf, true, 200.0, -12.0, 0.71}))), 0.0, 0.3);
+    EXPECT_GT(db(gainAt(15000.0, bandsWith(4, {EqBandType::HighShelf, true, 4000.0, 9.0, 0.71}))), 7.0) << "shelf alti";
+    EXPECT_LT(db(gainAt(30.0, bandsWith(0, {EqBandType::LowCut, true, 200.0, 0.0, 0.71}))), -20.0) << "taglio bassi";
+    EXPECT_NEAR(db(gainAt(5000.0, bandsWith(0, {EqBandType::LowCut, true, 200.0, 0.0, 0.71}))), 0.0, 0.3);
+    EXPECT_LT(db(gainAt(15000.0, bandsWith(5, {EqBandType::HighCut, true, 3000.0, 0.0, 0.71}))), -20.0) << "taglio alti";
+    EXPECT_NEAR(db(gainAt(200.0, bandsWith(5, {EqBandType::HighCut, true, 3000.0, 0.0, 0.71}))), 0.0, 0.3);
+    // Una banda spenta non fa niente anche con un guadagno.
+    EXPECT_NEAR(gainAt(1000.0, bandsWith(2, {EqBandType::Bell, false, 1000.0, 12.0, 0.71})), 1.0, 1e-3);
+}
+
+TEST(AudioEffect, ResponseMatchesTheFilter)
+{
+    const std::vector<EqBand> bands = {{EqBandType::LowCut, true, 100.0, 0.0, 0.71},
+                                       {EqBandType::Bell, true, 1000.0, 6.0, 1.5},
+                                       {EqBandType::HighShelf, true, 6000.0, -4.0, 0.71}};
+    for (const double hz : {50.0, 100.0, 500.0, 1000.0, 3000.0, 10000.0})
+        EXPECT_NEAR(eqResponseDb(bands, hz, kRate), db(gainAt(hz, bands)), 0.1) << hz << " Hz";
+    EXPECT_NEAR(eqResponseDb(defaultEqBands(), 1000.0, kRate), 0.0, 1e-9);
 }
 
 TEST(AudioEffect, ParametersAreClamped)
 {
     AudioEffect e;
-    e.params = {99.0, -99.0, std::nan(""), 7.0};
+    e.bands = {{EqBandType::Bell, true, 5.0, 99.0, 99.0}, {EqBandType::LowCut, true, 1e9, 7.0, -1.0},
+               {EqBandType::Bell, true, std::nan(""), std::nan(""), std::nan("")}};
     e = clampedEffect(e);
-    EXPECT_EQ(e.params[0], kEffectMaxDb);
-    EXPECT_EQ(e.params[1], kEffectMinDb);
-    EXPECT_EQ(e.params[2], 0.0);
-    EXPECT_EQ(e.params[3], 0.0);
+    EXPECT_EQ(e.bands[0].freq, kEqMinHz);
+    EXPECT_EQ(e.bands[0].gainDb, kEqMaxGainDb);
+    EXPECT_EQ(e.bands[0].q, kEqMaxQ);
+    EXPECT_EQ(e.bands[1].freq, kEqMaxHz);
+    EXPECT_EQ(e.bands[1].gainDb, 0.0) << "un taglio non ha guadagno";
+    EXPECT_EQ(e.bands[1].q, kEqMinQ);
+    EXPECT_EQ(e.bands[2].gainDb, 0.0);
+    AudioEffect empty;
+    empty.bands.clear();
+    EXPECT_EQ(clampedEffect(empty).bands.size(), kEqBandCount) << "senza bande: quelle di partenza";
 }
 
 TEST(AudioTracks, EffectsAreKeptPerTrackAndOnTheMaster)
@@ -69,13 +106,14 @@ TEST(AudioTracks, EffectsAreKeptPerTrackAndOnTheMaster)
     AudioTracks audio;
     const int a2 = audio.addTrack();
     AudioEffect eq;
-    eq.params = {3.0, 0.0, -2.0, 0.0};
+    eq.bands[1].gainDb = 3.0;
     EXPECT_TRUE(audio.setEffects(a2, {eq}));
     EXPECT_FALSE(audio.setEffects(a2, {eq}));
     EXPECT_EQ(audio.effects(a2).size(), 1u);
     EXPECT_TRUE(audio.effects(AudioTracks::kMasterTrack).empty());
     EXPECT_FALSE(audio.setEffects(99, {eq}));
-    EXPECT_TRUE(audio.setEffects(AudioTracks::kMasterTrack, {eq}));
+    EXPECT_TRUE(audio.setEffects(AudioTracks::kMasterTrack, {eq, eq}));
+    EXPECT_EQ(audio.effects(AudioTracks::kMasterTrack).size(), 2u) << "più equalizzatori nello stesso slot";
     EXPECT_FALSE(audio.isDefault());
     EXPECT_TRUE(audio.needsMix()) << "un effetto attivo sul Master cambia l'audio";
     // Escluso, A1 non ha bisogno del mix.
