@@ -17,6 +17,7 @@
 #include <chrono>
 #include <deque>
 #include <functional>
+#include <thread>
 #include <map>
 #include <memory>
 #include <optional>
@@ -462,6 +463,13 @@ private:
     QDockWidget* fullScreenDock_ = nullptr;
     QByteArray layoutBeforeFullScreen_;  // disposizione da ritrovare uscendo dallo schermo intero
     std::optional<CornerDrag> cornerDrag_;  // si sta trascinando un incrocio fra separatori
+    // «Normalizza» sul Master: la misura del picco di tutto il mix, in un thread, e il guadagno che ne viene (vedi runNormalize).
+    void scheduleNormalize();
+    void runNormalize();
+    QTimer* normalizeTimer_ = nullptr;
+    std::thread normalizeThread_;
+    std::atomic<bool> cancelNormalize_{false};
+    int normalizeGeneration_ = 0;
     QTimer* meterTimer_ = nullptr;          // aggiorna i vu-meter del Mixer (vedi updateMeters)
     QElapsedTimer meterClock_;
     QTimer* timelinePoll_ = nullptr;        // controlla la linea del tempo staccata (vedi timelinePollStep)

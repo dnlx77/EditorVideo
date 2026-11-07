@@ -2189,6 +2189,11 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                     mixer->onEffects(core::kMasterTrackId, {eq});
                     mixerOk = mixerOk && audio.effects(track).size() == 1 && mixer->trackAt(1).effects.size() == 1
                            && audio.effects(core::AudioTracks::kMasterTrack).size() == 1 && audio.needsMix();
+                    core::AudioEffect normalize;
+                    normalize.kind = core::EffectKind::Normalize;
+                    mixer->onEffects(core::kMasterTrackId, {normalize});
+                    mixerOk = mixerOk && core::hasActiveNormalize(audio.effects(core::AudioTracks::kMasterTrack))
+                           && mixer->stripCount() > 0 && audio.needsMix();
                     mixer->onEffects(track, {});
                     mixer->onEffects(core::kMasterTrackId, {});
                     mixerOk = mixerOk && audio.effects(track).empty() && audio.effects(core::AudioTracks::kMasterTrack).empty()

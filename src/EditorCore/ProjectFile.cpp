@@ -140,6 +140,10 @@ JsonValue mixToJson(const AudioMix& mix)
         JsonValue::Array effects;
         for (const AudioEffect& e : mix.effects) {
             static const char* const kTypes[] = {"tagliaBassi", "shelfBassi", "campana", "shelfAlti", "tagliaAlti"};
+            if (e.kind == EffectKind::Normalize) {
+                effects.emplace_back(JsonValue::Object{{"tipo", "normalizza"}, {"attivo", e.enabled}, {"livelloDb", e.targetDb}});
+                continue;
+            }
             JsonValue::Array bands;
             for (const EqBand& b : e.bands) {
                 bands.emplace_back(JsonValue::Object{{"tipo", kTypes[static_cast<int>(b.type)]},
@@ -336,6 +340,15 @@ std::vector<AudioEffect> effectsFromJson(const JsonValue& value)
     if (!value.isArray())
         return effects;
     for (const JsonValue& item : value.asArray()) {
+        if (item.isObject() && text(item["tipo"]) == "normalizza") {
+            AudioEffect n;
+            n.kind = EffectKind::Normalize;
+            n.enabled = !item["attivo"].isBool() || item["attivo"].asBool();
+            if (item["livelloDb"].isNumber())
+                n.targetDb = item["livelloDb"].asNumber();
+            effects.push_back(clampedEffect(n));
+            continue;
+        }
         if (!item.isObject() || text(item["tipo"]) != "equalizzatore")
             continue;
         AudioEffect e;

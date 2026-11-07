@@ -275,6 +275,30 @@ TEST_F(AudioMixerTest, SpectrumSamplesOfTheWatchedTrack)
     EXPECT_TRUE(mixer.takeSpectrumSamples(samples, 4096));
 }
 
+TEST_F(AudioMixerTest, MeasureMixPeakIsTheMasterPeakOfTheWholeMix)
+{
+    MixSpec spec;
+    spec.segments = {segment("a.wav", 0.0, 1.0, 0.0)};
+    spec.gains = {{0, 1.0f}};
+    spec.masterGain = 0.5f;
+    spec.length = 1.0;
+    float expected = 0.0f;
+    for (long long f = 0; f < kRate; ++f)
+        expected = std::max(expected, std::abs(sampleAudio(f)) / 32768.0f);
+    EXPECT_NEAR(measureMixPeak(spec), expected * 0.5f, 2e-3);
+    // Normalizzando a -6 dB il picco diventa -6 dB.
+    AudioEffect norm;
+    norm.kind = EffectKind::Normalize;
+    norm.targetDb = -6.0;
+    const float gain = normalizeGain({norm}, measureMixPeak(spec));
+    spec.masterGain *= gain;
+    EXPECT_NEAR(measureMixPeak(spec), std::pow(10.0f, -6.0f / 20.0f), 2e-3);
+    // Annullabile.
+    bool cancelled = false;
+    EXPECT_FLOAT_EQ(measureMixPeak(spec, [](double) { return false; }, &cancelled), 0.0f);
+    EXPECT_TRUE(cancelled);
+}
+
 TEST_F(AudioMixerTest, LevelChangesWithARampNotAJump)
 {
     AudioMixer mixer({segment("a.wav", 0.0, 2.0, 0.0)}, {{0, 1.0f}});

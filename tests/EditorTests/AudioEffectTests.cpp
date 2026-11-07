@@ -127,3 +127,26 @@ TEST(AudioTracks, EffectsAreKeptPerTrackAndOnTheMaster)
     audio.clear();
     EXPECT_TRUE(audio.effects(AudioTracks::kMasterTrack).empty());
 }
+
+TEST(AudioEffectTest, NormalizeGainBringsThePeakToTheTarget)
+{
+    AudioEffect norm;
+    norm.kind = EffectKind::Normalize;
+    norm.targetDb = -6.0;
+    const float expected = static_cast<float>(std::pow(10.0, -6.0 / 20.0));
+    EXPECT_NEAR(normalizeGain({norm}, 0.25f), expected / 0.25f, 1e-4);
+    EXPECT_NEAR(normalizeGain({norm}, 1.0f), expected, 1e-4) << "un picco troppo alto si abbassa";
+    EXPECT_FLOAT_EQ(normalizeGain({norm}, 0.0f), 1.0f) << "mix muto: niente da fare";
+    EXPECT_LE(normalizeGain({norm}, 1e-4f), 100.0f) << "mai oltre +40 dB";
+    EXPECT_TRUE(norm.active());
+    EXPECT_TRUE(hasActiveNormalize({norm}));
+    norm.enabled = false;
+    EXPECT_FLOAT_EQ(normalizeGain({norm}, 0.25f), 1.0f);
+    EXPECT_FALSE(hasActiveNormalize({norm}));
+    EXPECT_FALSE(hasActiveNormalize({}));
+    norm.enabled = true;
+    norm.targetDb = 5.0;
+    EXPECT_DOUBLE_EQ(clampedEffect(norm).targetDb, kNormalizeMaxDb);
+    norm.targetDb = -80.0;
+    EXPECT_DOUBLE_EQ(clampedEffect(norm).targetDb, kNormalizeMinDb);
+}

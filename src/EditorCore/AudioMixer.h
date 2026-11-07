@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -30,6 +31,11 @@ std::map<int, float> trackPansOf(const AudioTracks& tracks);
 MixSpec mixSpecOf(const Project& project, bool closeGaps = false);
 // Le linee del livello dei tratti, nello stesso ordine di mixSegmentsOf (per AudioMixer::setEnvelopes).
 std::vector<std::vector<LevelPoint>> segmentEnvelopesOf(const Project& project);
+
+// Il picco (0..1, valore assoluto, sinistro o destro) di tutto il mix di `spec` come arriva al Master: dopo il suo
+// livello e il suo equalizzatore, prima della normalizzazione e del limitatore. Rende tutto il mix (dal tempo 0 alla fine),
+// quindi può durare; `progress` (0..1) restituisce false per annullare (allora il risultato è 0 e `cancelled` diventa true).
+float measureMixPeak(const MixSpec& spec, const std::function<bool(double)>& progress = {}, bool* cancelled = nullptr);
 
 // Il mixer della sequenza: somma, a 48 kHz stereo, l'audio di tutti i tratti presenti in ogni istante, ognuno con il
 // livello e muto/solo della sua traccia, la linea del livello del tratto e senza i tratti silenziati. Un limitatore dolce evita la saturazione.

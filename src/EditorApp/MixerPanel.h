@@ -46,6 +46,8 @@ public:
     // onLevel con trackId core::kMasterTrackId.
     void setMaster(double levelDb, const std::vector<core::AudioEffect>& effects = {});
     double masterLevelDb() const;
+    // Il testo con la misura di «Normalizza» (picco e guadagno), mostrato nella sua finestra; vuoto = nessuna misura.
+    void setNormalizeInfo(const QString& text);
     // La traccia (o il Master) la cui finestra dell'equalizzatore è aperta: di quella serve lo spettro; AudioMixer::kNoSpectrum se nessuna.
     int spectrumTrack() const;
     // Lo spettro (core::spectrumDb) per la finestra aperta di quella traccia; vuoto = non suona.
