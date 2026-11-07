@@ -15,6 +15,9 @@ namespace editor::core {
 
 // Quanto "dura" un'immagine nel file, cioè fin dove si può allungare un pezzo (un'ora).
 inline constexpr double kStillDuration = 3600.0;
+// Da dove inizia il pezzo quando un'immagine entra nel montaggio (a metà della sua durata nel file): così il pezzo si può
+// allungare sia a destra sia a sinistra.
+inline constexpr double kStillCenter = kStillDuration / 2.0;
 // Quanto è lungo il pezzo quando un'immagine entra nel montaggio.
 inline constexpr double kStillDefaultLength = 5.0;
 

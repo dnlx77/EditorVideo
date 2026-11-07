@@ -51,7 +51,7 @@ public:
         std::shared_ptr<const core::Waveform> waveform;  // nullptr = in calcolo
         double gap = 0.0;          // spazio vuoto prima del pezzo
         // Come entra nel file esportato (valori di core::ClipFit): 0 copia, 1 copia con i suoi parametri, 2 da
-        // ricodificare. Con 1 e 2 un segno sul blocco, e fitNote nel suggerimento.
+        // ricodificare, 3 immagine (segno «I»). Con 1, 2 e 3 un segno sul blocco, e fitNote nel suggerimento.
         int fit = 0;
         QString fitNote;
         int proxyDivisor = 1;  // l'anteprima legge il video da un proxy a 1/proxyDivisor (1 = dall'originale)
