@@ -212,8 +212,9 @@ TEST_F(StillImageTest, DropPutsImageInSequenceWithDefaultLength)
     ASSERT_EQ(fragments.size(), 1u);
     const Fragment* piece = project.sequence().find(fragments[0]);
     ASSERT_NE(piece, nullptr);
-    EXPECT_EQ(piece->start, 0.0);
-    EXPECT_EQ(piece->end, kStillDefaultLength);
+    // Parte da metà del "file": il pezzo si può allungare da tutte e due le parti.
+    EXPECT_EQ(piece->start, kStillCenter);
+    EXPECT_EQ(piece->end, kStillCenter + kStillDefaultLength);
 }
 
 TEST_F(StillImageTest, FolderDropIncludesImages)
@@ -309,6 +310,66 @@ TEST_F(StillImageTest, FallbackLoaderReadsWhatFfmpegCannot)
     ASSERT_NE(decoder.seek(2.0), nullptr);
     setImageLoader(nullptr);
     EXPECT_EQ(loadImage(path("riserva.png")), nullptr);
+}
+
+TEST_F(StillImageTest, ImagesHaveNoAudioWhenMovedOrLinked)
+{
+    Project project;
+    const int image = project.add(path("foto.jpg"));
+    project.setAnalysis(image, {}, kStillDuration);
+    const int fragment = project.sequence().insert(-1, image, kStillCenter, kStillCenter + 5.0);
+    ASSERT_NE(fragment, 0);
+    // Scollegare/ricollegare l'audio: niente da fare.
+    EXPECT_EQ(project.unlinkAudio(fragment), 0);
+    EXPECT_FALSE(project.relinkAudio(fragment));
+    // Su un livello: nessuna clip audio e nessun gruppo con l'audio.
+    const int layer = project.textTracks().addLayer();
+    int audioClip = -1;
+    const int piece = project.liftToLayer(fragment, layer, 1.0, &audioClip);
+    ASSERT_NE(piece, 0);
+    EXPECT_EQ(audioClip, 0);
+    for (const AudioTrack& track : project.audioTracks().tracks())
+        EXPECT_TRUE(track.clips.empty());
+    // E di nuovo in V1: il pezzo non diventa "audio scollegato".
+    const int back = project.lowerToV1(piece, 0.0, true, &audioClip);
+    ASSERT_NE(back, 0);
+    EXPECT_EQ(audioClip, 0);
+    EXPECT_FALSE(project.sequence().find(back)->detached);
+    EXPECT_TRUE(project.sequence().find(back)->muted.empty());
+    // Pezzo messo direttamente su un livello con addLayerPiece(withAudio = true).
+    LayerPiece lp;
+    lp.clipId = image;
+    lp.start = kStillCenter;
+    lp.end = kStillCenter + 5.0;
+    lp.position = 10.0;
+    audioClip = -1;
+    ASSERT_NE(project.addLayerPiece(layer, lp, true, &audioClip), 0);
+    EXPECT_EQ(audioClip, 0);
+}
+
+TEST_F(StillImageTest, TrimmingAnImageCanGrowBothWays)
+{
+    Project project;
+    const int image = project.add(path("foto.jpg"));
+    project.setAnalysis(image, {}, kStillDuration);
+    const int fragment = project.sequence().insert(-1, image, kStillCenter, kStillCenter + 5.0);
+    ASSERT_NE(fragment, 0);
+    EXPECT_TRUE(project.sequence().trim(fragment, Sequence::Edge::End, kStillCenter + 30.0, kStillDuration, 0.04, false));
+    EXPECT_NEAR(project.sequence().find(fragment)->length(), 30.0, 1e-9);
+    EXPECT_TRUE(project.sequence().trim(fragment, Sequence::Edge::Start, kStillCenter - 10.0, kStillDuration, 0.04, true));
+    EXPECT_NEAR(project.sequence().find(fragment)->length(), 40.0, 1e-9);
+}
+
+TEST_F(StillImageTest, SignatureOfAnImageHasItsSize)
+{
+    if (!haveBmp_)
+        GTEST_SKIP() << "encoder BMP non disponibile";
+    const MediaSignature signature = readMediaSignature(path("prova.bmp"));
+    const StreamSignature* video = findStream(signature.streams, StreamKind::Video);
+    ASSERT_NE(video, nullptr);
+    EXPECT_EQ(video->width, 8);
+    EXPECT_EQ(video->height, 6);
+    EXPECT_EQ(findStream(signature.streams, StreamKind::Audio), nullptr);
 }
 
 }  // namespace

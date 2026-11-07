@@ -881,8 +881,8 @@ void MainWindow::addToSequence()
     }
     // IN e OUT della Sorgente; senza, il file intero.
     const core::CutSegment& segment = player_->segment();
-    const double in = segment.hasIn() ? segment.in() : 0.0;
-    // Un'immagine, senza OUT, entra con la durata predefinita (nel file potrebbe durare un'ora).
+    // Un'immagine, senza IN e OUT, entra a metà del suo "file" (si allunga da tutte e due le parti) con la durata predefinita.
+    const double in = segment.hasIn() ? segment.in() : (clip->still && !segment.hasOut() ? core::kStillCenter : 0.0);
     const double out = segment.hasOut() ? segment.out() : (clip->still ? in + core::kStillDefaultLength : clip->duration);
     if (core::isAudioOnly(clip->path)) {
         addSourceAudioToTrack(*clip, in, out);
@@ -927,7 +927,7 @@ void MainWindow::addToLayer()
     const core::CutSegment& segment = player_->segment();
     core::LayerPiece piece;
     piece.clipId = clip->id;
-    piece.start = segment.hasIn() ? segment.in() : 0.0;
+    piece.start = segment.hasIn() ? segment.in() : (clip->still && !segment.hasOut() ? core::kStillCenter : 0.0);
     piece.end = segment.hasOut() ? segment.out() : (clip->still ? piece.start + core::kStillDefaultLength : clip->duration);
     piece.position = std::max(0.0, program_->position());
     if (!(piece.length() >= core::TextTracks::kMinLength)) {
@@ -1460,7 +1460,7 @@ void MainWindow::refreshTimeline()
         const core::MediaSignature* signature = clip != nullptr ? signatureFor(clip->path) : nullptr;
         if (clip != nullptr && clip->still && !project_.format().empty()) {
             // Un'immagine diventa sempre video nel formato del progetto.
-            blocks.back().fit = static_cast<int>(core::ClipFit::Reencode);
+            blocks.back().fit = 3;  // immagine (segno «I»)
             blocks.back().fitNote = QStringLiteral("Immagine: nel file esportato diventa un video nel formato del progetto (%1).")
                                         .arg(qs(project_.format().sourceName));
         } else if (signature != nullptr && !project_.format().empty()) {
