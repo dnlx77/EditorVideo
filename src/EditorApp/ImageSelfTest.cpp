@@ -13,6 +13,11 @@
 #include <QtGui/QColor>
 #include <QtGui/QImage>
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+}
+
 #include <cstdio>
 
 namespace editor::app {
@@ -61,6 +66,13 @@ int runImageTest(const QStringList&, qsizetype)
     namespace core = editor::core;
     SelfCheck check;
     std::printf("Prova delle immagini nel montaggio\n");
+
+    // Quali codec per le immagini ha l'FFmpeg di questa build (solo informativo).
+    for (const AVCodecID id : {AV_CODEC_ID_PNG, AV_CODEC_ID_MJPEG, AV_CODEC_ID_BMP, AV_CODEC_ID_WEBP, AV_CODEC_ID_TIFF})
+        std::printf("  codec %s: decodificatore %s, codificatore %s\n", avcodec_get_name(id),
+                    avcodec_find_decoder(id) != nullptr ? "si" : "NO", avcodec_find_encoder(id) != nullptr ? "si" : "NO");
+    for (const char* name : {"image2", "png_pipe", "mjpeg", "image2pipe"})
+        std::printf("  formato %s: %s\n", name, av_find_input_format(name) != nullptr ? "si" : "NO");
 
     const QString dir = QDir::tempPath() + QStringLiteral("/EditorVideoImageTest");
     QDir().mkpath(dir);
