@@ -4,6 +4,7 @@
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/Project.h"
+#include "EditorCore/ProjectFile.h"
 #include "EditorCore/StillImage.h"
 
 extern "C" {
@@ -373,3 +374,109 @@ TEST_F(StillImageTest, SignatureOfAnImageHasItsSize)
 }
 
 }  // namespace
+
+namespace {
+
+// Una GIF di due quadri 4x3 (il primo di un colore, il secondo di un altro). False se manca l'encoder.
+bool writeGif(const fs::path& path)
+{
+    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_GIF);
+    if (codec == nullptr)
+        return false;
+    AVCodecContext* ctx = avcodec_alloc_context3(codec);
+    ctx->width = 4;
+    ctx->height = 3;
+    ctx->pix_fmt = AV_PIX_FMT_BGR8;
+    ctx->time_base = {1, 10};
+    bool ok = avcodec_open2(ctx, codec, nullptr) >= 0;
+    AVFrame* frame = av_frame_alloc();
+    AVPacket* packet = av_packet_alloc();
+    std::FILE* file = ok ? std::fopen(path.string().c_str(), "wb") : nullptr;
+    ok = ok && file != nullptr;
+    if (ok) {
+        frame->format = AV_PIX_FMT_BGR8;
+        frame->width = 4;
+        frame->height = 3;
+        ok = av_frame_get_buffer(frame, 0) >= 0;
+    }
+    const auto drain = [&] {
+        while (avcodec_receive_packet(ctx, packet) >= 0) {
+            ok = ok && std::fwrite(packet->data, 1, static_cast<std::size_t>(packet->size), file) == static_cast<std::size_t>(packet->size);
+            av_packet_unref(packet);
+        }
+    };
+    for (int n = 0; ok && n < 2; ++n) {
+        for (int y = 0; y < 3; ++y)
+            for (int x = 0; x < 4; ++x)
+                frame->data[0][y * frame->linesize[0] + x] = n == 0 ? 0xC0 : 0x38;  // BGR8: bbgggrrr
+        frame->pts = n;
+        ok = avcodec_send_frame(ctx, frame) >= 0;
+        drain();
+    }
+    if (ok) {
+        avcodec_send_frame(ctx, nullptr);
+        drain();
+    }
+    if (file != nullptr)
+        std::fclose(file);
+    av_packet_free(&packet);
+    av_frame_free(&frame);
+    avcodec_free_context(&ctx);
+    return ok;
+}
+
+}  // namespace
+
+TEST_F(StillImageTest, GifIsAnImageAndUsesItsFirstFrame)
+{
+    EXPECT_TRUE(isImagePath("animata.GIF"));
+    if (!writeGif(dir_ / "animata.gif"))
+        GTEST_SKIP() << "encoder GIF non disponibile";
+    const auto frame = loadImage(path("animata.gif"));
+    ASSERT_NE(frame, nullptr);
+    EXPECT_EQ(frame->width, 4);
+    EXPECT_EQ(frame->height, 3);
+    // Il primo quadro è blu (0xC0 = blu al massimo), non il secondo (verde).
+    const unsigned char* p = frame->pixels.data();
+    EXPECT_GT(p[0], 150);  // B
+    EXPECT_LT(p[1], 100);  // G
+    EXPECT_TRUE(inspectImage(path("animata.gif")).has_value());
+}
+
+TEST_F(StillImageTest, HugeImagesAreReadShrunkToTheMemoryLimit)
+{
+    // 5600 x 4400 = 24,6 milioni di pixel: appena sopra il limite.
+    if (!writeImage(dir_ / "enorme.bmp", 5600, 4400, AV_CODEC_ID_BMP, AV_PIX_FMT_BGRA))
+        GTEST_SKIP() << "encoder BMP non disponibile";
+    const auto frame = loadImage(path("enorme.bmp"));
+    ASSERT_NE(frame, nullptr);
+    EXPECT_LE(static_cast<std::int64_t>(frame->width) * frame->height, kMaxStillPixels);
+    EXPECT_GT(frame->width, 5000);
+    EXPECT_NEAR(static_cast<double>(frame->width) / frame->height, 5600.0 / 4400.0, 0.01);
+    // Un riquadro più piccolo vince sul limite.
+    const auto small = loadImage(path("enorme.bmp"), 280, 220);
+    ASSERT_NE(small, nullptr);
+    EXPECT_EQ(small->width, 280);
+}
+
+TEST_F(StillImageTest, MissingImageIsReportedAndCanBeRelinked)
+{
+    if (!haveBmp_)
+        GTEST_SKIP() << "encoder BMP non disponibile";
+    Project project;
+    const int id = project.add(path("prova.bmp"));
+    ASSERT_TRUE(project.find(id)->still);
+    const std::string projectPath = path("progetto.evproj");
+    saveProjectFile(projectPath, project, {});
+    fs::rename(dir_ / "prova.bmp", dir_ / "spostata.bmp");
+    LoadedProject loaded = loadProjectFile(projectPath);
+    ASSERT_EQ(loaded.missing.size(), 1u);
+    EXPECT_EQ(loaded.missing.front().fileName, "prova.bmp");
+    relocateMissing(loaded, loaded.missing.front(), path("spostata.bmp"));
+    EXPECT_TRUE(loaded.missing.empty());
+    const Clip* clip = loaded.project.find(loaded.project.clips().front().id);
+    ASSERT_NE(clip, nullptr);
+    EXPECT_TRUE(clip->still);
+    EXPECT_EQ(clip->path, path("spostata.bmp"));
+    EXPECT_TRUE(inspectImage(clip->path).has_value());
+}

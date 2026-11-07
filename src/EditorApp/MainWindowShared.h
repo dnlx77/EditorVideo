@@ -150,8 +150,9 @@ inline const QString kAudioFilter = QStringLiteral(
     "Audio di un video (*.mp4 *.mkv *.mov *.avi *.webm);;Tutti i file (*.*)");
 
 inline const QString kVideoFilter = QStringLiteral(
-    "File video e audio (*.mp4 *.mkv *.mov *.avi *.m4v *.webm *.ts *.mts *.m2ts *.mpg *.wmv *.flv "
-    "*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus);;Tutti i file (*.*)");
+    "Video, audio e immagini (*.mp4 *.mkv *.mov *.avi *.m4v *.webm *.ts *.mts *.m2ts *.mpg *.wmv *.flv "
+    "*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus *.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff *.gif);;"
+    "Tutti i file (*.*)");
 
 inline const QString kProjectExtension = QString::fromLatin1(core::kProjectExtension);  // ".evproj"
 inline const QString kProjectFilter = QStringLiteral("Progetto EditorVideo (*%1)").arg(kProjectExtension);
