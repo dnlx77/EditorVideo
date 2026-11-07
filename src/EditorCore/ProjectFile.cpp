@@ -139,10 +139,16 @@ JsonValue mixToJson(const AudioMix& mix)
     if (!mix.effects.empty()) {
         JsonValue::Array effects;
         for (const AudioEffect& e : mix.effects) {
-            JsonValue::Array params;
-            for (double v : e.params)
-                params.emplace_back(v);
-            effects.emplace_back(JsonValue::Object{{"tipo", "equalizzatore"}, {"attivo", e.enabled}, {"parametri", std::move(params)}});
+            static const char* const kTypes[] = {"tagliaBassi", "shelfBassi", "campana", "shelfAlti", "tagliaAlti"};
+            JsonValue::Array bands;
+            for (const EqBand& b : e.bands) {
+                bands.emplace_back(JsonValue::Object{{"tipo", kTypes[static_cast<int>(b.type)]},
+                                                     {"attiva", b.enabled},
+                                                     {"frequenza", b.freq},
+                                                     {"guadagno", b.gainDb},
+                                                     {"q", b.q}});
+            }
+            effects.emplace_back(JsonValue::Object{{"tipo", "equalizzatore"}, {"attivo", e.enabled}, {"bande", std::move(bands)}});
         }
         json["effetti"] = std::move(effects);
     }
@@ -335,13 +341,37 @@ std::vector<AudioEffect> effectsFromJson(const JsonValue& value)
         AudioEffect e;
         e.kind = EffectKind::Equalizer;
         e.enabled = !item["attivo"].isBool() || item["attivo"].asBool();
-        if (item["parametri"].isArray()) {
+        if (item["bande"].isArray()) {
+            e.bands.clear();
+            for (const JsonValue& b : item["bande"].asArray()) {
+                EqBand band;
+                const std::string type = text(b["tipo"]);
+                band.type = type == "tagliaBassi" ? EqBandType::LowCut
+                          : type == "shelfBassi"  ? EqBandType::LowShelf
+                          : type == "shelfAlti"   ? EqBandType::HighShelf
+                          : type == "tagliaAlti"  ? EqBandType::HighCut
+                                                  : EqBandType::Bell;
+                band.enabled = !b["attiva"].isBool() || b["attiva"].asBool();
+                if (b["frequenza"].isNumber())
+                    band.freq = b["frequenza"].asNumber();
+                if (b["guadagno"].isNumber())
+                    band.gainDb = b["guadagno"].asNumber();
+                if (b["q"].isNumber())
+                    band.q = b["q"].asNumber();
+                e.bands.push_back(band);
+            }
+        } else if (item["parametri"].isArray()) {
+            // Il primo equalizzatore (3 guadagni: bassi, medi, alti): diventa shelf a 120 Hz, campana a 1 kHz e shelf a 6 kHz.
+            double gains[3] = {0, 0, 0};
             std::size_t i = 0;
             for (const JsonValue& v : item["parametri"].asArray()) {
-                if (i < e.params.size() && v.isNumber())
-                    e.params[i] = v.asNumber();
+                if (i < 3 && v.isNumber())
+                    gains[i] = v.asNumber();
                 ++i;
             }
+            e.bands = {{EqBandType::LowShelf, true, 120.0, gains[0], 0.71},
+                       {EqBandType::Bell, true, 1000.0, gains[1], 0.9},
+                       {EqBandType::HighShelf, true, 6000.0, gains[2], 0.71}};
         }
         effects.push_back(clampedEffect(e));
     }

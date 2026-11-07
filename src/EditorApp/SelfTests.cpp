@@ -2184,7 +2184,7 @@ void startSmokeTest(QApplication& app, MainWindow& window, const QString& file)
                 mixerOk = mixerOk && std::abs(audio.masterLevelDb() + 6.0) < 1e-9 && std::abs(mixer->masterLevelDb() + 6.0) < 1e-9;
                 {
                     core::AudioEffect eq;
-                    eq.params = {2.0, 0.0, -3.0, 0.0};
+                    eq.bands[2].gainDb = 2.0;
                     mixer->onEffects(track, {eq});
                     mixer->onEffects(core::kMasterTrackId, {eq});
                     mixerOk = mixerOk && audio.effects(track).size() == 1 && mixer->trackAt(1).effects.size() == 1

@@ -55,7 +55,7 @@ public:
     void setPans(const std::map<int, float>& pans);
     // Il livello del Master (moltiplicatore di tutto il mix), con la stessa rampa.
     void setMasterGain(float gain);
-    // Gli effetti attivi di ogni traccia (trackEffectsOf), anche mentre si suona. Per ora agisce il primo equalizzatore.
+    // Gli effetti attivi di ogni traccia (trackEffectsOf), anche mentre si suona; più equalizzatori agiscono uno dopo l'altro.
     void setEffects(std::map<int, std::vector<AudioEffect>> effects);
     // Le linee del livello dei tratti, una per tratto nello stesso ordine (al posto di quelle di prima): il valore al
     // tempo del file moltiplica il livello della traccia, campione per campione.
@@ -85,7 +85,7 @@ private:
     float appliedMaster_ = 1.0f;        // e per il Master
     struct EqState
     {
-        EqualizerFilter filter;
+        std::vector<EqualizerFilter> filters;  // uno per ogni equalizzatore attivo della traccia, in ordine
         std::vector<float> buffer;  // la somma della traccia in questo blocco, da filtrare
     };
     std::map<int, EqState> eq_;       // un equalizzatore per traccia (e per il Master)

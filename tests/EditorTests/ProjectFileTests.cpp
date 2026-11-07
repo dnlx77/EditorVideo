@@ -417,8 +417,10 @@ TEST_F(ProjectFileTest, AudioTracksAreSavedWithLevelsMuteAndSolo)
     audio.setMasterLevel(-4.5);
     {
         AudioEffect eq;
-        eq.params = {2.0, -1.5, 4.0, 0.0};
-        audio.setEffects(a2, {eq});
+        eq.bands[1].gainDb = 2.0;
+        eq.bands[3] = {EqBandType::Bell, true, 2500.0, -1.5, 1.4};
+        eq.bands[5].enabled = true;
+        audio.setEffects(a2, {eq, eq});
         eq.enabled = false;
         audio.setEffects(AudioTracks::kMasterTrack, {eq});
     }

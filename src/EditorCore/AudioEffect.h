@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <vector>
 
 namespace editor::core {
@@ -8,33 +9,70 @@ namespace editor::core {
 // Un effetto messo su una traccia audio (o sul Master) nel Mixer.
 enum class EffectKind
 {
-    Equalizer,  // 3 bande: bassi (shelf a 120 Hz), medi (campana a 1 kHz), alti (shelf a 6 kHz); params = guadagni in dB
+    Equalizer,  // equalizzatore parametrico a più bande (EqBand)
 };
 
-inline constexpr double kEffectMinDb = -12.0;
-inline constexpr double kEffectMaxDb = 12.0;
+// Il tipo di filtro di una banda dell'equalizzatore.
+enum class EqBandType
+{
+    LowCut,     // taglia i bassi sotto la frequenza (passa-alto)
+    LowShelf,   // alza o abbassa tutto ciò che sta sotto la frequenza
+    Bell,       // campana: alza o abbassa intorno alla frequenza
+    HighShelf,  // alza o abbassa tutto ciò che sta sopra la frequenza
+    HighCut,    // taglia gli alti sopra la frequenza (passa-basso)
+};
+
+inline constexpr double kEqMinHz = 20.0;
+inline constexpr double kEqMaxHz = 20000.0;
+inline constexpr double kEqMinQ = 0.1;
+inline constexpr double kEqMaxQ = 10.0;
+inline constexpr double kEqMaxGainDb = 18.0;  // i guadagni vanno da -18 a +18 dB
+inline constexpr std::size_t kEqBandCount = 6;
+
+struct EqBand
+{
+    EqBandType type = EqBandType::Bell;
+    bool enabled = true;
+    double freq = 1000.0;   // Hz
+    double gainDb = 0.0;    // non conta per i tagli
+    double q = 0.71;
+
+    bool hasGain() const { return type != EqBandType::LowCut && type != EqBandType::HighCut; }
+    // Se agisce davvero: attiva e, per campana e shelf, con un guadagno che cambia qualcosa.
+    bool active() const;
+    bool operator==(const EqBand&) const = default;
+};
+
+// Le sei bande di partenza: taglio bassi (spento), shelf bassi, due campane, shelf alti, taglio alti (spento); tutte senza
+// guadagno, quindi l'equalizzatore all'inizio non cambia il suono.
+std::vector<EqBand> defaultEqBands();
+EqBand clampedBand(EqBand band);
 
 struct AudioEffect
 {
     EffectKind kind = EffectKind::Equalizer;
     bool enabled = true;  // false = escluso (resta nello slot ma non agisce)
-    std::array<double, 4> params{};
+    std::vector<EqBand> bands = defaultEqBands();  // per l'equalizzatore
 
-    // Se agisce davvero sull'audio: attivo e con almeno un parametro che cambia qualcosa.
+    // Se agisce davvero sull'audio: attivo e con almeno una banda che cambia qualcosa.
     bool active() const;
     bool operator==(const AudioEffect&) const = default;
 };
 
 const char* effectName(EffectKind kind);  // "Equalizzatore"
-// Porta i parametri nei limiti (e quelli inutilizzati a 0).
+const char* bandTypeName(EqBandType type);
+// Porta i parametri nei limiti (un equalizzatore senza bande riceve quelle di partenza).
 AudioEffect clampedEffect(AudioEffect effect);
 
-// Equalizzatore a 3 bande (filtri biquad RBJ in forma diretta I), sinistra e destra separati. I coefficienti si
+// La risposta in frequenza (dB) di una serie di bande a `hz`, alla frequenza di campionamento `sampleRate`.
+double eqResponseDb(const std::vector<EqBand>& bands, double hz, int sampleRate);
+
+// Equalizzatore parametrico (filtri biquad RBJ in forma diretta I), sinistra e destra separati. I coefficienti si
 // ricalcolano ai cambi di parametri senza toccare lo stato (niente scatti); reset() azzera lo stato (dopo un salto).
 class EqualizerFilter
 {
 public:
-    void setGains(double lowDb, double midDb, double highDb, int sampleRate);
+    void setBands(const std::vector<EqBand>& bands, int sampleRate);
     void reset();
     // Filtra `frames` fotogrammi stereo interlacciati (float) sul posto.
     void process(float* samples, std::size_t frames);
@@ -46,7 +84,7 @@ private:
         bool on = false;
         double x1[2] = {0, 0}, x2[2] = {0, 0}, y1[2] = {0, 0}, y2[2] = {0, 0};
     };
-    std::array<Biquad, 3> bands_;
+    std::vector<Biquad> stages_;
 };
 
 }  // namespace editor::core

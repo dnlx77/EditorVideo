@@ -198,7 +198,7 @@ TEST_F(AudioMixerTest, EqualizerOnATrackAndOnTheMaster)
 {
     AudioEffect flat;  // tutto a 0 dB: non agisce, il suono resta uguale
     AudioEffect eq;
-    eq.params = {0.0, 0.0, -12.0, 0.0};  // alti abbassati
+    eq.bands[4] = {EqBandType::HighShelf, true, 2000.0, -12.0, 0.71};  // alti abbassati
     const auto render = [&](std::map<int, std::vector<AudioEffect>> effects) {
         AudioMixer mixer({segment("a.wav", 0.0, 1.0, 0.0)}, {{0, 1.0f}}, {}, 1.0f, std::move(effects));
         return renderAll(mixer, 1.0);
