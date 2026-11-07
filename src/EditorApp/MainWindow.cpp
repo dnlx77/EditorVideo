@@ -1443,7 +1443,7 @@ void MainWindow::refreshTimeline()
                           f.clipId, clip ? waveforms_->get(clip->path) : nullptr, f.gap});
         if (clip != nullptr)
             blocks.back().proxyDivisor = proxies_->sourceDivisor(qs(clip->path));
-        blocks.back().audioDetached = f.detached;
+        blocks.back().audioDetached = f.detached || (clip != nullptr && clip->still);  // un'immagine non ha audio: niente blocco su A1
         core::Transform fixed = f.transform;  // i parametri animati si descrivono a parte (da dove a dove vanno)
         for (std::size_t p = 0; p < core::kAnimParamCount; ++p) {
             if (f.animation.animated(static_cast<core::AnimParam>(p)))
