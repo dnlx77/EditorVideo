@@ -2,6 +2,7 @@
 
 #include "EditorCore/VideoDecoder.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -10,7 +11,7 @@
 
 namespace editor::core {
 
-// Immagini fisse (PNG, JPG, BMP, WebP, TIFF...) come file del progetto. Un'immagine non ha audio, fotogrammi chiave né una
+// Immagini fisse (PNG, JPG, BMP, WebP, TIFF, GIF: di una GIF si usa il primo quadro) come file del progetto. Un'immagine non ha audio, fotogrammi chiave né una
 // durata propria: nel montaggio è un pezzo come gli altri e il suo fotogramma è sempre lo stesso, a qualsiasi tempo.
 
 // Quanto "dura" un'immagine nel file, cioè fin dove si può allungare un pezzo (un'ora).
@@ -20,6 +21,11 @@ inline constexpr double kStillDuration = 3600.0;
 inline constexpr double kStillCenter = kStillDuration / 2.0;
 // Quanto è lungo il pezzo quando un'immagine entra nel montaggio.
 inline constexpr double kStillDefaultLength = 5.0;
+
+// Limiti di memoria: un'immagine con più pixel di kMaxStillSourcePixels non si apre; una con più di kMaxStillPixels si
+// legge rimpicciolita (le proporzioni restano) a quella misura, se non si chiede un riquadro più piccolo.
+inline constexpr std::int64_t kMaxStillSourcePixels = 100'000'000;
+inline constexpr std::int64_t kMaxStillPixels = 24'000'000;
 
 // Estensioni delle immagini (minuscole, con il punto).
 const std::vector<std::string>& imageExtensions();

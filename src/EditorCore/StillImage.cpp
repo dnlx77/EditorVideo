@@ -109,7 +109,7 @@ void setImageLoader(ImageLoader loader)
 
 const std::vector<std::string>& imageExtensions()
 {
-    static const std::vector<std::string> extensions = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"};
+    static const std::vector<std::string> extensions = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff", ".gif"};
     return extensions;
 }
 
@@ -128,6 +128,8 @@ static std::shared_ptr<VideoFrame> loadWithFfmpeg(const std::string& utf8Path)
         FramePtr decoded;
         if (!decodeFirstFrame(utf8Path, orientation, srcW, srcH, decoded) || srcW <= 0 || srcH <= 0)
             return nullptr;
+        if (static_cast<std::int64_t>(srcW) * srcH > kMaxStillSourcePixels)
+            return nullptr;  // troppo grande da tenere in memoria anche solo una volta
 
         // Prima si converte in BGRA alla misura dell'originale, poi si orienta e (se serve) si rimpicciolisce.
         std::vector<std::uint8_t> bgra(static_cast<std::size_t>(srcW) * srcH * 4);
@@ -187,8 +189,16 @@ std::shared_ptr<VideoFrame> loadImage(const std::string& utf8Path, int maxWidth,
         return nullptr;
     const int outW = frame->width;
     const int outH = frame->height;
-    if (maxWidth > 0 && maxHeight > 0 && (outW > maxWidth || outH > maxHeight)) {
-        const double scale = std::min(static_cast<double>(maxWidth) / outW, static_cast<double>(maxHeight) / outH);
+    // Il riquadro richiesto; senza, un'immagine enorme si rimpicciolisce a kMaxStillPixels (la memoria non basterebbe).
+    int boxW = maxWidth;
+    int boxH = maxHeight;
+    if (!(maxWidth > 0 && maxHeight > 0) && static_cast<std::int64_t>(outW) * outH > kMaxStillPixels) {
+        const double fit = std::sqrt(static_cast<double>(kMaxStillPixels) / (static_cast<double>(outW) * outH));
+        boxW = std::max(1, static_cast<int>(outW * fit));
+        boxH = std::max(1, static_cast<int>(outH * fit));
+    }
+    if (boxW > 0 && boxH > 0 && (outW > boxW || outH > boxH)) {
+        const double scale = std::min(static_cast<double>(boxW) / outW, static_cast<double>(boxH) / outH);
         const int w = std::max(1, static_cast<int>(std::lround(outW * scale)));
         const int h = std::max(1, static_cast<int>(std::lround(outH * scale)));
         std::unique_ptr<SwsContext, SwsDeleter> shrink(sws_getContext(outW, outH, AV_PIX_FMT_BGRA, w, h,
