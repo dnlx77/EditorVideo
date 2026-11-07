@@ -3,6 +3,7 @@
 #include "EditorApp/UiText.h"
 
 #include "EditorCore/Proxy.h"
+#include "EditorCore/StillImage.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QFile>
@@ -54,6 +55,8 @@ int ProxyManager::divisor(const QString& original) const
 
 void ProxyManager::setDivisor(const QString& original, int divisor)
 {
+    if (core::isImagePath(original.toUtf8().toStdString()))
+        return;  // un'immagine non ha bisogno di un proxy
     if (divisor == this->divisor(original))
         return;
     if (divisor <= 1)

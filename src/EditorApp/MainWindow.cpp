@@ -13,6 +13,7 @@
 #include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
 #include "EditorCore/Compatibility.h"
+#include "EditorCore/StillImage.h"
 #include "EditorCore/FileDrop.h"
 #include "EditorCore/Encoder.h"
 #include "EditorCore/LibraryInfo.h"
@@ -881,7 +882,8 @@ void MainWindow::addToSequence()
     // IN e OUT della Sorgente; senza, il file intero.
     const core::CutSegment& segment = player_->segment();
     const double in = segment.hasIn() ? segment.in() : 0.0;
-    const double out = segment.hasOut() ? segment.out() : clip->duration;
+    // Un'immagine, senza OUT, entra con la durata predefinita (nel file potrebbe durare un'ora).
+    const double out = segment.hasOut() ? segment.out() : (clip->still ? in + core::kStillDefaultLength : clip->duration);
     if (core::isAudioOnly(clip->path)) {
         addSourceAudioToTrack(*clip, in, out);
         return;
@@ -926,7 +928,7 @@ void MainWindow::addToLayer()
     core::LayerPiece piece;
     piece.clipId = clip->id;
     piece.start = segment.hasIn() ? segment.in() : 0.0;
-    piece.end = segment.hasOut() ? segment.out() : clip->duration;
+    piece.end = segment.hasOut() ? segment.out() : (clip->still ? piece.start + core::kStillDefaultLength : clip->duration);
     piece.position = std::max(0.0, program_->position());
     if (!(piece.length() >= core::TextTracks::kMinLength)) {
         player_->showNote(QStringLiteral("Pezzo vuoto: OUT deve stare dopo IN."));
@@ -1301,11 +1303,23 @@ void MainWindow::ensureProjectFormat()
 {
     if (!project_.format().empty() || project_.sequence().empty())
         return;
-    const core::Clip* clip = project_.find(project_.sequence().fragments().front().clipId);
-    if (clip == nullptr)
-        return;
-    if (const core::MediaSignature* signature = signatureFor(clip->path))
-        project_.setFormat(core::formatOf(*signature));
+    // Il formato lo dà il primo pezzo che è un video; se ci sono solo immagini, quello predefinito.
+    for (const core::Fragment& f : project_.sequence().fragments()) {
+        const core::Clip* clip = project_.find(f.clipId);
+        if (clip == nullptr || clip->still)
+            continue;
+        if (const core::MediaSignature* signature = signatureFor(clip->path)) {
+            project_.setFormat(core::formatOf(*signature));
+            return;
+        }
+    }
+    const bool onlyImages = std::all_of(project_.sequence().fragments().begin(), project_.sequence().fragments().end(),
+                                        [this](const core::Fragment& f) {
+                                            const core::Clip* clip = project_.find(f.clipId);
+                                            return clip != nullptr && clip->still;
+                                        });
+    if (onlyImages)
+        project_.setFormat(core::defaultProjectFormat());
 }
 
 void MainWindow::refreshWaveforms()
@@ -1444,7 +1458,12 @@ void MainWindow::refreshTimeline()
             blocks.back().envelope = f.envelope;
         // Come entra nel file esportato, rispetto al formato del progetto: segno sul blocco e spiegazione.
         const core::MediaSignature* signature = clip != nullptr ? signatureFor(clip->path) : nullptr;
-        if (signature != nullptr && !project_.format().empty()) {
+        if (clip != nullptr && clip->still && !project_.format().empty()) {
+            // Un'immagine diventa sempre video nel formato del progetto.
+            blocks.back().fit = static_cast<int>(core::ClipFit::Reencode);
+            blocks.back().fitNote = QStringLiteral("Immagine: nel file esportato diventa un video nel formato del progetto (%1).")
+                                        .arg(qs(project_.format().sourceName));
+        } else if (signature != nullptr && !project_.format().empty()) {
             auto known = fits.find(f.clipId);
             if (known == fits.end()) {
                 const core::ClipFitResult fit = core::classifyClip(*signature, project_.format(), withAudio);

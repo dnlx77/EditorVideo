@@ -1,4 +1,6 @@
 #include "EditorCore/FileDrop.h"
+#include "EditorCore/LayerPlayback.h"
+#include "EditorCore/VideoDecoder.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/Project.h"
@@ -221,6 +223,55 @@ TEST_F(StillImageTest, FolderDropIncludesImages)
     Project project;
     const DropPlan plan = planDrop({utf8FromPath(dir_)}, project, inspectMedia);
     EXPECT_EQ(plan.media.size(), 2u);  // prova.bmp, prova.png
+}
+
+TEST_F(StillImageTest, DecoderGivesTheSameFrameAtAnyTime)
+{
+    if (!havePng_)
+        GTEST_SKIP() << "encoder PNG non disponibile";
+    VideoDecoder decoder(path("prova.png"), {.allowHardware = false});
+    EXPECT_EQ(decoder.durationSeconds(), kStillDuration);
+    EXPECT_GT(decoder.frameRate(), 0.0);
+    EXPECT_EQ(decoder.outputWidth(), 8);
+    EXPECT_EQ(decoder.outputHeight(), 6);
+    const auto first = decoder.seek(0.0);
+    const auto later = decoder.seek(12.34);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(later, nullptr);
+    EXPECT_EQ(first->time, 0.0);
+    EXPECT_DOUBLE_EQ(later->time, 12.34);
+    EXPECT_EQ(first->pixels, later->pixels);
+    // Il fotogramma dato non cambia se se ne chiede un altro (chi lo tiene non vede mutare i pixel).
+    EXPECT_EQ(first->time, 0.0);
+    // nextFrame avanza di un fotogramma alla volta.
+    const auto next = decoder.nextFrame();
+    ASSERT_NE(next, nullptr);
+    EXPECT_NEAR(next->time, 12.34 + 1.0 / decoder.frameRate(), 1e-9);
+    EXPECT_EQ(next->pixels, first->pixels);
+}
+
+TEST_F(StillImageTest, DecoderScalesToTheOutputBox)
+{
+    if (!havePng_)
+        GTEST_SKIP() << "encoder PNG non disponibile";
+    VideoDecoder decoder(path("prova.png"), {.allowHardware = false});
+    decoder.setOutputSize(32, 24);
+    const auto frame = decoder.seek(1.0);
+    ASSERT_NE(frame, nullptr);
+    EXPECT_EQ(frame->width, 32);
+    EXPECT_EQ(frame->height, 24);
+    EXPECT_EQ(frame->pixels.size(), static_cast<std::size_t>(32 * 24 * 4));
+}
+
+TEST_F(StillImageTest, LayerPlaybackShowsTheImage)
+{
+    if (!havePng_)
+        GTEST_SKIP() << "encoder PNG non disponibile";
+    LayerPlayback playback(path("prova.png"), 8, 6, false);
+    const auto frame = playback.waitFrame(3.0);
+    ASSERT_NE(frame, nullptr);
+    EXPECT_FALSE(playback.failed());
+    EXPECT_EQ(frame->width, 8);
 }
 
 }  // namespace

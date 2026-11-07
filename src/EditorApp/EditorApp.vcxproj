@@ -104,6 +104,7 @@
     <ClCompile Include="TransformSelfTest.cpp" />
     <ClCompile Include="TransformMonitorSelfTest.cpp" />
     <ClCompile Include="LayerSelfTest.cpp" />
+    <ClCompile Include="ImageSelfTest.cpp" />
     <ClCompile Include="ExportDialog.cpp" />
     <ClCompile Include="ExportSelfTest.cpp" />
     <ClCompile Include="GroupListPanel.cpp" />

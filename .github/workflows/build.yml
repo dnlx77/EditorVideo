@@ -271,6 +271,12 @@ jobs:
           $demo = "$env:TEMP\EditorVideoDemo"
           & ci\run-editorvideo.ps1 -Name livelli-monitor -Arguments @('--layer-monitor-test', "`"$demo\demo_mpeg2_gpu.mkv`"")
 
+      - name: Prova delle immagini nel montaggio
+        shell: pwsh
+        run: |
+          # Immagini fisse (PNG generate dalla prova) su V1 e su un livello: si vedono nel monitor del Montaggio.
+          & ci\run-editorvideo.ps1 -Name immagini -Arguments '--image-test'
+
       - name: Prova della scheda Gruppi
         shell: pwsh
         run: |
