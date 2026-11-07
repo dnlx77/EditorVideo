@@ -705,6 +705,27 @@ void MixerPanel::setMaster(double levelDb, const std::vector<core::AudioEffect>&
     master_->setTrack(t);
 }
 
+int MixerPanel::spectrumTrack() const
+{
+    if (master_->dialog() != nullptr && master_->dialog()->isVisible())
+        return core::kMasterTrackId;
+    for (const MixerStrip* s : strips_) {
+        if (s->dialog() != nullptr && s->dialog()->isVisible())
+            return s->trackId();
+    }
+    return core::AudioMixer::kNoSpectrum;
+}
+
+void MixerPanel::feedSpectrum(int trackId, const std::vector<float>& db)
+{
+    MixerStrip* target = trackId == core::kMasterTrackId ? master_ : nullptr;
+    for (MixerStrip* s : strips_)
+        if (s->trackId() == trackId)
+            target = s;
+    if (target != nullptr && target->dialog() != nullptr)
+        target->dialog()->setSpectrum(db);
+}
+
 double MixerPanel::masterLevelDb() const
 {
     return master_->level();

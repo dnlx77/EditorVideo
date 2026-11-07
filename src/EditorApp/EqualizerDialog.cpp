@@ -1,6 +1,7 @@
 #include "EditorApp/EqualizerDialog.h"
 
 #include "EditorApp/UiText.h"
+#include "EditorCore/Spectrum.h"
 
 #include <QtCore/QSettings>
 #include <QtGui/QMouseEvent>
@@ -174,6 +175,48 @@ public:
     int dragged() const { return drag_; }
     std::function<void(const std::vector<core::EqBand>&, bool final)> onEdited;
 
+    // Lo spettro del suono che passa (core::spectrumDb, bin da sampleRate / kSpectrumSize): sale subito e scende piano.
+    // Vuoto = non suona: le barre scendono fino a sparire.
+    void setSpectrum(const std::vector<float>& db)
+    {
+        const QRectF r = plot();
+        const int columns = std::max(1, static_cast<int>(r.width()));
+        if (static_cast<int>(spectrum_.size()) != columns)
+            spectrum_.assign(static_cast<std::size_t>(columns), kSpectrumFloorDb);
+        bool any = false;
+        for (int x = 0; x < columns; ++x) {
+            float target = kSpectrumFloorDb;
+            if (!db.empty()) {
+                // I bin che cadono nella colonna (in scala logaritmica): il massimo; sotto un bin, l'interpolazione.
+                const double hzA = hzOf(r.left() + x);
+                const double hzB = hzOf(r.left() + x + 1);
+                const double binHz = static_cast<double>(kSampleRate) / static_cast<double>(core::kSpectrumSize);
+                const double posA = hzA / binHz;
+                const double posB = hzB / binHz;
+                const int first = static_cast<int>(std::floor(posA));
+                const int last = static_cast<int>(std::floor(posB));
+                const int maxIndex = static_cast<int>(db.size()) - 1;
+                if (last > first) {
+                    for (int i = std::clamp(first, 0, maxIndex); i <= std::clamp(last, 0, maxIndex); ++i)
+                        target = std::max(target, db[static_cast<std::size_t>(i)]);
+                } else {
+                    const double mid = 0.5 * (posA + posB);
+                    const int i0 = std::clamp(static_cast<int>(std::floor(mid)), 0, maxIndex);
+                    const int i1 = std::min(i0 + 1, maxIndex);
+                    const double t = mid - std::floor(mid);
+                    target = static_cast<float>(db[static_cast<std::size_t>(i0)] * (1.0 - t) + db[static_cast<std::size_t>(i1)] * t);
+                }
+            }
+            float& shown = spectrum_[static_cast<std::size_t>(x)];
+            shown = std::max(target, shown - 3.0f);  // sale subito, scende di 3 dB a ogni aggiornamento
+            any = any || shown > kSpectrumFloorDb;
+        }
+        if (any || spectrumShown_)
+            update();
+        spectrumShown_ = any;
+    }
+    bool hasSpectrum() const { return spectrumShown_; }
+
     // La posizione (in pixel) del punto di una banda: per i test.
     QPointF pointOf(int band) const
     {
@@ -228,6 +271,22 @@ protected:
         QFont f = font();
         f.setPointSizeF(std::max(7.0, f.pointSizeF() - 1.5));
         p.setFont(f);
+        // Lo spettro del suono, sullo sfondo: da -90 dB (in basso) a 0 dB (in alto).
+        if (spectrumShown_ && !spectrum_.empty()) {
+            QPainterPath area;
+            area.moveTo(r.left(), r.bottom());
+            for (std::size_t x = 0; x < spectrum_.size(); ++x) {
+                const double n = std::clamp((static_cast<double>(spectrum_[x]) - kSpectrumFloorDb) / (0.0 - kSpectrumFloorDb), 0.0, 1.0);
+                area.lineTo(r.left() + static_cast<double>(x) + 0.5, r.bottom() - n * r.height());
+            }
+            area.lineTo(r.left() + static_cast<double>(spectrum_.size()), r.bottom());
+            area.closeSubpath();
+            p.setClipRect(r);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0x4a, 0xa8, 0xe0, 90));
+            p.drawPath(area);
+            p.setClipping(false);
+        }
         // Griglia: dB ogni 6, frequenze 30 ... 10k.
         for (int db = -18; db <= 18; db += 6) {
             const double y = yOf(db);
@@ -319,8 +378,11 @@ protected:
     }
 
 private:
+    static constexpr float kSpectrumFloorDb = -90.0f;
     std::vector<core::EqBand> bands_;
     int drag_ = -1;
+    std::vector<float> spectrum_;
+    bool spectrumShown_ = false;
 };
 
 namespace {
@@ -567,6 +629,11 @@ EqualizerDialog::EqualizerDialog(const QString& title, QWidget* parent) : QDialo
     });
     fillPresets();
     refreshControls();
+}
+
+void EqualizerDialog::setSpectrum(const std::vector<float>& db)
+{
+    graph_->setSpectrum(db);
 }
 
 void EqualizerDialog::turnKnob(int band, int which, double value)

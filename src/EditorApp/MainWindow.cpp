@@ -1339,6 +1339,11 @@ void MainWindow::updateMeters()
     if (!meterClock_.isValid())
         meterClock_.start();
     mixerPanel_->feedPeaks(program_->takeTrackPeaks(), std::min(seconds, 0.25));
+    // Lo spettro serve solo se è aperta la finestra di un equalizzatore.
+    const int watched = mixerPanel_->spectrumTrack();
+    program_->setSpectrumWatch(watched);
+    if (watched != core::AudioMixer::kNoSpectrum)
+        mixerPanel_->feedSpectrum(watched, program_->takeSpectrum());
 }
 
 void MainWindow::refreshTimeline()

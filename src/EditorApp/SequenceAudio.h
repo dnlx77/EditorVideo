@@ -42,6 +42,11 @@ public:
     void setEffects(std::map<int, std::vector<core::AudioEffect>> effects);
     // I picchi di ogni traccia dall'ultima chiamata (vedi AudioMixer::takePeaks); vuoto se non suona.
     std::map<int, std::array<float, 2>> takePeaks();
+    // La traccia (o il Master, core::kMasterTrackId) di cui si vuole lo spettro; AudioMixer::kNoSpectrum = nessuna. Vale
+    // anche per le riproduzioni che partono dopo.
+    void setSpectrumWatch(int trackId);
+    // Gli ultimi `count` campioni mono della traccia tenuta d'occhio (AudioMixer::takeSpectrumSamples); false se non suona.
+    bool takeSpectrumSamples(std::vector<float>& out, std::size_t count);
     void setSegmentEnvelopes(std::vector<std::vector<core::LevelPoint>> envelopes);  // le linee del livello dei tratti
 
 private:
@@ -57,6 +62,7 @@ private:
     double length_ = 0.0;
     double speed_ = 1.0;
     std::atomic<float> volume_{1.0f};
+    std::atomic<int> spectrumWatch_{core::AudioMixer::kNoSpectrum};
 };
 
 }  // namespace editor::app

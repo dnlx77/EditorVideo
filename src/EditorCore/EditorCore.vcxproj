@@ -36,6 +36,7 @@
   <ItemGroup>
     <ClInclude Include="AudioDecoder.h" />
     <ClInclude Include="AudioEffect.h" />
+    <ClInclude Include="Spectrum.h" />
     <ClInclude Include="AudioMixer.h" />
     <ClInclude Include="Groups.h" />
     <ClInclude Include="LevelEnvelope.h" />
@@ -87,6 +88,7 @@
   <ItemGroup>
     <ClCompile Include="AudioDecoder.cpp" />
     <ClCompile Include="AudioEffect.cpp" />
+    <ClCompile Include="Spectrum.cpp" />
     <ClCompile Include="AudioMixer.cpp" />
     <ClCompile Include="Groups.cpp" />
     <ClCompile Include="GroupMove.cpp" />

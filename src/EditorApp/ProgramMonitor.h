@@ -2,6 +2,7 @@
 
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/SequenceAudio.h"
+#include "EditorCore/Spectrum.h"
 #include "EditorApp/TextOverlay.h"
 #include "EditorCore/LayerPlayback.h"
 #include "EditorCore/TextTracks.h"
@@ -50,6 +51,15 @@ public:
     void audioMixChanged();
     // I picchi di ogni traccia audio dall'ultima chiamata, per i vu-meter del Mixer (vuoto se l'audio non suona).
     std::map<int, std::array<float, 2>> takeTrackPeaks() { return sequenceAudio_.takePeaks(); }
+    // Lo spettro (dB, core::spectrumDb) di una traccia o del Master mentre suona; vuoto se non suona.
+    void setSpectrumWatch(int trackId) { sequenceAudio_.setSpectrumWatch(trackId); }
+    std::vector<float> takeSpectrum()
+    {
+        std::vector<float> samples;
+        if (!sequenceAudio_.takeSpectrumSamples(samples, core::kSpectrumSize))
+            return {};
+        return core::spectrumDb(samples);
+    }
     void seekTo(double seconds);  // tempo della sequenza
     double programEnd() const;  // fine del programma: ultimo pezzo, scritta, pezzo di livello o clip audio
     bool hasProgram() const;  // c'è qualcosa da riprodurre: pezzi su V1, oppure solo scritte, livelli o clip audio

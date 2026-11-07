@@ -255,6 +255,26 @@ TEST_F(AudioMixerTest, PeaksPerTrackForTheMeters)
     EXPECT_TRUE(mixer.takePeaks().empty()) << "dopo la lettura si azzerano";
 }
 
+TEST_F(AudioMixerTest, SpectrumSamplesOfTheWatchedTrack)
+{
+    AudioMixer mixer({segment("a.wav", 0.0, 2.0, 0.0), segment("b.wav", 0.0, 2.0, 0.0, 1)}, {{0, 1.0f}, {1, 1.0f}});
+    std::vector<float> samples;
+    EXPECT_FALSE(mixer.takeSpectrumSamples(samples, 1000)) << "nessuna traccia tenuta d'occhio";
+    mixer.setSpectrumWatch(1);
+    std::vector<std::int16_t> out;
+    mixer.render(0, 4800, out);
+    EXPECT_FALSE(mixer.takeSpectrumSamples(samples, 6000)) << "ancora pochi campioni";
+    ASSERT_TRUE(mixer.takeSpectrumSamples(samples, 4096));
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        const long long frame = 4800 - 4096 + static_cast<long long>(i);
+        ASSERT_NEAR(samples[i], sampleAudio(frame + 2 * kRate) / 32768.0f, 1e-3) << i;  // la traccia 1, non la 0
+    }
+    mixer.setSpectrumWatch(kMasterTrackId);
+    EXPECT_FALSE(mixer.takeSpectrumSamples(samples, 100)) << "cambiando traccia si riparte";
+    mixer.render(4800, 4800, out);
+    EXPECT_TRUE(mixer.takeSpectrumSamples(samples, 4096));
+}
+
 TEST_F(AudioMixerTest, LevelChangesWithARampNotAJump)
 {
     AudioMixer mixer({segment("a.wav", 0.0, 2.0, 0.0)}, {{0, 1.0f}});

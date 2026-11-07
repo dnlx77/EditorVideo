@@ -40,6 +40,7 @@ bool SequenceAudio::start(core::AudioMixer mixer, double from, double length, do
         return false;
 
     mixer_ = std::make_unique<core::AudioMixer>(std::move(mixer));
+    mixer_->setSpectrumWatch(spectrumWatch_);
     from_ = std::max(0.0, from);
     length_ = length;
     speed_ = speed;
@@ -90,6 +91,18 @@ std::map<int, std::array<float, 2>> SequenceAudio::takePeaks()
     if (running_ && mixer_)
         return mixer_->takePeaks();
     return {};
+}
+
+void SequenceAudio::setSpectrumWatch(int trackId)
+{
+    spectrumWatch_ = trackId;
+    if (running_ && mixer_)
+        mixer_->setSpectrumWatch(trackId);
+}
+
+bool SequenceAudio::takeSpectrumSamples(std::vector<float>& out, std::size_t count)
+{
+    return running_ && mixer_ && mixer_->takeSpectrumSamples(out, count);
 }
 
 void SequenceAudio::setSegmentEnvelopes(std::vector<std::vector<core::LevelPoint>> envelopes)

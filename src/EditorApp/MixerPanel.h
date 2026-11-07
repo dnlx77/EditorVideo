@@ -46,6 +46,10 @@ public:
     // onLevel con trackId core::kMasterTrackId.
     void setMaster(double levelDb, const std::vector<core::AudioEffect>& effects = {});
     double masterLevelDb() const;
+    // La traccia (o il Master) la cui finestra dell'equalizzatore è aperta: di quella serve lo spettro; AudioMixer::kNoSpectrum se nessuna.
+    int spectrumTrack() const;
+    // Lo spettro (core::spectrumDb) per la finestra aperta di quella traccia; vuoto = non suona.
+    void feedSpectrum(int trackId, const std::vector<float>& db);
     double masterMeterDb(int channel) const;
     int stripCount() const { return static_cast<int>(strips_.size()); }
     const Track& trackAt(int index) const { return tracks_[static_cast<std::size_t>(index)]; }  // com'è mostrata
