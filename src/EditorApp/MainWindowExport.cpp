@@ -10,6 +10,7 @@
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
+#include "EditorCore/StillImage.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/FileDrop.h"
 #include "EditorCore/Encoder.h"
@@ -207,7 +208,8 @@ void MainWindow::exportDialog()
     const bool montage = !project_.sequence().empty();
     const QFileInfo source(qs(plan.front().path));
     ExportDialogInput input;
-    input.extension = source.suffix();
+    // Un montaggio che inizia con un'immagine non esce come immagine: MP4.
+    input.extension = core::isImagePath(plan.front().path) ? QStringLiteral("mp4") : source.suffix();
     input.suggestedPath = QDir(workFolder()).filePath(source.completeBaseName() + (montage ? QStringLiteral("_montaggio.") : QStringLiteral("_taglio."))
                                                       + input.extension);
     for (const core::ClipRanges& clip : plan)
@@ -217,7 +219,7 @@ void MainWindow::exportDialog()
         double bytes = 0.0;
         double seconds = 0.0;
         for (const core::Clip& clip : project_.clips()) {
-            if (clip.duration > 0.0 && input.sources.contains(qs(clip.path))) {
+            if (clip.duration > 0.0 && !clip.still && input.sources.contains(qs(clip.path))) {
                 bytes += static_cast<double>(QFileInfo(qs(clip.path)).size());
                 seconds += clip.duration;
             }
