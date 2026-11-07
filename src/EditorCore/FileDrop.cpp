@@ -3,6 +3,7 @@
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/ProjectFile.h"
+#include "EditorCore/StillImage.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -27,7 +28,13 @@ const std::vector<std::string>& mediaExtensions()
     static const std::vector<std::string> extensions = {
         ".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm", ".ts", ".mts", ".m2ts", ".mpg", ".mpeg", ".wmv", ".flv",
         ".3gp", ".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma", ".ac3", ".mka"};
-    return extensions;
+    // Con le immagini (vedi StillImage.h), una volta sola.
+    static const std::vector<std::string> all = [] {
+        std::vector<std::string> list = extensions;
+        list.insert(list.end(), imageExtensions().begin(), imageExtensions().end());
+        return list;
+    }();
+    return all;
 }
 
 DropPlan planDrop(const std::vector<std::string>& paths, const Project& project, const MediaInspector& inspect)
@@ -91,6 +98,8 @@ std::optional<double> inspectMedia(const std::string& utf8Path)
     std::error_code ec;
     if (!std::filesystem::is_regular_file(pathFromUtf8(utf8Path), ec))
         return std::nullopt;
+    if (isImagePath(utf8Path))
+        return inspectImage(utf8Path) ? std::optional<double>(kStillDuration) : std::nullopt;
     try {
         const FormatContextPtr ctx = openInput(utf8Path);
         int main = findMainStream(ctx.get(), AVMEDIA_TYPE_VIDEO);
@@ -130,7 +139,9 @@ std::vector<int> applyDrop(Project& project, const std::vector<DroppedMedia>& me
         // Il file intero.
         const Clip* clip = project.find(id);
         const double duration = clip != nullptr && clip->analyzed ? clip->duration : m.duration;
-        const int fragment = project.sequence().insert(at, id, 0.0, duration);
+        // Un'immagine entra con la durata predefinita (nel file potrebbe durare un'ora).
+        const double length = clip != nullptr && clip->still ? kStillDefaultLength : duration;
+        const int fragment = project.sequence().insert(at, id, 0.0, length);
         if (fragment != 0) {
             if (fragments != nullptr)
                 fragments->push_back(fragment);

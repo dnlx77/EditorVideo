@@ -1,6 +1,7 @@
 #include "EditorCore/Project.h"
 
 #include "EditorCore/AudioMixer.h"
+#include "EditorCore/StillImage.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <algorithm>
@@ -24,6 +25,7 @@ int Project::add(std::string path)
 {
     Clip clip;
     clip.id = nextId_++;
+    clip.still = isImagePath(path);
     clip.path = std::move(path);
     clips_.push_back(std::move(clip));
     return clips_.back().id;
@@ -47,6 +49,7 @@ void Project::setClipPath(int id, std::string path)
     if (index < 0)
         return;
     Clip& clip = clips_[index];
+    clip.still = isImagePath(path);
     clip.path = std::move(path);
     clip.analyzed = false;
     clip.keyframeData.reset();

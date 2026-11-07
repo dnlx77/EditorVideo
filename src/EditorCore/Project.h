@@ -25,6 +25,9 @@ struct Clip
     // passo di Annulla/Ripeti è una copia, con file da migliaia di fotogrammi chiave).
     std::shared_ptr<const std::vector<double>> keyframeData;
     double duration = 0.0;
+    // Immagine fissa (vedi StillImage.h): lo dice l'estensione del file. Non ha audio né fotogrammi chiave e la sua durata
+    // è kStillDuration.
+    bool still = false;
 
     const std::vector<double>& keyframes() const;  // vuoto se il file non è stato analizzato
 
