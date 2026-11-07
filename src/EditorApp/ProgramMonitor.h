@@ -49,6 +49,8 @@ public:
     void sequenceChanged();
     // Livello, muto o solo di una traccia audio cambiati: si sente subito, senza fermare la riproduzione.
     void audioMixChanged();
+    // Il guadagno di «Normalizza» sul Master misurato sul mix intero (1 = nessuno); si moltiplica al livello del Master.
+    void setNormalizeGain(float gain);
     // I picchi di ogni traccia audio dall'ultima chiamata, per i vu-meter del Mixer (vuoto se l'audio non suona).
     std::map<int, std::array<float, 2>> takeTrackPeaks() { return sequenceAudio_.takePeaks(); }
     // Lo spettro (dB, core::spectrumDb) di una traccia o del Master mentre suona; vuoto se non suona.
@@ -306,6 +308,7 @@ private:
     double baseSpeed_ = 1.0;
     bool loop_ = false;
     int volume_ = 100;
+    float normalizeGain_ = 1.0f;  // vedi setNormalizeGain
     bool muted_ = false;
     double playStart_ = 0.0;
     bool hasPlayStart_ = false;

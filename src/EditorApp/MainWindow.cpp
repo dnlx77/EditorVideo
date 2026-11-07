@@ -642,6 +642,10 @@ MainWindow::MainWindow(QWidget* parent)
     mixerPanel_->onEffects = [this](int trackId, const std::vector<core::AudioEffect>& effects) { setTrackEffects(trackId, effects); };
     mixerDock_ = makeDock(QStringLiteral("Mixer"), QStringLiteral("pannelloMixer"), mixerPanel_);
     // I vu-meter: ogni 40 ms si prendono i picchi dell'audio che suona (solo se il pannello si vede).
+    normalizeTimer_ = new QTimer(this);
+    normalizeTimer_->setSingleShot(true);
+    normalizeTimer_->setInterval(700);
+    connect(normalizeTimer_, &QTimer::timeout, this, [this] { runNormalize(); });
     meterTimer_ = new QTimer(this);
     meterTimer_->setInterval(40);
     connect(meterTimer_, &QTimer::timeout, this, [this] { updateMeters(); });
@@ -772,6 +776,9 @@ MainWindow::~MainWindow()
         cancelProbe_ = true;
         probeThread_->wait();
     }
+    cancelNormalize_ = true;
+    if (normalizeThread_.joinable())
+        normalizeThread_.join();
     waveforms_.reset();  // aspetta il calcolo in corso
     proxies_.reset();    // interrompe il proxy in lavoro
     thumbnails_.reset();
@@ -1346,8 +1353,65 @@ void MainWindow::updateMeters()
         mixerPanel_->feedSpectrum(watched, program_->takeSpectrum());
 }
 
+void MainWindow::scheduleNormalize()
+{
+    if (normalizeTimer_ == nullptr || mixerPanel_ == nullptr || program_ == nullptr)
+        return;
+    if (!core::hasActiveNormalize(project_.audioTracks().effects(core::AudioTracks::kMasterTrack))) {
+        ++normalizeGeneration_;  // una misura in corso non serve più
+        cancelNormalize_ = true;
+        normalizeTimer_->stop();
+        mixerPanel_->setNormalizeInfo(QString());
+        return;
+    }
+    ++normalizeGeneration_;  // il risultato di una misura vecchia non va più bene
+    mixerPanel_->setNormalizeInfo(QStringLiteral("Misura del picco in corso…"));
+    normalizeTimer_->start();  // si aspetta che le modifiche si fermino
+}
+
+// Misura il picco di tutto il mix (come arriva al Master) fuori dal thread dell'interfaccia; a misura finita il guadagno
+// va all'anteprima e il risultato nel testo della finestra.
+void MainWindow::runNormalize()
+{
+    if (!core::hasActiveNormalize(project_.audioTracks().effects(core::AudioTracks::kMasterTrack)))
+        return;
+    cancelNormalize_ = true;
+    if (normalizeThread_.joinable())
+        normalizeThread_.join();
+    cancelNormalize_ = false;
+    const int generation = normalizeGeneration_;
+    core::MixSpec spec = core::mixSpecOf(project_);
+    normalizeThread_ = std::thread([this, generation, spec = std::move(spec)] {
+        bool cancelled = false;
+        float peak = 0.0f;
+        try {
+            peak = core::measureMixPeak(spec, [this](double) { return !cancelNormalize_.load(); }, &cancelled);
+        } catch (const std::exception&) {
+            cancelled = true;  // un file che non si legge: niente misura
+        }
+        if (cancelled)
+            return;
+        QMetaObject::invokeMethod(
+            this,
+            [this, generation, peak] {
+                if (generation != normalizeGeneration_)
+                    return;
+                const auto& effects = project_.audioTracks().effects(core::AudioTracks::kMasterTrack);
+                const float gain = core::normalizeGain(effects, peak);
+                program_->setNormalizeGain(gain);
+                const double peakDb = peak > 1e-5f ? 20.0 * std::log10(static_cast<double>(peak)) : -120.0;
+                mixerPanel_->setNormalizeInfo(peak > 1e-5f ? QStringLiteral("Picco misurato: %1 dB. Guadagno applicato: %2 dB.")
+                                                                   .arg(peakDb, 0, 'f', 1)
+                                                                   .arg(20.0 * std::log10(static_cast<double>(gain)), 0, 'f', 1)
+                                                             : QStringLiteral("Il mix è muto: niente da normalizzare."));
+            },
+            Qt::QueuedConnection);
+    });
+}
+
 void MainWindow::refreshTimeline()
 {
+    scheduleNormalize();
     const core::Sequence& sequence = project_.sequence();
     std::vector<SequenceTimeline::Block> blocks;
     const auto replacement = project_.audioReplacement();

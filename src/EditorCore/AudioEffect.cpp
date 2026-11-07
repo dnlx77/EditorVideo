@@ -111,8 +111,28 @@ bool AudioEffect::active() const
     switch (kind) {
     case EffectKind::Equalizer:
         return std::any_of(bands.begin(), bands.end(), [](const EqBand& b) { return b.active(); });
+    case EffectKind::Normalize:
+        return true;
     }
     return false;
+}
+
+bool hasActiveNormalize(const std::vector<AudioEffect>& effects)
+{
+    return std::any_of(effects.begin(), effects.end(), [](const AudioEffect& e) { return e.kind == EffectKind::Normalize && e.enabled; });
+}
+
+float normalizeGain(const std::vector<AudioEffect>& effects, float measuredPeak)
+{
+    for (const AudioEffect& e : effects) {
+        if (e.kind != EffectKind::Normalize || !e.enabled)
+            continue;
+        if (!(measuredPeak > 1e-5f))
+            return 1.0f;
+        const double target = std::pow(10.0, clampedEffect(e).targetDb / 20.0);
+        return static_cast<float>(std::min(target / static_cast<double>(measuredPeak), 100.0));
+    }
+    return 1.0f;
 }
 
 const char* effectName(EffectKind kind)
@@ -120,6 +140,8 @@ const char* effectName(EffectKind kind)
     switch (kind) {
     case EffectKind::Equalizer:
         return "Equalizzatore";
+    case EffectKind::Normalize:
+        return "Normalizza";
     }
     return "";
 }
@@ -151,6 +173,9 @@ AudioEffect clampedEffect(AudioEffect effect)
             effect.bands.resize(8);
         for (EqBand& b : effect.bands)
             b = clampedBand(b);
+        break;
+    case EffectKind::Normalize:
+        effect.targetDb = std::clamp(std::isfinite(effect.targetDb) ? effect.targetDb : -1.0, kNormalizeMinDb, kNormalizeMaxDb);
         break;
     }
     return effect;

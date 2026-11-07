@@ -422,7 +422,10 @@ TEST_F(ProjectFileTest, AudioTracksAreSavedWithLevelsMuteAndSolo)
         eq.bands[5].enabled = true;
         audio.setEffects(a2, {eq, eq});
         eq.enabled = false;
-        audio.setEffects(AudioTracks::kMasterTrack, {eq});
+        AudioEffect norm;
+        norm.kind = EffectKind::Normalize;
+        norm.targetDb = -3.5;
+        audio.setEffects(AudioTracks::kMasterTrack, {eq, norm});
     }
     ASSERT_NE(audio.add(a2, AudioClip{0, file("voce.wav"), 0.5, 2.0 + 1.0 / 48000, 1.0, 9.5}), 0);
     ASSERT_NE(audio.add(a2, AudioClip{0, file("musica.mp3"), 10.0, 70.0, 4.0, 181.3}), 0);
@@ -439,6 +442,7 @@ TEST_F(ProjectFileTest, AudioTracksAreSavedWithLevelsMuteAndSolo)
     EXPECT_NE(text.find("\"pan\": -0.4"), std::string::npos) << text;
     EXPECT_NE(text.find("\"master\""), std::string::npos) << text;
     EXPECT_NE(text.find("\"effetti\""), std::string::npos) << text;
+    EXPECT_NE(text.find("\"normalizza\""), std::string::npos) << text;
     EXPECT_EQ(text.find("\"pan\": 0"), std::string::npos) << "il pan al centro non si scrive";
     EXPECT_NE(text.find("\"linea\""), std::string::npos) << text;
     EXPECT_EQ(text.find("calamita"), std::string::npos) << text;

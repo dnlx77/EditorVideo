@@ -53,7 +53,19 @@ int mixFileCount(const MixSpec& spec)
 double renderMixToFile(const MixSpec& spec, const std::string& path, const ExportProgress& progress, AudioCodec codec,
                        int bitRate)
 {
-    AudioMixer mixer(spec.segments, spec.gains, spec.pans, spec.masterGain, spec.effects);
+    // Con «Normalizza» sul Master si misura prima il picco di tutto il mix (metà del lavoro), poi si scrive col guadagno giusto.
+    float masterGain = spec.masterGain;
+    const auto master = spec.effects.find(kMasterTrackId);
+    const bool normalize = master != spec.effects.end() && hasActiveNormalize(master->second);
+    if (normalize) {
+        bool cancelled = false;
+        const float peak = measureMixPeak(
+            spec, [&](double done) { return !progress || progress(done * 0.5); }, &cancelled);
+        if (cancelled)
+            throw ExportCancelled();
+        masterGain *= normalizeGain(master->second, peak);
+    }
+    AudioMixer mixer(spec.segments, spec.gains, spec.pans, masterGain, spec.effects);
     const double seconds = std::max(spec.length, mixer.endTime());
     const long long totalFrames = std::max<long long>(1, std::llround(seconds * kMixSampleRate));
 
@@ -101,7 +113,7 @@ double renderMixToFile(const MixSpec& spec, const std::string& path, const Expor
 
         std::vector<std::int16_t> block;
         for (long long done = 0; done < totalFrames;) {
-            if (progress && !progress(static_cast<double>(done) / static_cast<double>(totalFrames)))
+            if (progress && !progress((normalize ? 0.5 : 0.0) + (normalize ? 0.5 : 1.0) * static_cast<double>(done) / static_cast<double>(totalFrames)))
                 throw ExportCancelled();
             const int count = static_cast<int>(std::min<long long>(kBlockFrames, totalFrames - done));
             mixer.render(done, static_cast<std::size_t>(count), block);

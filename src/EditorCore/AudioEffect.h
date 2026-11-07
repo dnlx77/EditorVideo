@@ -10,6 +10,7 @@ namespace editor::core {
 enum class EffectKind
 {
     Equalizer,  // equalizzatore parametrico a più bande (EqBand)
+    Normalize,  // solo sul Master: porta il picco di tutto il mix a un livello (AudioEffect::targetDb)
 };
 
 // Il tipo di filtro di una banda dell'equalizzatore.
@@ -28,6 +29,8 @@ inline constexpr double kEqMinQ = 0.1;
 inline constexpr double kEqMaxQ = 10.0;
 inline constexpr double kEqMaxGainDb = 18.0;  // i guadagni vanno da -18 a +18 dB
 inline constexpr std::size_t kEqBandCount = 6;
+inline constexpr double kNormalizeMinDb = -24.0;  // il livello di arrivo del picco va da -24 a -0,5 dB
+inline constexpr double kNormalizeMaxDb = -0.5;
 
 struct EqBand
 {
@@ -53,13 +56,18 @@ struct AudioEffect
     EffectKind kind = EffectKind::Equalizer;
     bool enabled = true;  // false = escluso (resta nello slot ma non agisce)
     std::vector<EqBand> bands = defaultEqBands();  // per l'equalizzatore
+    double targetDb = -1.0;                        // per Normalize: il picco del mix dopo la normalizzazione
 
     // Se agisce davvero sull'audio: attivo e con almeno una banda che cambia qualcosa.
     bool active() const;
     bool operator==(const AudioEffect&) const = default;
 };
 
-const char* effectName(EffectKind kind);  // "Equalizzatore"
+const char* effectName(EffectKind kind);  // "Equalizzatore", "Normalizza"
+// Il moltiplicatore che porta un picco misurato (0..1, valore assoluto) al livello del primo Normalize attivo della lista;
+// 1 se non ce n'è (o se il mix è muto). Mai oltre +40 dB.
+float normalizeGain(const std::vector<AudioEffect>& effects, float measuredPeak);
+bool hasActiveNormalize(const std::vector<AudioEffect>& effects);
 const char* bandTypeName(EqBandType type);
 // Porta i parametri nei limiti (un equalizzatore senza bande riceve quelle di partenza).
 AudioEffect clampedEffect(AudioEffect effect);

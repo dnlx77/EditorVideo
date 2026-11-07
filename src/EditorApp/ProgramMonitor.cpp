@@ -1597,7 +1597,7 @@ bool ProgramMonitor::startAudio(double from)
     applyVolume();
     core::AudioMixer mixer(core::mixSegmentsOf(project_), core::trackGainsOf(project_.audioTracks()),
                            core::trackPansOf(project_.audioTracks()),
-                           static_cast<float>(project_.audioTracks().masterGain()),
+                           static_cast<float>(project_.audioTracks().masterGain()) * normalizeGain_,
                            core::trackEffectsOf(project_.audioTracks()));
     const bool started = sequenceAudio_.start(std::move(mixer), from, programEnd(), speed_);
     player_->setAudioNote(started ? QString() : QStringLiteral("audio non disponibile"));
@@ -1616,11 +1616,20 @@ void ProgramMonitor::applyVolume()
     sequenceAudio_.setVolume(muted_ ? 0.0f : level * level);
 }
 
+void ProgramMonitor::setNormalizeGain(float gain)
+{
+    normalizeGain_ = gain;
+    sequenceAudio_.setMasterGain(static_cast<float>(project_.audioTracks().masterGain()) * normalizeGain_);
+}
+
 void ProgramMonitor::audioMixChanged()
 {
+    // Senza «Normalizza» attivo sul Master il guadagno della misura non vale più.
+    if (!core::hasActiveNormalize(project_.audioTracks().effects(core::AudioTracks::kMasterTrack)))
+        normalizeGain_ = 1.0f;
     sequenceAudio_.setTrackGains(core::trackGainsOf(project_.audioTracks()));
     sequenceAudio_.setTrackPans(core::trackPansOf(project_.audioTracks()));
-    sequenceAudio_.setMasterGain(static_cast<float>(project_.audioTracks().masterGain()));
+    sequenceAudio_.setMasterGain(static_cast<float>(project_.audioTracks().masterGain()) * normalizeGain_);
     sequenceAudio_.setEffects(core::trackEffectsOf(project_.audioTracks()));
     sequenceAudio_.setSegmentEnvelopes(core::segmentEnvelopesOf(project_));
 }

@@ -609,4 +609,28 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
         out[i] = static_cast<std::int16_t>(std::clamp(std::lround(limit(acc[i]) * 32768.0f), -32768L, 32767L));
 }
 
+float measureMixPeak(const MixSpec& spec, const std::function<bool(double)>& progress, bool* cancelled)
+{
+    if (cancelled != nullptr)
+        *cancelled = false;
+    AudioMixer mixer(spec.segments, spec.gains, spec.pans, spec.masterGain, spec.effects);
+    const double seconds = std::max(spec.length, mixer.endTime());
+    const long long totalFrames = std::max<long long>(1, std::llround(seconds * kMixSampleRate));
+    constexpr long long kBlock = 8192;
+    float peak = 0.0f;
+    std::vector<std::int16_t> block;
+    for (long long done = 0; done < totalFrames; done += kBlock) {
+        if (progress && !progress(static_cast<double>(done) / static_cast<double>(totalFrames))) {
+            if (cancelled != nullptr)
+                *cancelled = true;
+            return 0.0f;
+        }
+        mixer.render(done, static_cast<std::size_t>(std::min(kBlock, totalFrames - done)), block);
+        const auto peaks = mixer.takePeaks();
+        if (const auto it = peaks.find(kMasterTrackId); it != peaks.end())
+            peak = std::max({peak, it->second[0], it->second[1]});
+    }
+    return peak;
+}
+
 }  // namespace editor::core

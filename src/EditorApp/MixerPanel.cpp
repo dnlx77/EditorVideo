@@ -391,13 +391,80 @@ private:
     double holdAge_[2] = {0.0, 0.0};
 };
 
+// La finestra di «Normalizza» (solo Master): il livello a cui portare il picco di tutto il mix.
+class NormalizeDialog : public QDialog
+{
+public:
+    explicit NormalizeDialog(const QString& title, QWidget* parent) : QDialog(parent)
+    {
+        setWindowTitle(title);
+        setWindowFlag(Qt::WindowContextHelpButtonHint, false);
+        auto* layout = new QVBoxLayout(this);
+        enabled_ = new QCheckBox(QStringLiteral("Attivo"));
+        layout->addWidget(enabled_);
+        auto* row = new QHBoxLayout;
+        row->addWidget(new QLabel(QStringLiteral("Picco del mix a:")));
+        target_ = new QDoubleSpinBox;
+        target_->setRange(core::kNormalizeMinDb, core::kNormalizeMaxDb);
+        target_->setDecimals(1);
+        target_->setSingleStep(0.5);
+        target_->setSuffix(QStringLiteral(" dB"));
+        target_->setKeyboardTracking(false);
+        row->addWidget(target_);
+        layout->addLayout(row);
+        info_ = new QLabel;
+        info_->setWordWrap(true);
+        info_->setMinimumWidth(280);
+        layout->addWidget(info_);
+        auto* note = new QLabel(QStringLiteral("Il volume di tutto il mix si alza o si abbassa in modo che il punto più forte arrivi al livello scelto. "
+                                               "Vale in anteprima (dopo la misura) e nell'esportazione."));
+        note->setWordWrap(true);
+        note->setEnabled(false);
+        layout->addWidget(note);
+        connect(enabled_, &QCheckBox::clicked, this, [this] { commit(); });
+        connect(target_, &QDoubleSpinBox::valueChanged, this, [this] {
+            if (!updating_)
+                commit();
+        });
+    }
+    void setEffect(const core::AudioEffect& e)
+    {
+        updating_ = true;
+        enabled_->setChecked(e.enabled);
+        if (!target_->hasFocus())
+            target_->setValue(e.targetDb);
+        updating_ = false;
+    }
+    core::AudioEffect effect() const
+    {
+        core::AudioEffect e;
+        e.kind = core::EffectKind::Normalize;
+        e.enabled = enabled_->isChecked();
+        e.targetDb = target_->value();
+        return e;
+    }
+    void setInfo(const QString& text) { info_->setText(text); }
+    std::function<void(const core::AudioEffect&)> onChanged;
+
+private:
+    void commit()
+    {
+        if (onChanged)
+            onChanged(effect());
+    }
+    QCheckBox* enabled_ = nullptr;
+    QDoubleSpinBox* target_ = nullptr;
+    QLabel* info_ = nullptr;
+    bool updating_ = false;
+};
+
 }  // namespace
 
 // Una colonna del mixer.
 class MixerStrip : public QWidget
 {
 public:
-    MixerStrip(int trackId, const QString& name, QWidget* parent, bool master = false) : QWidget(parent), trackId_(trackId)
+    MixerStrip(int trackId, const QString& name, QWidget* parent, bool master = false) : QWidget(parent), trackId_(trackId), master_(master)
     {
         setFixedWidth(104);
         auto* col = new QVBoxLayout(this);
@@ -495,20 +562,40 @@ public:
     const std::vector<core::AudioEffect>& effects() const { return effects_; }
     QWidget* slotBox() const { return slotBox_; }
     EqualizerDialog* dialog() const { return dialog_; }
-    // Apre la finestra dell'effetto nello slot `index` (un solo equalizzatore aperto per colonna).
+    // Apre la finestra dell'effetto nello slot `index` (una per tipo e per colonna).
     void openEffect(int index)
     {
         if (index < 0 || index >= static_cast<int>(effects_.size()))
             return;
+        const core::AudioEffect& effect = effects_[static_cast<std::size_t>(index)];
+        if (effect.kind == core::EffectKind::Normalize) {
+            normIndex_ = index;
+            if (!normDialog_) {
+                normDialog_ = new NormalizeDialog(QStringLiteral("Normalizza - %1").arg(label_->text()), window());
+                normDialog_->setAttribute(Qt::WA_DeleteOnClose);
+                normDialog_->onChanged = [this](const core::AudioEffect& e) { changeEffect(normIndex_, e); };
+                normDialog_->setInfo(normalizeInfo_);
+            }
+            normDialog_->setEffect(effect);
+            normDialog_->show();
+            normDialog_->raise();
+            return;
+        }
         dialogIndex_ = index;
         if (!dialog_) {
             dialog_ = new EqualizerDialog(QStringLiteral("Equalizzatore - %1").arg(label_->text()), window());
             dialog_->setAttribute(Qt::WA_DeleteOnClose);
             dialog_->onChanged = [this](const core::AudioEffect& e) { changeEffect(dialogIndex_, e); };
         }
-        dialog_->setEffect(effects_[static_cast<std::size_t>(index)]);
+        dialog_->setEffect(effect);
         dialog_->show();
         dialog_->raise();
+    }
+    void setNormalizeInfo(const QString& text)
+    {
+        normalizeInfo_ = text;
+        if (normDialog_)
+            normDialog_->setInfo(text);
     }
 
     void wire(MixerPanel* panel)
@@ -608,7 +695,9 @@ public:
     std::vector<core::EffectKind> addableEffects() const
     {
         std::vector<core::EffectKind> list;
-        for (const core::EffectKind kind : {core::EffectKind::Equalizer}) {
+        for (const core::EffectKind kind : {core::EffectKind::Equalizer, core::EffectKind::Normalize}) {
+            if (kind == core::EffectKind::Normalize && !master_)
+                continue;  // «Normalizza» sta solo sul Master
             const bool present = std::any_of(effects_.begin(), effects_.end(), [&](const core::AudioEffect& e) { return e.kind == kind; });
             if (!present)
                 list.push_back(kind);
@@ -644,10 +733,16 @@ public:
             effects_ = t.effects;
             rebuildSlots();
             if (dialog_) {
-                if (dialogIndex_ < static_cast<int>(effects_.size()))
+                if (dialogIndex_ < static_cast<int>(effects_.size()) && effects_[static_cast<std::size_t>(dialogIndex_)].kind == core::EffectKind::Equalizer)
                     dialog_->setEffect(effects_[static_cast<std::size_t>(dialogIndex_)]);
                 else
                     dialog_->close();
+            }
+            if (normDialog_) {
+                if (normIndex_ < static_cast<int>(effects_.size()) && effects_[static_cast<std::size_t>(normIndex_)].kind == core::EffectKind::Normalize)
+                    normDialog_->setEffect(effects_[static_cast<std::size_t>(normIndex_)]);
+                else
+                    normDialog_->close();
             }
         }
         if (!fader_->dragging()) {
@@ -667,12 +762,16 @@ public:
 
 private:
     int trackId_;
+    bool master_ = false;
     MixerPanel* panel_ = nullptr;
     std::vector<core::AudioEffect> effects_;
     QWidget* slotBox_ = nullptr;
     QVBoxLayout* slotLayout_ = nullptr;
     QPointer<EqualizerDialog> dialog_;
     int dialogIndex_ = 0;
+    QPointer<NormalizeDialog> normDialog_;
+    int normIndex_ = 0;
+    QString normalizeInfo_;
     QPushButton* plus_ = nullptr;
     QPushButton* solo_ = nullptr;
     QPushButton* mute_ = nullptr;
@@ -725,6 +824,11 @@ void MixerPanel::setMaster(double levelDb, const std::vector<core::AudioEffect>&
     t.name = QStringLiteral("Master");
     t.levelDb = levelDb;
     master_->setTrack(t);
+}
+
+void MixerPanel::setNormalizeInfo(const QString& text)
+{
+    master_->setNormalizeInfo(text);
 }
 
 int MixerPanel::spectrumTrack() const
