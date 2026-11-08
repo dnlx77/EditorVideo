@@ -1,6 +1,7 @@
 #include "EditorApp/MixerPanel.h"
 
 #include "EditorApp/EqualizerDialog.h"
+#include "EditorApp/ValueControl.h"
 #include "EditorCore/AudioMixer.h"
 #include "EditorCore/AudioTracks.h"
 
@@ -60,30 +61,15 @@ double fractionDb(double f)
 
 // Il fader: una guida verticale con le tacche in dB e il cursore. Trascinando si vede il valore, che si consegna al
 // rilascio (un solo passo di Annulla per movimento, come il cursore del livello nella linea del tempo).
-class Fader : public QWidget
+class Fader : public ValueControl
 {
 public:
-    explicit Fader(QWidget* parent = nullptr) : QWidget(parent)
+    explicit Fader(QWidget* parent = nullptr) : ValueControl(kMinDb, kMaxDb, 0.0, parent)
     {
         setMinimumSize(70, 90);
         setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-        setFocusPolicy(Qt::WheelFocus);
         setToolTip(QStringLiteral("Livello della traccia: trascina, rotella per 0,5 dB (Maiusc: 0,1 dB); doppio clic = 0 dB"));
     }
-
-    double value() const { return value_; }
-    void setValue(double db)
-    {
-        db = std::clamp(db, kMinDb, kMaxDb);
-        if (db == value_)
-            return;
-        value_ = db;
-        update();
-    }
-    bool dragging() const { return dragging_; }
-
-    std::function<void(double)> onChanging;  // mentre si trascina
-    std::function<void(double)> onCommit;    // il valore definitivo
 
 protected:
     static const std::vector<double>& marks() { return scaleMarks(); }
@@ -121,109 +107,50 @@ protected:
             p.drawText(QRectF(0, y - 8, t.left() - 12, 16), Qt::AlignRight | Qt::AlignVCenter, text);
         }
         // Il cursore.
-        const double y = toY(value_);
+        const double y = toY(value());
         const QRectF knob(cx() - 14, y - 8, 28, 16);
         p.setPen(QPen(pal.color(QPalette::Shadow), 1));
-        p.setBrush(dragging_ || hasFocus() ? pal.color(QPalette::Light) : pal.color(QPalette::Button));
+        p.setBrush(dragging() || hasFocus() ? pal.color(QPalette::Light) : pal.color(QPalette::Button));
         p.drawRoundedRect(knob, 3, 3);
         p.setPen(pal.color(QPalette::Text));
         p.drawLine(QPointF(knob.left() + 3, y), QPointF(knob.right() - 3, y));
     }
 
-    void mousePressEvent(QMouseEvent* e) override
+    void startDrag(QMouseEvent* e) override
     {
-        if (e->button() != Qt::LeftButton)
-            return;
-        setFocus();
-        const double y = toY(value_);
+        const double y = toY(value());
         grab_ = std::abs(e->position().y() - y) <= 9 ? e->position().y() - y : 0.0;  // dov'è stato preso il cursore
-        dragging_ = true;
-        move(e->position().y() - grab_);
+        drag(e);
     }
-    void mouseMoveEvent(QMouseEvent* e) override
+    void drag(QMouseEvent* e) override { changeTo(std::round(toDb(e->position().y() - grab_) * 10.0) / 10.0); }
+    double wheelValue(bool up, bool fine) const override
     {
-        if (dragging_)
-            move(e->position().y() - grab_);
-    }
-    void mouseReleaseEvent(QMouseEvent* e) override
-    {
-        if (e->button() != Qt::LeftButton || !dragging_)
-            return;
-        dragging_ = false;
-        update();
-        if (onCommit)
-            onCommit(value_);
-    }
-    void mouseDoubleClickEvent(QMouseEvent* e) override
-    {
-        if (e->button() != Qt::LeftButton)
-            return;
-        dragging_ = false;
-        setValue(0.0);
-        if (onChanging)
-            onChanging(value_);
-        if (onCommit)
-            onCommit(value_);
-    }
-    void wheelEvent(QWheelEvent* e) override
-    {
-        const double step = (e->modifiers() & Qt::ShiftModifier) ? 0.1 : 0.5;
-        const double delta = e->angleDelta().y() == 0 ? e->angleDelta().x() : e->angleDelta().y();
-        if (delta == 0)
-            return;
-        setValue(std::round((value_ + (delta > 0 ? step : -step)) * 10.0) / 10.0);
-        if (onChanging)
-            onChanging(value_);
-        if (onCommit)
-            onCommit(value_);
-        e->accept();
+        const double step = fine ? 0.1 : 0.5;
+        return std::round((value() + (up ? step : -step)) * 10.0) / 10.0;
     }
 
 private:
-    void move(double y)
-    {
-        setValue(std::round(toDb(y) * 10.0) / 10.0);
-        if (onChanging)
-            onChanging(value_);
-    }
-
-    double value_ = 0.0;
     double grab_ = 0.0;
-    bool dragging_ = false;
 };
 
 // La manopola del pan: da S (sinistra) a D (destra), C al centro. Si gira trascinando (su/destra = verso destra), con la
 // rotella (Maiusc: passi piccoli); doppio clic = centro. Il valore si consegna al rilascio.
-class PanKnob : public QWidget
+class PanKnob : public ValueControl
 {
 public:
-    explicit PanKnob(QWidget* parent = nullptr) : QWidget(parent)
+    explicit PanKnob(QWidget* parent = nullptr) : ValueControl(-1.0, 1.0, 0.0, parent)
     {
         setFixedHeight(54);
         setMinimumWidth(48);
-        setFocusPolicy(Qt::WheelFocus);
         setToolTip(QStringLiteral("Pan: trascina o rotella, doppio clic = centro"));
-    }
-    double value() const { return value_; }
-    bool dragging() const { return dragging_; }
-    void setValue(double v)
-    {
-        v = std::clamp(v, -1.0, 1.0);
-        if (v == value_)
-            return;
-        value_ = v;
-        setToolTip(text());
-        update();
     }
     QString text() const
     {
-        const int percent = static_cast<int>(std::lround(std::abs(value_) * 100.0));
+        const int percent = static_cast<int>(std::lround(std::abs(value()) * 100.0));
         if (percent == 0)
             return QStringLiteral("Pan: centro");
-        return QStringLiteral("Pan: %1% %2").arg(percent).arg(value_ < 0 ? QStringLiteral("sinistra") : QStringLiteral("destra"));
+        return QStringLiteral("Pan: %1% %2").arg(percent).arg(value() < 0 ? QStringLiteral("sinistra") : QStringLiteral("destra"));
     }
-    std::function<void(double)> onChanging;
-    std::function<void(double)> onCommit;
 
 protected:
     void paintEvent(QPaintEvent*) override
@@ -234,10 +161,10 @@ protected:
         const double d = 34;
         const QRectF dial((width() - d) / 2.0, 2, d, d);
         p.setPen(QPen(pal.color(QPalette::Shadow), 1));
-        p.setBrush(dragging_ ? pal.color(QPalette::Light) : pal.color(QPalette::Button));
+        p.setBrush(dragging() ? pal.color(QPalette::Light) : pal.color(QPalette::Button));
         p.drawEllipse(dial);
         // Lancetta: 0 = su, ±135 gradi agli estremi.
-        const double angle = value_ * 135.0 * std::numbers::pi / 180.0;
+        const double angle = value() * 135.0 * std::numbers::pi / 180.0;
         const QPointF c = dial.center();
         p.setPen(QPen(pal.color(QPalette::Text), 2, Qt::SolidLine, Qt::RoundCap));
         p.drawLine(c, QPointF(c.x() + std::sin(angle) * d * 0.4, c.y() - std::cos(angle) * d * 0.4));
@@ -250,66 +177,28 @@ protected:
         p.drawText(QRectF(dial.right(), y - 8, 14, 14), Qt::AlignCenter, QStringLiteral("D"));
         p.drawText(QRectF(c.x() - 7, y, 14, 14), Qt::AlignCenter, QStringLiteral("C"));
     }
-    void mousePressEvent(QMouseEvent* e) override
+    void valueChanged() override { setToolTip(text()); }
+    void startDrag(QMouseEvent* e) override
     {
-        if (e->button() != Qt::LeftButton)
-            return;
-        setFocus();
-        dragging_ = true;
         lastX_ = e->position().x();
         lastY_ = e->position().y();
-        update();
     }
-    void mouseMoveEvent(QMouseEvent* e) override
+    void drag(QMouseEvent* e) override
     {
-        if (!dragging_)
-            return;
         const double delta = (e->position().x() - lastX_) - (e->position().y() - lastY_);
         lastX_ = e->position().x();
         lastY_ = e->position().y();
-        setValue(std::round((value_ + delta / 80.0) * 100.0) / 100.0);
-        if (onChanging)
-            onChanging(value_);
+        changeTo(std::round((value() + delta / 80.0) * 100.0) / 100.0);
     }
-    void mouseReleaseEvent(QMouseEvent* e) override
+    double wheelValue(bool up, bool fine) const override
     {
-        if (e->button() != Qt::LeftButton || !dragging_)
-            return;
-        dragging_ = false;
-        update();
-        if (onCommit)
-            onCommit(value_);
-    }
-    void mouseDoubleClickEvent(QMouseEvent* e) override
-    {
-        if (e->button() != Qt::LeftButton)
-            return;
-        dragging_ = false;
-        setValue(0.0);
-        if (onChanging)
-            onChanging(value_);
-        if (onCommit)
-            onCommit(value_);
-    }
-    void wheelEvent(QWheelEvent* e) override
-    {
-        const double step = (e->modifiers() & Qt::ShiftModifier) ? 0.01 : 0.05;
-        const double delta = e->angleDelta().y() == 0 ? e->angleDelta().x() : e->angleDelta().y();
-        if (delta == 0)
-            return;
-        setValue(std::round((value_ + (delta > 0 ? step : -step)) * 100.0) / 100.0);
-        if (onChanging)
-            onChanging(value_);
-        if (onCommit)
-            onCommit(value_);
-        e->accept();
+        const double step = fine ? 0.01 : 0.05;
+        return std::round((value() + (up ? step : -step)) * 100.0) / 100.0;
     }
 
 private:
-    double value_ = 0.0;
     double lastX_ = 0.0;
     double lastY_ = 0.0;
-    bool dragging_ = false;
 };
 
 // Il vu-meter stereo: due barre (sinistra e destra) con la stessa scala del fader, verde fino a -6 dB, giallo fino a 0,
@@ -327,6 +216,7 @@ public:
     // `peak` è il picco (0..1) dall'ultimo aggiornamento, `seconds` il tempo passato.
     void feed(float left, float right, double seconds)
     {
+        const std::array<double, 4> before = {level_[0], level_[1], hold_[0], hold_[1]};
         const std::array<float, 2> in = {left, right};
         for (int c = 0; c < 2; ++c) {
             const double db = in[static_cast<std::size_t>(c)] > 1e-6f ? 20.0 * std::log10(in[static_cast<std::size_t>(c)]) : kMinDb;
@@ -342,7 +232,9 @@ public:
                     hold_[c] = std::max(level, hold_[c] - kFallDbPerSecond * seconds);
             }
         }
-        update();
+        // Si ridisegna solo se si vede qualcosa di diverso (a riproduzione ferma i livelli restano in fondo).
+        if (level_[0] != before[0] || level_[1] != before[1] || hold_[0] != before[2] || hold_[1] != before[3])
+            update();
     }
     void reset()
     {
