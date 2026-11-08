@@ -376,6 +376,11 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
                         .arg(r.composeSeconds, 0, 'f', 1)
                         .arg(r.encodeSeconds, 0, 'f', 1)
                         .arg(std::max(0.0, r.totalSeconds - r.mixSeconds - r.composeSeconds - r.encodeSeconds), 0, 'f', 1);
+    if (r.composeSeconds > 0.0)
+        recoding += QStringLiteral("\nComposizione: scritte %1 s, livelli %2 s, fusione %3 s.")
+                        .arg(r.textPrepSeconds, 0, 'f', 1)
+                        .arg(r.layerPrepSeconds, 0, 'f', 1)
+                        .arg(r.blendSeconds, 0, 'f', 1);
     QMessageBox::information(this, QStringLiteral("Esportazione completata"),
                              QStringLiteral("%1 in:\n%2\n\nDurata: %3\n%4")
                                  .arg(what, target, timeText(outcome.result->durationSeconds), recoding));

@@ -53,6 +53,11 @@ struct ExportResult
     double totalSeconds = 0.0;
     double composeSeconds = 0.0;
     double encodeSeconds = 0.0;
+    // Dentro la composizione: preparazione delle scritte, decodifica/preparazione dei livelli sopra V1, e fusione finale
+    // (trasformazione, scritte e livelli disegnati sul fotogramma, conversione per l'encoder).
+    double textPrepSeconds = 0.0;
+    double layerPrepSeconds = 0.0;
+    double blendSeconds = 0.0;
 };
 
 // Una transizione da fondere nel file esportato (vedi ReencodeOptions::transitions): sta sulla giunzione fra il tratto
