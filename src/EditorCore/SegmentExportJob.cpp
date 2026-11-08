@@ -510,8 +510,13 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             throw MediaError(kOutOfMemory);
         // Il tempo del fotogramma nel montaggio, a metà fotogramma per non sbagliare ai bordi.
         const double frameTime = doneLength_ + (k + 0.5) * frameSeconds;
+        const auto textStarted = std::chrono::steady_clock::now();
         const std::vector<BlendedText> texts = textsAt(frameTime);
+        const auto layersStarted = std::chrono::steady_clock::now();
         const bool layered = prepareLayers(frameTime);
+        const auto blendStarted = std::chrono::steady_clock::now();
+        result_.textPrepSeconds += std::chrono::duration<double>(layersStarted - textStarted).count();
+        result_.layerPrepSeconds += std::chrono::duration<double>(blendStarted - layersStarted).count();
         if (piece.transition >= 0) {
             // Dentro una transizione: il fotogramma è la fusione dei due pezzi (con le scritte sopra, se ci sono).
             const ExportTransition& transition = reencode_.transitions[static_cast<std::size_t>(piece.transition)];
@@ -551,6 +556,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         }
         emitted->pts = base + k;
         const auto encodeStarted = std::chrono::steady_clock::now();
+        result_.blendSeconds += std::chrono::duration<double>(encodeStarted - blendStarted).count();
         video.encoder.encode(emitted.get(), k == 0, videoSink);
         const auto encodeDone = std::chrono::steady_clock::now();
         result_.composeSeconds += std::chrono::duration<double>(encodeStarted - composeStarted).count();
