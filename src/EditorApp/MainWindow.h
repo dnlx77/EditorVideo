@@ -359,6 +359,17 @@ private:
     void recordMixEdit(const QString& label, const core::Project& before);
     // Come recordEdit, per le modifiche che non toccano la sequenza (nessun aggiornamento dell'interfaccia).
     void recordHistory(const QString& label, const core::Project& before);
+    // Modifiche fatte di fila con lo stesso controllo (un cursore, una casella, il testo di una scritta): una sola voce di Annulla.
+    struct MergedEdit
+    {
+        std::string key;        // cosa si stava cambiando (campo e pezzi); vuota = non si unisce
+        std::size_t count = 0;  // quante voci aveva Annulla dopo quella modifica
+    };
+    // true se la modifica `key` prolunga l'ultima voce di Annulla: stessa chiave, voce `label` ancora in cima e dopo non è
+    // successo altro. Va chiesto prima di cambiare il progetto: la copia di prima serve solo se è false.
+    bool continuesEdit(const MergedEdit& last, const std::string& key, const QString& label) const;
+    // Dopo la modifica: senza `before` prolunga l'ultima voce, altrimenti ne registra una nuova `label`; poi ricorda la chiave.
+    void finishMergedEdit(MergedEdit& last, std::string key, const QString& label, const std::optional<core::Project>& before);
     void updateUndoActions();
     void afterHistoryChange(const QString& message);
     // Comandi di spostamento: vanno all'anteprima attiva.
@@ -446,18 +457,15 @@ private:
     PropertiesPanel* propertiesPanel_ = nullptr;
     MixerPanel* mixerPanel_ = nullptr;
     QDockWidget* mixerDock_ = nullptr;
-    std::string transitionMergeKey_;         // come transformMergeKey_, per le modifiche delle transizioni
-    std::size_t transitionMergeCount_ = 0;
+    MergedEdit transitionMerge_;  // ultima modifica delle transizioni, per unire quelle di fila
     bool propertiesFollowCursor_ = false;  // il pannello mostra un pezzo scelto da solo: i valori e i rombi seguono il cursore
-    std::string transformMergeKey_;          // campo e pezzi dell'ultima modifica delle trasformazioni, per unire quelle di fila
-    std::size_t transformMergeCount_ = 0;
+    MergedEdit transformMerge_;  // ultima modifica delle trasformazioni, per unire quelle di fila
     QTabWidget* leftTabs_ = nullptr;        // il blocco in alto a sinistra ha tre schede: File del progetto, Transizioni e Gruppi
     TransitionListPanel* transitionPanel_ = nullptr;
     GroupListPanel* groupPanel_ = nullptr;  // terza scheda del blocco a sinistra
     TransitionPreviewWidget* transitionPreview_ = nullptr;
     QStackedWidget* sourceStack_ = nullptr;  // il lettore della Sorgente o l'anteprima della transizione
-    int textMergeClip_ = 0;                 // scritta dell'ultima modifica del pannello, per unire quelle di fila
-    std::size_t textMergeCount_ = 0;        // quante voci aveva Annulla dopo quella modifica
+    MergedEdit textMerge_;  // ultima modifica del pannello delle scritte, per unire quelle di fila
     QDockWidget* fullScreenDock_ = nullptr;
     QByteArray layoutBeforeFullScreen_;  // disposizione da ritrovare uscendo dallo schermo intero
     std::optional<CornerDrag> cornerDrag_;  // si sta trascinando un incrocio fra separatori

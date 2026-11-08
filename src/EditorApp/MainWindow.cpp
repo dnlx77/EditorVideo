@@ -1186,6 +1186,22 @@ void MainWindow::recordHistory(const QString& label, const core::Project& before
     updateUndoActions();
 }
 
+bool MainWindow::continuesEdit(const MergedEdit& last, const std::string& key, const QString& label) const
+{
+    return !key.empty() && last.key == key && last.count == history_.undoCount() && history_.canUndo() && !history_.canRedo()
+        && QString::fromStdString(history_.undoLabel()) == label;
+}
+
+void MainWindow::finishMergedEdit(MergedEdit& last, std::string key, const QString& label, const std::optional<core::Project>& before)
+{
+    if (before)
+        recordEdit(label, *before);
+    else if (history_.amend())  // (riesce sempre: continuesEdit ha già controllato che ci sia la voce e niente da ripetere)
+        sequenceChanged();
+    last.key = std::move(key);
+    last.count = history_.undoCount();
+}
+
 void MainWindow::recordEdit(const QString& label, const core::Project& before)
 {
     recordHistory(label, before);

@@ -216,7 +216,7 @@ bool MainWindow::editAnimationKeys(const QString& label, const std::function<boo
     const core::Project before = project_;
     if (!writeAnimTarget(target, base, animation))
         return false;
-    transformMergeKey_.clear();
+    transformMerge_.key.clear();
     recordEdit(label, before);
     return true;
 }
@@ -276,26 +276,23 @@ bool MainWindow::setTextPosition(std::optional<double> x, std::optional<double> 
     base = core::normalized(base);
     if (style == clip->style && base == clip->transform && animation == clip->animation)
         return false;
-    const core::Project before = project_;
+    const QString label = QStringLiteral("Posizione della scritta");
+    std::string key = std::string("posizioneScritta") + (x ? "X" : "") + (y ? "Y" : "") + ":" + std::to_string(target.id) + ":"
+                      + std::to_string(std::lround(target.fileTime * 1000.0));
+    std::optional<core::Project> before;
+    if (!continuesEdit(transformMerge_, key, label))
+        before = project_;
     core::TextTracks& tracks = project_.textTracks();
     tracks.setStyle(target.id, style);
     tracks.setTransform(target.id, base);
     tracks.setAnimation(target.id, animation);
-    const std::string key = std::string("posizioneScritta") + (x ? "X" : "") + (y ? "Y" : "") + ":" + std::to_string(target.id) + ":"
-                            + std::to_string(std::lround(target.fileTime * 1000.0));
-    const bool continues = transformMergeKey_ == key && transformMergeCount_ == history_.undoCount() && history_.canUndo()
-                        && history_.undoLabel() == "Posizione della scritta" && !history_.canRedo();
-    if (continues && history_.amend())
-        sequenceChanged();
-    else
-        recordEdit(QStringLiteral("Posizione della scritta"), before);
-    transformMergeKey_ = key;
-    transformMergeCount_ = history_.undoCount();
+    finishMergedEdit(transformMerge_, std::move(key), label, before);
     return true;
 }
 
 bool MainWindow::applyTransformEdit(const std::function<void(core::Transform&)>& edit, const std::string& field)
 {
+    const QString label = QStringLiteral("Cambia trasformazione");
     // Un pezzo scelto da solo (di V1 o di un livello): i parametri animati ricevono una chiave sul cursore (auto-key), il resto
     // cambia la trasformazione fissa.
     if (const AnimTarget target = animationTarget(); target.valid) {
@@ -306,27 +303,29 @@ bool MainWindow::applyTransformEdit(const std::function<void(core::Transform&)>&
         core::TransformAnimation animation = target.animation;
         if (!core::applyEditWithKeys(animation, base, shown, edited, target.fileTime))
             return false;
-        const core::Project before = project_;
+        // Un cursore o una casella girati più volte di fila sullo stesso campo (e sullo stesso istante) sono una sola voce di Annulla.
+        std::string key = field + (target.text ? ":T" : target.layer ? ":L" : ":") + std::to_string(target.id) + ":"
+                          + std::to_string(std::lround(target.fileTime * 1000.0));
+        std::optional<core::Project> before;
+        if (!continuesEdit(transformMerge_, key, label))
+            before = project_;
         if (!writeAnimTarget(target, base, animation))
             return false;
-        // Un cursore o una casella girati più volte di fila sullo stesso campo (e sullo stesso istante) sono una sola voce di Annulla.
-        const std::string key = field + (target.text ? ":T" : target.layer ? ":L" : ":") + std::to_string(target.id) + ":"
-                                + std::to_string(std::lround(target.fileTime * 1000.0));
-        const bool continues = transformMergeKey_ == key && transformMergeCount_ == history_.undoCount() && history_.canUndo()
-                            && history_.undoLabel() == "Cambia trasformazione" && !history_.canRedo();
-        if (continues && history_.amend())
-            sequenceChanged();
-        else
-            recordEdit(QStringLiteral("Cambia trasformazione"), before);
-        transformMergeKey_ = key;
-        transformMergeCount_ = history_.undoCount();
+        finishMergedEdit(transformMerge_, std::move(key), label, before);
         return true;
     }
     const std::vector<int> ids = selectedPieceIds(timeline_->allSelectedObjects());
     if (ids.empty())
         return false;
-    const core::Project before = project_;
+    // Un cursore o una casella girati più volte di fila sullo stesso campo sono una sola voce di Annulla.
     std::string key = field;
+    for (int id : ids) {
+        if (project_.sequence().find(id) != nullptr)
+            key += ':' + std::to_string(id);
+    }
+    std::optional<core::Project> before;
+    if (!continuesEdit(transformMerge_, key, label))
+        before = project_;
     int changed = 0;
     for (int id : ids) {
         const core::Fragment* f = project_.sequence().find(id);
@@ -335,19 +334,10 @@ bool MainWindow::applyTransformEdit(const std::function<void(core::Transform&)>&
         core::Transform t = f->transform;
         edit(t);
         changed += project_.setTransform({id}, t);
-        key += ':' + std::to_string(id);
     }
     if (changed == 0)
         return false;
-    // Un cursore o una casella girati più volte di fila sullo stesso campo sono una sola voce di Annulla.
-    const bool continues = transformMergeKey_ == key && transformMergeCount_ == history_.undoCount() && history_.canUndo()
-                        && history_.undoLabel() == "Cambia trasformazione" && !history_.canRedo();
-    if (continues && history_.amend())
-        sequenceChanged();
-    else
-        recordEdit(QStringLiteral("Cambia trasformazione"), before);
-    transformMergeKey_ = key;
-    transformMergeCount_ = history_.undoCount();
+    finishMergedEdit(transformMerge_, std::move(key), label, before);
     return true;
 }
 
@@ -360,7 +350,7 @@ bool MainWindow::commitMonitorTransform(int fragmentId, const core::Transform& t
     const core::Project before = project_;
     if (project_.setTransform({fragmentId}, transform) == 0)
         return false;
-    transformMergeKey_.clear();  // un gesto è una voce di Annulla a sé: non si unisce alle modifiche del pannello
+    transformMerge_.key.clear();  // un gesto è una voce di Annulla a sé: non si unisce alle modifiche del pannello
     recordEdit(QStringLiteral("Trasforma sul monitor"), before);
     return true;
 }
@@ -377,7 +367,7 @@ bool MainWindow::commitMonitorTextTransform(int clipId, const core::Transform& t
     const core::Project before = project_;
     if (!project_.textTracks().setTransform(clipId, core::normalized(transform)))
         return false;
-    transformMergeKey_.clear();
+    transformMerge_.key.clear();
     recordEdit(QStringLiteral("Trasforma sul monitor"), before);
     return true;
 }
@@ -391,7 +381,7 @@ bool MainWindow::commitMonitorLayerTransform(int pieceId, const core::Transform&
     const core::Project before = project_;
     if (!project_.textTracks().setPieceTransform(pieceId, transform))
         return false;
-    transformMergeKey_.clear();
+    transformMerge_.key.clear();
     recordEdit(QStringLiteral("Trasforma sul monitor"), before);
     return true;
 }
@@ -412,7 +402,7 @@ bool MainWindow::commitAnimatedMonitorTransform(bool layer, int id, const core::
     const core::Project before = project_;
     if (!writeAnimTarget(target, base, animation))
         return false;
-    transformMergeKey_.clear();
+    transformMerge_.key.clear();
     recordEdit(QStringLiteral("Trasforma sul monitor"), before);
     return true;
 }
@@ -454,7 +444,7 @@ void MainWindow::applyAnimationAction(core::AnimGroup group, int actionValue)
     const core::Project before = project_;
     if (!writeAnimTarget(target, base, animation))
         return;
-    transformMergeKey_.clear();
+    transformMerge_.key.clear();
     recordEdit(label, before);
 }
 
@@ -498,7 +488,7 @@ void MainWindow::fitSelectedPieces(bool fill)
     }
     if (changed == 0)
         return;
-    transformMergeKey_.clear();
+    transformMerge_.key.clear();
     recordEdit(fill ? QStringLiteral("Riempi il fotogramma") : QStringLiteral("Adatta al fotogramma"), before);
 }
 

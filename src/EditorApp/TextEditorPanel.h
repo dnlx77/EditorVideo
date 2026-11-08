@@ -103,8 +103,10 @@ private:
     QCheckBox* background_ = nullptr;
     ColorButton* backgroundColor_ = nullptr;
     QDoubleSpinBox* padding_ = nullptr;
-    QDoubleSpinBox* centerX_ = nullptr;
-    QDoubleSpinBox* centerY_ = nullptr;
+    // Centro di stile della scritta (0..1 del fotogramma): non ha un campo nel pannello (la posizione si cambia in «Trasforma»),
+    // si cambia con i nove posti fissi.
+    double centerX_ = 0.5;
+    double centerY_ = 0.88;
     QDoubleSpinBox* length_ = nullptr;
     QDoubleSpinBox* fadeIn_ = nullptr;
     QDoubleSpinBox* fadeOut_ = nullptr;

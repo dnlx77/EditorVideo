@@ -129,22 +129,18 @@ bool MainWindow::applyTransitionEdit(const std::string& type, const core::Transi
     const core::TransitionClip* clip = project_.transitions().find(id);
     if (clip == nullptr)
         return false;
-    const core::Project before = project_;
+    // Girare più volte di fila lo stesso controllo è una sola voce di Annulla.
+    const QString label = QStringLiteral("Modifica transizione");
+    const std::string key = field + ':' + std::to_string(id);
+    std::optional<core::Project> before;
+    if (!continuesEdit(transitionMerge_, key, label))
+        before = project_;
     const bool changedSettings = project_.setTransitionSettings(id, type, params, crossfadeAudio);
     const bool changedDuration = std::abs(clip->duration - duration) > 1e-6
                               && project_.setTransitionDuration(id, clampTransitionDuration(id, duration));
     if (!changedSettings && !changedDuration)
         return false;
-    // Girare più volte di fila lo stesso controllo è una sola voce di Annulla.
-    const std::string key = field + ':' + std::to_string(id);
-    const bool continues = transitionMergeKey_ == key && transitionMergeCount_ == history_.undoCount() && history_.canUndo()
-                        && history_.undoLabel() == "Modifica transizione" && !history_.canRedo();
-    if (continues && history_.amend())
-        sequenceChanged();
-    else
-        recordEdit(QStringLiteral("Modifica transizione"), before);
-    transitionMergeKey_ = key;
-    transitionMergeCount_ = history_.undoCount();
+    finishMergedEdit(transitionMerge_, key, label, before);
     return true;
 }
 
