@@ -27,6 +27,38 @@
 namespace editor::app {
 using namespace detail;
 
+namespace {
+
+// Il bordo (inizio o fine) di una clip a meno di 5 pixel da `x`, il più vicino; a pari distanza vince quello di cui si è
+// dentro la clip. Le clip più strette di 12 pixel non hanno bordi da prendere: si prendono per spostarle.
+template <typename Clips, typename ToX>
+bool nearestEdge(const Clips& clips, double x, ToX toX, int& clip, bool& atStart)
+{
+    constexpr double kReach = 5.0;  // pixel
+    double bestDistance = kReach + 1;
+    bool found = false;
+    for (std::size_t i = 0; i < clips.size(); ++i) {
+        const double left = toX(clips[i].position);
+        const double right = toX(clips[i].position + clips[i].length);
+        if (right - left < 12)
+            continue;
+        for (const bool start : {true, false}) {
+            const double edge = start ? left : right;
+            const double distance = std::abs(x - edge);
+            const bool inside = start ? x >= edge : x <= edge;
+            if (distance <= kReach && (distance < bestDistance || (distance == bestDistance && inside))) {
+                clip = static_cast<int>(i);
+                atStart = start;
+                bestDistance = distance;
+                found = true;
+            }
+        }
+    }
+    return found;
+}
+
+}  // namespace
+
 
 QStringList droppedFiles(const QMimeData* mime)
 {
@@ -866,28 +898,7 @@ bool SequenceTimeline::textEdgeAt(const QPointF& pos, int& lane, int& clip, bool
     lane = textLaneAt(pos.y(), true);
     if (lane < 0 || pos.x() < videoLane().left())
         return false;
-    constexpr double kReach = 5.0;  // pixel
-    double bestDistance = kReach + 1;
-    bool found = false;
-    const auto& clips = laneRef(lane).clips;
-    for (std::size_t i = 0; i < clips.size(); ++i) {
-        const double left = xForTime(clips[i].position);
-        const double right = xForTime(clips[i].position + clips[i].length);
-        if (right - left < 12)
-            continue;  // scritta troppo stretta: si prende per spostarla
-        for (const bool start : {true, false}) {
-            const double edge = start ? left : right;
-            const double distance = std::abs(pos.x() - edge);
-            const bool inside = start ? pos.x() >= edge : pos.x() <= edge;
-            if (distance <= kReach && (distance < bestDistance || (distance == bestDistance && inside))) {
-                clip = static_cast<int>(i);
-                atStart = start;
-                bestDistance = distance;
-                found = true;
-            }
-        }
-    }
-    return found;
+    return nearestEdge(laneRef(lane).clips, pos.x(), [this](double t) { return xForTime(t); }, clip, atStart);
 }
 
 SequenceTimeline::Object::Kind SequenceTimeline::textObjectKind(int clipId) const
@@ -1202,28 +1213,7 @@ bool SequenceTimeline::audioEdgeAt(const QPointF& pos, int& lane, int& clip, boo
     lane = laneAt(pos.y());
     if (lane < 0 || pos.x() < videoLane().left())
         return false;
-    constexpr double kReach = 5.0;  // pixel
-    double bestDistance = kReach + 1;
-    bool found = false;
-    const auto& clips = lanes_[static_cast<std::size_t>(lane)].clips;
-    for (std::size_t i = 0; i < clips.size(); ++i) {
-        const double left = xForTime(clips[i].position);
-        const double right = xForTime(clips[i].position + clips[i].length);
-        if (right - left < 12)
-            continue;  // clip troppo stretta: si prende per spostarla
-        for (const bool start : {true, false}) {
-            const double edge = start ? left : right;
-            const double distance = std::abs(pos.x() - edge);
-            const bool inside = start ? pos.x() >= edge : pos.x() <= edge;
-            if (distance <= kReach && (distance < bestDistance || (distance == bestDistance && inside))) {
-                clip = static_cast<int>(i);
-                atStart = start;
-                bestDistance = distance;
-                found = true;
-            }
-        }
-    }
-    return found;
+    return nearestEdge(lanes_[static_cast<std::size_t>(lane)].clips, pos.x(), [this](double t) { return xForTime(t); }, clip, atStart);
 }
 
 double SequenceTimeline::audioDragTarget(double x, int lane) const

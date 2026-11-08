@@ -84,15 +84,10 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
     }
 
     if (trimming_ && trimIndex_ >= 0 && trimIndex_ < static_cast<int>(blocks_.size())) {
-        // Bordo trascinato: la parte aggiunta chiara, quella tolta scurita, e una riga dove sarà il bordo.
         const QRectF lane = videoLane();
         const double oldX = xForBlockEdge(trimIndex_, trimAtStart_);
         const double newX = xForTime(trimEdgeSequenceTime(trimValue_));
-        const bool longer = trimAtStart_ ? newX < oldX : newX > oldX;
-        const QRectF changed(QPointF(std::min(oldX, newX), lane.top()), QPointF(std::max(oldX, newX), lane.bottom()));
-        p.fillRect(changed, longer ? QColor(255, 255, 255, 110) : QColor(0, 0, 0, 120));
-        p.setPen(QPen(palette().color(QPalette::Highlight), 3));
-        p.drawLine(QPointF(newX, lane.top() - 3), QPointF(newX, lane.bottom() + 3));
+        paintTrimFeedback(p, lane, oldX, newX, trimAtStart_);
         const double edgeTime = trimEdgeSequenceTime(trimValue_);
         paintAlignGuide(p, edgeTime, edgeMarks(trimIndex_, 0, 0, trimAtStart_ ? startOfBlock(trimIndex_) : startOfBlock(trimIndex_) + blocks_[static_cast<std::size_t>(trimIndex_)].length));
     }
@@ -104,11 +99,7 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
             const double oldEdge = audioTrimAtStart_ ? c->position : c->position + c->length;
             const double oldX = xForTime(oldEdge);
             const double newX = xForTime(oldEdge + audioTrimValue_ - (audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length));
-            const bool longer = audioTrimAtStart_ ? newX < oldX : newX > oldX;
-            const QRectF changed(QPointF(std::min(oldX, newX), lane.top()), QPointF(std::max(oldX, newX), lane.bottom()));
-            p.fillRect(changed, longer ? QColor(255, 255, 255, 110) : QColor(0, 0, 0, 120));
-            p.setPen(QPen(palette().color(QPalette::Highlight), 3));
-            p.drawLine(QPointF(newX, lane.top() - 3), QPointF(newX, lane.bottom() + 3));
+            paintTrimFeedback(p, lane, oldX, newX, audioTrimAtStart_);
             paintAlignGuide(p, oldEdge + audioTrimValue_ - (audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length),
                             edgeMarks(-1, c->clipId, 0, oldEdge));
         }
@@ -121,11 +112,7 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
             const double oldEdge = textTrimAtStart_ ? c->position : c->position + c->length;
             const double oldX = xForTime(oldEdge);
             const double newX = xForTime(textTrimValue_);
-            const bool longer = textTrimAtStart_ ? newX < oldX : newX > oldX;
-            const QRectF changed(QPointF(std::min(oldX, newX), lane.top()), QPointF(std::max(oldX, newX), lane.bottom()));
-            p.fillRect(changed, longer ? QColor(255, 255, 255, 110) : QColor(0, 0, 0, 120));
-            p.setPen(QPen(palette().color(QPalette::Highlight), 3));
-            p.drawLine(QPointF(newX, lane.top() - 3), QPointF(newX, lane.bottom() + 3));
+            paintTrimFeedback(p, lane, oldX, newX, textTrimAtStart_);
             paintAlignGuide(p, textTrimValue_, edgeMarks(-1, 0, c->clipId, oldEdge));
         }
     }
@@ -660,6 +647,15 @@ void SequenceTimeline::paintAudio(QPainter& p)
         }
         p.restore();
     }
+}
+
+void SequenceTimeline::paintTrimFeedback(QPainter& p, const QRectF& lane, double oldX, double newX, bool atStart) const
+{
+    const bool longer = atStart ? newX < oldX : newX > oldX;
+    const QRectF changed(QPointF(std::min(oldX, newX), lane.top()), QPointF(std::max(oldX, newX), lane.bottom()));
+    p.fillRect(changed, longer ? QColor(255, 255, 255, 110) : QColor(0, 0, 0, 120));
+    p.setPen(QPen(palette().color(QPalette::Highlight), 3));
+    p.drawLine(QPointF(newX, lane.top() - 3), QPointF(newX, lane.bottom() + 3));
 }
 
 namespace {

@@ -333,22 +333,12 @@ double AudioTracks::freePosition(int trackId, double length, double desired) con
 
 double AudioTracks::freeSpot(const AudioTrack& track, double length, double desired, int ignoredClip)
 {
-    desired = std::max(0.0, desired);
-    if (!overlaps(track, desired, length, ignoredClip))
-        return desired;
-    // Contro una delle altre clip, prima o dopo: il punto libero più vicino.
-    double best = -1.0;
+    std::vector<TimeRange> occupied;
     for (const AudioClip& other : track.clips) {
-        if (other.id == ignoredClip)
-            continue;
-        for (const double candidate : {other.endPosition(), other.position - length}) {
-            if (candidate < 0.0 || overlaps(track, candidate, length, ignoredClip))
-                continue;
-            if (best < 0.0 || std::abs(candidate - desired) < std::abs(best - desired))
-                best = candidate;
-        }
+        if (other.id != ignoredClip)
+            occupied.push_back({other.position, other.endPosition()});
     }
-    return best < 0.0 ? desired : best;
+    return closestFreeStart(std::move(occupied), length, desired, kTimeEpsilon);
 }
 
 bool AudioTracks::moveTo(int clipId, int trackId, double position, const std::vector<TimeRange>& blocked)

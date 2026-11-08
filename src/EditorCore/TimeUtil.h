@@ -3,7 +3,9 @@
 // Tempi (secondi): intervalli e funzioni di servizio comuni a segmento, progetto, sequenza ed esportazione.
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
+#include <limits>
 #include <vector>
 
 namespace editor::core {
@@ -35,6 +37,41 @@ inline std::vector<TimeRange> mergeRanges(std::vector<TimeRange> ranges)
             merged.push_back(r);
     }
     return merged;
+}
+
+// Dove mettere un oggetto lungo `length` che si vorrebbe a `desired` (portato a >= 0) senza sovrapporlo agli `occupied`
+// (in qualsiasi ordine, anche sovrapposti fra loro): `desired` se è libero, altrimenti il punto più vicino in uno degli
+// spazi fra gli occupati (o dopo l'ultimo). Si tollerano sovrapposizioni fino a `tolerance` secondi.
+inline double closestFreeStart(std::vector<TimeRange> occupied, double length, double desired, double tolerance)
+{
+    desired = std::max(desired, 0.0);
+    const auto overlaps = [&](double start) {
+        return std::any_of(occupied.begin(), occupied.end(), [&](const TimeRange& r) {
+            return start < r.end - tolerance && start + length > r.start + tolerance;
+        });
+    };
+    if (!overlaps(desired))
+        return desired;
+    std::sort(occupied.begin(), occupied.end(), [](const TimeRange& a, const TimeRange& b) { return a.start < b.start; });
+    double best = -1.0;
+    double bestDistance = std::numeric_limits<double>::max();
+    const auto consider = [&](double gapStart, double gapEnd) {
+        if (gapEnd - gapStart < length - tolerance)
+            return;
+        const double start = std::clamp(desired, gapStart, std::max(gapStart, gapEnd - length));
+        const double distance = std::abs(start - desired);
+        if (distance <= bestDistance) {  // a pari distanza vince il posto più avanti
+            bestDistance = distance;
+            best = start;
+        }
+    };
+    double cursor = 0.0;
+    for (const TimeRange& r : occupied) {
+        consider(cursor, r.start);
+        cursor = std::max(cursor, r.end);
+    }
+    consider(cursor, std::numeric_limits<double>::max() / 4);
+    return best;
 }
 
 // Fotogramma chiave nello stesso punto o subito prima di `seconds` (`keyframes` in ordine); se `seconds` viene prima
