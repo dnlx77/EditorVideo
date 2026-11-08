@@ -1,6 +1,7 @@
 #include "EditorApp/EqualizerDialog.h"
 
 #include "EditorApp/UiText.h"
+#include "EditorApp/ValueControl.h"
 #include "EditorCore/Spectrum.h"
 
 #include <QtCore/QSettings>
@@ -38,49 +39,26 @@ QColor bandColor(int band)
 }  // namespace
 
 // Una manopola: si gira trascinando in verticale (su = più), con la rotella; doppio clic = valore di partenza.
-class EqKnob : public QWidget
+class EqKnob : public ValueControl
 {
 public:
     EqKnob(double minimum, double maximum, double initial, bool logarithmic, QWidget* parent = nullptr)
-        : QWidget(parent), min_(minimum), max_(maximum), default_(initial), value_(initial), log_(logarithmic)
+        : ValueControl(minimum, maximum, initial, parent), log_(logarithmic)
     {
         setFixedSize(38, 38);
-        setFocusPolicy(Qt::WheelFocus);
-    }
-    double value() const { return value_; }
-    void setValue(double v)
-    {
-        v = std::clamp(v, min_, max_);
-        if (v == value_)
-            return;
-        value_ = v;
-        update();
-    }
-    void setDefault(double v) { default_ = v; }
-    std::function<void(double)> onChanging;
-    std::function<void(double)> onCommit;
-
-    // Un valore scelto dall'utente (doppio clic, rotella): lo mette e lo consegna subito.
-    void turnTo(double v)
-    {
-        setValue(v);
-        if (onChanging)
-            onChanging(value_);
-        if (onCommit)
-            onCommit(value_);
     }
 
 protected:
     double norm() const
     {
         if (log_)
-            return std::log(value_ / min_) / std::log(max_ / min_);
-        return (value_ - min_) / (max_ - min_);
+            return std::log(value() / minimum()) / std::log(maximum() / minimum());
+        return (value() - minimum()) / (maximum() - minimum());
     }
     double fromNorm(double n) const
     {
         n = std::clamp(n, 0.0, 1.0);
-        return log_ ? min_ * std::pow(max_ / min_, n) : min_ + n * (max_ - min_);
+        return log_ ? minimum() * std::pow(maximum() / minimum(), n) : minimum() + n * (maximum() - minimum());
     }
     void paintEvent(QPaintEvent*) override
     {
@@ -94,7 +72,7 @@ protected:
         p.setPen(QPen(isEnabled() ? QColor(0xe0, 0x7a, 0x30) : pal.color(QPalette::Mid), 3, Qt::SolidLine, Qt::RoundCap));
         p.drawArc(dial.adjusted(-2, -2, 2, 2), static_cast<int>((90 + 135) * 16), static_cast<int>(-270 * norm() * 16));
         p.setPen(QPen(pal.color(QPalette::Shadow), 1));
-        p.setBrush(dragging_ ? pal.color(QPalette::Light) : pal.color(QPalette::Button));
+        p.setBrush(dragging() ? pal.color(QPalette::Light) : pal.color(QPalette::Button));
         p.drawEllipse(dial.adjusted(3, 3, -3, -3));
         const double angle = (norm() * 270.0 - 135.0) * std::numbers::pi / 180.0;
         const QPointF c = dial.center();
@@ -103,56 +81,22 @@ protected:
         p.drawLine(QPointF(c.x() + std::sin(angle) * r * 0.3, c.y() - std::cos(angle) * r * 0.3),
                    QPointF(c.x() + std::sin(angle) * r * 0.9, c.y() - std::cos(angle) * r * 0.9));
     }
-    void mousePressEvent(QMouseEvent* e) override
+    void startDrag(QMouseEvent* e) override { lastY_ = e->position().y(); }
+    void drag(QMouseEvent* e) override
     {
-        if (e->button() != Qt::LeftButton)
-            return;
-        setFocus();
-        dragging_ = true;
-        lastY_ = e->position().y();
-        update();
-    }
-    void mouseMoveEvent(QMouseEvent* e) override
-    {
-        if (!dragging_)
-            return;
         const double dy = lastY_ - e->position().y();
         lastY_ = e->position().y();
         const double step = (e->modifiers() & Qt::ShiftModifier) ? 600.0 : 150.0;
-        setValue(fromNorm(norm() + dy / step));
-        if (onChanging)
-            onChanging(value_);
+        changeTo(fromNorm(norm() + dy / step));
     }
-    void mouseReleaseEvent(QMouseEvent* e) override
+    double wheelValue(bool up, bool fine) const override
     {
-        if (e->button() != Qt::LeftButton || !dragging_)
-            return;
-        dragging_ = false;
-        update();
-        if (onCommit)
-            onCommit(value_);
-    }
-    void mouseDoubleClickEvent(QMouseEvent* e) override
-    {
-        if (e->button() != Qt::LeftButton)
-            return;
-        dragging_ = false;
-        turnTo(default_);
-    }
-    void wheelEvent(QWheelEvent* e) override
-    {
-        const double delta = e->angleDelta().y();
-        if (delta == 0)
-            return;
-        const double step = (e->modifiers() & Qt::ShiftModifier) ? 0.005 : 0.02;
-        turnTo(fromNorm(norm() + (delta > 0 ? step : -step)));
-        e->accept();
+        const double step = fine ? 0.005 : 0.02;
+        return fromNorm(norm() + (up ? step : -step));
     }
 
 private:
-    double min_, max_, default_, value_;
     bool log_;
-    bool dragging_ = false;
     double lastY_ = 0.0;
 };
 
