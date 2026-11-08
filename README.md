@@ -82,6 +82,10 @@ La finestra è divisa così:
 | **Aggiungi IN-OUT al montaggio** (senza IN e OUT: il file intero) | A |
 | Togli IN-OUT dal montaggio | X |
 | Dividi il pezzo sotto il cursore del montaggio | S |
+| Aggiungi IN-OUT su un livello video (V2, V3...) | Maiusc+A |
+| Manipolatori sul monitor: Trasforma / Ritaglia (accendi e spegni) | Q / W |
+| Nuova scritta al cursore / modifica la scritta scelta | T / Ctrl+T |
+| Crea gruppo / sciogli il gruppo (o scollega l'audio) | G / U |
 | Elimina il pezzo selezionato (o il file, se il fuoco è sull'elenco dei file) | Canc |
 | Svuota il montaggio | menu Montaggio |
 | Sostituisci l'audio / torna all'audio originale | menu Audio |
@@ -112,6 +116,41 @@ La finestra è divisa così:
 - **Formato del progetto**: il primo pezzo messo nel montaggio decide il formato del file esportato (codec, risoluzione, fotogrammi al secondo, formato dei pixel, audio). **Montaggio > Impostazioni del progetto...** lo mostra e permette di prenderlo da un altro file del progetto; si salva con il progetto (i progetti di prima lo ricavano dal primo pezzo). Il formato del progetto è quello di partenza: nella finestra Esporta si possono cambiare codec (H.264, HEVC, AV1), risoluzione e fotogrammi al secondo per quell'esportazione (vedi Esportazione).
 - Ogni pezzo è confrontato con il formato del progetto. Un segno sul blocco lo dice (tenendo il mouse sopra c'è la spiegazione): nessun segno = si copia così com'è; **P** = stesso codec, misure e fotogrammi al secondo ma parametri di codifica diversi (es. un altro numero di fotogrammi di riferimento, come in alcuni video di ShadowPlay): si copia lo stesso, senza ricodifica; **R** = diverso (risoluzione, fotogrammi al secondo, codec, audio...): all'esportazione si ricodifica nel formato del progetto (vedi sotto).
 - Si copiano senza ricodifica i pezzi con gli **stessi codec e parametri** del formato del progetto (risoluzione, formato pixel, fotogrammi al secondo, profilo, parametri di codifica; per l'audio frequenza e canali): di solito file dello stesso telefono o della stessa videocamera con le stesse impostazioni. Se qualcosa non coincide l'esportazione **non viene rifiutata**: il pezzo diverso (segno R) si ricodifica nel formato del progetto. Contenitori diversi vanno bene, se i codec coincidono.
+
+### Livelli video, trasformazioni e animazione
+
+#### Livelli video
+
+- Sopra **V1** si possono aggiungere i **livelli video V2, V3...** (**Scritte > Aggiungi livello video**, oppure il pulsante **+** in alto a sinistra della linea del tempo quando è scelta una traccia video; **Togli livello video** o **−** toglie quello scelto, chiedendo conferma se non è vuoto). Un livello più alto copre quelli sotto: dove un pezzo non copre tutto lo schermo (scala sotto il 100%, ritaglio, rotazione, opacità) si vede quello sotto. Così si fanno immagine nell'immagine e sovrapposizioni.
+- **Maiusc+A** (Montaggio > Aggiungi IN-OUT su un livello video) mette il tratto IN-OUT della Sorgente sul livello scelto (o sul primo dove ci sta), dal cursore del Montaggio. I file si possono anche trascinare direttamente su un livello.
+- I pezzi si trascinano anche in verticale, da V1 a un livello e fra i livelli: in V1 resta uno spazio vuoto. L'**audio segue il livello**: V2 con A2, V3 con A3 (riportando il video su V1 l'audio torna su A1); un audio scollegato resta dov'è.
+- Sui livelli valgono le stesse regole di V1: spazio e Spinta, bordi, **S**, **Canc**, Ctrl+clic, gruppi, Annulla/Ripeti. Il monitor e l'esportazione arrivano fino alla fine del livello più lungo, anche oltre la fine di V1.
+
+#### Pannello Proprietà
+
+- Il pannello **Proprietà** (a destra, menu **Finestra**; in scheda con il Mixer) mostra le proprietà dell'oggetto scelto sulla linea del tempo: per un pezzo video o un'immagine la sezione **Trasforma**, per una scritta testo e stile (vedi Scritte), per una transizione tipo, durata, direzione e dissolvenza incrociata dell'audio. Senza niente di scelto dice di scegliere un oggetto.
+- **Trasforma** ha: **Scala** (con **Proporzionale** larghezza e altezza cambiano insieme), **Posizione** X/Y in pixel dal centro del fotogramma, **Rotazione** in gradi (in senso orario se positivi), **Ritaglio** dei quattro lati e **Aspetto** (opacità, **Specchia ↔** e **Specchia ↕**). Scala 100% = tutta l'immagine nel fotogramma, con le bande nere se le proporzioni sono diverse; **Adatta** torna lì, **Riempi** ingrandisce fino a riempire il fotogramma. **↺** ripristina un gruppo di valori, **Ripristina tutto** tutti.
+- Con più pezzi scelti (Ctrl+clic) ogni modifica vale per tutti; si vedono i valori del primo.
+- I pezzi con una trasformazione o un'animazione hanno il segno **fx** sulla linea del tempo; tenendoci sopra il mouse si vedono i valori cambiati.
+
+#### Trasformare sul monitor
+
+- **Q** (Montaggio > Trasforma sul monitor) accende i manipolatori sul pezzo scelto, a monitor fermo: trascinando il pezzo lo si sposta, gli **angoli** lo scalano (Maiusc = proporzioni libere, Alt = dal centro), il **cerchio sopra** lo ruota (Maiusc = scatti di 15°). Vale anche per i pezzi dei livelli e per le scritte.
+- **W** (Ritaglia sul monitor) mostra il riquadro del ritaglio: si trascina un lato o un angolo; la linea tratteggiata è il file intero. Non vale per le scritte.
+- Spostando, ruotando e scalando il pezzo **scatta** sul centro e sui bordi dello schermo, sui 90° e sul 100%; **Ctrl** tenuto premuto evita lo scatto. **Griglia dei terzi sul monitor** (menu Montaggio) mostra le linee guida.
+- Un gesto è un solo passo di Annulla. Pannello e manipolatori sono la stessa cosa: cambiando l'uno si muove l'altro.
+
+#### Animazione con i fotogrammi chiave
+
+- Ogni gruppo della sezione Trasforma (Scala, Posizione, Rotazione, Ritaglio, Opacità) ha **◀ ◇ ▶ ↺**: il **rombo** mette (o toglie) un fotogramma chiave sul cursore del montaggio con i valori di adesso, le frecce vanno alla chiave prima e dopo, ↺ spegne l'animazione del gruppo. Con due o più chiavi il valore cambia nel tempo fra l'una e l'altra (zoom lento, panoramica, entrata da un lato, dissolvenza...). I valori del pannello seguono il cursore.
+- **Auto-key**: quando un gruppo è animato, ogni modifica (dal pannello o dai manipolatori sul monitor) mette o aggiorna da sola la chiave sul cursore.
+- Le chiavi stanno nei tempi del file: seguono il pezzo quando si sposta, si rifila o si divide (le due metà restano identiche a prima).
+- Sulla linea del tempo, sotto il pezzo scelto da solo, c'è una **riga di rombi** per ogni gruppo animato, ognuno col suo colore (Scala azzurro, Posizione verde, Rotazione arancione, Ritaglio viola, Opacità bianco; lo stesso colore ha il rombo nel pannello). La forma dice il tipo di passaggio: rombo = lineare, tondo = dolce, quadrato = fermo (il valore resta fino alla chiave dopo), rombo con puntino = curva. Clic sceglie la chiave, trascinarla la sposta (si aggancia al cursore), **Canc** la toglie (non il pezzo), doppio clic porta lì il cursore, clic destro dà il menu: Lineare, Dolce, Fermo, **Curva** (curve pronte o **Personalizza…**, che apre l'editor **Curva del passaggio** con due maniglie da trascinare) e Togli la chiave.
+- In fondo alla sezione Trasforma una **mini linea del tempo** mostra le stesse righe di rombi su tutta la durata del pezzo, con gli stessi comandi.
+- Con Trasforma (**Q**) acceso e la posizione animata il monitor disegna il **percorso del movimento** (tratteggio arancione) con un rombo per chiave: trascinando un rombo si cambia la posizione di quella chiave.
+- Il menu **Animazione ▾** del pannello crea in un passo le animazioni più comuni, con le chiavi all'inizio e alla fine del pezzo: zoom lento avanti o indietro, panoramica verso sinistra o destra, dissolvenza in apertura o in chiusura (per le scritte anche entrate e uscite). Poi si ritoccano con i rombi.
+- Trasformazioni e animazioni si vedono nel monitor e si **esportano**: si ricodificano solo i tratti che ne hanno una (o dove ci sono più livelli sovrapposti); il resto resta copiato.
+
 ### Immagini
 
 - Si aggiungono come i video (trascinandole da Esplora file o dall'elenco dei file, o con **File > Aggiungi file**): **PNG, JPG, BMP, WebP, TIFF** e **GIF** (di una GIF animata si usa solo il primo quadro). Nell'elenco dei file stanno sotto «Immagini». L'orientamento EXIF è applicato e la trasparenza resta.
@@ -152,11 +191,12 @@ La finestra è divisa così:
 
 ### Scritte
 
-- Le **scritte** (titoli e testi) stanno su **livelli sopra il video**, nominati T1, T2... (menu **Scritte > Aggiungi livello di scritte** o il pulsante sulla linea del tempo; **Togli livello di scritte** toglie il livello scelto con le sue scritte). Un livello più alto copre quelli sotto. Sullo stesso livello le scritte non si sovrappongono; su livelli diversi sì.
-- **T** aggiunge una scritta di 5 secondi dal cursore del montaggio (sul livello scelto, o dove c'è posto) e apre l'editor. **Doppio clic** sulla scritta o **Ctrl+T** (Scritte > Modifica scritta) lo riapre. Si vedono come blocchi viola col testo scritto sopra.
-- L'**editor** dà: testo (anche su più righe), font fra quelli installati, grandezza, grassetto, corsivo, sottolineato, allineamento, interlinea, colore e opacità, contorno, ombra, sfondo con trasparenza, posizione, durata e **dissolvenza in entrata e in uscita** (in secondi). Gli **stili con nome** ("Titolo", "Sottotitolo"...) si salvano nel progetto e in un elenco valido per tutti i progetti.
+- Le **scritte** (titoli e testi) stanno sui **livelli video** (V1, V2, V3...; vedi Livelli video) insieme ai pezzi: un livello più alto copre quelli sotto. Sullo stesso livello scritte e pezzi non si sovrappongono; su livelli diversi sì. **Scritte > Aggiungi livello video** (o il pulsante **+** della linea del tempo, con una traccia video scelta) aggiunge un livello; **Togli livello video** toglie quello scelto con tutto quello che contiene (chiedendo conferma se non è vuoto).
+- **T** aggiunge una scritta di 5 secondi dal cursore del montaggio (sul livello scelto, o dove c'è posto) e ne mostra le proprietà nel pannello **Proprietà**. Scegliendo la scritta, con un **doppio clic** o con **Ctrl+T** (Scritte > Modifica scritta) si torna lì con il fuoco sul testo. Si vedono come blocchi viola col testo scritto sopra.
+- Il **pannello Proprietà** della scritta dà: testo (anche su più righe), font fra quelli installati, grandezza, grassetto, corsivo, sottolineato, allineamento, interlinea, colore e opacità, contorno, ombra, sfondo con trasparenza, posizione (con nove punti fissi: angoli, lati e centro), durata e **dissolvenza in entrata e in uscita** (in secondi). Gli **stili con nome** ("Titolo", "Sottotitolo"...) si salvano nel progetto e in un elenco valido per tutti i progetti.
 - Come gli altri oggetti, le scritte si trascinano, si accorciano ai bordi, si dividono con **S**, si tolgono con **Canc**, entrano nei gruppi (**G**/**U**, Ctrl+clic) e seguono Annulla e Ripeti; si salvano nel progetto.
 - Nel monitor del Montaggio la scritta si vede subito sopra il video, con le dissolvenze, e da fermo si **trascina con il mouse** sull'immagine per cambiarne la posizione.
+- In fondo alla pagina della scritta c'è la sezione **Trasforma**, come per i pezzi video ma senza ritaglio e specchio: scala, **Posizione X/Y** (in % del fotogramma), rotazione e opacità, tutte animabili con i fotogrammi chiave (vedi Livelli video, trasformazioni e animazione). Le dissolvenze si sommano all'opacità. Il menu **Animazione ▾** ha anche le entrate e le uscite: entra da sinistra, da destra, dal basso, compare ingrandendosi, e le uscite corrispondenti.
 - All'esportazione si **ricodificano solo i tratti coperti da una scritta**, con il testo disegnato sopra (anche sul nero degli spazi vuoti); il resto resta copiato o in taglio preciso.
 
 ### Transizioni
