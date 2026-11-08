@@ -988,6 +988,14 @@ ExportResult ExportJob::run()
         result_.segmentCount = rangeCount_;
         result_.clipCount = static_cast<int>(clips_.size());
         result_.parametersInStream = plan_.parametersInStream;
+        if (blender_) {
+            const TextFrameBlender::Timing& t = blender_->timing();
+            result_.blendToRgbaSeconds = t.toRgba;
+            result_.blendFillSeconds = t.fill;
+            result_.blendCompositeSeconds = t.composite;
+            result_.blendOverlaySeconds = t.overlays;
+            result_.blendToYuvSeconds = t.toYuv;
+        }
         result_.totalSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - runStarted).count();
         return result_;
     } catch (...) {

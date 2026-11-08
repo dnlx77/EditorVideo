@@ -381,6 +381,13 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
                         .arg(r.textPrepSeconds, 0, 'f', 1)
                         .arg(r.layerPrepSeconds, 0, 'f', 1)
                         .arg(r.blendSeconds, 0, 'f', 1);
+    if (r.blendSeconds > 0.0)
+        recoding += QStringLiteral("\nFusione: in RGBA %1 s, nero %2 s, pezzo trasformato %3 s, livelli e scritte %4 s, in YUV %5 s.")
+                        .arg(r.blendToRgbaSeconds, 0, 'f', 1)
+                        .arg(r.blendFillSeconds, 0, 'f', 1)
+                        .arg(r.blendCompositeSeconds, 0, 'f', 1)
+                        .arg(r.blendOverlaySeconds, 0, 'f', 1)
+                        .arg(r.blendToYuvSeconds, 0, 'f', 1);
     QMessageBox::information(this, QStringLiteral("Esportazione completata"),
                              QStringLiteral("%1 in:\n%2\n\nDurata: %3\n%4")
                                  .arg(what, target, timeText(outcome.result->durationSeconds), recoding));

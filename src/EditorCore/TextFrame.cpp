@@ -10,6 +10,14 @@ namespace editor::core {
 
 using detail::FramePtr;
 
+namespace {
+using Clock = std::chrono::steady_clock;
+double since(Clock::time_point from)
+{
+    return std::chrono::duration<double>(Clock::now() - from).count();
+}
+}  // namespace
+
 TextFrameBlender::TextFrameBlender(int width, int height, AVPixelFormat pixelFormat)
     : width_(width)
     , height_(height)
@@ -97,18 +105,24 @@ const AVFrame* TextFrameBlender::blendTransformed(const AVFrame* frame, const Tr
     sws_setColorspaceDetails(toRgba_.get(), coefficients, fullRange ? 1 : 0, coefficients, 1, 0, 1 << 16, 1 << 16);
     sws_setColorspaceDetails(toYuv_.get(), coefficients, 1, coefficients, 0, 0, 1 << 16, 1 << 16);
 
+    auto mark = Clock::now();
     layer_.resize(static_cast<std::size_t>(sourceWidth) * sourceHeight * 4);
     std::uint8_t* layerPlanes[4] = {layer_.data(), nullptr, nullptr, nullptr};
     const int layerStride[4] = {sourceWidth * 4, 0, 0, 0};
     sws_scale(toRgba_.get(), source->data, source->linesize, 0, sourceHeight, layerPlanes, layerStride);
+    timing_.toRgba += since(mark);
+    mark = Clock::now();
 
     for (std::size_t i = 0; i < rgba_.size(); i += 4) {
         rgba_[i] = rgba_[i + 1] = rgba_[i + 2] = 0;
         rgba_[i + 3] = 255;
     }
+    timing_.fill += since(mark);
+    mark = Clock::now();
     // compositeLayer non guarda i canali: RGBA si comporta come BGRA.
     compositeLayer(rgba_.data(), width_ * 4, width_, height_, BgraImage{layer_.data(), sourceWidth * 4, sourceWidth, sourceHeight},
                    transform);
+    timing_.composite += since(mark);
     return toYuv(texts, frame);
 }
 
@@ -141,6 +155,7 @@ const AVFrame* TextFrameBlender::toYuv(const std::vector<BlendedText>& texts, co
     // I pezzi dei livelli sono BGRA e compositeLayer non guarda i canali: il fotogramma (RGBA) si scambia rosso e blu
     // per il tempo della composizione. Livelli e scritte si mettono in ordine di piano (a parità, il pezzo prima della scritta:
     // sullo stesso livello non stanno insieme).
+    auto mark = Clock::now();
     bool swapped = false;
     const auto swapRedBlue = [&] {
         for (std::size_t i = 0; i < rgba_.size(); i += 4)
@@ -172,6 +187,8 @@ const AVFrame* TextFrameBlender::toYuv(const std::vector<BlendedText>& texts, co
     if (swapped)
         swapRedBlue();
 
+    timing_.overlays += since(mark);
+    mark = Clock::now();
     if (av_frame_make_writable(output_.get()) < 0)
         throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
     const std::uint8_t* rgbaPlanes[4] = {rgba_.data(), nullptr, nullptr, nullptr};
@@ -181,6 +198,7 @@ const AVFrame* TextFrameBlender::toYuv(const std::vector<BlendedText>& texts, co
     output_->sample_aspect_ratio = {1, 1};
     output_->pts = props->pts;
     output_->color_range = AVCOL_RANGE_MPEG;
+    timing_.toYuv += since(mark);
     return output_.get();
 }
 

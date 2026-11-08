@@ -58,6 +58,13 @@ struct ExportResult
     double textPrepSeconds = 0.0;
     double layerPrepSeconds = 0.0;
     double blendSeconds = 0.0;
+    // Dentro la fusione: conversione dell'originale in RGBA, riempimento del nero, disegno del pezzo trasformato, livelli e
+    // scritte sopra, conversione in YUV (solo per i fotogrammi trasformati o con scritte).
+    double blendToRgbaSeconds = 0.0;
+    double blendFillSeconds = 0.0;
+    double blendCompositeSeconds = 0.0;
+    double blendOverlaySeconds = 0.0;
+    double blendToYuvSeconds = 0.0;
 };
 
 // Una transizione da fondere nel file esportato (vedi ReencodeOptions::transitions): sta sulla giunzione fra il tratto
