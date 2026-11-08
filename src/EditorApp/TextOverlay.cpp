@@ -2,6 +2,8 @@
 
 #include "EditorCore/Animation.h"
 
+#include <QtGui/QTransform>
+
 #include <algorithm>
 #include <cmath>
 
@@ -80,10 +82,11 @@ void TextOverlay::paint(QPainter& painter, const QRectF& target, qreal devicePix
         const double k = projectFrame.width() > 0 ? target.width() / projectFrame.width() : 1.0;
         painter.save();
         painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-        painter.translate(pivot + QPointF(t.posX * k, t.posY * k));
-        painter.rotate(t.rotation);
-        painter.scale(t.scaleX * (t.flipHorizontal ? -1.0 : 1.0), t.scaleY * (t.flipVertical ? -1.0 : 1.0));
-        painter.translate(-pivot);
+        const core::Affine m = core::linearPart(t);
+        const QPointF shift = pivot + QPointF(t.posX * k, t.posY * k);
+        painter.setTransform(QTransform(m.a, m.b, m.c, m.d, shift.x() - (m.a * pivot.x() + m.c * pivot.y()),
+                                        shift.y() - (m.b * pivot.x() + m.d * pivot.y())),
+                             true);
         painter.drawImage(where, entry.image);
         painter.restore();
     }

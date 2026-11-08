@@ -92,4 +92,18 @@ struct TransformGeometry
 // `projectWidth` x `projectHeight`. Misure <= 0: tutti zero (nessuna immagine).
 TransformGeometry computeGeometry(const Transform& t, int sourceWidth, int sourceHeight, int projectWidth, int projectHeight);
 
+// La parte lineare di `t` (rotazione, scala e specchio, senza spostamento: tx = ty = 0), con in più la scala `extraScale`
+// (es. l'adattamento del file al progetto). Con y verso il basso un angolo positivo gira in senso orario. È la stessa
+// matrice per i pezzi, le scritte, il monitor e l'esportazione.
+Affine linearPart(const Transform& t, double extraScale = 1.0);
+
+// I pixel interi che contengono i quattro punti, con un pixel di margine, limitati al fotogramma width x height:
+// le colonne x0..x1-1 e le righe y0..y1-1. Vuoto se i punti cadono fuori.
+struct PixelBounds
+{
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    bool empty() const { return x1 <= x0 || y1 <= y0; }
+};
+PixelBounds pixelBounds(const std::array<Point2, 4>& points, int width, int height);
+
 }  // namespace editor::core
