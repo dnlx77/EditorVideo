@@ -23,7 +23,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numbers>
 
 namespace editor::app {
 
@@ -277,11 +276,8 @@ namespace {
 // Dove va a finire il vettore dal centro di stile al centro del riquadro, con scala, specchio e rotazione di `t`.
 core::Point2 turnedOffset(const core::Transform& t, core::Point2 d)
 {
-    const double ex = t.scaleX * (t.flipHorizontal ? -1.0 : 1.0);
-    const double ey = t.scaleY * (t.flipVertical ? -1.0 : 1.0);
-    const double cs = std::cos(t.rotation * std::numbers::pi / 180.0);
-    const double sn = std::sin(t.rotation * std::numbers::pi / 180.0);
-    return {cs * ex * d.x - sn * ey * d.y, sn * ex * d.x + cs * ey * d.y};
+    const core::Affine m = core::linearPart(t);
+    return {m.a * d.x + m.c * d.y, m.b * d.x + m.d * d.y};
 }
 
 }  // namespace

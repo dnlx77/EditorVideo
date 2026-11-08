@@ -75,19 +75,13 @@ void compositeLayer(std::uint8_t* canvas, int canvasStride, int canvasWidth, int
     }
 
     // L'area dello schermo toccata dal pezzo.
-    double minX = g.corners[0].x, maxX = g.corners[0].x, minY = g.corners[0].y, maxY = g.corners[0].y;
-    for (const Point2& p : g.corners) {
-        minX = std::min(minX, p.x);
-        maxX = std::max(maxX, p.x);
-        minY = std::min(minY, p.y);
-        maxY = std::max(maxY, p.y);
-    }
-    const int x0 = std::max(0, static_cast<int>(std::floor(minX)) - 1);
-    const int x1 = std::min(canvasWidth, static_cast<int>(std::ceil(maxX)) + 1);
-    const int y0 = std::max(0, static_cast<int>(std::floor(minY)) - 1);
-    const int y1 = std::min(canvasHeight, static_cast<int>(std::ceil(maxY)) + 1);
-    if (x0 >= x1 || y0 >= y1)
+    const PixelBounds box = pixelBounds(g.corners, canvasWidth, canvasHeight);
+    if (box.empty())
         return;
+    const int x0 = box.x0;
+    const int x1 = box.x1;
+    const int y0 = box.y0;
+    const int y1 = box.y1;
 
     const Affine inv = g.toProject.inverse();
     // Quanto è lungo sullo schermo un pixel del file nelle due direzioni (per sfumare i bordi di mezzo pixel dello schermo).

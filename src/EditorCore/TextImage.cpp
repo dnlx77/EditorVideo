@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numbers>
 
 namespace editor::core {
 
@@ -38,17 +37,8 @@ TextImage transformTextImage(const TextImage& text, const Transform& transform, 
     if (text.empty() || !t.movesPicture() || frameWidth <= 0 || frameHeight <= 0
         || text.rgba.size() < static_cast<std::size_t>(text.width) * text.height * 4)
         return text;
-    const double ex = t.scaleX * (t.flipHorizontal ? -1.0 : 1.0);
-    const double ey = t.scaleY * (t.flipVertical ? -1.0 : 1.0);
-    const double radians = t.rotation * std::numbers::pi / 180.0;
-    const double cs = std::cos(radians);
-    const double sn = std::sin(radians);
-    // p' = pivot + spostamento + R * D * (p - pivot); con y verso il basso un angolo positivo gira in senso orario.
-    Affine forward;
-    forward.a = cs * ex;
-    forward.b = sn * ex;
-    forward.c = -sn * ey;
-    forward.d = cs * ey;
+    // p' = pivot + spostamento + R * D * (p - pivot).
+    Affine forward = linearPart(t);
     forward.tx = pivotX + t.posX - (forward.a * pivotX + forward.c * pivotY);
     forward.ty = pivotY + t.posY - (forward.b * pivotX + forward.d * pivotY);
     const Affine inverse = forward.inverse();
@@ -57,19 +47,13 @@ TextImage transformTextImage(const TextImage& text, const Transform& transform, 
     const double top = text.y;
     const double right = text.x + text.width;
     const double bottom = text.y + text.height;
-    const Point2 corners[4] = {forward.apply(left, top), forward.apply(right, top), forward.apply(right, bottom),
-                               forward.apply(left, bottom)};
-    double minX = corners[0].x, maxX = corners[0].x, minY = corners[0].y, maxY = corners[0].y;
-    for (const Point2& p : corners) {
-        minX = std::min(minX, p.x);
-        maxX = std::max(maxX, p.x);
-        minY = std::min(minY, p.y);
-        maxY = std::max(maxY, p.y);
-    }
-    const int x0 = std::max(0, static_cast<int>(std::floor(minX)) - 1);
-    const int y0 = std::max(0, static_cast<int>(std::floor(minY)) - 1);
-    const int x1 = std::min(frameWidth, static_cast<int>(std::ceil(maxX)) + 1);
-    const int y1 = std::min(frameHeight, static_cast<int>(std::ceil(maxY)) + 1);
+    const PixelBounds box = pixelBounds({forward.apply(left, top), forward.apply(right, top), forward.apply(right, bottom),
+                                         forward.apply(left, bottom)},
+                                        frameWidth, frameHeight);
+    const int x0 = box.x0;
+    const int y0 = box.y0;
+    const int x1 = box.x1;
+    const int y1 = box.y1;
     TextImage out;
     if (x1 <= x0 || y1 <= y0)
         return out;

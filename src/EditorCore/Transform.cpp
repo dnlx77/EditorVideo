@@ -63,6 +63,38 @@ Affine Affine::inverse() const
     return r;
 }
 
+Affine linearPart(const Transform& t, double extraScale)
+{
+    const double ex = extraScale * t.scaleX * (t.flipHorizontal ? -1.0 : 1.0);
+    const double ey = extraScale * t.scaleY * (t.flipVertical ? -1.0 : 1.0);
+    const double radians = t.rotation * std::numbers::pi / 180.0;
+    const double cs = std::cos(radians);
+    const double sn = std::sin(radians);
+    Affine m;
+    m.a = cs * ex;
+    m.b = sn * ex;
+    m.c = -sn * ey;
+    m.d = cs * ey;
+    return m;
+}
+
+PixelBounds pixelBounds(const std::array<Point2, 4>& points, int width, int height)
+{
+    double minX = points[0].x, maxX = points[0].x, minY = points[0].y, maxY = points[0].y;
+    for (const Point2& p : points) {
+        minX = std::min(minX, p.x);
+        maxX = std::max(maxX, p.x);
+        minY = std::min(minY, p.y);
+        maxY = std::max(maxY, p.y);
+    }
+    PixelBounds b;
+    b.x0 = std::max(0, static_cast<int>(std::floor(minX)) - 1);
+    b.y0 = std::max(0, static_cast<int>(std::floor(minY)) - 1);
+    b.x1 = std::min(width, static_cast<int>(std::ceil(maxX)) + 1);
+    b.y1 = std::min(height, static_cast<int>(std::ceil(maxY)) + 1);
+    return b;
+}
+
 TransformGeometry computeGeometry(const Transform& transform, int sourceWidth, int sourceHeight, int projectWidth, int projectHeight)
 {
     TransformGeometry g;
@@ -73,17 +105,8 @@ TransformGeometry computeGeometry(const Transform& transform, int sourceWidth, i
     const double sh = sourceHeight;
 
     // Adattato al progetto (scala 100%), poi la scala scelta, con lo specchio come scala negativa.
-    const double fit = std::min(projectWidth / sw, projectHeight / sh);
-    const double ex = fit * t.scaleX * (t.flipHorizontal ? -1.0 : 1.0);
-    const double ey = fit * t.scaleY * (t.flipVertical ? -1.0 : 1.0);
-    const double radians = t.rotation * std::numbers::pi / 180.0;
-    const double cs = std::cos(radians);
-    const double sn = std::sin(radians);
-    // p' = centro + R * D * (p - centro del file); con y verso il basso, un angolo positivo gira in senso orario.
-    g.toProject.a = cs * ex;
-    g.toProject.b = sn * ex;
-    g.toProject.c = -sn * ey;
-    g.toProject.d = cs * ey;
+    // p' = centro + R * D * (p - centro del file).
+    g.toProject = linearPart(t, std::min(projectWidth / sw, projectHeight / sh));
     const double cx = projectWidth / 2.0 + t.posX;
     const double cy = projectHeight / 2.0 + t.posY;
     g.toProject.tx = cx - (g.toProject.a * sw / 2.0 + g.toProject.c * sh / 2.0);
