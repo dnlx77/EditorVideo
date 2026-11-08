@@ -1,86 +1,8 @@
-#include "EditorApp/MainWindow.h"
 
 #include "EditorApp/ExportDialog.h"
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/QtTextRenderer.h"
-#include "EditorApp/PlayerWidget.h"
-#include "EditorApp/ProgramMonitor.h"
-#include "EditorApp/ProxyManager.h"
-#include "EditorApp/UiText.h"
-#include "EditorApp/SequenceTimeline.h"
-#include "EditorApp/TimelineWidget.h"
-#include "EditorCore/AudioDecoder.h"
 #include "EditorCore/StillImage.h"
-#include "EditorCore/Compatibility.h"
-#include "EditorCore/FileDrop.h"
-#include "EditorCore/Encoder.h"
-#include "EditorCore/LibraryInfo.h"
-#include "EditorCore/MediaProbe.h"
-#include "EditorCore/MixExport.h"
-#include "EditorCore/Proxy.h"
-#include "EditorCore/SegmentExport.h"
-#include "EditorApp/ThumbnailCache.h"
-#include "EditorApp/WaveformStore.h"
-#include "EditorCore/TimeUtil.h"
-#include "EditorCore/Waveform.h"
-
-#include <QtCore/QAbstractNativeEventFilter>
-#include <QtCore/QDir>
-#include <QtCore/QElapsedTimer>
-#include <QtCore/QFileInfo>
-#include <QtCore/QSettings>
-#include <QtCore/QStandardPaths>
-#include <QtCore/QThread>
-#include <QtCore/QTimer>
-#include <QtCore/QMimeData>
-#include <QtCore/QUrl>
-#include <QtGui/QIcon>
-#include <QtGui/QPainter>
-#include <QtGui/QPixmap>
-#include <QtGui/QCloseEvent>
-#include <QtGui/QDragEnterEvent>
-#include <QtGui/QDropEvent>
-#include <QtGui/QCursor>
-#include <QtGui/QHoverEvent>
-#include <QtGui/QWindow>
-#include <QtWidgets/QStyle>
-#include <QtGui/QMouseEvent>
-#include <QtGui/QKeyEvent>
-#include <QtGui/QHelpEvent>
-#include <QtGui/QScreen>
-#include <QtWidgets/QToolTip>
-#include <QtWidgets/QApplication>
-#include <QtWidgets/QCheckBox>
-#include <QtWidgets/QComboBox>
-#include <QtWidgets/QDialog>
-#include <QtWidgets/QDialogButtonBox>
-#include <QtWidgets/QDockWidget>
-#include <QtWidgets/QFormLayout>
-#include <QtWidgets/QFileDialog>
-#include <QtWidgets/QHeaderView>
-#include <QtWidgets/QLabel>
-#include <QtWidgets/QListWidget>
-#include <QtWidgets/QMenuBar>
-#include <QtWidgets/QMessageBox>
-#include <QtWidgets/QProgressDialog>
-#include <QtWidgets/QPushButton>
-#include <QtWidgets/QSplitter>
-#include <QtWidgets/QStatusBar>
-#include <QtWidgets/QTabWidget>
-#include <QtWidgets/QTreeWidget>
-#include <QtWidgets/QVBoxLayout>
-
-#include <algorithm>
-
-#include <windows.h>
-#include <cmath>
-#include <cstdio>
-#include <iterator>
-#include <map>
-#include <memory>
-#include <optional>
-#include <thread>
-
 
 namespace editor::app {
 using namespace detail;
@@ -449,6 +371,5 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
                              QStringLiteral("%1 in:\n%2\n\nDurata: %3\n%4")
                                  .arg(what, target, timeText(outcome.result->durationSeconds), recoding));
 }
-
 
 }  // namespace editor::app

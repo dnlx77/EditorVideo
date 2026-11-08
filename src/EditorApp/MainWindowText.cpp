@@ -1,20 +1,7 @@
-#include "EditorApp/MainWindow.h"
 
 #include "EditorApp/MainWindowShared.h"
-#include "EditorApp/ProgramMonitor.h"
-#include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorCore/ProjectFile.h"
-#include "EditorApp/UiText.h"
-
-#include <QtCore/QSettings>
-#include <QtWidgets/QMessageBox>
-#include <QtWidgets/QPushButton>
-#include <QtWidgets/QStatusBar>
-#include <QtWidgets/QTabWidget>
-
-#include <algorithm>
-#include <optional>
 
 namespace editor::app {
 

@@ -1,96 +1,19 @@
-#include "EditorApp/MainWindow.h"
 #include "EditorApp/CurveEditorDialog.h"
 
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/MixerPanel.h"
 #include "EditorCore/AudioMixer.h"
-#include "EditorApp/PlayerWidget.h"
-#include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/PropertiesPanel.h"
-#include "EditorApp/ProxyManager.h"
-#include "EditorApp/UiText.h"
-#include "EditorApp/SequenceTimeline.h"
-#include "EditorApp/TimelineWidget.h"
-#include "EditorCore/AudioDecoder.h"
-#include "EditorCore/Compatibility.h"
 #include "EditorCore/StillImage.h"
-#include "EditorCore/FileDrop.h"
-#include "EditorCore/Encoder.h"
-#include "EditorCore/LibraryInfo.h"
-#include "EditorCore/MediaProbe.h"
-#include "EditorCore/MixExport.h"
-#include "EditorCore/Proxy.h"
-#include "EditorCore/SegmentExport.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/GroupListPanel.h"
 #include "EditorApp/TransitionListPanel.h"
 #include "EditorApp/TransitionPreviewWidget.h"
-#include "EditorApp/ThumbnailCache.h"
-#include "EditorApp/WaveformStore.h"
-#include "EditorCore/TimeUtil.h"
-#include "EditorCore/Waveform.h"
 
-#include <QtCore/QAbstractNativeEventFilter>
-#include <QtCore/QDir>
-#include <QtCore/QElapsedTimer>
-#include <QtCore/QFileInfo>
-#include <QtCore/QSettings>
-#include <QtCore/QStandardPaths>
-#include <QtCore/QThread>
-#include <QtCore/QTimer>
-#include <QtCore/QMimeData>
-#include <QtCore/QUrl>
-#include <QtGui/QIcon>
-#include <QtGui/QPainter>
-#include <QtGui/QPixmap>
-#include <QtGui/QCloseEvent>
-#include <QtGui/QDragEnterEvent>
-#include <QtGui/QDropEvent>
-#include <QtGui/QCursor>
-#include <QtGui/QHoverEvent>
-#include <QtGui/QWindow>
-#include <QtWidgets/QStyle>
-#include <QtGui/QMouseEvent>
-#include <QtGui/QKeyEvent>
-#include <QtGui/QHelpEvent>
-#include <QtGui/QScreen>
-#include <QtWidgets/QToolTip>
-#include <QtWidgets/QApplication>
-#include <QtWidgets/QCheckBox>
-#include <QtWidgets/QComboBox>
-#include <QtWidgets/QDialog>
-#include <QtWidgets/QDialogButtonBox>
-#include <QtWidgets/QDockWidget>
-#include <QtWidgets/QFormLayout>
-#include <QtWidgets/QFileDialog>
-#include <QtWidgets/QHeaderView>
-#include <QtWidgets/QLabel>
-#include <QtWidgets/QListWidget>
-#include <QtWidgets/QMenuBar>
-#include <QtWidgets/QMessageBox>
-#include <QtWidgets/QProgressDialog>
-#include <QtWidgets/QPushButton>
-#include <QtWidgets/QSplitter>
-#include <QtWidgets/QStatusBar>
 #include <QtWidgets/QStackedWidget>
-#include <QtWidgets/QTabWidget>
-#include <QtWidgets/QTreeWidget>
-#include <QtWidgets/QVBoxLayout>
-
-#include <algorithm>
-
-#include <windows.h>
-#include <cmath>
-#include <cstdio>
-#include <iterator>
-#include <map>
-#include <memory>
-#include <optional>
-#include <thread>
 
 namespace editor::app {
 using namespace detail;
-
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -269,7 +192,6 @@ MainWindow::MainWindow(QWidget* parent)
         if (cropAction_ != nullptr && cropAction_->isChecked() != on)
             cropAction_->setChecked(on);
     };
-
 
     // Proxy: le due anteprime leggono il video dal proxy quando è pronto. Ogni file ha la sua qualità: il menu della
     // Sorgente cambia quella del file nella Sorgente, quello del Montaggio quella del file del pezzo mostrato.
