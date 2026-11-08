@@ -5,6 +5,7 @@
 #include "EditorCore/Transform.h"
 #include "EditorCore/VideoDecoder.h"
 
+#include <chrono>
 #include <cstdint>
 #include <vector>
 
@@ -56,6 +57,18 @@ public:
     // quelle dell'adattamento al fotogramma del progetto).
     const AVFrame* blendTransformed(const AVFrame* source, const Transform& transform, const std::vector<BlendedText>& texts);
 
+    // Dove va il tempo di blend*() (secondi di orologio, sommati su tutti i fotogrammi): conversione dell'originale in RGBA,
+    // riempimento del nero, disegno del pezzo trasformato, livelli e scritte sopra, conversione in YUV per l'encoder.
+    struct Timing
+    {
+        double toRgba = 0.0;
+        double fill = 0.0;
+        double composite = 0.0;
+        double overlays = 0.0;
+        double toYuv = 0.0;
+    };
+    const Timing& timing() const { return timing_; }
+
 private:
     const AVFrame* toYuv(const std::vector<BlendedText>& texts, const AVFrame* props);
 
@@ -69,6 +82,7 @@ private:
     detail::FramePtr output_;
     std::unique_ptr<SwsContext, detail::SwsDeleter> toRgba_;
     std::unique_ptr<SwsContext, detail::SwsDeleter> toYuv_;
+    Timing timing_;
 };
 
 }  // namespace editor::core
