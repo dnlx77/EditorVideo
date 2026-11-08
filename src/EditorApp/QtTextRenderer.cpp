@@ -18,11 +18,6 @@ namespace editor::app {
 
 namespace {
 
-QColor toQt(const core::TextColor& c)
-{
-    return QColor(c.r, c.g, c.b, c.a);
-}
-
 struct Line
 {
     QString text;

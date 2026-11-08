@@ -1,5 +1,6 @@
 #include "EditorCore/NalUnits.h"
 
+#include <algorithm>
 #include <string>
 
 namespace editor::core::nal {
@@ -104,6 +105,68 @@ void appendLengthPrefixed(std::vector<std::uint8_t>& out, const std::uint8_t* na
     for (int b = lengthSize - 1; b >= 0; --b)
         out.push_back(static_cast<std::uint8_t>(size >> (8 * b)));
     out.insert(out.end(), nal, nal + size);
+}
+
+RbspReader::RbspReader(const Nal& nal, int headerBytes, PastEnd pastEnd)
+    : pastEnd_(pastEnd)
+{
+    int zeros = 0;
+    for (std::size_t i = static_cast<std::size_t>(std::max(headerBytes, 0)); i < nal.size(); ++i) {
+        if (zeros >= 2 && nal[i] == 0x03) {
+            zeros = 0;
+            continue;
+        }
+        data_.push_back(nal[i]);
+        zeros = nal[i] == 0 ? zeros + 1 : 0;
+    }
+    for (long long i = static_cast<long long>(data_.size()) * 8 - 1; i >= 0; --i) {
+        if ((data_[static_cast<std::size_t>(i / 8)] >> (7 - i % 8)) & 1) {
+            lastOne_ = i;
+            break;
+        }
+    }
+}
+
+unsigned RbspReader::bit()
+{
+    if (pos_ >= data_.size() * 8) {
+        if (pastEnd_ == PastEnd::Throw)
+            throw Error{};
+        ++pos_;
+        return 0;
+    }
+    const unsigned b = (data_[pos_ / 8] >> (7 - pos_ % 8)) & 1u;
+    ++pos_;
+    return b;
+}
+
+unsigned RbspReader::bits(int n)
+{
+    unsigned v = 0;
+    for (int i = 0; i < n; ++i)
+        v = (v << 1) | bit();
+    return v;
+}
+
+unsigned RbspReader::ue()
+{
+    int zeros = 0;
+    if (pastEnd_ == PastEnd::Throw) {
+        while (bit() == 0) {
+            if (++zeros > 31)
+                throw Error{};
+        }
+    } else {
+        while (zeros < 31 && bit() == 0)
+            ++zeros;
+    }
+    return zeros == 0 ? 0u : (1u << zeros) - 1u + bits(zeros);
+}
+
+int RbspReader::se()
+{
+    const unsigned v = ue();
+    return (v & 1) ? static_cast<int>((v + 1) / 2) : -static_cast<int>(v / 2);
 }
 
 }  // namespace editor::core::nal

@@ -3,6 +3,9 @@
 #include "EditorCore/Animation.h"
 
 #include <QtGui/QColor>
+#include <QtGui/QPainter>
+#include <QtGui/QPen>
+#include <QtGui/QPolygonF>
 
 namespace editor::app {
 
@@ -31,6 +34,50 @@ inline const char* animGroupName(core::AnimGroup group)
         case core::AnimGroup::Opacity: return "Opacità";
     }
     return "";
+}
+
+// La sotto-riga di un gruppo animato: una fascia leggera nel suo colore e la linea che unisce le sue chiavi (`line`, i
+// centri delle chiavi in ordine). La stessa nella linea del tempo e nella mini linea del pannello Proprietà.
+inline void drawKeyBand(QPainter& p, const QRectF& band, const QColor& color, const QPolygonF& line)
+{
+    QColor fill = color;
+    fill.setAlpha(34);
+    p.setPen(Qt::NoPen);
+    p.setBrush(fill);
+    p.drawRect(band);
+    if (line.size() >= 2) {
+        QColor stroke = color;
+        stroke.setAlpha(190);
+        p.setPen(QPen(stroke, 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawPolyline(line);
+    }
+}
+
+// Una chiave: la forma dice il tipo di passaggio (quadrato = fermo, tondo = dolce, rombo = lineare, rombo con un puntino
+// scuro = curva); `half` è metà della diagonale del rombo.
+inline void drawKeyMark(QPainter& p, const QPointF& center, double half, core::Interp interp, const QColor& color, const QPen& outline)
+{
+    p.setBrush(color);
+    p.setPen(outline);
+    const double x = center.x();
+    const double y = center.y();
+    switch (interp) {
+        case core::Interp::Hold: p.drawRect(QRectF(x - half * 0.8, y - half * 0.8, half * 1.6, half * 1.6)); break;
+        case core::Interp::Smooth: p.drawEllipse(center, half * 0.9, half * 0.9); break;
+        case core::Interp::Linear:
+        case core::Interp::Bezier: {
+            QPolygonF diamond;
+            diamond << QPointF(x, y - half) << QPointF(x + half, y) << QPointF(x, y + half) << QPointF(x - half, y);
+            p.drawPolygon(diamond);
+            if (interp == core::Interp::Bezier) {
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(20, 20, 20));
+                p.drawEllipse(center, half * 0.28, half * 0.28);
+            }
+            break;
+        }
+    }
 }
 
 }  // namespace editor::app

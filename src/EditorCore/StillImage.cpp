@@ -18,11 +18,6 @@ using namespace detail;
 
 namespace {
 
-std::string extensionOf(const std::string& utf8Path)
-{
-    return lowercase(utf8FromPath(pathFromUtf8(utf8Path).extension()));
-}
-
 // Come ruotare/specchiare l'immagine per mostrarla: (x, y) dell'originale va in (A*x + C*y, B*x + D*y), più lo scarto che
 // la riporta dentro il fotogramma. Ogni valore è -1, 0 o 1 (solo rotazioni di 90° e specchi).
 struct Orientation

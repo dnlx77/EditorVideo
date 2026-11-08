@@ -151,11 +151,6 @@ void SequenceTimeline::paintKeyRow(QPainter& p)
         const QColor color = animGroupColor(group);
         const double y = keyY(g, group);
         // La sotto-riga del gruppo: una fascia leggera nel suo colore e la linea che unisce le sue chiavi.
-        QColor band = color;
-        band.setAlpha(34);
-        p.setPen(Qt::NoPen);
-        p.setBrush(band);
-        p.drawRect(QRectF(strip.left(), y - g.rowHeight / 2, strip.width(), g.rowHeight));
         QPolygonF line;
         for (int i = 0; i < static_cast<int>(keyRow_.keys.size()); ++i) {
             const KeyMark& k = keyRow_.keys[static_cast<std::size_t>(i)];
@@ -163,12 +158,7 @@ void SequenceTimeline::paintKeyRow(QPainter& p)
                 continue;
             line << QPointF(keyX(g, keyDragging_ && i == keyDragIndex_ ? keyDragValue_ : k.time), y);
         }
-        if (line.size() >= 2) {
-            QColor stroke = color;
-            stroke.setAlpha(190);
-            p.setPen(QPen(stroke, 1.5));
-            p.drawPolyline(line);
-        }
+        drawKeyBand(p, QRectF(strip.left(), y - g.rowHeight / 2, strip.width(), g.rowHeight), color, line);
     }
     for (int i = 0; i < static_cast<int>(keyRow_.keys.size()); ++i) {
         const KeyMark& k = keyRow_.keys[static_cast<std::size_t>(i)];
@@ -180,29 +170,8 @@ void SequenceTimeline::paintKeyRow(QPainter& p)
             continue;
         const double y = keyY(g, k.group);
         const bool selected = selectedKey_ >= 0.0 && k.group == selectedKeyGroup_ && sameInstant(k.time, selectedKey_);
-        const QColor color = animGroupColor(k.group);
-        p.setBrush(color);
-        p.setPen(selected ? QPen(pal.color(QPalette::Highlight), 2.5) : QPen(QColor(15, 15, 15), 1.2));
-        switch (k.interp) {
-            case core::Interp::Hold:  // quadrato: salta
-                p.drawRect(QRectF(x - half * 0.8, y - half * 0.8, half * 1.6, half * 1.6));
-                break;
-            case core::Interp::Smooth:  // tondo: parte e arriva piano
-                p.drawEllipse(QPointF(x, y), half * 0.9, half * 0.9);
-                break;
-            case core::Interp::Linear:
-            case core::Interp::Bezier: {  // rombo (la curva con un puntino scuro)
-                QPolygonF diamond;
-                diamond << QPointF(x, y - half) << QPointF(x + half, y) << QPointF(x, y + half) << QPointF(x - half, y);
-                p.drawPolygon(diamond);
-                if (k.interp == core::Interp::Bezier) {
-                    p.setPen(Qt::NoPen);
-                    p.setBrush(QColor(20, 20, 20));
-                    p.drawEllipse(QPointF(x, y), half * 0.28, half * 0.28);
-                }
-                break;
-            }
-        }
+        drawKeyMark(p, QPointF(x, y), half, k.interp, animGroupColor(k.group),
+                    selected ? QPen(pal.color(QPalette::Highlight), 2.5) : QPen(QColor(15, 15, 15), 1.2));
     }
     p.restore();
 }

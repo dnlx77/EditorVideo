@@ -34,4 +34,31 @@ std::optional<ParameterSets> readHvcC(const std::vector<std::uint8_t>& extra);
 // Aggiunge a `out` il NAL preceduto dalla sua lunghezza su `lengthSize` byte.
 void appendLengthPrefixed(std::vector<std::uint8_t>& out, const std::uint8_t* nal, std::size_t size, int lengthSize);
 
+// Lettura bit per bit del contenuto di un NAL (RBSP): salta i primi `headerBytes` byte (l'intestazione: 1 in H.264, 2 in
+// HEVC) e i byte di protezione 0x03 dopo due zeri. Oltre la fine dei dati, con PastEnd::Throw si lancia Error, con
+// PastEnd::Zeros si leggono zeri (e un numero Exp-Golomb si ferma a 31 zeri).
+class RbspReader
+{
+public:
+    struct Error
+    {
+    };
+    enum class PastEnd { Throw, Zeros };
+
+    RbspReader(const Nal& nal, int headerBytes, PastEnd pastEnd);
+
+    unsigned bit();
+    unsigned bits(int n);
+    unsigned ue();  // Exp-Golomb senza segno
+    int se();       // Exp-Golomb con segno
+    // Ci sono ancora dati prima del bit di chiusura del RBSP (l'ultimo bit a 1).
+    bool moreRbspData() const { return static_cast<long long>(pos_) < lastOne_; }
+
+private:
+    std::vector<std::uint8_t> data_;
+    std::size_t pos_ = 0;
+    long long lastOne_ = -1;
+    PastEnd pastEnd_;
+};
+
 }  // namespace editor::core::nal

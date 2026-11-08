@@ -24,17 +24,6 @@ using namespace detail;
 
 namespace {
 
-// FNV-1a a 64 bit: un codice stabile (lo stesso a ogni avvio) per riconoscere l'originale.
-std::uint64_t fnv1a(const std::string& text)
-{
-    std::uint64_t hash = 14695981039346656037ull;
-    for (const unsigned char c : text) {
-        hash ^= c;
-        hash *= 1099511628211ull;
-    }
-    return hash;
-}
-
 struct OutputDeleter
 {
     void operator()(AVFormatContext* fmt) const
@@ -107,7 +96,7 @@ std::string proxyFileName(const std::string& originalUtf8Path, int divisor)
     const auto ticks = modified.time_since_epoch().count();
     const std::string key = sameFileKey(originalUtf8Path) + "|" + std::to_string(size) + "|" + std::to_string(ticks);
     char code[17];
-    std::snprintf(code, sizeof code, "%016llx", static_cast<unsigned long long>(fnv1a(key)));
+    std::snprintf(code, sizeof code, "%016llx", static_cast<unsigned long long>(fnv1a(key.data(), key.size())));
     return utf8FromPath(original.stem()) + "_" + code + "_1-" + std::to_string(divisor) + ".mp4";
 }
 

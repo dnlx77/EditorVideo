@@ -127,26 +127,16 @@ void AnimMiniTimeline::paintEvent(QPaintEvent*)
     for (const core::AnimGroup group : rows()) {
         const QColor color = animGroupColor(group);
         const double cy = y(group);
-        QColor band = color;
-        band.setAlpha(34);
-        p.setPen(Qt::NoPen);
-        p.setBrush(band);
-        p.drawRect(QRectF(left, cy - kRowHeight / 2.0, right - left, kRowHeight));
-        p.setPen(pal.color(QPalette::WindowText));
-        p.drawText(QRectF(0, cy - kRowHeight / 2.0, kLabelWidth, kRowHeight), Qt::AlignLeft | Qt::AlignVCenter,
-                   QString::fromUtf8(animGroupName(group)));
         QPolygonF line;
         for (int i = 0; i < static_cast<int>(marks_.size()); ++i) {
             const Mark& m = marks_[static_cast<std::size_t>(i)];
             if (m.group == group && m.time >= from_ - kSame && m.time <= to_ + kSame)
                 line << QPointF(x(dragIndex_ == i && dragMoved_ ? dragValue_ : m.time), cy);
         }
-        if (line.size() >= 2) {
-            QColor stroke = color;
-            stroke.setAlpha(190);
-            p.setPen(QPen(stroke, 1.5));
-            p.drawPolyline(line);
-        }
+        drawKeyBand(p, QRectF(left, cy - kRowHeight / 2.0, right - left, kRowHeight), color, line);
+        p.setPen(pal.color(QPalette::WindowText));
+        p.drawText(QRectF(0, cy - kRowHeight / 2.0, kLabelWidth, kRowHeight), Qt::AlignLeft | Qt::AlignVCenter,
+                   QString::fromUtf8(animGroupName(group)));
     }
     const double half = 4.5;
     for (int i = 0; i < static_cast<int>(marks_.size()); ++i) {
@@ -156,24 +146,7 @@ void AnimMiniTimeline::paintEvent(QPaintEvent*)
         const bool dragged = dragIndex_ == i && dragMoved_;
         const double mx = x(dragged ? dragValue_ : m.time);
         const double my = y(m.group);
-        p.setBrush(animGroupColor(m.group));
-        p.setPen(QPen(QColor(15, 15, 15), 1.1));
-        switch (m.interp) {
-            case core::Interp::Hold: p.drawRect(QRectF(mx - half * 0.8, my - half * 0.8, half * 1.6, half * 1.6)); break;
-            case core::Interp::Smooth: p.drawEllipse(QPointF(mx, my), half * 0.9, half * 0.9); break;
-            case core::Interp::Linear:
-            case core::Interp::Bezier: {
-                QPolygonF diamond;
-                diamond << QPointF(mx, my - half) << QPointF(mx + half, my) << QPointF(mx, my + half) << QPointF(mx - half, my);
-                p.drawPolygon(diamond);
-                if (m.interp == core::Interp::Bezier) {
-                    p.setPen(Qt::NoPen);
-                    p.setBrush(QColor(20, 20, 20));
-                    p.drawEllipse(QPointF(mx, my), half * 0.28, half * 0.28);
-                }
-                break;
-            }
-        }
+        drawKeyMark(p, QPointF(mx, my), half, m.interp, animGroupColor(m.group), QPen(QColor(15, 15, 15), 1.1));
     }
     if (cursor_ >= from_ - kSame && cursor_ <= to_ + kSame) {
         const double cx = x(cursor_);
