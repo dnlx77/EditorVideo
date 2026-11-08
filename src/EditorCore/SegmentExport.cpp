@@ -83,13 +83,17 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
             return {};
         return [&progress, from, to](double fraction) { return progress(from + (to - from) * fraction); };
     };
+    const auto mixStarted = std::chrono::steady_clock::now();
     const double duration = renderMixToFile(spec, utf8FromPath(temp.path), scaled(0.0, kMixShare), mixCodec, reencode.audioBitRate);
+    const auto mixDone = std::chrono::steady_clock::now();
     AudioEdit replaced;
     replaced.replacement = AudioReplacement{utf8FromPath(temp.path), 0.0, duration};
     const ExportProgress videoProgress = scaled(kMixShare, 1.0);  // ExportJob tiene un riferimento
     ExportJob job(clips, outputPath, replaced, videoProgress, muteMethod, format, reencode, &plan);
     ExportResult result = job.run();
     result.mixedAudioFiles = mixFileCount(spec);
+    result.mixSeconds = std::chrono::duration<double>(mixDone - mixStarted).count();
+    result.totalSeconds += result.mixSeconds;
     return result;
 }
 

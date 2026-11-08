@@ -504,6 +504,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     if (!emitted)
         throw MediaError(kOutOfMemory);
     const auto emit = [&](const AVFrame* frame) {
+        const auto composeStarted = std::chrono::steady_clock::now();
         av_frame_unref(emitted.get());
         if (av_frame_ref(emitted.get(), frame) < 0)
             throw MediaError(kOutOfMemory);
@@ -549,7 +550,11 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
                 throw MediaError(kOutOfMemory);
         }
         emitted->pts = base + k;
+        const auto encodeStarted = std::chrono::steady_clock::now();
         video.encoder.encode(emitted.get(), k == 0, videoSink);
+        const auto encodeDone = std::chrono::steady_clock::now();
+        result_.composeSeconds += std::chrono::duration<double>(encodeStarted - composeStarted).count();
+        result_.encodeSeconds += std::chrono::duration<double>(encodeDone - encodeStarted).count();
         ++k;
         if (progress_ && !progress_(std::clamp((doneLength_ + k * frameSeconds) / totalLength_, 0.0, 1.0)))
             throw ExportCancelled();
@@ -904,6 +909,7 @@ void ExportJob::copyRange(InputFile& current, std::size_t c, const Piece& piece)
 
 ExportResult ExportJob::run()
 {
+    const auto runStarted = std::chrono::steady_clock::now();
     try {
         if ((output_->oformat->flags & AVFMT_NOFILE) == 0) {
             if (const int ret = avio_open(&output_->pb, outputPath_.c_str(), AVIO_FLAG_WRITE); ret < 0)
@@ -976,6 +982,7 @@ ExportResult ExportJob::run()
         result_.segmentCount = rangeCount_;
         result_.clipCount = static_cast<int>(clips_.size());
         result_.parametersInStream = plan_.parametersInStream;
+        result_.totalSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - runStarted).count();
         return result_;
     } catch (...) {
         removePartial();

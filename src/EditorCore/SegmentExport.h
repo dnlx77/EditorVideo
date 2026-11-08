@@ -47,6 +47,12 @@ struct ExportResult
     int transformSegments = 0;   // parti ricodificate perché trasformate (scala, posizione, rotazione, ritaglio)
     int transitionSegments = 0;  // parti ricodificate perché dentro una transizione
     int mixedAudioFiles = 0;    // file audio mixati e ricodificati in AAC (AudioEdit::mix); 0 = audio copiato
+    // Dove è andato il tempo (secondi di orologio): mix audio, tutta l'esportazione, composizione (scritte, livelli,
+    // trasformazioni) e codifica dei fotogrammi video. Il resto del tempo è lettura e decodifica.
+    double mixSeconds = 0.0;
+    double totalSeconds = 0.0;
+    double composeSeconds = 0.0;
+    double encodeSeconds = 0.0;
 };
 
 // Una transizione da fondere nel file esportato (vedi ReencodeOptions::transitions): sta sulla giunzione fra il tratto
