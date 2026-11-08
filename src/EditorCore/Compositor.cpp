@@ -1,6 +1,7 @@
 #include "EditorCore/Compositor.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <thread>
 #include <vector>
@@ -100,13 +101,18 @@ void compositeLayer(std::uint8_t* canvas, int canvasStride, int canvasWidth, int
     const float opacity = static_cast<float>(t.opacity);
 
     // Ogni pixel dipende solo dalla sua posizione: le righe si dividono tra più thread senza cambiare il risultato.
+    // L'interpolazione usa pesi interi a 8 bit (i valori differiscono al più di un livello dal calcolo in virgola mobile;
+    // con spostamenti interi e pezzo opaco sono esatti) e la posizione nel file avanza per somme lungo la riga.
+    const int alphaScale = static_cast<int>(std::lround(opacity * 256.0f));
     const auto drawRows = [&](int rowStart, int rowEnd) {
         for (int y = rowStart; y < rowEnd; ++y) {
             std::uint8_t* dst = canvas + static_cast<std::ptrdiff_t>(y) * canvasStride + static_cast<std::ptrdiff_t>(x0) * 4;
-            for (int x = x0; x < x1; ++x, dst += 4) {
-                const Point2 p = inv.apply(x + 0.5, y + 0.5);
-                const float u = static_cast<float>(p.x);
-                const float v = static_cast<float>(p.y);
+            const Point2 first = inv.apply(x0 + 0.5, y + 0.5);
+            double pu = first.x;
+            double pv = first.y;
+            for (int x = x0; x < x1; ++x, dst += 4, pu += inv.a, pv += inv.b) {
+                const float u = static_cast<float>(pu);
+                const float v = static_cast<float>(pv);
                 const float coverage = clamp01((u - left) * lenX + 0.5f) * clamp01((right - u) * lenX + 0.5f) *
                                        clamp01((v - top) * lenY + 0.5f) * clamp01((bottom - v) * lenY + 0.5f);
                 if (coverage <= 0.0f)
@@ -114,22 +120,24 @@ void compositeLayer(std::uint8_t* canvas, int canvasStride, int canvasWidth, int
                 // Bilineare: i centri dei pixel sono a +0.5.
                 const float fx = u - 0.5f;
                 const float fy = v - 0.5f;
-                const float flx = std::floor(fx);
-                const float fly = std::floor(fy);
-                const float tx = fx - flx;
-                const float ty = fy - fly;
-                const int ix0 = std::clamp(static_cast<int>(flx), minIx, maxIx);
-                const int ix1 = std::clamp(static_cast<int>(flx) + 1, minIx, maxIx);
-                const int iy0 = std::clamp(static_cast<int>(fly), minIy, maxIy);
-                const int iy1 = std::clamp(static_cast<int>(fly) + 1, minIy, maxIy);
-                const std::uint8_t* r0 = image.data + static_cast<std::ptrdiff_t>(iy0) * image.stride;
-                const std::uint8_t* r1 = image.data + static_cast<std::ptrdiff_t>(iy1) * image.stride;
-                const float alpha = coverage * opacity;
+                const int flx = static_cast<int>(fx) - (fx < 0.0f ? 1 : 0);  // pavimento
+                const int fly = static_cast<int>(fy) - (fy < 0.0f ? 1 : 0);
+                const int wx = static_cast<int>((fx - static_cast<float>(flx)) * 256.0f);  // 0..255
+                const int wy = static_cast<int>((fy - static_cast<float>(fly)) * 256.0f);
+                const int ix0 = std::clamp(flx, minIx, maxIx);
+                const int ix1 = std::clamp(flx + 1, minIx, maxIx);
+                const int iy0 = std::clamp(fly, minIy, maxIy);
+                const int iy1 = std::clamp(fly + 1, minIy, maxIy);
+                const std::uint8_t* p00 = image.data + static_cast<std::ptrdiff_t>(iy0) * image.stride + ix0 * 4;
+                const std::uint8_t* p01 = image.data + static_cast<std::ptrdiff_t>(iy0) * image.stride + ix1 * 4;
+                const std::uint8_t* p10 = image.data + static_cast<std::ptrdiff_t>(iy1) * image.stride + ix0 * 4;
+                const std::uint8_t* p11 = image.data + static_cast<std::ptrdiff_t>(iy1) * image.stride + ix1 * 4;
+                const int alpha = std::clamp(static_cast<int>(coverage * static_cast<float>(alphaScale) + 0.5f), 0, 256);
                 for (int c = 0; c < 3; ++c) {
-                    const float top2 = r0[ix0 * 4 + c] * (1.0f - tx) + r0[ix1 * 4 + c] * tx;
-                    const float bot2 = r1[ix0 * 4 + c] * (1.0f - tx) + r1[ix1 * 4 + c] * tx;
-                    const float color = top2 * (1.0f - ty) + bot2 * ty;
-                    dst[c] = static_cast<std::uint8_t>(std::lround(color * alpha + dst[c] * (1.0f - alpha)));
+                    const int top2 = p00[c] * (256 - wx) + p01[c] * wx;
+                    const int bot2 = p10[c] * (256 - wx) + p11[c] * wx;
+                    const int color = (top2 * (256 - wy) + bot2 * wy + 32768) >> 16;
+                    dst[c] = static_cast<std::uint8_t>(alpha >= 256 ? color : (color * alpha + dst[c] * (256 - alpha) + 128) >> 8);
                 }
                 dst[3] = 255;
             }
@@ -142,11 +150,18 @@ void compositeLayer(std::uint8_t* canvas, int canvasStride, int canvasWidth, int
         drawRows(y0, y1);
         return;
     }
+    // Blocchi di righe presi a turno (le righe di un pezzo ruotato non costano tutte uguale).
+    constexpr int kBlock = 16;
+    std::atomic<int> nextRow{y0};
+    const auto work = [&] {
+        for (int start = nextRow.fetch_add(kBlock); start < y1; start = nextRow.fetch_add(kBlock))
+            drawRows(start, std::min(start + kBlock, y1));
+    };
     std::vector<std::thread> workers;
     workers.reserve(static_cast<std::size_t>(threads - 1));
     for (int i = 1; i < threads; ++i)
-        workers.emplace_back(drawRows, y0 + rows * i / threads, y0 + rows * (i + 1) / threads);
-    drawRows(y0, y0 + rows / threads);
+        workers.emplace_back(work);
+    work();
     for (std::thread& w : workers)
         w.join();
 }
