@@ -367,6 +367,15 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
         recoding += QStringLiteral("\nAudio ricodificato: %1 file audio mixati (%2).")
                         .arg(outcome.result->mixedAudioFiles)
                         .arg(audioChoiceText(reencodeOptions_));
+    // Dove è andato il tempo, per capire cosa rallenta l'esportazione.
+    const core::ExportResult& r = *outcome.result;
+    if (r.totalSeconds > 0.0 && (r.composeSeconds > 0.0 || r.encodeSeconds > 0.0 || r.mixSeconds > 0.0))
+        recoding += QStringLiteral("\nTempi: totale %1 s (mix audio %2 s, composizione %3 s, codifica %4 s, lettura e decodifica %5 s).")
+                        .arg(r.totalSeconds, 0, 'f', 1)
+                        .arg(r.mixSeconds, 0, 'f', 1)
+                        .arg(r.composeSeconds, 0, 'f', 1)
+                        .arg(r.encodeSeconds, 0, 'f', 1)
+                        .arg(std::max(0.0, r.totalSeconds - r.mixSeconds - r.composeSeconds - r.encodeSeconds), 0, 'f', 1);
     QMessageBox::information(this, QStringLiteral("Esportazione completata"),
                              QStringLiteral("%1 in:\n%2\n\nDurata: %3\n%4")
                                  .arg(what, target, timeText(outcome.result->durationSeconds), recoding));
