@@ -203,12 +203,7 @@ struct VideoDecoder::Impl : OpenedStream
 
     void openCodec()
     {
-        ctx.reset(avcodec_alloc_context3(codec));
-        if (!ctx)
-            throw MediaError("Memoria insufficiente per il decoder video.");
-        if (avcodec_parameters_to_context(ctx.get(), stream->codecpar) < 0)
-            throw MediaError("Parametri del flusso video non validi.");
-        ctx->pkt_timebase = stream->time_base;
+        ctx.reset();
         hardwareActive = false;
         decoderLive = false;
 
@@ -220,25 +215,17 @@ struct VideoDecoder::Impl : OpenedStream
                 else
                     hardwareAllowed = false;  // niente scheda video compatibile: inutile riprovare
             }
-            if (hwDevice) {
-                ctx->hw_device_ctx = av_buffer_ref(hwDevice.get());
-                ctx->get_format = &Impl::getFormat;
-                ctx->opaque = this;
-                hardware = true;
-            }
+            hardware = static_cast<bool>(hwDevice);
         }
-        // In software usiamo tutti i core; con la GPU un solo thread è la configurazione consigliata da FFmpeg.
-        ctx->thread_count = hardware ? 1 : 0;
-
-        if (const int ret = avcodec_open2(ctx.get(), codec, nullptr); ret < 0) {
-            if (hardware) {
-                hardwareAllowed = false;
-                openCodec();
-                return;
-            }
-            throw MediaError("Impossibile aprire il decoder video " + std::string(codec->name) + " ("
-                             + ffmpegError(ret) + ").");
-        }
+        // In software tutti i core; con la GPU un solo thread. Se con la GPU non si apre, si riprova con la CPU.
+        const HardwareDecoding gpu{hwDevice.get(), &Impl::getFormat, this};
+        int ret = 0;
+        bool usedHardware = false;
+        ctx = openDecoder(codec, stream, 0, hardware ? &gpu : nullptr, &ret, &usedHardware);
+        if (hardware && !usedHardware)
+            hardwareAllowed = false;
+        if (!ctx)
+            throw MediaError("Impossibile aprire il decoder video " + std::string(codec->name) + " (" + ffmpegError(ret) + ").");
     }
 
     bool usingHardwareDevice() const { return ctx && ctx->hw_device_ctx != nullptr; }

@@ -1,5 +1,7 @@
 #include "EditorCore/SegmentExportInternal.h"
 
+#include <optional>
+
 namespace editor::core {
 
 using namespace detail;
@@ -427,27 +429,15 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
 
     // Decoder del video (e dell'audio, se si ricodifica).
     AVPixelFormat hardwareFormat = AV_PIX_FMT_NONE;  // formato D3D11 dei fotogrammi, se il video si decodifica con la GPU
-    const auto openDecoder = [&](int index) {
+    const auto openStreamDecoder = [&](int index) {
         const AVStream* st = input->streams[index];
         const AVCodec* codec = avcodec_find_decoder(st->codecpar->codec_id);
         if (codec == nullptr)
             throw ClipsNotJoinable("Il file " + clips_[c].path + " è in " + avcodec_get_name(st->codecpar->codec_id)
                                    + ": questa versione del programma non sa decodificarlo per ricodificarlo.");
-        const auto create = [&](bool hardware) {
-            CodecContextPtr ctx(avcodec_alloc_context3(codec));
-            avcodec_parameters_to_context(ctx.get(), st->codecpar);
-            ctx->pkt_timebase = st->time_base;
-            ctx->thread_count = 0;
-            if (hardware) {
-                ctx->hw_device_ctx = av_buffer_ref(hwDevice_.get());
-                ctx->get_format = &pickHardwareFormat;
-                ctx->opaque = reinterpret_cast<void*>(static_cast<std::intptr_t>(hardwareFormat));
-                ctx->thread_count = 1;  // con la GPU un solo thread (consigliato da FFmpeg)
-            }
-            return ctx;
-        };
         // Video con la GPU, se richiesta e se si può: dispositivo D3D11 (uno solo per tutta l'esportazione); se qualcosa non
-        // va si decodifica con la CPU.
+        // va si decodifica con la CPU (tutti i core).
+        std::optional<HardwareDecoding> gpu;
         if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && reencode_.decoder == DecoderMode::Hardware) {
             const AVPixelFormat format = d3d11FormatFor(codec);
             if (format != AV_PIX_FMT_NONE && !hwDevice_ && !hwDeviceTried_) {
@@ -457,14 +447,16 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             }
             if (format != AV_PIX_FMT_NONE && hwDevice_) {
                 hardwareFormat = format;
-                CodecContextPtr hardware = create(true);
-                if (avcodec_open2(hardware.get(), codec, nullptr) >= 0)
-                    return hardware;
-                hardwareFormat = AV_PIX_FMT_NONE;
+                gpu = HardwareDecoding{hwDevice_.get(), &pickHardwareFormat,
+                                       reinterpret_cast<void*>(static_cast<std::intptr_t>(hardwareFormat))};
             }
         }
-        CodecContextPtr ctx = create(false);
-        if (const int ret = avcodec_open2(ctx.get(), codec, nullptr); ret < 0)
+        int ret = 0;
+        bool usedHardware = false;
+        CodecContextPtr ctx = openDecoder(codec, st, 0, gpu ? &*gpu : nullptr, &ret, &usedHardware);
+        if (!usedHardware)
+            hardwareFormat = AV_PIX_FMT_NONE;
+        if (!ctx)
             throw MediaError("Il decoder di " + clips_[c].path + " non si apre: " + ffmpegError(ret));
         return ctx;
     };
@@ -472,10 +464,10 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     if (videoIndex < 0)
         throw ClipsNotJoinable("Il file " + clips_[c].path + " non ha video.");
     const AVStream* inV = input->streams[videoIndex];
-    CodecContextPtr videoDecoder = openDecoder(videoIndex);
+    CodecContextPtr videoDecoder = openStreamDecoder(videoIndex);
     const int audioIndex = outAudio_ >= 0 ? findMainStream(input, AVMEDIA_TYPE_AUDIO) : -1;
     const bool copyAudio = audioIndex >= 0 && plan_.copyAudio[c];
-    CodecContextPtr audioDecoder = audioIndex >= 0 && !copyAudio ? openDecoder(audioIndex) : nullptr;
+    CodecContextPtr audioDecoder = audioIndex >= 0 && !copyAudio ? openStreamDecoder(audioIndex) : nullptr;
     AVStream* outA = outAudio_ >= 0 ? output_->streams[outAudio_] : nullptr;
     std::unique_ptr<AudioEncoder> audioEncoder;
     StreamCopy audioOut;  // il flusso audio del file creato (per il silenzio nei tratti senza audio)

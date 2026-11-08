@@ -103,11 +103,9 @@ AudioDecoder::AudioDecoder(const std::string& utf8Path, int targetSampleRate)
         throw MediaError("Memoria insufficiente per il decoder audio.");
 
     static_cast<OpenedStream&>(d) = openMainStream(utf8Path, AVMEDIA_TYPE_AUDIO);
-    d.ctx.reset(avcodec_alloc_context3(d.codec));
-    if (!d.ctx || avcodec_parameters_to_context(d.ctx.get(), d.stream->codecpar) < 0)
-        throw MediaError("Parametri del flusso audio non validi.");
-    d.ctx->pkt_timebase = d.stream->time_base;
-    if (const int ret = avcodec_open2(d.ctx.get(), d.codec, nullptr); ret < 0)
+    int ret = 0;
+    d.ctx = openDecoder(d.codec, d.stream, 1, nullptr, &ret);
+    if (!d.ctx)
         throw MediaError("Impossibile aprire il decoder audio " + std::string(d.codec->name) + " (" + ffmpegError(ret)
                          + ").");
 
