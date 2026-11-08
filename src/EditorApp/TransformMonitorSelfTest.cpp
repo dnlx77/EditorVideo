@@ -237,6 +237,7 @@ int runManipTest(const QStringList& args, qsizetype at)
                       && std::abs(moved[0][2] - 120.0) < 1.0,
                   "al rilascio arrivano l'istante della chiave e la nuova posizione");
             check(edits.empty(), "trascinare un punto del percorso non sposta il pezzo");
+            monitor.onMotionKeyMoved = nullptr;  // `moved` finisce qui: il monitor non deve più scriverci
         }
         // Una chiave sola: non c'è un percorso.
         animation.track(core::AnimParam::PosX) = {{.time = 0.5, .value = 10.0}};
@@ -409,7 +410,6 @@ int runManipTest(const QStringList& args, qsizetype at)
                 const core::Fragment& piece = *window.project().sequence().find(id);
                 const double t1 = piece.start + 0.5;
                 const double t2 = piece.start + 1.5;
-                const double t3 = piece.start + 2.5;
                 window.editAnimationKeys(QStringLiteral("prova"), [&](core::TransformAnimation& a, core::Transform&) {
                     core::AnimKey k;
                     k.time = t1;

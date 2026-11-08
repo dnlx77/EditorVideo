@@ -203,7 +203,6 @@ public:
     void refreshKeyRow();  // la riga dei rombi sulla linea del tempo segue il pezzo scelto
     PropertiesPanel* propertiesPanel() const { return propertiesPanel_; }
     MixerPanel* mixerPanel() const { return mixerPanel_; }
-    QDockWidget* mixerDock() const { return mixerDock_; }
     // Cambia la trasformazione dei pezzi video scelti con `edit` (un campo alla volta: `field` unisce le modifiche di
     // seguito dello stesso campo in una voce di Annulla). false se nessun pezzo è cambiato.
     bool applyTransformEdit(const std::function<void(core::Transform&)>& edit, const std::string& field);
@@ -213,8 +212,6 @@ public:
     // Il gesto sul monitor di un pezzo con l'animazione: chiavi sul cursore per i parametri animati (false se il pezzo non è animato).
     bool commitAnimatedMonitorTransform(bool layer, int id, const core::Transform& edited, bool text = false);
     bool commitMonitorTextTransform(int clipId, const core::Transform& transform);
-    QAction* transformModeAction() const { return transformAction_; }
-    QAction* cropModeAction() const { return cropAction_; }
     // "Adatta" / "Riempi" sui pezzi scelti.
     void fitSelectedPieces(bool fill);
     QTabWidget* leftTabs() const { return leftTabs_; }

@@ -3,12 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <numbers>
 
 namespace editor::core {
 
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
 
 struct Coeffs
 {
@@ -20,7 +19,7 @@ Coeffs design(const EqBand& band, int sampleRate)
 {
     const double freq = std::clamp(band.freq, kEqMinHz, std::min(kEqMaxHz, sampleRate * 0.45));
     const double q = std::clamp(band.q, kEqMinQ, kEqMaxQ);
-    const double w0 = 2.0 * kPi * freq / sampleRate;
+    const double w0 = 2.0 * std::numbers::pi * freq / sampleRate;
     const double cosw = std::cos(w0);
     const double sinw = std::sin(w0);
     const double alpha = sinw / (2.0 * q);
@@ -183,7 +182,7 @@ AudioEffect clampedEffect(AudioEffect effect)
 
 double eqResponseDb(const std::vector<EqBand>& bands, double hz, int sampleRate)
 {
-    const double w = 2.0 * kPi * hz / sampleRate;
+    const double w = 2.0 * std::numbers::pi * hz / sampleRate;
     const std::complex<double> z1 = std::polar(1.0, -w);
     const std::complex<double> z2 = z1 * z1;
     double db = 0.0;

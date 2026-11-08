@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace editor::app {
 
@@ -276,11 +277,10 @@ namespace {
 // Dove va a finire il vettore dal centro di stile al centro del riquadro, con scala, specchio e rotazione di `t`.
 core::Point2 turnedOffset(const core::Transform& t, core::Point2 d)
 {
-    constexpr double kPi = 3.14159265358979323846;
     const double ex = t.scaleX * (t.flipHorizontal ? -1.0 : 1.0);
     const double ey = t.scaleY * (t.flipVertical ? -1.0 : 1.0);
-    const double cs = std::cos(t.rotation * kPi / 180.0);
-    const double sn = std::sin(t.rotation * kPi / 180.0);
+    const double cs = std::cos(t.rotation * std::numbers::pi / 180.0);
+    const double sn = std::sin(t.rotation * std::numbers::pi / 180.0);
     return {cs * ex * d.x - sn * ey * d.y, sn * ex * d.x + cs * ey * d.y};
 }
 
@@ -1193,7 +1193,6 @@ void ProgramMonitor::seekRelative(double deltaSeconds)
 
 void ProgramMonitor::togglePlayPause()
 {
-    const core::Sequence& sequence = project_.sequence();
     if (!hasProgram())
         return;
     if (playing_) {
@@ -1213,7 +1212,6 @@ void ProgramMonitor::togglePlayPause()
 
 void ProgramMonitor::start()
 {
-    const core::Sequence& sequence = project_.sequence();
     if (!hasProgram() || playing_)
         return;
     if (speed_ < 0) {
@@ -1370,7 +1368,6 @@ void ProgramMonitor::stepToCut(int direction)
 
 void ProgramMonitor::seekToEnd()
 {
-    const core::Sequence& sequence = project_.sequence();
     if (!hasProgram())
         return;
     setPlaying(false);
@@ -1420,7 +1417,6 @@ void ProgramMonitor::fragmentEnded()
 
 void ProgramMonitor::reachedEdge()
 {
-    const core::Sequence& sequence = project_.sequence();
     if (loop_ && hasProgram()) {
         // Ripetizione: si riparte dall'altro capo del montaggio, senza fermarsi.
         seekTo(speed_ < 0 ? std::max(0.0, programEnd() - player_->frameDuration()) : 0.0);
@@ -1589,7 +1585,6 @@ void ProgramMonitor::updatePosition()
 bool ProgramMonitor::startAudio(double from)
 {
     stopAudio();
-    const core::Sequence& sequence = project_.sequence();
     if (!hasProgram() || !core::audibleAtSpeed(speed_)) {
         player_->setAudioNote(QString());
         return false;

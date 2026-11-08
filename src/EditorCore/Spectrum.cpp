@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <numbers>
 
 namespace editor::core {
 
@@ -21,7 +22,7 @@ void fft(std::vector<std::complex<double>>& a)
             std::swap(a[i], a[j]);
     }
     for (std::size_t len = 2; len <= n; len <<= 1) {
-        const double angle = -2.0 * 3.14159265358979323846 / static_cast<double>(len);
+        const double angle = -2.0 * std::numbers::pi / static_cast<double>(len);
         const std::complex<double> step(std::cos(angle), std::sin(angle));
         for (std::size_t i = 0; i < n; i += len) {
             std::complex<double> w(1.0, 0.0);
@@ -46,7 +47,7 @@ std::vector<float> spectrumDb(const std::vector<float>& samples)
     std::vector<std::complex<double>> a(n);
     double windowSum = 0.0;
     for (std::size_t i = 0; i < n; ++i) {
-        const double w = 0.5 - 0.5 * std::cos(2.0 * 3.14159265358979323846 * static_cast<double>(i) / static_cast<double>(n));
+        const double w = 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(n));
         windowSum += w;
         a[i] = std::complex<double>(static_cast<double>(samples[i]) * w, 0.0);
     }

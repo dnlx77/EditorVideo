@@ -55,7 +55,7 @@ public:
     // Fine dell'ultimo tratto, in secondi.
     double endTime() const { return end_; }
 
-    void setGain(int trackId, float gain);
+    void setGain(int trackId, float gain);  // usata dalle prove (il programma usa setGains)
     void setGains(const std::map<int, float>& gains);
     // Il pan delle tracce (-1 sinistra .. +1 destra, assente = centro); cambia con la stessa rampa del livello.
     void setPans(const std::map<int, float>& pans);

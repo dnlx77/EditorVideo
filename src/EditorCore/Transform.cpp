@@ -3,12 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <numbers>
 
 namespace editor::core {
 
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
 
 double finiteOr(double value, double fallback)
 {
@@ -77,7 +76,7 @@ TransformGeometry computeGeometry(const Transform& transform, int sourceWidth, i
     const double fit = std::min(projectWidth / sw, projectHeight / sh);
     const double ex = fit * t.scaleX * (t.flipHorizontal ? -1.0 : 1.0);
     const double ey = fit * t.scaleY * (t.flipVertical ? -1.0 : 1.0);
-    const double radians = t.rotation * kPi / 180.0;
+    const double radians = t.rotation * std::numbers::pi / 180.0;
     const double cs = std::cos(radians);
     const double sn = std::sin(radians);
     // p' = centro + R * D * (p - centro del file); con y verso il basso, un angolo positivo gira in senso orario.

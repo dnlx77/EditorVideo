@@ -46,15 +46,6 @@ public:
     static QString bandsToText(const std::vector<core::EqBand>& bands);
     static std::vector<core::EqBand> bandsFromText(const QString& text);
 
-    // Per i test.
-    EqGraph* graph() const { return graph_; }
-    // Come girare una manopola e rilasciarla (which: 0 freq, 1 gain, 2 Q).
-    void turnKnob(int band, int which, double value);
-    QComboBox* typeCombo(int band) const { return types_[static_cast<std::size_t>(band)]; }
-    QCheckBox* bandCheck(int band) const { return checks_[static_cast<std::size_t>(band)]; }
-    QComboBox* presetCombo() const { return presets_; }
-    QPushButton* resetAllButton() const { return resetAll_; }
-
 private:
     void commit();
     void bandsChanged(bool final);  // dal grafico o dalle manopole: aggiorna il resto

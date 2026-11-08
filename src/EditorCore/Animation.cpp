@@ -83,24 +83,6 @@ void setParamValue(Transform& t, AnimParam p, double value)
     }
 }
 
-const char* animParamName(AnimParam p)
-{
-    switch (p) {
-        case AnimParam::ScaleX: return "Scala X";
-        case AnimParam::ScaleY: return "Scala Y";
-        case AnimParam::PosX: return "Posizione X";
-        case AnimParam::PosY: return "Posizione Y";
-        case AnimParam::Rotation: return "Rotazione";
-        case AnimParam::CropLeft: return "Ritaglio sinistra";
-        case AnimParam::CropRight: return "Ritaglio destra";
-        case AnimParam::CropTop: return "Ritaglio alto";
-        case AnimParam::CropBottom: return "Ritaglio basso";
-        case AnimParam::Opacity: return "Opacità";
-        case AnimParam::Count: break;
-    }
-    return "";
-}
-
 double easedFraction(const AnimKey& from, double u)
 {
     u = std::clamp(u, 0.0, 1.0);
@@ -271,14 +253,6 @@ const AnimKey* findKey(const TransformAnimation& animation, AnimParam param, dou
 
 namespace {
 
-std::vector<AnimParam> allParams()
-{
-    std::vector<AnimParam> params;
-    for (std::size_t p = 0; p < kAnimParamCount; ++p)
-        params.push_back(static_cast<AnimParam>(p));
-    return params;
-}
-
 bool moveKeysOf(TransformAnimation& animation, const std::vector<AnimParam>& params, double fromTime, double toTime)
 {
     if (!std::isfinite(toTime) || sameTime(fromTime, toTime))
@@ -334,10 +308,6 @@ Interp interpOf(const TransformAnimation& animation, const std::vector<AnimParam
 
 }  // namespace
 
-bool moveKeysAt(TransformAnimation& animation, double fromTime, double toTime)
-{
-    return moveKeysOf(animation, allParams(), fromTime, toTime);
-}
 
 void shiftKeys(TransformAnimation& animation, double delta)
 {
@@ -347,20 +317,8 @@ void shiftKeys(TransformAnimation& animation, double delta)
     }
 }
 
-bool removeKeysAt(TransformAnimation& animation, double time, Transform* base)
-{
-    return removeKeysOf(animation, allParams(), time, base);
-}
 
-bool setKeysInterpAt(TransformAnimation& animation, double time, Interp interp, double c1x, double c1y, double c2x, double c2y)
-{
-    return setInterpOf(animation, allParams(), time, interp, c1x, c1y, c2x, c2y);
-}
 
-Interp interpAt(const TransformAnimation& animation, double time)
-{
-    return interpOf(animation, allParams(), time);
-}
 
 bool moveGroupKeys(TransformAnimation& animation, AnimGroup group, double fromTime, double toTime)
 {

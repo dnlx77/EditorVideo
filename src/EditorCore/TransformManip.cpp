@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace editor::core {
 
@@ -13,8 +14,6 @@ TransformGeometry geometryOf(const Transform& t, const ManipSize& size)
     return computeGeometry(t, static_cast<int>(size.srcW), static_cast<int>(size.srcH), static_cast<int>(size.projW),
                            static_cast<int>(size.projH));
 }
-
-constexpr double kPi = 3.14159265358979323846;
 
 bool valid(const ManipSize& s)
 {
@@ -119,7 +118,7 @@ Transform manipScale(const Transform& start, const ManipSize& size, int corner, 
     const double fit = std::min(size.projW / size.srcW, size.projH / size.srcH);
     const double fx = t0.flipHorizontal ? -1.0 : 1.0;
     const double fy = t0.flipVertical ? -1.0 : 1.0;
-    const double radians = t0.rotation * kPi / 180.0;
+    const double radians = t0.rotation * std::numbers::pi / 180.0;
     const double cs = std::cos(radians);
     const double sn = std::sin(radians);
     // Il mouse rispetto all'ancora, nel sistema ruotato del pezzo.
@@ -167,7 +166,7 @@ Transform manipRotate(const Transform& start, const ManipSize& size, Point2 from
     const Point2 pivot{size.projW / 2.0 + t0.posX, size.projH / 2.0 + t0.posY};
     const double a0 = std::atan2(from.y - pivot.y, from.x - pivot.x);
     const double a1 = std::atan2(to.y - pivot.y, to.x - pivot.x);
-    double delta = (a1 - a0) * 180.0 / kPi;
+    double delta = (a1 - a0) * 180.0 / std::numbers::pi;
     while (delta > 180.0)
         delta -= 360.0;
     while (delta < -180.0)
