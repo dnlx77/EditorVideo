@@ -1,13 +1,17 @@
 #pragma once
 
+#include "EditorCore/Encoder.h"
 #include "EditorCore/PathUtil.h"
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <system_error>
+
+struct AVFrame;
 
 namespace editor::tests {
 
@@ -45,6 +49,35 @@ bool sampleEncodersAvailable();
 // I file "sorgente.mkv" (MPEG-4 + PCM) e "sorgente.mp4" (MPEG-4 + AAC) usati dalle prove di esportazione: 4 s,
 // 100 fotogrammi, un fotogramma chiave ogni secondo.
 void writeExportSources(const std::filesystem::path& dir);
+
+// File di prova codificato con gli encoder del programma (H.264 o HEVC, di solito con la scheda video) più audio AAC: ogni
+// fotogramma ha una luminanza uniforme (luma + lumaStep * indice), così si riconosce da quale file e fotogramma viene.
+// L'audio è un La (440 Hz) per tutto il file. Lo usano le prove dell'esportazione.
+struct EncodedClipSpec
+{
+    core::VideoCodec codec = core::VideoCodec::H264;
+    int width = 640;
+    int height = 360;
+    int fps = 30;
+    int frames = 120;  // 4 s
+    int gop = 30;      // un fotogramma chiave al secondo
+    int bFrames = 0;
+    int luma = 100;    // luminanza del primo fotogramma
+    int lumaStep = 0;  // quanto cresce a ogni fotogramma (0 = tutti uguali)
+    int audioRate = 48000;  // 0 = senza audio
+    int audioAmplitude = 10000;
+};
+
+// false se manca l'encoder o la scrittura non riesce.
+bool writeEncodedClip(const std::filesystem::path& path, const EncodedClipSpec& spec);
+
+// Decodifica tutti i fotogrammi video del file e chiama onFrame per ognuno, in ordine di visualizzazione. Restituisce gli
+// errori: file che non si apre, pacchetti rifiutati e, con strict, anche i fotogrammi con errori o danneggiati (con il
+// controllo del flusso più severo del decoder).
+int decodeVideoFrames(const std::filesystem::path& path, const std::function<void(const AVFrame&)>& onFrame, bool strict = false);
+
+// Luminanza (Y) del pixel (x, y) di un fotogramma decodificato.
+int lumaAt(const AVFrame& frame, int x, int y);
 
 // Base dei test che lavorano su file di prova generati in una cartella temporanea propria (una per gruppo di test).
 // La classe derivata dichiara, pubblici, kDirName (nome della cartella in %TEMP%) e prepareSamples() (genera i file

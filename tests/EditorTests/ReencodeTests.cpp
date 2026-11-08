@@ -4,11 +4,11 @@
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/SegmentExport.h"
 #include "MediaChecks.h"
+#include "SampleMedia.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
-#include <libavutil/channel_layout.h>
 }
 
 #include <gtest/gtest.h>
@@ -20,6 +20,9 @@ extern "C" {
 
 namespace fs = std::filesystem;
 using namespace editor::core;
+using editor::tests::decodeVideoFrames;
+using editor::tests::lumaAt;
+using editor::tests::writeEncodedClip;
 
 namespace {
 
@@ -43,86 +46,9 @@ int lumaOf(const ClipSpec& spec, int index)
 
 bool writeClip(const fs::path& path, const ClipSpec& spec)
 {
-    try {
-        VideoEncoderSettings s;
-        s.codec = spec.codec;
-        s.width = spec.width;
-        s.height = spec.height;
-        s.frameRate = {spec.fps, 1};
-        s.gopFrames = spec.gop;
-        VideoEncoder video(s);
-        std::unique_ptr<AudioEncoder> audio;
-        if (spec.audioRate > 0)
-            audio = std::make_unique<AudioEncoder>(AudioEncoderSettings{spec.audioRate, 2});
-        AVFormatContext* fmt = nullptr;
-        const std::string name = utf8FromPath(path);
-        avformat_alloc_output_context2(&fmt, nullptr, nullptr, name.c_str());
-        AVStream* vs = avformat_new_stream(fmt, nullptr);
-        video.copyParameters(vs->codecpar);
-        vs->time_base = {1, spec.fps};
-        AVStream* as = nullptr;
-        if (audio) {
-            as = avformat_new_stream(fmt, nullptr);
-            audio->copyParameters(as->codecpar);
-            as->time_base = {1, spec.audioRate};
-        }
-        avio_open(&fmt->pb, name.c_str(), AVIO_FLAG_WRITE);
-        if (avformat_write_header(fmt, nullptr) < 0)
-            return false;
-        const auto sinkFor = [&](AVStream* st, AVRational tb) {
-            return PacketSink([=](AVPacket* p) {
-                AVPacket* copy = av_packet_clone(p);
-                av_packet_rescale_ts(copy, tb, st->time_base);
-                copy->stream_index = st->index;
-                av_interleaved_write_frame(fmt, copy);
-                av_packet_free(&copy);
-            });
-        };
-        const PacketSink videoSink = sinkFor(vs, {1, spec.fps});
-        const PacketSink audioSink = audio ? sinkFor(as, {1, spec.audioRate}) : PacketSink{};
-        long long sample = 0;
-        for (int i = 0; i < spec.frames; ++i) {
-            AVFrame* frame = av_frame_alloc();
-            frame->format = AV_PIX_FMT_YUV420P;
-            frame->width = spec.width;
-            frame->height = spec.height;
-            av_frame_get_buffer(frame, 0);
-            for (int y = 0; y < spec.height; ++y)
-                std::fill_n(frame->data[0] + y * frame->linesize[0], spec.width, static_cast<std::uint8_t>(lumaOf(spec, i)));
-            for (int p = 1; p <= 2; ++p) {
-                for (int y = 0; y < spec.height / 2; ++y)
-                    std::fill_n(frame->data[p] + y * frame->linesize[p], spec.width / 2, 128);
-            }
-            frame->pts = i;
-            video.encode(frame, false, videoSink);
-            av_frame_free(&frame);
-            if (audio) {
-                // Un La per tutto il file, fino alla fine di questo fotogramma.
-                const long long until = static_cast<long long>(i + 1) * spec.audioRate / spec.fps;
-                AVFrame* a = av_frame_alloc();
-                a->format = AV_SAMPLE_FMT_S16;
-                a->sample_rate = spec.audioRate;
-                a->nb_samples = static_cast<int>(until - sample);
-                av_channel_layout_default(&a->ch_layout, 2);
-                av_frame_get_buffer(a, 0);
-                auto* s16 = reinterpret_cast<std::int16_t*>(a->data[0]);
-                for (int n = 0; n < a->nb_samples; ++n)
-                    s16[2 * n] = s16[2 * n + 1] = static_cast<std::int16_t>(12000 * std::sin(2 * 3.14159265 * 440 * (sample + n) / spec.audioRate));
-                sample = until;
-                audio->encode(a, audioSink);
-                av_frame_free(&a);
-            }
-        }
-        video.finish(videoSink);
-        if (audio)
-            audio->finish(audioSink);
-        av_write_trailer(fmt);
-        avio_closep(&fmt->pb);
-        avformat_free_context(fmt);
-        return true;
-    } catch (const MediaError&) {
-        return false;
-    }
+    return writeEncodedClip(path, {.codec = spec.codec, .width = spec.width, .height = spec.height, .fps = spec.fps,
+                                   .frames = spec.frames, .gop = spec.gop, .luma = lumaOf(spec, 0), .lumaStep = 1,
+                                   .audioRate = spec.audioRate, .audioAmplitude = 12000});
 }
 
 // Se il file ha un flusso di quel tipo.
@@ -147,45 +73,12 @@ struct Decoded
 Decoded decodeAll(const fs::path& path)
 {
     Decoded d;
-    AVFormatContext* fmt = nullptr;
-    if (avformat_open_input(&fmt, utf8FromPath(path).c_str(), nullptr, nullptr) < 0) {
-        d.errors = 1;
-        return d;
-    }
-    avformat_find_stream_info(fmt, nullptr);
-    const int video = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-    const AVCodec* codec = avcodec_find_decoder(fmt->streams[video]->codecpar->codec_id);
-    AVCodecContext* ctx = avcodec_alloc_context3(codec);
-    avcodec_parameters_to_context(ctx, fmt->streams[video]->codecpar);
-    ctx->err_recognition = AV_EF_EXPLODE | AV_EF_BITSTREAM;
-    ctx->thread_count = 0;
-    avcodec_open2(ctx, codec, nullptr);
-    AVPacket* pkt = av_packet_alloc();
-    AVFrame* frame = av_frame_alloc();
-    const auto drain = [&] {
-        while (avcodec_receive_frame(ctx, frame) >= 0) {
-            d.width = frame->width;
-            d.height = frame->height;
-            d.centre.push_back(frame->data[0][(frame->height / 2) * frame->linesize[0] + frame->width / 2]);
-            d.edge.push_back(frame->data[0][(frame->height / 2) * frame->linesize[0] + 8]);
-            d.errors += (frame->decode_error_flags != 0 || (frame->flags & AV_FRAME_FLAG_CORRUPT) != 0) ? 1 : 0;
-            av_frame_unref(frame);
-        }
-    };
-    while (av_read_frame(fmt, pkt) >= 0) {
-        if (pkt->stream_index == video) {
-            if (avcodec_send_packet(ctx, pkt) < 0)
-                ++d.errors;
-            drain();
-        }
-        av_packet_unref(pkt);
-    }
-    avcodec_send_packet(ctx, nullptr);
-    drain();
-    av_frame_free(&frame);
-    av_packet_free(&pkt);
-    avcodec_free_context(&ctx);
-    avformat_close_input(&fmt);
+    d.errors = decodeVideoFrames(path, [&](const AVFrame& f) {
+        d.width = f.width;
+        d.height = f.height;
+        d.centre.push_back(lumaAt(f, f.width / 2, f.height / 2));
+        d.edge.push_back(lumaAt(f, 8, f.height / 2));
+    }, true);
     return d;
 }
 

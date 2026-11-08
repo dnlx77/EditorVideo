@@ -8,6 +8,9 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <cmath>
+#include <memory>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 
@@ -244,6 +247,148 @@ void writeSampleFile(const std::filesystem::path& path, const SampleSpec& spec)
     if (spec.audio)
         writer.addAudio(spec.silentAudio, spec.aacAudio, spec.mp2Audio, spec.sampleRate);
     writer.write(spec.frames);
+}
+
+bool writeEncodedClip(const std::filesystem::path& path, const EncodedClipSpec& spec)
+{
+    using namespace core;
+    try {
+        VideoEncoderSettings s;
+        s.codec = spec.codec;
+        s.width = spec.width;
+        s.height = spec.height;
+        s.frameRate = {spec.fps, 1};
+        s.gopFrames = spec.gop;
+        s.bFrames = spec.bFrames;
+        VideoEncoder video(s);
+        std::unique_ptr<AudioEncoder> audio;
+        if (spec.audioRate > 0)
+            audio = std::make_unique<AudioEncoder>(AudioEncoderSettings{spec.audioRate, 2});
+        AVFormatContext* fmt = nullptr;
+        const std::string name = utf8FromPath(path);
+        avformat_alloc_output_context2(&fmt, nullptr, nullptr, name.c_str());
+        AVStream* vs = avformat_new_stream(fmt, nullptr);
+        video.copyParameters(vs->codecpar);
+        vs->time_base = {1, spec.fps};
+        AVStream* as = nullptr;
+        if (audio) {
+            as = avformat_new_stream(fmt, nullptr);
+            audio->copyParameters(as->codecpar);
+            as->time_base = {1, spec.audioRate};
+        }
+        avio_open(&fmt->pb, name.c_str(), AVIO_FLAG_WRITE);
+        if (avformat_write_header(fmt, nullptr) < 0) {
+            avio_closep(&fmt->pb);
+            avformat_free_context(fmt);
+            return false;
+        }
+        const auto sinkFor = [&](AVStream* st, AVRational tb) {
+            return PacketSink([=](AVPacket* p) {
+                AVPacket* copy = av_packet_clone(p);
+                av_packet_rescale_ts(copy, tb, st->time_base);
+                copy->stream_index = st->index;
+                av_interleaved_write_frame(fmt, copy);
+                av_packet_free(&copy);
+            });
+        };
+        const PacketSink videoSink = sinkFor(vs, {1, spec.fps});
+        const PacketSink audioSink = audio ? sinkFor(as, {1, spec.audioRate}) : PacketSink{};
+        long long sample = 0;
+        for (int i = 0; i < spec.frames; ++i) {
+            AVFrame* frame = av_frame_alloc();
+            frame->format = AV_PIX_FMT_YUV420P;
+            frame->width = spec.width;
+            frame->height = spec.height;
+            av_frame_get_buffer(frame, 0);
+            const auto luma = static_cast<std::uint8_t>(spec.luma + spec.lumaStep * i);
+            for (int y = 0; y < spec.height; ++y)
+                std::fill_n(frame->data[0] + y * frame->linesize[0], spec.width, luma);
+            for (int p = 1; p <= 2; ++p) {
+                for (int y = 0; y < spec.height / 2; ++y)
+                    std::fill_n(frame->data[p] + y * frame->linesize[p], spec.width / 2, 128);
+            }
+            frame->pts = i;
+            video.encode(frame, false, videoSink);
+            av_frame_free(&frame);
+            if (audio) {
+                // Il La fino alla fine di questo fotogramma.
+                const long long until = static_cast<long long>(i + 1) * spec.audioRate / spec.fps;
+                AVFrame* a = av_frame_alloc();
+                a->format = AV_SAMPLE_FMT_S16;
+                a->sample_rate = spec.audioRate;
+                a->nb_samples = static_cast<int>(until - sample);
+                av_channel_layout_default(&a->ch_layout, 2);
+                av_frame_get_buffer(a, 0);
+                auto* s16 = reinterpret_cast<std::int16_t*>(a->data[0]);
+                for (int n = 0; n < a->nb_samples; ++n)
+                    s16[2 * n] = s16[2 * n + 1] = static_cast<std::int16_t>(
+                        spec.audioAmplitude * std::sin(2 * std::numbers::pi * 440 * static_cast<double>(sample + n) / spec.audioRate));
+                sample = until;
+                audio->encode(a, audioSink);
+                av_frame_free(&a);
+            }
+        }
+        video.finish(videoSink);
+        if (audio)
+            audio->finish(audioSink);
+        av_write_trailer(fmt);
+        avio_closep(&fmt->pb);
+        avformat_free_context(fmt);
+        return true;
+    } catch (const MediaError&) {
+        return false;
+    }
+}
+
+int decodeVideoFrames(const std::filesystem::path& path, const std::function<void(const AVFrame&)>& onFrame, bool strict)
+{
+    AVFormatContext* fmt = nullptr;
+    if (avformat_open_input(&fmt, core::utf8FromPath(path).c_str(), nullptr, nullptr) < 0)
+        return 1;
+    avformat_find_stream_info(fmt, nullptr);
+    const int video = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    if (video < 0) {
+        avformat_close_input(&fmt);
+        return 1;
+    }
+    int errors = 0;
+    const AVCodec* codec = avcodec_find_decoder(fmt->streams[video]->codecpar->codec_id);
+    AVCodecContext* ctx = avcodec_alloc_context3(codec);
+    avcodec_parameters_to_context(ctx, fmt->streams[video]->codecpar);
+    if (strict)
+        ctx->err_recognition = AV_EF_EXPLODE | AV_EF_BITSTREAM;
+    ctx->thread_count = 0;
+    avcodec_open2(ctx, codec, nullptr);
+    AVPacket* pkt = av_packet_alloc();
+    AVFrame* frame = av_frame_alloc();
+    const auto drain = [&] {
+        while (avcodec_receive_frame(ctx, frame) >= 0) {
+            if (strict && (frame->decode_error_flags != 0 || (frame->flags & AV_FRAME_FLAG_CORRUPT) != 0))
+                ++errors;
+            onFrame(*frame);
+            av_frame_unref(frame);
+        }
+    };
+    while (av_read_frame(fmt, pkt) >= 0) {
+        if (pkt->stream_index == video) {
+            if (avcodec_send_packet(ctx, pkt) < 0)
+                ++errors;
+            drain();
+        }
+        av_packet_unref(pkt);
+    }
+    avcodec_send_packet(ctx, nullptr);
+    drain();
+    av_frame_free(&frame);
+    av_packet_free(&pkt);
+    avcodec_free_context(&ctx);
+    avformat_close_input(&fmt);
+    return errors;
+}
+
+int lumaAt(const AVFrame& frame, int x, int y)
+{
+    return frame.data[0][y * frame.linesize[0] + x];
 }
 
 }  // namespace editor::tests
