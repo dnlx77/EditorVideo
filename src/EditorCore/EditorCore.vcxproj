@@ -49,6 +49,7 @@
     <ClInclude Include="TransformManip.h" />
     <ClInclude Include="Compositor.h" />
     <ClInclude Include="BandedSws.h" />
+    <ClInclude Include="ParallelFor.h" />
     <ClInclude Include="TextFrame.h" />
     <ClInclude Include="TextImage.h" />
     <ClInclude Include="LayerFrames.h" />
