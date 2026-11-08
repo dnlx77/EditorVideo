@@ -1,5 +1,6 @@
 #include "EditorCore/TextFrame.h"
 
+#include "EditorCore/BandedSws.h"
 #include "EditorCore/Compositor.h"
 #include "EditorCore/MediaError.h"
 
@@ -15,6 +16,19 @@ using Clock = std::chrono::steady_clock;
 double since(Clock::time_point from)
 {
     return std::chrono::duration<double>(Clock::now() - from).count();
+}
+
+// Nero opaco (RGBA) su tutta l'immagine, a bande su più thread.
+void fillOpaqueBlack(std::vector<std::uint8_t>& rgba, int width, int height)
+{
+    runBands(bandEdges(height, bandCount(height)), [&](int, int y0, int y1) {
+        std::uint8_t* p = rgba.data() + static_cast<std::size_t>(y0) * width * 4;
+        std::uint8_t* end = rgba.data() + static_cast<std::size_t>(y1) * width * 4;
+        for (; p < end; p += 4) {
+            p[0] = p[1] = p[2] = 0;
+            p[3] = 255;
+        }
+    });
 }
 }  // namespace
 
@@ -58,19 +72,13 @@ const AVFrame* TextFrameBlender::blend(const AVFrame* frame, const std::vector<B
     detail::normalizeJpegRange(sourceFormat, fullRange);
     toRgba_.reset(sws_getCachedContext(toRgba_.release(), source->width, source->height, sourceFormat, width, height,
                                        AV_PIX_FMT_RGBA, SWS_BICUBIC, nullptr, nullptr, nullptr));
-    toYuv_.reset(sws_getCachedContext(toYuv_.release(), width_, height_, AV_PIX_FMT_RGBA, width_, height_, pixelFormat_,
-                                      SWS_BICUBIC, nullptr, nullptr, nullptr));
-    if (!toRgba_ || !toYuv_)
+    if (!toRgba_)
         throw MediaError("Conversione del fotogramma da codificare non possibile.");
     const int* coefficients = sws_getCoefficients(SWS_CS_DEFAULT);
     sws_setColorspaceDetails(toRgba_.get(), coefficients, fullRange ? 1 : 0, coefficients, 1, 0, 1 << 16, 1 << 16);
-    sws_setColorspaceDetails(toYuv_.get(), coefficients, 1, coefficients, 0, 0, 1 << 16, 1 << 16);
 
     // Nero opaco dappertutto, poi l'immagine al suo posto.
-    for (std::size_t i = 0; i < rgba_.size(); i += 4) {
-        rgba_[i] = rgba_[i + 1] = rgba_[i + 2] = 0;
-        rgba_[i + 3] = 255;
-    }
+    fillOpaqueBlack(rgba_, width_, height_);
     std::uint8_t* destination[4] = {rgba_.data() + (static_cast<std::ptrdiff_t>(y) * width_ + x) * 4, nullptr, nullptr, nullptr};
     const int destinationStride[4] = {width_ * 4, 0, 0, 0};
     sws_scale(toRgba_.get(), source->data, source->linesize, 0, source->height, destination, destinationStride);
@@ -95,28 +103,18 @@ const AVFrame* TextFrameBlender::blendTransformed(const AVFrame* frame, const Tr
     bool fullRange = source->color_range == AVCOL_RANGE_JPEG;
     detail::normalizeJpegRange(sourceFormat, fullRange);
     // Il fotogramma originale in RGBA alla sua misura (la qualità piena, non quella adattata al progetto).
-    toRgba_.reset(sws_getCachedContext(toRgba_.release(), sourceWidth, sourceHeight, sourceFormat, sourceWidth, sourceHeight,
-                                       AV_PIX_FMT_RGBA, SWS_BICUBIC, nullptr, nullptr, nullptr));
-    toYuv_.reset(sws_getCachedContext(toYuv_.release(), width_, height_, AV_PIX_FMT_RGBA, width_, height_, pixelFormat_,
-                                      SWS_BICUBIC, nullptr, nullptr, nullptr));
-    if (!toRgba_ || !toYuv_)
+    if (!bandedToRgba_.prepare(sourceWidth, sourceHeight, sourceFormat, AV_PIX_FMT_RGBA, fullRange, true))
         throw MediaError("Conversione del fotogramma da codificare non possibile.");
-    const int* coefficients = sws_getCoefficients(SWS_CS_DEFAULT);
-    sws_setColorspaceDetails(toRgba_.get(), coefficients, fullRange ? 1 : 0, coefficients, 1, 0, 1 << 16, 1 << 16);
-    sws_setColorspaceDetails(toYuv_.get(), coefficients, 1, coefficients, 0, 0, 1 << 16, 1 << 16);
 
     auto mark = Clock::now();
     layer_.resize(static_cast<std::size_t>(sourceWidth) * sourceHeight * 4);
     std::uint8_t* layerPlanes[4] = {layer_.data(), nullptr, nullptr, nullptr};
     const int layerStride[4] = {sourceWidth * 4, 0, 0, 0};
-    sws_scale(toRgba_.get(), source->data, source->linesize, 0, sourceHeight, layerPlanes, layerStride);
+    bandedToRgba_.convert(source->data, source->linesize, layerPlanes, layerStride);
     timing_.toRgba += since(mark);
     mark = Clock::now();
 
-    for (std::size_t i = 0; i < rgba_.size(); i += 4) {
-        rgba_[i] = rgba_[i + 1] = rgba_[i + 2] = 0;
-        rgba_[i + 3] = 255;
-    }
+    fillOpaqueBlack(rgba_, width_, height_);
     timing_.fill += since(mark);
     mark = Clock::now();
     // compositeLayer non guarda i canali: RGBA si comporta come BGRA.
@@ -141,12 +139,6 @@ const AVFrame* TextFrameBlender::blendRaster(const std::uint8_t* bgra, int strid
             out[3] = 255;
         }
     }
-    toYuv_.reset(sws_getCachedContext(toYuv_.release(), width_, height_, AV_PIX_FMT_RGBA, width_, height_, pixelFormat_,
-                                      SWS_BICUBIC, nullptr, nullptr, nullptr));
-    if (!toYuv_)
-        throw MediaError("Conversione del fotogramma da codificare non possibile.");
-    const int* coefficients = sws_getCoefficients(SWS_CS_DEFAULT);
-    sws_setColorspaceDetails(toYuv_.get(), coefficients, 1, coefficients, 0, 0, 1 << 16, 1 << 16);
     return toYuv(texts, props);
 }
 
@@ -158,8 +150,12 @@ const AVFrame* TextFrameBlender::toYuv(const std::vector<BlendedText>& texts, co
     auto mark = Clock::now();
     bool swapped = false;
     const auto swapRedBlue = [&] {
-        for (std::size_t i = 0; i < rgba_.size(); i += 4)
-            std::swap(rgba_[i], rgba_[i + 2]);
+        runBands(bandEdges(height_, bandCount(height_)), [&](int, int y0, int y1) {
+            std::uint8_t* p = rgba_.data() + static_cast<std::size_t>(y0) * width_ * 4;
+            std::uint8_t* end = rgba_.data() + static_cast<std::size_t>(y1) * width_ * 4;
+            for (; p < end; p += 4)
+                std::swap(p[0], p[2]);
+        });
         swapped = !swapped;
     };
     std::size_t nextText = 0;
@@ -193,7 +189,9 @@ const AVFrame* TextFrameBlender::toYuv(const std::vector<BlendedText>& texts, co
         throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
     const std::uint8_t* rgbaPlanes[4] = {rgba_.data(), nullptr, nullptr, nullptr};
     const int rgbaStride[4] = {width_ * 4, 0, 0, 0};
-    sws_scale(toYuv_.get(), rgbaPlanes, rgbaStride, 0, height_, output_->data, output_->linesize);
+    if (!bandedToYuv_.prepare(width_, height_, AV_PIX_FMT_RGBA, pixelFormat_, true, false))
+        throw MediaError("Conversione del fotogramma da codificare non possibile.");
+    bandedToYuv_.convert(rgbaPlanes, rgbaStride, output_->data, output_->linesize);
     av_frame_copy_props(output_.get(), props);
     output_->sample_aspect_ratio = {1, 1};
     output_->pts = props->pts;

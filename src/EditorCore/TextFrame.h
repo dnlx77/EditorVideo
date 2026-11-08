@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EditorCore/BandedSws.h"
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/TextImage.h"
 #include "EditorCore/Transform.h"
@@ -81,7 +82,8 @@ private:
     detail::FramePtr software_;  // per i fotogrammi della scheda video
     detail::FramePtr output_;
     std::unique_ptr<SwsContext, detail::SwsDeleter> toRgba_;
-    std::unique_ptr<SwsContext, detail::SwsDeleter> toYuv_;
+    BandedSws bandedToRgba_;  // blendTransformed: l'originale in RGBA alla sua misura
+    BandedSws bandedToYuv_;   // il fotogramma RGBA finito nel formato dell'encoder
     Timing timing_;
 };
 
