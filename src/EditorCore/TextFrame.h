@@ -67,6 +67,7 @@ public:
         double composite = 0.0;
         double overlays = 0.0;
         double toYuv = 0.0;
+        AVPixelFormat sourceFormat = AV_PIX_FMT_NONE;  // formato dei fotogrammi dell'originale (per capire le conversioni lente)
     };
     const Timing& timing() const { return timing_; }
 

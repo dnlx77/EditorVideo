@@ -1,9 +1,9 @@
 #include "EditorCore/Compositor.h"
 
+#include "EditorCore/ParallelFor.h"
+
 #include <algorithm>
-#include <atomic>
 #include <cmath>
-#include <thread>
 #include <vector>
 
 namespace editor::core {
@@ -145,25 +145,16 @@ void compositeLayer(std::uint8_t* canvas, int canvasStride, int canvasWidth, int
     };
     const int rows = y1 - y0;
     const std::int64_t area = static_cast<std::int64_t>(rows) * (x1 - x0);
-    const int threads = area < 100000 ? 1 : std::clamp(static_cast<int>(std::thread::hardware_concurrency()), 1, 8);
-    if (threads <= 1) {
+    if (area < 100000) {
         drawRows(y0, y1);
         return;
     }
     // Blocchi di righe presi a turno (le righe di un pezzo ruotato non costano tutte uguale).
     constexpr int kBlock = 16;
-    std::atomic<int> nextRow{y0};
-    const auto work = [&] {
-        for (int start = nextRow.fetch_add(kBlock); start < y1; start = nextRow.fetch_add(kBlock))
-            drawRows(start, std::min(start + kBlock, y1));
-    };
-    std::vector<std::thread> workers;
-    workers.reserve(static_cast<std::size_t>(threads - 1));
-    for (int i = 1; i < threads; ++i)
-        workers.emplace_back(work);
-    work();
-    for (std::thread& w : workers)
-        w.join();
+    parallelFor((rows + kBlock - 1) / kBlock, [&](int block) {
+        const int start = y0 + block * kBlock;
+        drawRows(start, std::min(start + kBlock, y1));
+    });
 }
 
 }  // namespace editor::core

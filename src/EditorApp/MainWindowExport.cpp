@@ -388,6 +388,10 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
                         .arg(r.blendCompositeSeconds, 0, 'f', 1)
                         .arg(r.blendOverlaySeconds, 0, 'f', 1)
                         .arg(r.blendToYuvSeconds, 0, 'f', 1);
+    if (r.blendSeconds > 0.0)
+        recoding += QStringLiteral("\nFotogrammi dell'originale: %1; thread di calcolo: %2.")
+                        .arg(r.blendSourceFormat.empty() ? QStringLiteral("?") : QString::fromStdString(r.blendSourceFormat))
+                        .arg(r.workerThreads);
     QMessageBox::information(this, QStringLiteral("Esportazione completata"),
                              QStringLiteral("%1 in:\n%2\n\nDurata: %3\n%4")
                                  .arg(what, target, timeText(outcome.result->durationSeconds), recoding));

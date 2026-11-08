@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace editor::core {
 
@@ -22,12 +23,12 @@ double since(Clock::time_point from)
 void fillOpaqueBlack(std::vector<std::uint8_t>& rgba, int width, int height)
 {
     runBands(bandEdges(height, bandCount(height)), [&](int, int y0, int y1) {
-        std::uint8_t* p = rgba.data() + static_cast<std::size_t>(y0) * width * 4;
-        std::uint8_t* end = rgba.data() + static_cast<std::size_t>(y1) * width * 4;
-        for (; p < end; p += 4) {
-            p[0] = p[1] = p[2] = 0;
-            p[3] = 255;
-        }
+        // Un pixel RGBA nero opaco, scritto come una parola da 32 bit (byte 0, 0, 0, 255).
+        const std::uint8_t pixel[4] = {0, 0, 0, 255};
+        std::uint32_t word = 0;
+        std::memcpy(&word, pixel, sizeof word);
+        std::uint32_t* p = reinterpret_cast<std::uint32_t*>(rgba.data()) + static_cast<std::size_t>(y0) * width;
+        std::fill(p, p + static_cast<std::size_t>(y1 - y0) * width, word);
     });
 }
 }  // namespace
@@ -102,6 +103,7 @@ const AVFrame* TextFrameBlender::blendTransformed(const AVFrame* frame, const Tr
     AVPixelFormat sourceFormat = static_cast<AVPixelFormat>(source->format);
     bool fullRange = source->color_range == AVCOL_RANGE_JPEG;
     detail::normalizeJpegRange(sourceFormat, fullRange);
+    timing_.sourceFormat = sourceFormat;
     // Il fotogramma originale in RGBA alla sua misura (la qualità piena, non quella adattata al progetto).
     if (!bandedToRgba_.prepare(sourceWidth, sourceHeight, sourceFormat, AV_PIX_FMT_RGBA, fullRange, true))
         throw MediaError("Conversione del fotogramma da codificare non possibile.");
@@ -151,10 +153,15 @@ const AVFrame* TextFrameBlender::toYuv(const std::vector<BlendedText>& texts, co
     bool swapped = false;
     const auto swapRedBlue = [&] {
         runBands(bandEdges(height_, bandCount(height_)), [&](int, int y0, int y1) {
-            std::uint8_t* p = rgba_.data() + static_cast<std::size_t>(y0) * width_ * 4;
-            std::uint8_t* end = rgba_.data() + static_cast<std::size_t>(y1) * width_ * 4;
-            for (; p < end; p += 4)
-                std::swap(p[0], p[2]);
+            // Scambia il primo e il terzo byte di ogni pixel, una parola da 32 bit alla volta.
+            std::uint32_t* p = reinterpret_cast<std::uint32_t*>(rgba_.data()) + static_cast<std::size_t>(y0) * width_;
+            std::uint32_t* end = p + static_cast<std::size_t>(y1 - y0) * width_;
+            for (; p < end; ++p) {
+                std::uint32_t v;
+                std::memcpy(&v, p, sizeof v);
+                v = (v & 0xFF00FF00u) | ((v & 0xFFu) << 16) | ((v >> 16) & 0xFFu);
+                std::memcpy(p, &v, sizeof v);
+            }
         });
         swapped = !swapped;
     };

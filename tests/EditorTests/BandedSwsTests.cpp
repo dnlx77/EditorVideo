@@ -2,8 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <thread>
 #include <vector>
 
 using namespace editor::core;
@@ -124,4 +126,18 @@ TEST(BandedSws, PrepareAgainWithOtherSizeWorks)
     ASSERT_TRUE(converter.prepare(64, 64, AV_PIX_FMT_RGBA, AV_PIX_FMT_YUV420P, true, false));
     ASSERT_TRUE(converter.prepare(kWidth, kHeight, AV_PIX_FMT_RGBA, AV_PIX_FMT_YUV420P, true, false));
     EXPECT_FALSE(converter.prepare(0, 10, AV_PIX_FMT_RGBA, AV_PIX_FMT_YUV420P, true, false));
+}
+
+TEST(ParallelFor, RunsEveryTaskOnceAlsoFromTwoThreadsAtTheSameTime)
+{
+    std::atomic<long> sum{0};
+    const auto work = [&](int tasks, int rounds) {
+        for (int r = 0; r < rounds; ++r)
+            parallelFor(tasks, [&](int i) { sum += i + 1; });
+    };
+    std::thread other([&] { work(13, 500); });
+    work(37, 500);
+    other.join();
+    EXPECT_EQ(sum.load(), 500L * (37 * 38 / 2) + 500L * (13 * 14 / 2));
+    parallelFor(0, [&](int) { FAIL(); });
 }

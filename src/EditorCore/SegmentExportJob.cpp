@@ -995,6 +995,9 @@ ExportResult ExportJob::run()
             result_.blendCompositeSeconds = t.composite;
             result_.blendOverlaySeconds = t.overlays;
             result_.blendToYuvSeconds = t.toYuv;
+            if (t.sourceFormat != AV_PIX_FMT_NONE)
+                result_.blendSourceFormat = av_get_pix_fmt_name(t.sourceFormat);
+            result_.workerThreads = ThreadPool::instance().size();
         }
         result_.totalSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - runStarted).count();
         return result_;

@@ -65,6 +65,8 @@ struct ExportResult
     double blendCompositeSeconds = 0.0;
     double blendOverlaySeconds = 0.0;
     double blendToYuvSeconds = 0.0;
+    std::string blendSourceFormat;  // formato dei fotogrammi dell'originale nella fusione (es. yuv420p, nv12)
+    int workerThreads = 0;          // thread usati per le parti a bande
 };
 
 // Una transizione da fondere nel file esportato (vedi ReencodeOptions::transitions): sta sulla giunzione fra il tratto

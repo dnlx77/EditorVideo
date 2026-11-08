@@ -1,12 +1,12 @@
 #pragma once
 
 #include "EditorCore/FfmpegUtil.h"
+#include "EditorCore/ParallelFor.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <thread>
 #include <vector>
 
 namespace editor::core {
@@ -14,8 +14,7 @@ namespace editor::core {
 // Quante bande di righe usare per un'immagine alta `height`: una per core (al massimo 8), ognuna di almeno 64 righe.
 inline int bandCount(int height)
 {
-    const int cores = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
-    return std::clamp(std::min(cores, 8), 1, std::max(1, height / 64));
+    return std::clamp(ThreadPool::instance().size(), 1, std::max(1, height / 64));
 }
 
 // I bordi delle bande (count + 1 valori da 0 a `height`): tutti pari, così anche il colore sottocampionato resta allineato.
@@ -27,7 +26,7 @@ inline std::vector<int> bandEdges(int height, int count)
     return edges;
 }
 
-// Chiama fn(indice, riga iniziale, riga finale) per ogni banda, su thread diversi (la prima sul thread chiamante).
+// Chiama fn(indice, riga iniziale, riga finale) per ogni banda, su thread diversi (vedi ThreadPool).
 // fn non deve lanciare eccezioni.
 template <typename F>
 void runBands(const std::vector<int>& edges, F&& fn)
@@ -37,13 +36,7 @@ void runBands(const std::vector<int>& edges, F&& fn)
         fn(0, edges.front(), edges.back());
         return;
     }
-    std::vector<std::thread> workers;
-    workers.reserve(static_cast<std::size_t>(count) - 1);
-    for (int i = 1; i < count; ++i)
-        workers.emplace_back([&fn, &edges, i] { fn(i, edges[static_cast<std::size_t>(i)], edges[static_cast<std::size_t>(i) + 1]); });
-    fn(0, edges[0], edges[1]);
-    for (std::thread& w : workers)
-        w.join();
+    parallelFor(count, [&](int i) { fn(i, edges[static_cast<std::size_t>(i)], edges[static_cast<std::size_t>(i) + 1]); });
 }
 
 // Conversione di formato (swscale, stessa misura) a bande di righe su più thread: ogni banda è come un'immagine a sé
