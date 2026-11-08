@@ -473,6 +473,8 @@ private:
     std::vector<double> edgeMarks(int ignoredBlock, int ignoredClip, int ignoredText, double originalEdge) const;
     // Se il bordo trascinato in `time` è a livello con uno dei segni, la riga tratteggiata di allineamento su tutte le corsie.
     void paintAlignGuide(QPainter& p, double time, const std::vector<double>& marks) const;
+    // Bordo trascinato nella corsia `lane`: la parte aggiunta chiara, quella tolta scurita, e una riga dove sarà il bordo.
+    void paintTrimFeedback(QPainter& p, const QRectF& lane, double oldX, double newX, bool atStart) const;
     void syncTrackButtons();
     void updateDuration();  // durata mostrata: fino alla fine dei pezzi o delle clip audio, più un po' di posto
     // Bordo di un blocco sotto il punto (corsia video, entro pochi pixel): indice del blocco, -1 se nessuno; atStart

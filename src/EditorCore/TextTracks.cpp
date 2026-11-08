@@ -1,4 +1,5 @@
 #include "EditorCore/TextTracks.h"
+#include "EditorCore/TimeUtil.h"
 
 #include <algorithm>
 #include <cmath>
@@ -205,30 +206,10 @@ double TextTracks::freeStartFor(int layerId, double length, double desired, int 
     const TextLayer* target = layer(layerId);
     if (target == nullptr)
         return -1.0;
-    desired = std::max(desired, 0.0);
-    if (isFree(*target, desired, desired + length, ignoreId))
-        return desired;
-
-    // I posti liberi sono gli spazi fra gli altri oggetti (e dopo l'ultimo): in ognuno si prende il punto più vicino.
-    double best = -1.0;
-    double bestDistance = std::numeric_limits<double>::max();
-    const auto consider = [&](double gapStart, double gapEnd) {
-        if (gapEnd - gapStart < length - kEps)
-            return;
-        const double start = std::clamp(desired, gapStart, gapEnd - length);
-        const double distance = std::abs(start - desired);
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            best = start;
-        }
-    };
-    double cursor = 0.0;
-    for (const auto& [from, to] : occupied(*target, ignoreId)) {
-        consider(cursor, from);
-        cursor = std::max(cursor, to);
-    }
-    consider(cursor, std::numeric_limits<double>::max() / 4);
-    return best;
+    std::vector<TimeRange> spans;
+    for (const auto& [from, to] : occupied(*target, ignoreId))
+        spans.push_back({from, to});
+    return closestFreeStart(std::move(spans), length, desired, kEps);
 }
 
 bool TextTracks::moveTo(int clipId, int layerId, double start)
