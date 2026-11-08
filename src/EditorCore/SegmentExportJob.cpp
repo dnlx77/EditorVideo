@@ -721,18 +721,29 @@ std::vector<BlendedText> ExportJob::textsAt(double sequenceTime)
     for (const TextClip* clip : visible) {
         auto found = textImages_.find(clip->id);
         if (found == textImages_.end())
-            found = textImages_.emplace(clip->id, reencode_.textRenderer->render(*clip, format.width, format.height)).first;
+            found = textImages_.emplace(clip->id, CachedText{reencode_.textRenderer->render(*clip, format.width, format.height), {}}).first;
         // Le dissolvenze: la scritta si vede meno all'inizio e alla fine; la trasformazione (anche animata: tempi dall'inizio della
         // scritta) vale sull'immagine disegnata, intorno al centro del suo riquadro.
         double opacity = clip->fadeFactor(sequenceTime);
-        const TextImage* image = &found->second;
+        CachedText& cached = found->second;
+        const TextImage* image = &cached.drawn;
         if (!clip->transform.isIdentity() || !clip->animation.empty()) {
             const Transform t = evaluateTransform(clip->transform, clip->animation, sequenceTime - clip->position);
             opacity *= t.opacity;
             if (t.movesPicture()) {
-                transformedTexts_.push_back(transformTextImage(found->second, t, clip->style.centerX * format.width,
-                                                               clip->style.centerY * format.height, format.width, format.height));
-                image = &transformedTexts_.back();
+                const auto transform = [&] {
+                    return transformTextImage(cached.drawn, t, clip->style.centerX * format.width, clip->style.centerY * format.height,
+                                              format.width, format.height);
+                };
+                if (clip->animation.empty()) {
+                    // Trasformazione fissa: uguale in tutti i fotogrammi, si calcola una volta sola.
+                    if (!cached.transformed)
+                        cached.transformed = transform();
+                    image = &*cached.transformed;
+                } else {
+                    transformedTexts_.push_back(transform());
+                    image = &transformedTexts_.back();
+                }
             }
         }
         if (!image->empty() && opacity > 0.0)

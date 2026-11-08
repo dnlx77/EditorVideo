@@ -99,17 +99,24 @@ void TransitionRenderer::reset()
 
 namespace {
 
-// Mette il fotogramma al centro di un riquadro nero della misura `box` (BGRA, alfa 255).
-std::shared_ptr<VideoFrame> onCanvas(const VideoFrame& frame, int boxWidth, int boxHeight)
+// Un riquadro nero opaco (BGRA, alfa 255) della misura `box`, al tempo `time`.
+std::shared_ptr<VideoFrame> blackCanvas(double time, int boxWidth, int boxHeight)
 {
     auto canvas = std::make_shared<VideoFrame>();
-    canvas->time = frame.time;
+    canvas->time = time;
     canvas->width = boxWidth;
     canvas->height = boxHeight;
     canvas->stride = boxWidth * 4;
     canvas->pixels.assign(static_cast<std::size_t>(canvas->stride) * boxHeight, 0);
     for (std::size_t i = 3; i < canvas->pixels.size(); i += 4)
         canvas->pixels[i] = 255;
+    return canvas;
+}
+
+// Mette il fotogramma al centro di un riquadro nero della misura `box` (BGRA, alfa 255).
+std::shared_ptr<VideoFrame> onCanvas(const VideoFrame& frame, int boxWidth, int boxHeight)
+{
+    auto canvas = blackCanvas(frame.time, boxWidth, boxHeight);
     const int copyWidth = std::min(frame.width, boxWidth);
     const int copyHeight = std::min(frame.height, boxHeight);
     const int x0 = (boxWidth - copyWidth) / 2;
@@ -130,14 +137,7 @@ std::shared_ptr<VideoFrame> onCanvasTransformed(const VideoFrame& frame, int box
 {
     if (transform.isIdentity())
         return onCanvas(frame, boxWidth, boxHeight);
-    auto canvas = std::make_shared<VideoFrame>();
-    canvas->time = frame.time;
-    canvas->width = boxWidth;
-    canvas->height = boxHeight;
-    canvas->stride = boxWidth * 4;
-    canvas->pixels.assign(static_cast<std::size_t>(canvas->stride) * boxHeight, 0);
-    for (std::size_t i = 3; i < canvas->pixels.size(); i += 4)
-        canvas->pixels[i] = 255;
+    auto canvas = blackCanvas(frame.time, boxWidth, boxHeight);
     compositeLayer(canvas->pixels.data(), canvas->stride, boxWidth, boxHeight,
                    BgraImage{frame.pixels.data(), frame.stride, frame.width, frame.height}, transform);
     return canvas;

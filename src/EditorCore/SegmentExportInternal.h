@@ -503,8 +503,15 @@ private:
     int outLength_ = 4;  // byte della lunghezza davanti ai NAL nei pacchetti video del file creato (per i parametri nel flusso)
 
     // Stato della scrittura.
-    std::vector<TextImage> transformedTexts_;  // le scritte trasformate del fotogramma in corso (vedi textsAt)
-    std::map<int, TextImage> textImages_;  // per id di scritta: disegnata una volta sola
+    std::vector<TextImage> transformedTexts_;  // le scritte animate del fotogramma in corso (vedi textsAt)
+    // Per id di scritta: l'immagine disegnata una volta sola e, se la scritta ha una trasformazione fissa che la sposta, la
+    // stessa già trasformata (anche questa una volta sola). Si liberano quando la scritta non si vede più.
+    struct CachedText
+    {
+        TextImage drawn;
+        std::optional<TextImage> transformed;
+    };
+    std::map<int, CachedText> textImages_;
     std::unique_ptr<TextFrameBlender> blender_;
     std::unique_ptr<LayerFrameSource> layerSource_;  // i fotogrammi dei pezzi dei livelli (vedi ReencodeOptions::layerFiles)
     std::vector<LayerFrameSource::Visible> layerFrames_;  // quelli del fotogramma in corso, tenuti vivi finché il blender li usa
