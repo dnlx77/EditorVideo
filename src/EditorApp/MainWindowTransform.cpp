@@ -1,16 +1,7 @@
-#include "EditorApp/MainWindow.h"
 #include "EditorApp/CurveEditorDialog.h"
 
 #include "EditorApp/MainWindowShared.h"
-#include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/PropertiesPanel.h"
-#include "EditorApp/SequenceTimeline.h"
-#include "EditorCore/Compatibility.h"
-
-#include <QtWidgets/QStatusBar>
-
-#include <algorithm>
-#include <cmath>
 
 namespace editor::app {
 using namespace detail;
