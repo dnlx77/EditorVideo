@@ -19,6 +19,30 @@ std::vector<int> selectedPieceIds(const std::vector<core::ObjectRef>& objects)
     return ids;
 }
 
+// Lo stato dei rombi del pannello Proprietà per l'animazione del pezzo o della scritta scelti, col cursore a `fileTime`.
+PropertiesPanel::AnimationState animationState(const core::TransformAnimation& animation, double fileTime, double from, double to,
+                                               bool inside)
+{
+    PropertiesPanel::AnimationState state;
+    state.enabled = inside;
+    state.presets = true;
+    for (int g = 0; g < core::kAnimGroupCount; ++g)
+        state.groups[static_cast<std::size_t>(g)] = core::groupState(animation, static_cast<core::AnimGroup>(g), fileTime, from, to);
+    return state;
+}
+
+// I rombi della mini linea del tempo: una chiave per gruppo e istante, col suo tipo di passaggio.
+std::vector<AnimMiniTimeline::Mark> keyMarks(const core::TransformAnimation& animation)
+{
+    std::vector<AnimMiniTimeline::Mark> marks;
+    for (int g = 0; g < core::kAnimGroupCount; ++g) {
+        const auto group = static_cast<core::AnimGroup>(g);
+        for (const double time : core::groupKeyTimes(animation, group))
+            marks.push_back({group, time, core::groupInterpAt(animation, group, time)});
+    }
+    return marks;
+}
+
 }  // namespace
 
 void MainWindow::refreshPropertiesPanel(bool cursorOnly)
@@ -34,25 +58,16 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
         && project_.textTracks().find(objects.front().id) != nullptr) {
         // La scritta: il suo editor (refreshTextPanel ne mette i valori) e in fondo la sezione «Trasforma» con rombi e mini linea.
         if (const AnimTarget target = animationTarget(); target.valid) {
-            PropertiesPanel::AnimationState state;
-            state.enabled = target.inside;
-            state.presets = true;
-            for (int g = 0; g < core::kAnimGroupCount; ++g)
-                state.groups[static_cast<std::size_t>(g)] =
-                    core::groupState(target.animation, static_cast<core::AnimGroup>(g), target.fileTime, target.from, target.to);
+            const PropertiesPanel::AnimationState state =
+                animationState(target.animation, target.fileTime, target.from, target.to, target.inside);
             propertiesFollowCursor_ = true;
             const core::TextClip* textClip = project_.textTracks().find(target.id);
             const QSize frame = frameSize();
             propertiesPanel_->showTextTransform(core::evaluateTransform(target.base, target.animation, target.fileTime), state,
                                                 textClip != nullptr ? textClip->style.centerX : 0.5,
                                                 textClip != nullptr ? textClip->style.centerY : 0.5, frame.width(), frame.height());
-            std::vector<AnimMiniTimeline::Mark> marks;
-            for (int g = 0; g < core::kAnimGroupCount; ++g) {
-                const auto group = static_cast<core::AnimGroup>(g);
-                for (const double time : core::groupKeyTimes(target.animation, group))
-                    marks.push_back({group, time, core::groupInterpAt(target.animation, group, time)});
-            }
-            propertiesPanel_->miniTimeline()->setData(target.from, target.to, target.inside ? target.fileTime : -1.0, std::move(marks));
+            propertiesPanel_->miniTimeline()->setData(target.from, target.to, target.inside ? target.fileTime : -1.0,
+                                                      keyMarks(target.animation));
         } else {
             propertiesPanel_->showText();
         }
@@ -67,21 +82,12 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
     }
     // Un pezzo scelto da solo (di V1 o di un livello): valori al cursore e rombi dei fotogrammi chiave.
     if (const AnimTarget target = animationTarget(); target.valid) {
-        PropertiesPanel::AnimationState state;
-        state.enabled = target.inside;
-        state.presets = true;
-        for (int g = 0; g < core::kAnimGroupCount; ++g)
-            state.groups[static_cast<std::size_t>(g)] =
-                core::groupState(target.animation, static_cast<core::AnimGroup>(g), target.fileTime, target.from, target.to);
+        const PropertiesPanel::AnimationState state =
+            animationState(target.animation, target.fileTime, target.from, target.to, target.inside);
         propertiesFollowCursor_ = true;
         propertiesPanel_->showTransform(core::evaluateTransform(target.base, target.animation, target.fileTime), 1, state);
-        std::vector<AnimMiniTimeline::Mark> marks;
-        for (int g = 0; g < core::kAnimGroupCount; ++g) {
-            const auto group = static_cast<core::AnimGroup>(g);
-            for (const double time : core::groupKeyTimes(target.animation, group))
-                marks.push_back({group, time, core::groupInterpAt(target.animation, group, time)});
-        }
-        propertiesPanel_->miniTimeline()->setData(target.from, target.to, target.inside ? target.fileTime : -1.0, std::move(marks));
+        propertiesPanel_->miniTimeline()->setData(target.from, target.to, target.inside ? target.fileTime : -1.0,
+                                                  keyMarks(target.animation));
         return;
     }
     const std::vector<int> pieces = selectedPieceIds(objects);

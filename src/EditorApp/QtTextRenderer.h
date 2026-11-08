@@ -2,9 +2,17 @@
 
 #include "EditorCore/TextImage.h"
 
+#include <QtGui/QColor>
+
 #include <map>
 
 namespace editor::app {
+
+// Il colore di una scritta come colore di Qt (con la trasparenza).
+inline QColor toQt(const core::TextColor& c)
+{
+    return QColor(c.r, c.g, c.b, c.a);
+}
 
 // Disegna le scritte con Qt (font di Windows, contorno, ombra, sfondo): lo stesso disegno serve per l'anteprima e per
 // l'esportazione, così coincidono. Va usato dopo aver creato QGuiApplication (i font si leggono da lì).

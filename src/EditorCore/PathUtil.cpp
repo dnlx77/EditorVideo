@@ -28,6 +28,21 @@ std::string lowercase(std::string text)
     return text;
 }
 
+std::string extensionOf(const std::string& utf8Path)
+{
+    return lowercase(utf8FromPath(pathFromUtf8(utf8Path).extension()));
+}
+
+std::uint64_t fnv1a(const void* data, std::size_t size, std::uint64_t hash)
+{
+    const auto* bytes = static_cast<const unsigned char*>(data);
+    for (std::size_t i = 0; i < size; ++i) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
 std::string sameFileKey(const std::string& utf8Path)
 {
     std::error_code ec;

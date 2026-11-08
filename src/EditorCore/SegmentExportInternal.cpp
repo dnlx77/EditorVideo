@@ -6,46 +6,6 @@
 
 namespace editor::core::segment {
 
-namespace {
-
-// Legge i bit di un NAL senza i byte di protezione (00 00 03), per i campi dell'SPS HEVC.
-struct NalBits
-{
-    explicit NalBits(const std::vector<std::uint8_t>& nal)
-    {
-        for (std::size_t i = 0; i < nal.size(); ++i) {
-            if (i >= 2 && nal[i] == 3 && nal[i - 1] == 0 && nal[i - 2] == 0)
-                continue;
-            bytes.push_back(nal[i]);
-        }
-    }
-    unsigned bit()
-    {
-        const std::size_t byte = position >> 3;
-        const unsigned value = byte < bytes.size() ? (bytes[byte] >> (7 - (position & 7))) & 1u : 0u;
-        ++position;
-        return value;
-    }
-    unsigned bits(int count)
-    {
-        unsigned value = 0;
-        for (int i = 0; i < count; ++i)
-            value = value << 1 | bit();
-        return value;
-    }
-    unsigned ue()
-    {
-        int zeros = 0;
-        while (zeros < 31 && bit() == 0)
-            ++zeros;
-        return zeros == 0 ? 0u : (1u << zeros) - 1u + bits(zeros);
-    }
-    std::vector<std::uint8_t> bytes;
-    std::size_t position = 0;
-};
-
-}  // namespace
-
 void replacePacketData(AVPacket* pkt, const std::uint8_t* data, std::size_t size)
 {
     PacketPtr part(av_packet_alloc());
@@ -147,9 +107,8 @@ std::vector<std::uint8_t> buildHvcC(const ParameterSets& sets)
     }
     if (vps == nullptr || sps == nullptr || pps == nullptr)
         return {};
-    // SPS: 2 byte d'intestazione del NAL, poi VPS id (4 bit), sottolivelli (3), nidificazione (1) e profile_tier_level.
-    NalBits sp(*sps);
-    sp.bits(16);
+    // SPS: dopo i 2 byte d'intestazione del NAL, VPS id (4 bit), sottolivelli (3), nidificazione (1) e profile_tier_level.
+    nal::RbspReader sp(*sps, 2, nal::RbspReader::PastEnd::Zeros);
     sp.bits(4);
     const unsigned subLayers = sp.bits(3) + 1;
     sp.bits(1);

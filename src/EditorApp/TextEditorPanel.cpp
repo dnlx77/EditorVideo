@@ -1,4 +1,5 @@
 #include "EditorApp/TextEditorPanel.h"
+#include "EditorApp/QtTextRenderer.h"
 
 #include <QtCore/QSignalBlocker>
 #include <QtGui/QPainter>
@@ -30,11 +31,6 @@
 namespace editor::app {
 
 namespace {
-
-QColor toQt(const core::TextColor& c)
-{
-    return QColor(c.r, c.g, c.b, c.a);
-}
 
 core::TextColor fromQt(const QColor& c)
 {

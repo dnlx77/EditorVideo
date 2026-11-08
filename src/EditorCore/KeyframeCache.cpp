@@ -17,16 +17,6 @@ namespace fs = std::filesystem;
 constexpr char kMagic[4] = {'E', 'V', 'K', 'F'};
 constexpr std::uint32_t kVersion = 1;
 
-std::uint64_t fnv1a(const void* data, std::size_t size, std::uint64_t hash = 14695981039346656037ull)
-{
-    const auto* bytes = static_cast<const unsigned char*>(data);
-    for (std::size_t i = 0; i < size; ++i) {
-        hash ^= bytes[i];
-        hash *= 1099511628211ull;
-    }
-    return hash;
-}
-
 struct FileState
 {
     std::uint64_t size = 0;

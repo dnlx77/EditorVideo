@@ -14,15 +14,6 @@ namespace editor::core {
 
 using namespace detail;
 
-namespace {
-
-std::string extensionOf(const std::string& utf8Path)
-{
-    return lowercase(utf8FromPath(pathFromUtf8(utf8Path).extension()));
-}
-
-}  // namespace
-
 const std::vector<std::string>& mediaExtensions()
 {
     static const std::vector<std::string> extensions = {

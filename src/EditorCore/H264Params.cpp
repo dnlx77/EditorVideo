@@ -10,83 +10,8 @@ namespace editor::core {
 namespace {
 
 // Dati malformati: si smette di leggere e i parametri risultano non validi.
-struct ParseError
-{
-};
-
-// Lettura bit per bit di un RBSP (NAL senza i byte di prevenzione dell'emulazione).
-class BitReader
-{
-public:
-    explicit BitReader(std::vector<std::uint8_t> data)
-        : data_(std::move(data))
-    {
-        // Ultimo bit a 1 = bit di chiusura del RBSP: oltre quello non ci sono più dati.
-        lastOne_ = -1;
-        for (int i = static_cast<int>(data_.size()) * 8 - 1; i >= 0; --i) {
-            if ((data_[i / 8] >> (7 - i % 8)) & 1) {
-                lastOne_ = i;
-                break;
-            }
-        }
-    }
-
-    unsigned bit()
-    {
-        if (pos_ >= data_.size() * 8)
-            throw ParseError{};
-        const unsigned b = (data_[pos_ / 8] >> (7 - pos_ % 8)) & 1;
-        ++pos_;
-        return b;
-    }
-
-    unsigned bits(int n)
-    {
-        unsigned v = 0;
-        for (int i = 0; i < n; ++i)
-            v = (v << 1) | bit();
-        return v;
-    }
-
-    unsigned ue()
-    {
-        int zeros = 0;
-        while (bit() == 0) {
-            if (++zeros > 31)
-                throw ParseError{};
-        }
-        return ((1u << zeros) - 1) + bits(zeros);
-    }
-
-    int se()
-    {
-        const unsigned v = ue();
-        return (v & 1) ? static_cast<int>((v + 1) / 2) : -static_cast<int>(v / 2);
-    }
-
-    bool moreRbspData() const { return static_cast<int>(pos_) < lastOne_; }
-
-private:
-    std::vector<std::uint8_t> data_;
-    std::size_t pos_ = 0;
-    int lastOne_ = -1;
-};
-
-std::vector<std::uint8_t> toRbsp(const std::vector<std::uint8_t>& nal)
-{
-    // Si saltano l'intestazione del NAL (1 byte) e i byte 0x03 inseriti dopo due zeri.
-    std::vector<std::uint8_t> rbsp;
-    int zeros = 0;
-    for (std::size_t i = 1; i < nal.size(); ++i) {
-        if (zeros >= 2 && nal[i] == 0x03) {
-            zeros = 0;
-            continue;
-        }
-        rbsp.push_back(nal[i]);
-        zeros = nal[i] == 0 ? zeros + 1 : 0;
-    }
-    return rbsp;
-}
+using ParseError = nal::RbspReader::Error;
+using BitReader = nal::RbspReader;
 
 void skipScalingList(BitReader& r, int size)
 {
@@ -112,7 +37,7 @@ bool highProfile(int profile)
 
 H264Sps parseSps(const std::vector<std::uint8_t>& nal)
 {
-    BitReader r(toRbsp(nal));
+    BitReader r(nal, 1, BitReader::PastEnd::Throw);
     H264Sps s;
     s.profileIdc = static_cast<int>(r.bits(8));
     s.constraintFlags = static_cast<int>(r.bits(8));
@@ -181,7 +106,7 @@ H264Sps parseSps(const std::vector<std::uint8_t>& nal)
 
 H264Pps parsePps(const std::vector<std::uint8_t>& nal, const std::vector<H264Sps>& spsList)
 {
-    BitReader r(toRbsp(nal));
+    BitReader r(nal, 1, BitReader::PastEnd::Throw);
     H264Pps p;
     p.id = static_cast<int>(r.ue());
     p.spsId = static_cast<int>(r.ue());

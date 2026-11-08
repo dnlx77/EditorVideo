@@ -19,11 +19,6 @@ std::uint8_t* rowOf(const RgbaTarget& t, int y)
     return t.data + static_cast<std::ptrdiff_t>(y) * t.stride;
 }
 
-double clamp01(double v)
-{
-    return std::clamp(v, 0.0, 1.0);
-}
-
 // Combina due fotogrammi pixel per pixel: `weightTo` (0..256) dice quanto pesa `to`, `weightFrom` quanto pesa `from`
 // (0..256, di solito 256 - weightTo; nella dissolvenza al nero no).
 void mixFrames(const RgbaView& from, const RgbaView& to, int weightFrom, int weightTo, RgbaTarget out)
@@ -47,7 +42,7 @@ public:
     const char* name() const override { return "Dissolvenza incrociata"; }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
-        const int w = static_cast<int>(std::lround(clamp01(progress) * 256.0));
+        const int w = static_cast<int>(std::lround(std::clamp(progress, 0.0, 1.0) * 256.0));
         mixFrames(from, to, 256 - w, w, out);
     }
 };
@@ -60,7 +55,7 @@ public:
     const char* name() const override { return "Dissolvenza al nero"; }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
-        const double p = clamp01(progress);
+        const double p = std::clamp(progress, 0.0, 1.0);
         if (p < 0.5)
             mixFrames(from, to, static_cast<int>(std::lround((1.0 - 2.0 * p) * 256.0)), 0, out);
         else
@@ -80,7 +75,7 @@ public:
     {
         const int w = from.width;
         const int h = from.height;
-        const double p = clamp01(progress);
+        const double p = std::clamp(progress, 0.0, 1.0);
         const bool horizontal = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Right;
         const bool forward = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Up;
         const int size = horizontal ? w : h;
