@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace editor::app {
 
@@ -59,7 +60,7 @@ public:
     std::function<void(double)> onChanging;
     std::function<void(double)> onCommit;
 
-    // Le azioni dell'utente, per i test.
+    // Un valore scelto dall'utente (doppio clic, rotella): lo mette e lo consegna subito.
     void turnTo(double v)
     {
         setValue(v);
@@ -95,7 +96,7 @@ protected:
         p.setPen(QPen(pal.color(QPalette::Shadow), 1));
         p.setBrush(dragging_ ? pal.color(QPalette::Light) : pal.color(QPalette::Button));
         p.drawEllipse(dial.adjusted(3, 3, -3, -3));
-        const double angle = (norm() * 270.0 - 135.0) * 3.14159265358979 / 180.0;
+        const double angle = (norm() * 270.0 - 135.0) * std::numbers::pi / 180.0;
         const QPointF c = dial.center();
         const double r = dial.width() / 2.0 - 3;
         p.setPen(QPen(pal.color(QPalette::Text), 2, Qt::SolidLine, Qt::RoundCap));
@@ -634,11 +635,6 @@ EqualizerDialog::EqualizerDialog(const QString& title, QWidget* parent) : QDialo
 void EqualizerDialog::setSpectrum(const std::vector<float>& db)
 {
     graph_->setSpectrum(db);
-}
-
-void EqualizerDialog::turnKnob(int band, int which, double value)
-{
-    knobs_[static_cast<std::size_t>(band * 3 + which)]->turnTo(value);
 }
 
 void EqualizerDialog::fillPresets()

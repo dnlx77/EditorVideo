@@ -24,10 +24,6 @@ struct PlaybackState
 // non deve finire subito.
 bool playbackFinished(const PlaybackState& state);
 
-// Manda `frames` campioni (per canale) di silenzio a `write`, a blocchi di ~100 ms sempre uguali: anche un'attesa
-// lunga (audio esterno che comincia molto più avanti) non occupa memoria. `write` riceve campioni interlacciati e il
-// loro numero (frames * channels), e restituisce false se bisogna fermarsi; in quel caso anche la funzione restituisce
-// false.
 // Velocità dell'anteprima scelte dal menu (1 = normale).
 inline constexpr double kPlaybackSpeeds[] = {0.25, 0.5, 1.0, 1.5, 2.0, 4.0};
 
@@ -39,6 +35,10 @@ double shuttleSpeed(double current, bool playing, int direction);
 // Se a questa velocità si sente l'audio (con la stessa intonazione): solo in avanti e fino a 2x.
 bool audibleAtSpeed(double speed);
 
+// Manda `frames` campioni (per canale) di silenzio a `write`, a blocchi di ~100 ms sempre uguali: anche un'attesa
+// lunga (audio esterno che comincia molto più avanti) non occupa memoria. `write` riceve campioni interlacciati e il
+// loro numero (frames * channels), e restituisce false se bisogna fermarsi; in quel caso anche la funzione restituisce
+// false.
 bool writeSilence(std::size_t frames, int channels, int sampleRate,
                   const std::function<bool(const std::int16_t* samples, std::size_t count)>& write);
 

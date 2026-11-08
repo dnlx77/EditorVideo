@@ -853,8 +853,8 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         root["nomiGruppi"] = std::move(groupNames);
     if (!project.textTracks().layers().empty())
         root["scritte"] = textTracksToJson(project.textTracks());
-        if (!project.textTracks().baseLayer().clips.empty())
-            root["scrittePrincipale"] = textClipsToJson(project.textTracks().baseLayer().clips);
+    if (!project.textTracks().baseLayer().clips.empty())  // le scritte su V1, anche senza livelli
+        root["scrittePrincipale"] = textClipsToJson(project.textTracks().baseLayer().clips);
     if (!project.textStyles().empty())
         root["stiliScritte"] = textStylesToJson(project.textStyles());
     if (!transitions.asArray().empty())

@@ -72,7 +72,6 @@ inline constexpr double kAnimTimeEpsilon = 1e-6;
 
 double paramValue(const Transform& t, AnimParam p);
 void setParamValue(Transform& t, AnimParam p, double value);
-const char* animParamName(AnimParam p);  // nome italiano ("Scala X", "Posizione Y"...)
 
 // Il valore del tratto all'istante `time` (chiavi in ordine di tempo); `fallback` se non ci sono chiavi.
 double evaluateTrack(const std::vector<AnimKey>& keys, double time, double fallback);
@@ -98,18 +97,9 @@ bool setKeyInterp(TransformAnimation& animation, AnimParam param, double time, I
 bool clearTrack(TransformAnimation& animation, AnimParam param);
 const AnimKey* findKey(const TransformAnimation& animation, AnimParam param, double time);
 
-// Le stesse modifiche su TUTTI i parametri che hanno una chiave a quell'istante (la riga dei rombi della linea del tempo ne
-// mostra uno solo per istante). moveKeysAt non fa niente se in `toTime` c'è già una chiave di uno di quei parametri.
-bool moveKeysAt(TransformAnimation& animation, double fromTime, double toTime);
 // Somma `delta` ai tempi di tutte le chiavi (l'ordine non cambia). Serve alle scritte, i cui tempi sono relativi all'inizio
 // della scritta: accorciandone o allungandone l'inizio, o dividendola, le chiavi seguono l'immagine.
 void shiftKeys(TransformAnimation& animation, double delta);
-// Se `base` c'è e un parametro resta senza chiavi, prende il valore della chiave tolta (come col rombo del pannello).
-bool removeKeysAt(TransformAnimation& animation, double time, Transform* base = nullptr);
-bool setKeysInterpAt(TransformAnimation& animation, double time, Interp interp, double c1x = 0.25, double c1y = 0.1,
-                     double c2x = 0.25, double c2y = 1.0);
-// Il tipo di passaggio delle chiavi a quell'istante (quello della prima che c'è; Linear se non ce ne sono).
-Interp interpAt(const TransformAnimation& animation, double time);
 // I valori da dove l'animazione parte a dove arriva, uno per riga e in italiano, per il suggerimento del badge: "Scala 100%→130%".
 std::vector<std::string> describeAnimation(const Transform& base, const TransformAnimation& animation);
 
@@ -165,11 +155,14 @@ enum class AnimGroup : int
 };
 inline constexpr int kAnimGroupCount = 5;
 std::vector<AnimParam> groupParams(AnimGroup group);
-// Le stesse operazioni su un solo gruppo di parametri (la riga dei rombi della linea del tempo ha una sotto-riga per gruppo).
+// Le modifiche su tutti i parametri di un gruppo che hanno una chiave a quell'istante (la riga dei rombi della linea del tempo
+// ha una sotto-riga per gruppo). moveGroupKeys non fa niente se in `toTime` c'è già una chiave di uno di quei parametri.
 bool moveGroupKeys(TransformAnimation& animation, AnimGroup group, double fromTime, double toTime);
+// Se `base` c'è e un parametro resta senza chiavi, prende il valore della chiave tolta (come col rombo del pannello).
 bool removeGroupKeys(TransformAnimation& animation, AnimGroup group, double time, Transform* base = nullptr);
 bool setGroupKeysInterp(TransformAnimation& animation, AnimGroup group, double time, Interp interp, double c1x = 0.25, double c1y = 0.1,
                         double c2x = 0.25, double c2y = 1.0);
+// Il tipo di passaggio delle chiavi del gruppo a quell'istante (quello della prima che c'è; Linear se non ce ne sono).
 Interp groupInterpAt(const TransformAnimation& animation, AnimGroup group, double time);
 // La prima chiave del gruppo a quell'istante (per il tipo di passaggio e i punti della curva); nullptr se non ce n'è.
 const AnimKey* firstGroupKey(const TransformAnimation& animation, AnimGroup group, double time);

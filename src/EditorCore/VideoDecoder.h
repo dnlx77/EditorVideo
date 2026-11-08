@@ -55,7 +55,7 @@ public:
     double durationSeconds() const;  // -1 se sconosciuta
     double frameRate() const;        // 0 se sconosciuta
     int outputWidth() const;         // dimensioni dei fotogrammi restituiti (proporzioni di visualizzazione già applicate)
-    int outputHeight() const;
+    int outputHeight() const;        // (usate dalle prove)
 
     // Riquadro in cui far stare i fotogrammi (mantenendo le proporzioni, anche ingrandendo): di solito la
     // dimensione in pixel dell'area di anteprima, così l'interfaccia li disegna senza doverli riscalare.

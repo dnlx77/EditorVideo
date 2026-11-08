@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace editor::core {
 
@@ -37,10 +38,9 @@ TextImage transformTextImage(const TextImage& text, const Transform& transform, 
     if (text.empty() || !t.movesPicture() || frameWidth <= 0 || frameHeight <= 0
         || text.rgba.size() < static_cast<std::size_t>(text.width) * text.height * 4)
         return text;
-    constexpr double kPi = 3.14159265358979323846;
     const double ex = t.scaleX * (t.flipHorizontal ? -1.0 : 1.0);
     const double ey = t.scaleY * (t.flipVertical ? -1.0 : 1.0);
-    const double radians = t.rotation * kPi / 180.0;
+    const double radians = t.rotation * std::numbers::pi / 180.0;
     const double cs = std::cos(radians);
     const double sn = std::sin(radians);
     // p' = pivot + spostamento + R * D * (p - pivot); con y verso il basso un angolo positivo gira in senso orario.

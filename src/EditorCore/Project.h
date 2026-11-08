@@ -261,6 +261,7 @@ public:
     // groupMoverCount: quanti pezzi e clip si muovono con `anchor` (1 = da solo).
     int groupMoverCount(ObjectRef anchor) const;
     // Il tratto più vicino a `delta` che si può fare senza sovrapporsi a nessuno (con la spinta verso destra non c'è limite).
+    // (Usate dalle prove: il programma passa da moveObject, che si basa sugli stessi calcoli.)
     double clampGroupDelta(ObjectRef anchor, double delta, bool push) const;
     // Sposta il gruppo; false (e nessuna modifica) se `delta` non è possibile (vedi clampGroupDelta).
     bool moveGroup(ObjectRef anchor, double delta, bool push);
@@ -285,8 +286,8 @@ public:
     // si elimina. false (e nessuna modifica) se il gruppo o l'oggetto non ci sono, o non cambierebbe niente.
     // addToGroup: l'oggetto passa dal suo gruppo (se ne ha uno) a questo. removeFromGroup: l'oggetto resta libero; il
     // gruppo con meno di due oggetti si scioglie. renameGroup: nome vuoto = automatico.
-    bool addToGroup(int groupId, ObjectRef object);
-    bool removeFromGroup(ObjectRef object);
+    bool addToGroup(int groupId, ObjectRef object);  // usata dalle prove (il programma usa dropOnGroup)
+    bool removeFromGroup(ObjectRef object);         // usata dalle prove (il programma usa dropOnGroup)
     bool renameGroup(int groupId, const std::string& name);
     // Trascinare oggetti (che esistono) nell'elenco dei gruppi: con groupId > 0 passano in quel gruppo; con 0 (spazio
     // vuoto) uno solo esce dal suo gruppo e due o più ne formano uno nuovo. false (e nessuna modifica) se non cambia niente.
@@ -309,7 +310,7 @@ public:
     // Tutte le giunzioni (audio dei pezzi non scollegato) nell'ordine: prima i pezzi, poi le clip per traccia.
     std::vector<Junction> junctions() const;
     // Il livello (dB) del pallino comune; std::nullopt se non c'è (nessun punto sul bordo da una delle due parti, o con
-    // livelli diversi) o la giunzione non esiste più.
+    // livelli diversi) o la giunzione non esiste più. Usata dalle prove.
     std::optional<double> junctionLevel(const Junction& junction) const;
     // Mette il pallino al livello `db` (lo crea o lo sposta). false se la giunzione non c'è o non cambia nulla.
     bool setJunctionLevel(const Junction& junction, double db);

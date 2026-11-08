@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numbers>
 
 namespace editor::app {
 
@@ -236,7 +237,7 @@ protected:
         p.setBrush(dragging_ ? pal.color(QPalette::Light) : pal.color(QPalette::Button));
         p.drawEllipse(dial);
         // Lancetta: 0 = su, ±135 gradi agli estremi.
-        const double angle = value_ * 135.0 * 3.14159265358979 / 180.0;
+        const double angle = value_ * 135.0 * std::numbers::pi / 180.0;
         const QPointF c = dial.center();
         p.setPen(QPen(pal.color(QPalette::Text), 2, Qt::SolidLine, Qt::RoundCap));
         p.drawLine(c, QPointF(c.x() + std::sin(angle) * d * 0.4, c.y() - std::cos(angle) * d * 0.4));
