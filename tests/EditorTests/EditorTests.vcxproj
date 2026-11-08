@@ -43,6 +43,7 @@
     <ClCompile Include="TextTracksTests.cpp" />
     <ClCompile Include="TransformTests.cpp" />
     <ClCompile Include="AnimationTests.cpp" />
+    <ClCompile Include="BandedSwsTests.cpp" />
     <ClCompile Include="CompositorTests.cpp" />
     <ClCompile Include="TextImageTests.cpp" />
     <ClCompile Include="TransitionsTests.cpp" />
