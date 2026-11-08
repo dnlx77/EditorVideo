@@ -31,6 +31,14 @@ void fillOpaqueBlack(std::vector<std::uint8_t>& rgba, int width, int height)
         std::fill(p, p + static_cast<std::size_t>(y1 - y0) * width, word);
     });
 }
+// Il formato del fotogramma come lo vede la conversione: come l'encoder, i formati "J" diventano quelli normali a gamma piena.
+AVPixelFormat normalizedFormat(const AVFrame* source, bool& fullRange)
+{
+    AVPixelFormat format = static_cast<AVPixelFormat>(source->format);
+    fullRange = source->color_range == AVCOL_RANGE_JPEG;
+    detail::normalizeJpegRange(format, fullRange);
+    return format;
+}
 }  // namespace
 
 TextFrameBlender::TextFrameBlender(int width, int height, AVPixelFormat pixelFormat)
@@ -50,14 +58,18 @@ TextFrameBlender::TextFrameBlender(int width, int height, AVPixelFormat pixelFor
         throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
 }
 
+const AVFrame* TextFrameBlender::softwareSource(const AVFrame* frame)
+{
+    if (frame->hw_frames_ctx == nullptr)
+        return frame;
+    if (const int ret = detail::downloadHardwareFrame(software_.get(), frame); ret < 0)
+        throw MediaError("Fotogramma della scheda video non leggibile: " + detail::ffmpegError(ret));
+    return software_.get();
+}
+
 const AVFrame* TextFrameBlender::blend(const AVFrame* frame, const std::vector<BlendedText>& texts)
 {
-    const AVFrame* source = frame;
-    if (frame->hw_frames_ctx != nullptr) {
-        if (const int ret = detail::downloadHardwareFrame(software_.get(), frame); ret < 0)
-            throw MediaError("Fotogramma della scheda video non leggibile: " + detail::ffmpegError(ret));
-        source = software_.get();
-    }
+    const AVFrame* source = softwareSource(frame);
 
     // Misura dell'immagine dentro il fotogramma del progetto: le stesse regole dell'encoder (proporzioni dell'originale,
     // bande nere, posizioni pari).
@@ -67,10 +79,8 @@ const AVFrame* TextFrameBlender::blend(const AVFrame* frame, const std::vector<B
     const int x = fit.x;
     const int y = fit.y;
 
-    // Come l'encoder: i formati "J" sono a gamma piena.
-    AVPixelFormat sourceFormat = static_cast<AVPixelFormat>(source->format);
-    bool fullRange = source->color_range == AVCOL_RANGE_JPEG;
-    detail::normalizeJpegRange(sourceFormat, fullRange);
+    bool fullRange = false;
+    const AVPixelFormat sourceFormat = normalizedFormat(source, fullRange);
     toRgba_.reset(sws_getCachedContext(toRgba_.release(), source->width, source->height, sourceFormat, width, height,
                                        AV_PIX_FMT_RGBA, SWS_BICUBIC, nullptr, nullptr, nullptr));
     if (!toRgba_)
@@ -92,17 +102,11 @@ const AVFrame* TextFrameBlender::blendTransformed(const AVFrame* frame, const Tr
 {
     if (transform.isIdentity())
         return blend(frame, texts);
-    const AVFrame* source = frame;
-    if (frame->hw_frames_ctx != nullptr) {
-        if (const int ret = detail::downloadHardwareFrame(software_.get(), frame); ret < 0)
-            throw MediaError("Fotogramma della scheda video non leggibile: " + detail::ffmpegError(ret));
-        source = software_.get();
-    }
+    const AVFrame* source = softwareSource(frame);
     const int sourceWidth = source->width;
     const int sourceHeight = source->height;
-    AVPixelFormat sourceFormat = static_cast<AVPixelFormat>(source->format);
-    bool fullRange = source->color_range == AVCOL_RANGE_JPEG;
-    detail::normalizeJpegRange(sourceFormat, fullRange);
+    bool fullRange = false;
+    const AVPixelFormat sourceFormat = normalizedFormat(source, fullRange);
     timing_.sourceFormat = sourceFormat;
     // Il fotogramma originale in RGBA alla sua misura (la qualità piena, non quella adattata al progetto).
     if (!bandedToRgba_.prepare(sourceWidth, sourceHeight, sourceFormat, AV_PIX_FMT_RGBA, fullRange, true))

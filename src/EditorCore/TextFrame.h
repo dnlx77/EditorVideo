@@ -72,6 +72,8 @@ public:
     const Timing& timing() const { return timing_; }
 
 private:
+    // Il fotogramma in memoria: quello della scheda video si copia (in software_), gli altri si usano come sono.
+    const AVFrame* softwareSource(const AVFrame* frame);
     const AVFrame* toYuv(const std::vector<BlendedText>& texts, const AVFrame* props);
 
     int width_;

@@ -62,10 +62,12 @@ TextImage transformTextImage(const TextImage& text, const Transform& transform, 
     out.width = x1 - x0;
     out.height = y1 - y0;
     out.rgba.assign(static_cast<std::size_t>(out.width) * out.height * 4, 0);
-    const auto texel = [&](int ix, int iy, int c) -> double {
+    // I quattro pixel vicini; fuori dal riquadro sono trasparenti (così i bordi sono morbidi).
+    static constexpr std::uint8_t kClear[4] = {0, 0, 0, 0};
+    const auto texel = [&](int ix, int iy) -> const std::uint8_t* {
         if (ix < 0 || iy < 0 || ix >= text.width || iy >= text.height)
-            return 0.0;  // fuori dal riquadro: trasparente (così i bordi sono morbidi)
-        return text.rgba[(static_cast<std::size_t>(iy) * text.width + ix) * 4 + static_cast<std::size_t>(c)];
+            return kClear;
+        return &text.rgba[(static_cast<std::size_t>(iy) * text.width + ix) * 4];
     };
     for (int y = 0; y < out.height; ++y) {
         for (int x = 0; x < out.width; ++x) {
@@ -78,10 +80,13 @@ TextImage transformTextImage(const TextImage& text, const Transform& transform, 
             const int iv = static_cast<int>(std::floor(v));
             const double fu = u - iu;
             const double fv = v - iv;
+            const std::uint8_t* p00 = texel(iu, iv);
+            const std::uint8_t* p10 = texel(iu + 1, iv);
+            const std::uint8_t* p01 = texel(iu, iv + 1);
+            const std::uint8_t* p11 = texel(iu + 1, iv + 1);
             std::uint8_t* dst = &out.rgba[(static_cast<std::size_t>(y) * out.width + x) * 4];
             for (int c = 0; c < 4; ++c) {
-                const double value = (texel(iu, iv, c) * (1 - fu) + texel(iu + 1, iv, c) * fu) * (1 - fv)
-                                     + (texel(iu, iv + 1, c) * (1 - fu) + texel(iu + 1, iv + 1, c) * fu) * fv;
+                const double value = (p00[c] * (1 - fu) + p10[c] * fu) * (1 - fv) + (p01[c] * (1 - fu) + p11[c] * fu) * fv;
                 dst[c] = static_cast<std::uint8_t>(std::clamp(static_cast<int>(std::lround(value)), 0, 255));
             }
         }
