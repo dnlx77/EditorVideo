@@ -143,12 +143,9 @@ ProxyInfo buildProxyWith(const std::string& originalUtf8Path, const std::string&
         if (!decoder)
             throw GpuFailure{};
     } else {
-        decoder.reset(avcodec_alloc_context3(in.codec));
-        if (!decoder || avcodec_parameters_to_context(decoder.get(), stream->codecpar) < 0)
-            throw MediaError("Decoder video non disponibile per il proxy.");
-        decoder->pkt_timebase = stream->time_base;
-        decoder->thread_count = 0;  // tutti i core
-        if (const int ret = avcodec_open2(decoder.get(), in.codec, nullptr); ret < 0)
+        int ret = 0;
+        decoder = openDecoder(in.codec, stream, 0, nullptr, &ret);  // tutti i core
+        if (!decoder)
             throw MediaError("Impossibile aprire il decoder video per il proxy (" + ffmpegError(ret) + ").");
     }
     AVRational rate = av_guess_frame_rate(in.fmt.get(), stream, nullptr);

@@ -74,6 +74,45 @@ AVPixelFormat d3d11FormatFor(const AVCodec* codec)
     }
 }
 
+CodecContextPtr openDecoder(const AVCodec* codec, const AVStream* stream, int threads, const HardwareDecoding* hardware, int* error,
+                            bool* usedHardware)
+{
+    const auto open = [&](bool gpu, int& ret) {
+        CodecContextPtr ctx(avcodec_alloc_context3(codec));
+        if (!ctx) {
+            ret = AVERROR(ENOMEM);
+            return CodecContextPtr{};
+        }
+        if (ret = avcodec_parameters_to_context(ctx.get(), stream->codecpar); ret < 0)
+            return CodecContextPtr{};
+        ctx->pkt_timebase = stream->time_base;
+        ctx->thread_count = threads;
+        if (gpu) {
+            ctx->hw_device_ctx = av_buffer_ref(hardware->device);
+            ctx->get_format = hardware->getFormat;
+            ctx->opaque = hardware->opaque;
+            ctx->thread_count = 1;
+        }
+        if (ret = avcodec_open2(ctx.get(), codec, nullptr); ret < 0)
+            return CodecContextPtr{};
+        return ctx;
+    };
+    int ret = 0;
+    if (usedHardware != nullptr)
+        *usedHardware = false;
+    if (hardware != nullptr && hardware->device != nullptr) {
+        if (CodecContextPtr ctx = open(true, ret)) {
+            if (usedHardware != nullptr)
+                *usedHardware = true;
+            return ctx;
+        }
+    }
+    CodecContextPtr ctx = open(false, ret);
+    if (!ctx && error != nullptr)
+        *error = ret;
+    return ctx;
+}
+
 AVBufferRef* createD3d11Device()
 {
     AVBufferRef* device = nullptr;

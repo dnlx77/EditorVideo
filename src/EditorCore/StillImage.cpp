@@ -48,8 +48,8 @@ bool decodeFirstFrame(const std::string& utf8Path, Orientation& orientation, int
     if (!std::filesystem::is_regular_file(pathFromUtf8(utf8Path), ec))
         return false;
     const OpenedStream opened = openMainStream(utf8Path, AVMEDIA_TYPE_VIDEO);
-    CodecContextPtr ctx(avcodec_alloc_context3(opened.codec));
-    if (!ctx || avcodec_parameters_to_context(ctx.get(), opened.stream->codecpar) < 0 || avcodec_open2(ctx.get(), opened.codec, nullptr) < 0)
+    CodecContextPtr ctx = openDecoder(opened.codec, opened.stream);
+    if (!ctx)
         return false;
     PacketPtr packet(av_packet_alloc());
     FramePtr frame(av_frame_alloc());

@@ -160,6 +160,21 @@ AVBufferRef* createD3d11Device();
 // software. `hardware` (se c'è) dice quale dei due. AV_PIX_FMT_NONE se non c'è niente.
 AVPixelFormat chooseDecoderFormat(const AVPixelFormat* formats, AVPixelFormat wanted, bool* hardware = nullptr);
 
+// Come un decoder usa la GPU: il dispositivo (es. createD3d11Device) e la funzione che sceglie il formato dei fotogrammi
+// (get_format, che riceve `opaque` in AVCodecContext::opaque).
+struct HardwareDecoding
+{
+    AVBufferRef* device = nullptr;
+    AVPixelFormat (*getFormat)(AVCodecContext*, const AVPixelFormat*) = nullptr;
+    void* opaque = nullptr;
+};
+
+// Crea e apre il decoder `codec` per `stream`, con i parametri e la base dei tempi del flusso; `threads` 0 = tutti i core.
+// Con `hardware` prova prima con la GPU (un solo thread, come consiglia FFmpeg) e, se così non si apre, con la CPU.
+// nullptr se non si apre, con il codice di errore FFmpeg in `error`; `usedHardware` dice se è aperto con la GPU.
+CodecContextPtr openDecoder(const AVCodec* codec, const AVStream* stream, int threads = 1, const HardwareDecoding* hardware = nullptr,
+                            int* error = nullptr, bool* usedHardware = nullptr);
+
 // Copia in memoria normale (di solito NV12) un fotogramma decodificato dalla GPU, con le sue proprietà (tempi, colori).
 // Restituisce un codice di errore FFmpeg negativo se non riesce.
 int downloadHardwareFrame(AVFrame* software, const AVFrame* hardware);
