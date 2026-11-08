@@ -195,10 +195,9 @@ bool MainWindow::applyTextEdit(const core::TextClip& edited, const std::vector<c
     // Scrivere una frase nel pannello è una sola modifica: se l'ultima voce di Annulla è la precedente modifica di questa
     // scritta (e dopo non è successo altro), si continua quella.
     const bool onlyStyles = *current == comparable;  // (qui sono cambiati solo gli stili con nome)
-    const bool continues = merge && textMergeClip_ == edited.id && textMergeCount_ == history_.undoCount() && history_.canUndo()
-                        && history_.undoLabel() == "Modifica scritta" && !history_.canRedo();
+    const std::string key = merge ? std::to_string(edited.id) : std::string();
     std::optional<core::Project> before;
-    if (!continues)
+    if (!continuesEdit(textMerge_, key, QStringLiteral("Modifica scritta")))
         before = project_;
     if (stylesChanged)
         keepTextStyles(*styles);
@@ -211,12 +210,8 @@ bool MainWindow::applyTextEdit(const core::TextClip& edited, const std::vector<c
     text.setStyle(edited.id, edited.style);
     text.setFades(edited.id, edited.fadeIn, edited.fadeOut);
     timeline_->setSelectedTextClip(edited.id);
-    if (continues && history_.amend())
-        sequenceChanged();
-    else
-        recordEdit(onlyStyles ? QStringLiteral("Cambia stili delle scritte") : QStringLiteral("Modifica scritta"), before ? *before : project_);
-    textMergeClip_ = merge ? edited.id : 0;
-    textMergeCount_ = history_.undoCount();
+    finishMergedEdit(textMerge_, key, onlyStyles ? QStringLiteral("Cambia stili delle scritte") : QStringLiteral("Modifica scritta"),
+                     before);
     return true;
 }
 

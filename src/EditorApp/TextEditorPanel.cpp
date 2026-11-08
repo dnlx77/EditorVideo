@@ -262,9 +262,7 @@ void TextEditorPanel::build()
     effectsGrid->addWidget(new QLabel(QStringLiteral("marg.")), 2, 2);
     effectsGrid->addWidget(padding_, 2, 3);
 
-    // Posizione: nove posti fissi più i valori esatti.
-    centerX_ = spin(0.0, 100.0, 1.0, 1, QStringLiteral(" %"), "posizioneX");
-    centerY_ = spin(0.0, 100.0, 1.0, 1, QStringLiteral(" %"), "posizioneY");
+    // Posizione: nove posti fissi (la posizione esatta è nella sezione «Trasforma», con i rombi).
     length_ = spin(0.1, 36000.0, 0.5, 2, QStringLiteral(" s"), "durata");
     fadeIn_ = spin(0.0, 36000.0, 0.1, 2, QStringLiteral(" s"), "dissolvenzaIn");
     fadeIn_->setToolTip(QStringLiteral("La scritta compare piano piano in questo tempo"));
@@ -298,12 +296,6 @@ void TextEditorPanel::build()
         }
     }
     whereGrid->addLayout(presets, 0, 0, 3, 1);
-    // La posizione esatta è nella sezione «Trasforma» (con i rombi): qui restano i nove punti fissi; i campi del centro di stile
-    // restano nascosti perché sono il dato dello stile.
-    centerX_->setParent(where);
-    centerY_->setParent(where);
-    centerX_->hide();
-    centerY_->hide();
     whereGrid->addWidget(new QLabel(QStringLiteral("Durata")), 0, 1);
     whereGrid->addWidget(length_, 0, 2);
     whereGrid->addWidget(new QLabel(QStringLiteral("Compare")), 1, 1);
@@ -368,7 +360,7 @@ void TextEditorPanel::build()
             fontFamily_ = f.family().toStdString();
         changed();
     });
-    for (QDoubleSpinBox* box : {size_, lineSpacing_, opacity_, outlineWidth_, shadowX_, shadowY_, padding_, centerX_, centerY_, length_, fadeIn_, fadeOut_})
+    for (QDoubleSpinBox* box : {size_, lineSpacing_, opacity_, outlineWidth_, shadowX_, shadowY_, padding_, length_, fadeIn_, fadeOut_})
         connect(box, &QDoubleSpinBox::valueChanged, this, [this] { changed(); });
     for (QToolButton* button : {bold_, italic_, underline_})
         connect(button, &QToolButton::toggled, this, [this] { changed(); });
@@ -438,8 +430,8 @@ void TextEditorPanel::loadStyle(const core::TextStyle& s)
     background_->setChecked(s.background);
     backgroundColor_->setColor(toQt(s.backgroundColor));
     padding_->setValue(s.backgroundPadding * 100.0);
-    centerX_->setValue(s.centerX * 100.0);
-    centerY_->setValue(s.centerY * 100.0);
+    centerX_ = s.centerX;
+    centerY_ = s.centerY;
     loading_ = false;
 }
 
@@ -477,8 +469,8 @@ core::TextStyle TextEditorPanel::currentStyle() const
     s.background = background_->isChecked();
     s.backgroundColor = fromQt(backgroundColor_->color());
     s.backgroundPadding = padding_->value() / 100.0;
-    s.centerX = centerX_->value() / 100.0;
-    s.centerY = centerY_->value() / 100.0;
+    s.centerX = centerX_;
+    s.centerY = centerY_;
     return style;
 }
 
@@ -533,8 +525,11 @@ void TextEditorPanel::deleteSelectedStyle()
 
 void TextEditorPanel::setPosition(double x, double y)
 {
-    centerX_->setValue(x * 100.0);
-    centerY_->setValue(y * 100.0);
+    if (x == centerX_ && y == centerY_)
+        return;
+    centerX_ = x;
+    centerY_ = y;
+    changed();
 }
 
 void TextEditorPanel::changed()

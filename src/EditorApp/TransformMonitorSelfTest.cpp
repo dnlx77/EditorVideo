@@ -336,7 +336,7 @@ int runManipTest(const QStringList& args, qsizetype at)
             auto* key = panel->findChild<QToolButton*>(QStringLiteral("chiave1"));  // gruppo Posizione
             auto* next = panel->findChild<QToolButton*>(QStringLiteral("chiaveDopo1"));
             auto* prev = panel->findChild<QToolButton*>(QStringLiteral("chiavePrima1"));
-            QDoubleSpinBox* posX = nullptr;  // (la pagina delle scritte ha un campo con lo stesso nome: si prende quello visibile)
+            QDoubleSpinBox* posX = nullptr;  // (si prende quello visibile)
             for (QDoubleSpinBox* spin : panel->findChildren<QDoubleSpinBox*>(QStringLiteral("posizioneX"))) {
                 if (spin->isVisibleTo(panel))
                     posX = spin;
