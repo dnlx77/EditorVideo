@@ -87,6 +87,16 @@ public:
 private:
     struct Reader;
     struct Shared;
+    struct Settings;
+    // Picco sinistro e destro di una traccia; `used` = la traccia ha suonato (le voci restano, così non si alloca).
+    struct TrackPeak
+    {
+        std::array<float, 2> value{};
+        bool used = false;
+    };
+
+    // Cambia le impostazioni condivise: una copia nuova, che il thread audio prende al blocco seguente.
+    void changeSettings(const std::function<void(Settings&)>& change);
 
     std::vector<MixSegment> segments_;
     std::vector<long long> first_;   // primo fotogramma di ogni tratto nella sequenza
@@ -104,7 +114,11 @@ private:
     std::map<int, EqState> eq_;       // un equalizzatore per traccia (e per il Master)
     long long nextExpected_ = -1;     // il fotogramma che seguirebbe l'ultimo blocco: se è un altro si è saltato
     double end_ = 0.0;
-    std::vector<float> acc_;  // somma del blocco in lavorazione (render)
+    // Riusati a ogni blocco da render, così il thread audio non alloca memoria.
+    std::vector<float> acc_;                                        // somma del blocco in lavorazione
+    std::map<int, TrackPeak> blockPeaks_;                           // picchi del blocco, per traccia
+    std::vector<std::pair<int, std::vector<float>*>> trackBuffers_;  // tracce sommate a parte (equalizzatore, spettro)
+    std::vector<std::pair<long long, long long>> mutedFrames_;      // tratti silenziati del tratto in lettura
 };
 
 }  // namespace editor::core
