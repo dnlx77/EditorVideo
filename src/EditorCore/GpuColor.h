@@ -63,6 +63,10 @@ public:
     // stessa scheda video) si fondono a `progress` (0..1) e il risultato resta in questo convertitore. Come
     // Transition::blend della CPU (Dissolvenza incrociata, Dissolvenza al nero, Scorrimento nella direzione data).
     bool blendTransition(GpuFrameConverter& to, const std::string& transitionId, double progress, const TransitionParams& params);
+    // Come drawLayer, ma il livello è un fotogramma NV12 in memoria (di qualunque misura): si converte in RGBA16F sulla scheda
+    // video (con i mipmap se si rimpicciolisce) e poi si disegna. Con `Transform{}` è il fotogramma adattato a quello del progetto
+    // (bande nere comprese se le proporzioni sono diverse).
+    bool drawNv12(const AVFrame* nv12, const GpuColorSpace& colors, const Transform& transform);
     // Carica la scritta nella scheda video (nullptr se è vuota o non si riesce). Vale per questo convertitore.
     std::shared_ptr<GpuTextImage> createText(const TextImage& image);
     // Sovrappone la scritta al fotogramma come blendTextOver(transformTextImage(...)): con la trasformazione `transform` (scala,

@@ -118,6 +118,7 @@ private:
     QLabel* range_ = nullptr;
     QComboBox* codec_ = nullptr;
     QComboBox* decoder_ = nullptr;
+    QComboBox* compositor_ = nullptr;
     QComboBox* resolution_ = nullptr;
     QComboBox* frameRate_ = nullptr;
     QComboBox* container_ = nullptr;

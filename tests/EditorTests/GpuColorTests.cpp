@@ -1,5 +1,7 @@
 #include "EditorCore/Compositor.h"
 #include "EditorCore/GpuColor.h"
+#include "EditorCore/GpuCompositor.h"
+#include "EditorCore/TextFrame.h"
 #include "EditorCore/GpuDevice.h"
 #include "EditorCore/TextImage.h"
 #include "EditorCore/Transitions.h"
@@ -457,4 +459,207 @@ TEST(GpuTransition, MatchesTheCpuTransitions)
                 EXPECT_LT(mean, 0.6) << transition->id() << " direzione " << static_cast<int>(direction) << " a " << progress;
             }
     }
+}
+
+// --- GpuCompositor: stessi fotogrammi di TextFrameBlender (CPU), con ripiego sulla CPU ---
+
+namespace {
+
+Frame smoothYuv420p(int w, int h)
+{
+    Frame frame(av_frame_alloc());
+    frame->format = AV_PIX_FMT_YUV420P;
+    frame->width = w;
+    frame->height = h;
+    frame->sample_aspect_ratio = {1, 1};
+    frame->color_range = AVCOL_RANGE_MPEG;
+    EXPECT_GE(av_frame_get_buffer(frame.get(), 32), 0);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            frame->data[0][y * frame->linesize[0] + x] = static_cast<std::uint8_t>(60 + (x * 80) / w + (y * 50) / h + (((x / 16) + (y / 16)) % 2) * 20);
+    for (int y = 0; y < h / 2; ++y)
+        for (int x = 0; x < w / 2; ++x) {
+            frame->data[1][y * frame->linesize[1] + x] = static_cast<std::uint8_t>(108 + (x * 40) / (w / 2));
+            frame->data[2][y * frame->linesize[2] + x] = static_cast<std::uint8_t>(148 - (y * 40) / (h / 2));
+        }
+    return frame;
+}
+
+// Differenza media fra due piani (8 bit).
+double planeDiff(const AVFrame* a, const AVFrame* b, int plane, int w, int h)
+{
+    double total = 0.0;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            total += std::abs(a->data[plane][y * a->linesize[plane] + x] - b->data[plane][y * b->linesize[plane] + x]);
+    return total / (static_cast<double>(w) * h);
+}
+
+void expectSameFrames(const AVFrame* gpu, const AVFrame* cpu, int w, int h, double maxY, double maxC, const char* what)
+{
+    ASSERT_NE(gpu, nullptr);
+    ASSERT_NE(cpu, nullptr);
+    const double y = planeDiff(gpu, cpu, 0, w, h);
+    const double u = planeDiff(gpu, cpu, 1, w / 2, h / 2);
+    const double v = planeDiff(gpu, cpu, 2, w / 2, h / 2);
+    std::cout << "[gpu] compositore «" << what << "»: differenza dalla CPU Y " << y << ", U " << u << ", V " << v << std::endl;
+    EXPECT_LT(y, maxY) << what;
+    EXPECT_LT(u, maxC) << what;
+    EXPECT_LT(v, maxC) << what;
+}
+
+}  // namespace
+
+TEST(GpuCompositor, BlendWithTextMatchesTheCpuBlender)
+{
+    constexpr int w = 128;
+    constexpr int h = 72;
+    std::string why;
+    const auto gpu = GpuCompositor::create(w, h, AV_PIX_FMT_YUV420P, true, &why);
+    if (!gpu)
+        GTEST_SKIP() << "nessuna GPU: " << why;
+    EXPECT_TRUE(gpu->isHardware());
+    TextFrameBlender cpu(w, h, AV_PIX_FMT_YUV420P);
+    const Frame source = smoothYuv420p(w, h);
+    const TextImage text = sampleText(20, 10, 60, 24);
+    BlendedText blended;
+    blended.image = &text;
+    blended.opacity = 0.7;
+    expectSameFrames(gpu->blend(source.get(), {blended}), cpu.blend(source.get(), {blended}), w, h, 2.0, 2.5, "blend con scritta");
+}
+
+TEST(GpuCompositor, TransformedWithAnimatedTextMatchesTheCpuBlender)
+{
+    constexpr int w = 128;
+    constexpr int h = 72;
+    std::string why;
+    const auto gpu = GpuCompositor::create(w, h, AV_PIX_FMT_YUV420P, true, &why);
+    if (!gpu)
+        GTEST_SKIP() << "nessuna GPU: " << why;
+    TextFrameBlender cpu(w, h, AV_PIX_FMT_YUV420P);
+    const Frame source = smoothYuv420p(w, h);
+    Transform t;
+    t.scaleX = t.scaleY = 0.7;
+    t.rotation = 15;
+    t.posX = 6;
+    const TextImage text = sampleText(30, 20, 50, 20);
+    BlendedText blended;  // la scritta si trasforma dove la si compone: la GPU a ogni fotogramma, la CPU con transformTextImage
+    blended.base = &text;
+    blended.transform.scaleX = blended.transform.scaleY = 1.3;
+    blended.transform.rotation = 25;
+    blended.pivotX = 55;
+    blended.pivotY = 30;
+    blended.opacity = 0.9;
+    blended.cacheId = 7;
+    expectSameFrames(gpu->blendTransformed(source.get(), t, {blended}), cpu.blendTransformed(source.get(), t, {blended}), w, h, 3.0, 3.5,
+                     "trasformato con scritta animata");
+    // Lo stesso con la scritta già nella scheda video (cacheId): stesso risultato.
+    expectSameFrames(gpu->blendTransformed(source.get(), t, {blended}), cpu.blendTransformed(source.get(), t, {blended}), w, h, 3.0, 3.5,
+                     "trasformato, scritta dalla cache");
+}
+
+TEST(GpuCompositor, RasterAndLayersMatchTheCpuBlender)
+{
+    constexpr int w = 128;
+    constexpr int h = 72;
+    std::string why;
+    const auto gpu = GpuCompositor::create(w, h, AV_PIX_FMT_YUV420P, true, &why);
+    if (!gpu)
+        GTEST_SKIP() << "nessuna GPU: " << why;
+    TextFrameBlender cpu(w, h, AV_PIX_FMT_YUV420P);
+    const std::vector<std::uint8_t> raster = patternBgra(w, h, 1);
+    VideoFrame layerFrame;
+    layerFrame.width = 64;
+    layerFrame.height = 36;
+    layerFrame.stride = 64 * 4;
+    layerFrame.pixels = patternBgra(64, 36, 0);
+    Transform layerTransform;
+    layerTransform.scaleX = layerTransform.scaleY = 0.8;
+    layerTransform.posX = 20;
+    layerTransform.opacity = 0.8;
+    const TextImage under = sampleText(5, 5, 40, 16);
+    const TextImage over = sampleText(60, 40, 40, 16);
+    BlendedText belowLayer;
+    belowLayer.image = &under;
+    belowLayer.level = 0;
+    BlendedText aboveLayer;
+    aboveLayer.image = &over;
+    aboveLayer.level = 1;
+    AVFrame* props = av_frame_alloc();
+    props->pts = 42;
+    gpu->setLayers({{&layerFrame, layerTransform, 1}});
+    cpu.setLayers({{&layerFrame, layerTransform, 1}});
+    const AVFrame* a = gpu->blendRaster(raster.data(), w * 4, w, h, {belowLayer, aboveLayer}, props);
+    const AVFrame* b = cpu.blendRaster(raster.data(), w * 4, w, h, {belowLayer, aboveLayer}, props);
+    expectSameFrames(a, b, w, h, 2.5, 3.0, "transizione, livello e scritte");
+    EXPECT_EQ(a->pts, 42);
+    av_frame_free(&props);
+}
+
+TEST(GpuCompositor, UnsupportedSourceFormatFallsBackToTheCpuForThatFrameOnly)
+{
+    constexpr int w = 128;
+    constexpr int h = 72;
+    std::string why;
+    const auto gpu = GpuCompositor::create(w, h, AV_PIX_FMT_YUV420P, true, &why);
+    if (!gpu)
+        GTEST_SKIP() << "nessuna GPU: " << why;
+    TextFrameBlender cpu(w, h, AV_PIX_FMT_YUV420P);
+    Frame tenBit(av_frame_alloc());
+    tenBit->format = AV_PIX_FMT_YUV420P10LE;
+    tenBit->width = w;
+    tenBit->height = h;
+    tenBit->sample_aspect_ratio = {1, 1};
+    ASSERT_GE(av_frame_get_buffer(tenBit.get(), 32), 0);
+    for (int p = 0; p < 3; ++p) {
+        const int pw = p == 0 ? w : w / 2;
+        const int ph = p == 0 ? h : h / 2;
+        for (int y = 0; y < ph; ++y)
+            for (int x = 0; x < pw; ++x)
+                reinterpret_cast<std::uint16_t*>(tenBit->data[p] + y * tenBit->linesize[p])[x] = static_cast<std::uint16_t>(p == 0 ? 300 + x * 3 : 512);
+    }
+    const AVFrame* a = gpu->blend(tenBit.get(), {});
+    const AVFrame* b = cpu.blend(tenBit.get(), {});
+    ASSERT_NE(a, nullptr);
+    EXPECT_EQ(planeDiff(a, b, 0, w, h), 0.0);  // è il codice della CPU
+    EXPECT_TRUE(gpu->isHardware());  // la GPU resta in uso per gli altri fotogrammi
+    EXPECT_TRUE(gpu->fallbackReason().empty());
+    // Un fotogramma yuv420p subito dopo torna sulla GPU.
+    const Frame source = smoothYuv420p(w, h);
+    expectSameFrames(gpu->blend(source.get(), {}), cpu.blend(source.get(), {}), w, h, 2.0, 2.5, "dopo il ripiego di un fotogramma");
+}
+
+TEST(GpuCompositor, Nv12OutputWorksToo)
+{
+    constexpr int w = 128;
+    constexpr int h = 72;
+    std::string why;
+    const auto gpu = GpuCompositor::create(w, h, AV_PIX_FMT_NV12, true, &why);
+    if (!gpu)
+        GTEST_SKIP() << "nessuna GPU: " << why;
+    const Frame source = smoothYuv420p(w, h);
+    const AVFrame* out = gpu->blend(source.get(), {});
+    ASSERT_NE(out, nullptr);
+    EXPECT_EQ(out->format, AV_PIX_FMT_NV12);
+    // Senza scritte né trasformazioni il fotogramma torna com'era (a meno degli arrotondamenti).
+    double total = 0.0;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            total += std::abs(out->data[0][y * out->linesize[0] + x] - source->data[0][y * source->linesize[0] + x]);
+    EXPECT_LT(total / (static_cast<double>(w) * h), 2.0);
+}
+
+TEST(GpuCompositor, FactoryNeverGivesTheSoftwareRasterizerAndAcceptsOnlyEightBit420)
+{
+    // Senza una scheda vera (come in CI) la fabbrica dà la CPU; con 10 bit sempre la CPU.
+    const auto eight = makeFrameCompositor(128, 72, AV_PIX_FMT_YUV420P);
+    ASSERT_NE(eight, nullptr);
+    if (!eight->isHardware())
+        EXPECT_STREQ(eight->name(), "CPU");
+    const auto ten = makeFrameCompositor(128, 72, AV_PIX_FMT_YUV420P10LE);
+    ASSERT_NE(ten, nullptr);
+    EXPECT_FALSE(ten->isHardware());
+    const auto forced = makeFrameCompositor(128, 72, AV_PIX_FMT_YUV420P, false);
+    ASSERT_NE(forced, nullptr);
+    EXPECT_FALSE(forced->isHardware());
 }

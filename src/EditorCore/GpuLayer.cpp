@@ -4,6 +4,11 @@
 
 #include "EditorCore/GpuInternal.h"
 
+extern "C" {
+#include <libavutil/frame.h>
+#include <libavutil/pixfmt.h>
+}
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -177,14 +182,63 @@ bool GpuFrameConverter::drawLayer(const BgraImage& source, const Transform& tran
     Impl& d = *impl_;
     if (source.data == nullptr || source.width <= 0 || source.height <= 0)
         return false;
-    const Transform t = normalized(transform);
-    if (t.opacity <= 0.0)
+    if (normalized(transform).opacity <= 0.0)
         return true;  // niente da disegnare
     if (!d.ensureLayerResources())
         return false;
+    const Impl::SourceTexture* texture = d.uploadSource(source, true);
+    if (texture == nullptr)
+        return false;
+    return d.drawLayerView(texture->view.Get(), source.width, source.height, transform);
+}
 
-    const TransformGeometry g = computeGeometry(t, source.width, source.height, d.width, d.height);
-    const PixelBounds box = pixelBounds(g.corners, d.width, d.height);
+bool GpuFrameConverter::drawNv12(const AVFrame* nv12, const GpuColorSpace& colors, const Transform& transform)
+{
+    Impl& d = *impl_;
+    if (nv12 == nullptr || nv12->format != AV_PIX_FMT_NV12 || nv12->width <= 0 || nv12->height <= 0 || nv12->data[0] == nullptr
+        || nv12->data[1] == nullptr || nv12->linesize[0] <= 0 || nv12->linesize[1] <= 0)
+        return false;
+    const Transform t = normalized(transform);
+    if (t.opacity <= 0.0)
+        return true;
+    if (!d.ensureLayerResources())
+        return false;
+    const int w = nv12->width;
+    const int h = nv12->height;
+    const int cw = (w + 1) / 2;
+    const int ch = (h + 1) / 2;
+    if (d.nv12Sources.size() > 4)
+        d.nv12Sources.clear();
+    Impl::Nv12Source& source = d.nv12Sources[{w, h}];
+    if (!source.y) {
+        source.y = d.makeTexture(w, h, DXGI_FORMAT_R8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+        source.uv = d.makeTexture(cw, ch, DXGI_FORMAT_R8G8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+        source.rgb = d.makeTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE,
+                                   D3D11_USAGE_DEFAULT, 0, 0, D3D11_RESOURCE_MISC_GENERATE_MIPS);
+        if (!source.y || !source.uv || !source.rgb || FAILED(d.device->CreateShaderResourceView(source.y.Get(), nullptr, &source.yView))
+            || FAILED(d.device->CreateShaderResourceView(source.uv.Get(), nullptr, &source.uvView))
+            || FAILED(d.device->CreateShaderResourceView(source.rgb.Get(), nullptr, &source.rgbView))
+            || FAILED(d.device->CreateRenderTargetView(source.rgb.Get(), nullptr, &source.rgbTarget))) {
+            d.nv12Sources.erase({w, h});
+            return false;
+        }
+    }
+    d.context->UpdateSubresource(source.y.Get(), 0, nullptr, nv12->data[0], static_cast<UINT>(nv12->linesize[0]), 0);
+    d.context->UpdateSubresource(source.uv.Get(), 0, nullptr, nv12->data[1], static_cast<UINT>(nv12->linesize[1]), 0);
+    d.setParams(colors);
+    ID3D11ShaderResourceView* views[2] = {source.yView.Get(), source.uvView.Get()};
+    d.pass(source.rgbTarget.Get(), 0, 0, w, h, d.psToRgb.Get(), views, 2);
+    d.context->GenerateMips(source.rgbView.Get());
+    return d.drawLayerView(source.rgbView.Get(), w, h, t);
+}
+
+bool GpuFrameConverter::Impl::drawLayerView(ID3D11ShaderResourceView* view, int sourceWidth, int sourceHeight, const Transform& transform)
+{
+    const Transform t = normalized(transform);
+    if (t.opacity <= 0.0)
+        return true;
+    const TransformGeometry g = computeGeometry(t, sourceWidth, sourceHeight, width, height);
+    const PixelBounds box = pixelBounds(g.corners, width, height);
     if (box.empty())
         return true;
     const Affine inv = g.toProject.inverse();
@@ -194,24 +248,21 @@ bool GpuFrameConverter::drawLayer(const BgraImage& source, const Transform& tran
     const double scale = std::sqrt(std::abs(g.toProject.a * g.toProject.d - g.toProject.b * g.toProject.c));
     const float lod = scale > 0.0 && scale < 1.0 ? static_cast<float>(std::log2(1.0 / scale)) : 0.0f;
     // I pixel leggibili restano dentro la parte visibile (così non entra il colore di quello ritagliato).
-    const int minIx = std::clamp(static_cast<int>(std::floor(g.sourceLeft)), 0, source.width - 1);
-    const int maxIx = std::clamp(static_cast<int>(std::ceil(g.sourceRight)) - 1, minIx, source.width - 1);
-    const int minIy = std::clamp(static_cast<int>(std::floor(g.sourceTop)), 0, source.height - 1);
-    const int maxIy = std::clamp(static_cast<int>(std::ceil(g.sourceBottom)) - 1, minIy, source.height - 1);
+    const int minIx = std::clamp(static_cast<int>(std::floor(g.sourceLeft)), 0, sourceWidth - 1);
+    const int maxIx = std::clamp(static_cast<int>(std::ceil(g.sourceRight)) - 1, minIx, sourceWidth - 1);
+    const int minIy = std::clamp(static_cast<int>(std::floor(g.sourceTop)), 0, sourceHeight - 1);
+    const int maxIy = std::clamp(static_cast<int>(std::ceil(g.sourceBottom)) - 1, minIy, sourceHeight - 1);
 
     const float values[20] = {
         static_cast<float>(inv.a), static_cast<float>(inv.c), static_cast<float>(inv.tx), lenX,
         static_cast<float>(inv.b), static_cast<float>(inv.d), static_cast<float>(inv.ty), lenY,
         static_cast<float>(g.sourceLeft), static_cast<float>(g.sourceRight), static_cast<float>(g.sourceTop), static_cast<float>(g.sourceBottom),
         static_cast<float>(minIx) + 0.5f, static_cast<float>(maxIx) + 0.5f, static_cast<float>(minIy) + 0.5f, static_cast<float>(maxIy) + 0.5f,
-        static_cast<float>(t.opacity), lod, static_cast<float>(source.width), static_cast<float>(source.height),
+        static_cast<float>(t.opacity), lod, static_cast<float>(sourceWidth), static_cast<float>(sourceHeight),
     };
-    const Impl::SourceTexture* texture = d.uploadSource(source, true);
-    if (texture == nullptr)
-        return false;
-    d.context->UpdateSubresource(d.layerParams.Get(), 0, nullptr, values, 0, 0);
-    ID3D11ShaderResourceView* views[4] = {nullptr, nullptr, nullptr, texture->view.Get()};
-    d.pass(d.rgbTarget.Get(), box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0, d.psLayer.Get(), views, 4, d.layerBlend.Get());
+    context->UpdateSubresource(layerParams.Get(), 0, nullptr, values, 0, 0);
+    ID3D11ShaderResourceView* views[4] = {nullptr, nullptr, nullptr, view};
+    pass(rgbTarget.Get(), box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0, psLayer.Get(), views, 4, layerBlend.Get());
     return true;
 }
 
@@ -333,6 +384,7 @@ namespace editor::core {
 bool GpuFrameConverter::clearCanvas(float, float, float) { return false; }
 bool GpuFrameConverter::setCanvasBgra(const BgraImage&) { return false; }
 bool GpuFrameConverter::drawLayer(const BgraImage&, const Transform&) { return false; }
+bool GpuFrameConverter::drawNv12(const AVFrame*, const GpuColorSpace&, const Transform&) { return false; }
 std::shared_ptr<GpuTextImage> GpuFrameConverter::createText(const TextImage&) { return nullptr; }
 bool GpuFrameConverter::supportsTransition(const std::string&) { return false; }
 bool GpuFrameConverter::blendTransition(GpuFrameConverter&, const std::string&, double, const TransitionParams&) { return false; }

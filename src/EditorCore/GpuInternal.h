@@ -59,6 +59,13 @@ struct GpuFrameConverter::Impl
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> view;
     };
+    struct Nv12Source  // un fotogramma NV12 di una certa misura e la sua versione RGBA16F (con i mipmap)
+    {
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> y, uv, rgb;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> yView, uvView, rgbView;
+        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rgbTarget;
+    };
+    std::map<std::pair<int, int>, Nv12Source> nv12Sources;
     bool layerReady = false;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> psLayer, psCopy, psText, psTransition;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> scratch;  // dove si scrive la transizione prima di rimetterla nel fotogramma
@@ -80,6 +87,8 @@ struct GpuFrameConverter::Impl
     bool ensureLayerResources();
     // Una texture BGRA 8 bit di quella misura (con tutti i livelli di mip) con `source` caricato dentro.
     SourceTexture* uploadSource(const BgraImage& source, bool mips);
+    // Disegna la texture `view` (di `sourceWidth` x `sourceHeight`, con i mipmap se serve) sul fotogramma con `transform`.
+    bool drawLayerView(ID3D11ShaderResourceView* view, int sourceWidth, int sourceHeight, const Transform& transform);
 };
 
 // Compila una funzione degli shader (nullptr se non compila).

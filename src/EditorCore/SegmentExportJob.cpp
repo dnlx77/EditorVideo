@@ -521,21 +521,17 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
                 transitionRenderer_->render(transition.job, transition.job.start + transition.before + (frameTime - junction));
             if (!mixed)
                 throw MediaError("La transizione non si riesce a fare: i file dei due pezzi non si leggono.");
-            if (!blender_)
-                blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format));
-            const AVFrame* blended = blender_->blendRaster(mixed->pixels.data(), mixed->stride, mixed->width, mixed->height, texts, frame);
+            const AVFrame* blended = compositor().blendRaster(mixed->pixels.data(), mixed->stride, mixed->width, mixed->height, texts, frame);
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
                 throw MediaError(kOutOfMemory);
         } else if (piece.transformed) {
             // Tratto trasformato: scala, posizione, rotazione e ritaglio sul fotogramma, poi le scritte (se ci sono).
-            if (!blender_)
-                blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format));
             // Con i fotogrammi chiave la trasformazione è quella del tempo del fotogramma nel file.
             const Transform now = piece.animation.empty()
                                       ? piece.transform
                                       : evaluateTransform(piece.transform, piece.animation, range.start + k * frameSeconds);
-            const AVFrame* blended = blender_->blendTransformed(frame, now, texts);
+            const AVFrame* blended = compositor().blendTransformed(frame, now, texts);
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
                 throw MediaError(kOutOfMemory);
@@ -700,6 +696,7 @@ std::vector<BlendedText> ExportJob::textsAt(double sequenceTime)
     if (reencode_.textRenderer == nullptr || plan_.reference.video() == nullptr)
         return images;
     const StreamSignature& format = *plan_.reference.video();
+    const bool gpu = compositor().isHardware();
     const std::vector<const TextClip*> visible = reencode_.texts.visibleAt(sequenceTime);
     transformedTexts_.clear();
     transformedTexts_.reserve(visible.size());  // gli indirizzi restano validi fino alla prossima chiamata
@@ -719,27 +716,47 @@ std::vector<BlendedText> ExportJob::textsAt(double sequenceTime)
         double opacity = clip->fadeFactor(sequenceTime);
         CachedText& cached = found->second;
         const TextImage* image = &cached.drawn;
+        std::optional<Transform> onGpu;  // con la GPU la trasformazione si applica a ogni fotogramma sulla scheda video
         if (!clip->transform.isIdentity() || !clip->animation.empty()) {
             const Transform t = evaluateTransform(clip->transform, clip->animation, sequenceTime - clip->position);
             opacity *= t.opacity;
             if (t.movesPicture()) {
-                const auto transform = [&] {
-                    return transformTextImage(cached.drawn, t, clip->style.centerX * format.width, clip->style.centerY * format.height,
-                                              format.width, format.height);
-                };
-                if (clip->animation.empty()) {
-                    // Trasformazione fissa: uguale in tutti i fotogrammi, si calcola una volta sola.
-                    if (!cached.transformed)
-                        cached.transformed = transform();
-                    image = &*cached.transformed;
+                if (gpu) {
+                    onGpu = t;
                 } else {
-                    transformedTexts_.push_back(transform());
-                    image = &transformedTexts_.back();
+                    const auto transform = [&] {
+                        return transformTextImage(cached.drawn, t, clip->style.centerX * format.width, clip->style.centerY * format.height,
+                                                  format.width, format.height);
+                    };
+                    if (clip->animation.empty()) {
+                        // Trasformazione fissa: uguale in tutti i fotogrammi, si calcola una volta sola.
+                        if (!cached.transformed)
+                            cached.transformed = transform();
+                        image = &*cached.transformed;
+                    } else {
+                        transformedTexts_.push_back(transform());
+                        image = &transformedTexts_.back();
+                    }
                 }
             }
         }
-        if (!image->empty() && opacity > 0.0)
-            images.push_back({image, opacity, reencode_.texts.levelOf(clip->id)});
+        if (cached.drawn.empty() || image->empty() || opacity <= 0.0)
+            continue;
+        BlendedText text;
+        text.opacity = opacity;
+        text.level = reencode_.texts.levelOf(clip->id);
+        if (onGpu) {
+            text.base = &cached.drawn;
+            text.transform = *onGpu;
+            text.pivotX = clip->style.centerX * format.width;
+            text.pivotY = clip->style.centerY * format.height;
+            text.cacheId = static_cast<std::uint64_t>(clip->id) + 1;
+        } else {
+            text.image = image;
+            if (image == &cached.drawn)
+                text.cacheId = static_cast<std::uint64_t>(clip->id) + 1;
+        }
+        images.push_back(text);
     }
     return images;
 }
@@ -756,22 +773,25 @@ bool ExportJob::prepareLayers(double sequenceTime)
     layerFrames_ = layerSource_->at(reencode_.texts, sequenceTime);
     if (layerFrames_.empty())
         return false;
-    if (!blender_)
-        blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format));
     std::vector<BlendedLayer> layers;
     for (const LayerFrameSource::Visible& v : layerFrames_)
         layers.push_back({v.frame.get(), v.transform, v.level});
-    blender_->setLayers(std::move(layers));
+    compositor().setLayers(std::move(layers));
     return true;
 }
 
 const AVFrame* ExportJob::withText(const AVFrame* frame, const std::vector<BlendedText>& texts)
 {
+    return compositor().blend(frame, texts);
+}
+
+IFrameCompositor& ExportJob::compositor()
+{
     if (!blender_) {
         const StreamSignature& format = *plan_.reference.video();
-        blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format));
+        blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format), reencode_.compositor == CompositorMode::Auto);
     }
-    return blender_->blend(frame, texts);
+    return *blender_;
 }
 
 // Uno spazio vuoto: nero (nel formato del progetto, come i tratti ricodificati: fotogrammi al secondo costanti,
@@ -1001,6 +1021,8 @@ ExportResult ExportJob::run()
             if (t.sourceFormat != AV_PIX_FMT_NONE)
                 result_.blendSourceFormat = av_get_pix_fmt_name(t.sourceFormat);
             result_.workerThreads = ThreadPool::instance().size();
+            result_.compositor = blender_->name();
+            result_.compositorNote = blender_->fallbackReason();
         }
         result_.totalSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - runStarted).count();
         return result_;
