@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <ProjectGuid>{851A2F6F-6C43-4694-944A-139262B063C7}</ProjectGuid>
+    <RootNamespace>EditorAppTests</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <!-- EditorVideoTests.exe: le prove della finestra e dell'esportazione (le opzioni --...-test), fuori da EditorVideo.exe. -->
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <TargetName>EditorVideoTests</TargetName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'" Label="Configuration">
+    <UseDebugLibraries>true</UseDebugLibraries>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'" Label="Configuration">
+    <UseDebugLibraries>false</UseDebugLibraries>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <!-- Applicazione a finestre con main() standard al posto di WinMain. -->
+      <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)' == 'Release'">
+    <ClCompile>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <PropertyGroup>
+    <!-- Copia i plugin di Qt accanto all'eseguibile (EditorVideoDeployQtPlugins in Directory.Build.targets). -->
+    <EditorVideoQtPlugins>true</EditorVideoQtPlugins>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClInclude Include="SelfTests.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="ExportSelfTest.cpp" />
+    <ClCompile Include="GroupSelfTest.cpp" />
+    <ClCompile Include="ImageSelfTest.cpp" />
+    <ClCompile Include="LayerSelfTest.cpp" />
+    <ClCompile Include="SelfTests.cpp" />
+    <ClCompile Include="TextSelfTest.cpp" />
+    <ClCompile Include="TransformMonitorSelfTest.cpp" />
+    <ClCompile Include="TransformSelfTest.cpp" />
+    <ClCompile Include="TransitionSelfTest.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\EditorApp\EditorAppLib.vcxproj">
+      <Project>{5FCCF33A-037A-46F7-B78F-7E3CD03A4643}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\EditorCore\EditorCore.vcxproj">
+      <Project>{CCC26550-4CFA-448F-A5F7-8F8CA66E24FE}</Project>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

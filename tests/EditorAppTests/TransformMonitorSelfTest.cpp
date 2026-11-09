@@ -5,7 +5,7 @@
 #include "EditorApp/PropertiesPanel.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/SequenceTimeline.h"
-#include "EditorApp/SelfTests.h"
+#include "SelfTests.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Project.h"

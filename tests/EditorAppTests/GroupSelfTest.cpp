@@ -1,7 +1,7 @@
 #include "EditorApp/GroupListPanel.h"
 #include "EditorApp/GroupMime.h"
 #include "EditorApp/MainWindow.h"
-#include "EditorApp/SelfTests.h"
+#include "SelfTests.h"
 
 #include <QtCore/QStringList>
 #include <QtGui/QAction>

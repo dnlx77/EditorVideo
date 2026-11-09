@@ -1,7 +1,7 @@
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/PropertiesPanel.h"
-#include "EditorApp/SelfTests.h"
+#include "SelfTests.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorCore/VideoDecoder.h"
 

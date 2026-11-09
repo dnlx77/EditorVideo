@@ -1,5 +1,5 @@
 #include "EditorApp/ExportDialog.h"
-#include "EditorApp/SelfTests.h"
+#include "SelfTests.h"
 
 #include <QtCore/QDir>
 #include <QtCore/QFile>

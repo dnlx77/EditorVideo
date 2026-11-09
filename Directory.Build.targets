@@ -34,6 +34,20 @@
     <Copy SourceFiles="@(_EditorVideoDll)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
   </Target>
 
+  <!-- Copia i plugin di Qt (piattaforma Windows, stili, formati immagine) accanto agli eseguibili con la finestra
+       (EditorVideo.exe ed EditorVideoTests.exe, che impostano EditorVideoQtPlugins). -->
+  <Target Name="EditorVideoDeployQtPlugins" AfterTargets="Build" Condition="'$(EditorVideoQtPlugins)' == 'true'">
+    <PropertyGroup>
+      <_QtTripletDir>$(VcpkgInstalledDir)$(VcpkgTriplet)\</_QtTripletDir>
+      <_QtTripletDir Condition="'$(Configuration)' == 'Debug'">$(VcpkgInstalledDir)$(VcpkgTriplet)\debug\</_QtTripletDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <_QtPlugin Include="$(_QtTripletDir)Qt6\plugins\**\*.dll" />
+    </ItemGroup>
+    <Warning Condition="'@(_QtPlugin)' == ''" Text="Plugin Qt non trovati in $(_QtTripletDir)Qt6\plugins" />
+    <Copy SourceFiles="@(_QtPlugin)" DestinationFiles="@(_QtPlugin->'$(OutDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+
   <Target Name="EditorVideoCheckVcpkg" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(VcpkgRoot)' == '' or !Exists('$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets')"
            Text="vcpkg non trovato. Installa il componente vcpkg di Visual Studio oppure imposta la variabile d'ambiente VCPKG_ROOT (vedi README.md)." />

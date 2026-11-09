@@ -1,18 +1,20 @@
-# Avvia EditorVideo.exe (Release) con gli argomenti dati, aspetta che finisca, mostra cosa ha scritto e controlla il
-# codice di uscita. Usato da tutte le prove della build automatica.
+# Avvia un eseguibile Release (di solito EditorVideoTests.exe, le prove; EditorVideo.exe solo per --smoke-test) con gli
+# argomenti dati, aspetta che finisca, mostra cosa ha scritto e controlla il codice di uscita. Usato da tutte le prove della
+# build automatica.
 #
-#   & ci\run-editorvideo.ps1 -Name 'unione' -Arguments @('--join-test', ...) [-Expected 4] [-TimeoutSeconds 60]
+#   & ci\run-editorvideo.ps1 -Name 'unione' -Arguments @('--join-test', ...) [-Expected 4] [-TimeoutSeconds 60] [-Exe EditorVideo.exe]
 #
 # Gli argomenti con spazi vanno già racchiusi fra virgolette (come per Start-Process).
 param(
     [Parameter(Mandatory = $true)] [string] $Name,
     [Parameter(Mandatory = $true)] [string[]] $Arguments,
     [int] $Expected = 0,
-    [int] $TimeoutSeconds = 60
+    [int] $TimeoutSeconds = 60,
+    [string] $Exe = 'EditorVideoTests.exe'
 )
 
 $ErrorActionPreference = 'Stop'
-$exe = Join-Path $PSScriptRoot '..\bin\x64\Release\EditorVideo.exe'
+$exe = Join-Path $PSScriptRoot "..\bin\x64\Release\$Exe"
 $out = New-TemporaryFile
 $err = New-TemporaryFile
 try {
@@ -21,7 +23,7 @@ try {
     if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
         $p.Kill()
         Get-Content $out, $err
-        throw "$Name : EditorVideo non si è chiuso entro $TimeoutSeconds secondi"
+        throw "$Name : $Exe non si è chiuso entro $TimeoutSeconds secondi"
     }
     Get-Content $out, $err
     if ($p.ExitCode -ne $Expected) {
