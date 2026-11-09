@@ -7,6 +7,7 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/PropertiesPanel.h"
+#include "EditorApp/TestAccess.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/TransitionMime.h"
 #include "EditorApp/SequenceTimeline.h"
@@ -782,14 +783,14 @@ int runExportDialogTest(QApplication& app, const QString& project, const QString
             return;
         std::printf("  [%.1f s] finestra Esporta: destinazione e Esporta\n", waiting.elapsed() / 1000.0);
         dialog->setDestination(output);
-        warnedExisting = !dialog->warningText().isEmpty();
+        warnedExisting = !TestAccess::warningText(*dialog).isEmpty();
         if (!dialog->canExport()) {
-            std::printf("  il pulsante Esporta non è attivo: %s\n", qPrintable(dialog->warningText()));
+            std::printf("  il pulsante Esporta non è attivo: %s\n", qPrintable(TestAccess::warningText(*dialog)));
             dialog->reject();
             stage = 1;
             return;
         }
-        dialog->exportButton()->click();
+        TestAccess::exportButton(*dialog)->click();
         stage = 2;
     });
     dialogDriver.start(300);
@@ -823,9 +824,9 @@ int runExportDialogTest(QApplication& app, const QString& project, const QString
     const char* stages[] = {"finestra Esporta mai comparsa", "finestra Esporta senza pulsante attivo",
                             "messaggio finale mai comparso", "arrivata in fondo"};
     std::printf("Esportazione dal pulsante: %s, %s (file %s%s)\n", stages[stage.load()],
-                window.lastExportSucceeded() ? "riuscita" : qPrintable(QStringLiteral("non riuscita: ") + window.lastExportProblem()),
+                TestAccess::lastExportSucceeded(window) ? "riuscita" : qPrintable(QStringLiteral("non riuscita: ") + TestAccess::lastExportProblem(window)),
                 QFile::exists(output) ? "creato" : "assente", warnedExisting ? ", avviso comparso" : "");
-    return stage == 3 && window.lastExportSucceeded() ? 0 : 3;
+    return stage == 3 && TestAccess::lastExportSucceeded(window) ? 0 : 3;
 }
 
 int runProjectExportTest(QApplication& app, const QString& project, const QString& output)
@@ -853,21 +854,21 @@ int runProjectExportTest(QApplication& app, const QString& project, const QStrin
         return 2;
     }
     int lastPercent = -1;
-    while (window.isExporting() && exporting.elapsed() < 300000) {
+    while (TestAccess::isExporting(window) && exporting.elapsed() < 300000) {
         app.processEvents(QEventLoop::AllEvents, 50);
         if (const int percent = static_cast<int>(exporting.elapsed() / 5000); percent != lastPercent) {
             lastPercent = percent;
             std::printf("  ... %.0f s\n", exporting.elapsed() / 1000.0);
         }
     }
-    if (window.isExporting()) {
+    if (TestAccess::isExporting(window)) {
         std::printf("Esportazione BLOCCATA: dopo %.0f s non è ancora finita\n", exporting.elapsed() / 1000.0);
         return 3;
     }
-    std::printf("Esportazione %s in %.1f s%s%s\n", window.lastExportSucceeded() ? "riuscita" : "NON riuscita",
-                exporting.elapsed() / 1000.0, window.lastExportSucceeded() ? "" : ": ",
-                qPrintable(window.lastExportProblem()));
-    return window.lastExportSucceeded() ? 0 : 2;
+    std::printf("Esportazione %s in %.1f s%s%s\n", TestAccess::lastExportSucceeded(window) ? "riuscita" : "NON riuscita",
+                exporting.elapsed() / 1000.0, TestAccess::lastExportSucceeded(window) ? "" : ": ",
+                qPrintable(TestAccess::lastExportProblem(window)));
+    return TestAccess::lastExportSucceeded(window) ? 0 : 2;
 }
 
 int runDockTest(QApplication& app)
@@ -875,7 +876,7 @@ int runDockTest(QApplication& app)
     std::setvbuf(stdout, nullptr, _IONBF, 0);  // ogni riga subito, anche se la prova si interrompe
     std::printf("Prova dei pannelli con la finestra vera\n");
     MainWindow window;
-    window.setTimelinePollAutomatic(false);  // i passi li dà la prova
+    TestAccess::setTimelinePollAutomatic(window, false);  // i passi li dà la prova
     window.setAttribute(Qt::WA_ShowWithoutActivating);
     // EDITORVIDEO_DOCK_TEST_SAVED=1: con la disposizione salvata dall'utente e la finestra ingrandita (come la usa lui).
     if (qEnvironmentVariableIntValue("EDITORVIDEO_DOCK_TEST_SAVED") != 0) {
@@ -885,7 +886,7 @@ int runDockTest(QApplication& app)
         window.resize(1200, 800);
         window.show();
     }
-    QDockWidget* timeline = window.timelineDock();
+    QDockWidget* timeline = TestAccess::timelineDock(window);
     // Aspetta davvero (i riagganci partono da timer): processEvents da solo ritorna appena non c'è niente da fare.
     const auto settle = [&](int ms = 250) {
         QElapsedTimer t;
@@ -902,7 +903,7 @@ int runDockTest(QApplication& app)
     int previews = 0;
     const auto windowsMove = [&](void* hwnd, QPoint) {
         const auto h = static_cast<HWND>(hwnd);
-        window.setTestCursor(frame.center());
+        TestAccess::setTestCursor(window, frame.center());
         // Come con il mouse vero: Qt riceve la pressione sul titolo di Windows (e avvierebbe il suo trascinamento dei
         // pannelli, che poi non vede mai finire perché il rilascio se lo prende lo spostamento di Windows).
         {
@@ -913,18 +914,18 @@ int runDockTest(QApplication& app)
         }
         SendMessageW(h, WM_ENTERSIZEMOVE, 0, 0);
         settle(60);
-        window.setTestCursor(dropAt);
+        TestAccess::setTestCursor(window, dropAt);
         SetWindowPos(h, nullptr, dropAt.x() - 200, dropAt.y() - 12, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         window.timelinePollStep(true, dropAt);  // un passo del controllo periodico durante lo spostamento
-        previews += window.isDockPreviewVisible() == (dropAt == low) ? 1 : 0;
+        previews += TestAccess::isDockPreviewVisible(window) == (dropAt == low) ? 1 : 0;
         SendMessageW(h, WM_EXITSIZEMOVE, 0, 0);
     };
-    window.setNativeDragForTest(windowsMove);
+    TestAccess::setNativeDragForTest(window, windowsMove);
     const auto docked = [&](const char* how, int round) {
         settle();
         // I pannelli di sopra devono finire sopra la linea del tempo (non restare alti fino in fondo, coprendola).
         int overlap = 0;
-        for (QDockWidget* dock : {window.filesDock(), window.sourceDock(), window.programDock()}) {
+        for (QDockWidget* dock : {TestAccess::filesDock(window), TestAccess::sourceDock(window), TestAccess::programDock(window)}) {
             if (dock->isVisible() && !dock->isFloating())
                 overlap = std::max(overlap, dock->geometry().bottom() - timeline->geometry().top() + 1);
         }
@@ -992,7 +993,7 @@ int runDockTest(QApplication& app)
         window.grab().save(capture);
 
     // Il titolo di un pannello agganciato con il mouse sopra: disegnato davvero con il colore di evidenziazione.
-    QDockWidget* source = window.sourceDock();
+    QDockWidget* source = TestAccess::sourceDock(window);
     const QPointF titlePoint(source->width() / 2.0, 5);
     QHoverEvent hover(QEvent::HoverMove, titlePoint, source->mapToGlobal(titlePoint), QPointF(-1, -1));
     QCoreApplication::sendEvent(source, &hover);

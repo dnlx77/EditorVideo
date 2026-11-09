@@ -48,7 +48,6 @@ public:
     // Rimette l'elenco; se non è cambiato niente non tocca la vista (così restano scelta e nodi aperti o chiusi).
     void setGroups(std::vector<GroupRow> rows);
     const std::vector<GroupRow>& rows() const { return rows_; }
-    int groupCount() const;
     QTreeWidget* tree() const { return tree_; }
 
     // Evidenzia nell'elenco ciò che è scelto sulla linea del tempo: se sono tutti gli oggetti di un gruppo, il suo nodo; se è
@@ -91,6 +90,11 @@ private:
     int rowIndexOf(const QTreeWidgetItem* item) const;  // la riga del gruppo del nodo (o del nodo padre); -1 se non c'è
     const GroupRow* rowOf(const QTreeWidgetItem* item) const;  // il gruppo del nodo (o del nodo padre)
     std::vector<int> collapsed_;  // id dei gruppi chiusi dall'utente (restano chiusi quando l'elenco si rifà)
+
+private:
+    // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
+    friend class TestAccess;
+    int groupCount() const;
 };
 
 }  // namespace editor::app

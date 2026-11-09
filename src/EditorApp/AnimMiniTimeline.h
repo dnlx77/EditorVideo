@@ -29,9 +29,6 @@ public:
     void setData(double from, double to, double cursor, std::vector<Mark> marks);
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
-    // Per i test: il centro del rombo n (nell'ordine delle chiavi) in coordinate del widget; la chiave scelta.
-    QPointF markCenterForTest(int index) const;
-    QPointF pointForTimeForTest(core::AnimGroup group, double time) const;
 
     std::function<void(double fileTime)> onSeek;
     std::function<void(core::AnimGroup group, double from, double to)> onKeyMoved;
@@ -62,6 +59,13 @@ private:
     bool dragMoved_ = false;
     bool scrubbing_ = false;
     double dragValue_ = 0.0;
+
+private:
+    // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
+    friend class TestAccess;
+    // Il centro del rombo n (nell'ordine delle chiavi) in coordinate del widget; la chiave scelta.
+    QPointF markCenterForTest(int index) const;
+    QPointF pointForTimeForTest(core::AnimGroup group, double time) const;
 };
 
 }  // namespace editor::app

@@ -3,6 +3,7 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
 #include "EditorApp/PropertiesPanel.h"
+#include "EditorApp/TestAccess.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/SequenceTimeline.h"
 #include "SelfTests.h"
@@ -152,7 +153,7 @@ int runManipTest(const QStringList& args, qsizetype at)
     // Ritaglia (W): si esclude con Trasforma; un lato e un angolo.
     monitor.setCropMode(true);
     QCoreApplication::processEvents();
-    check(monitor.cropMode() && !monitor.transformMode() && monitor.manipulatorsVisible(),
+    check(TestAccess::cropMode(monitor) && !TestAccess::transformMode(monitor) && monitor.manipulatorsVisible(),
           "il ritaglio spegne la modalità Trasforma e mostra le maniglie");
     edits.clear();
     send(QEvent::MouseButtonPress, toScreen(0, projH / 2.0));
@@ -172,10 +173,10 @@ int runManipTest(const QStringList& args, qsizetype at)
         check(std::abs(edits[0].second.cropRight - 0.1) < 0.01 && std::abs(edits[0].second.cropTop - 0.2) < 0.01,
               "l'angolo alto a destra ritaglia due lati");
     monitor.setTransformMode(true);
-    check(monitor.transformMode() && !monitor.cropMode(), "Trasforma spegne il ritaglio");
+    check(TestAccess::transformMode(monitor) && !TestAccess::cropMode(monitor), "Trasforma spegne il ritaglio");
     monitor.setTransformMode(false);
     monitor.setThirdsGrid(true);
-    check(monitor.thirdsGrid(), "la griglia dei terzi si accende");
+    check(TestAccess::thirdsGrid(monitor), "la griglia dei terzi si accende");
     monitor.setThirdsGrid(false);
     monitor.setTransformMode(true);
 
@@ -265,7 +266,7 @@ int runManipTest(const QStringList& args, qsizetype at)
         monitor.seekTo(1.0);
         monitor.setTransformMode(true);
         QCoreApplication::processEvents();
-        const auto quad = monitor.manipQuad();
+        const auto quad = TestAccess::manipQuad(monitor);
         check(monitor.manipulatorsVisible() && quad.has_value(), "con la scritta scelta le maniglie sono sulla scritta");
         if (quad.has_value()) {
             const double w = (*quad)[1].x - (*quad)[0].x;
@@ -320,10 +321,10 @@ int runManipTest(const QStringList& args, qsizetype at)
         check(fragments.size() == 1, "la finestra ha un pezzo nella sequenza");
         if (fragments.size() == 1) {
             const int id = fragments[0].id;
-            window.sequenceTimeline()->selectObjects({{core::ObjectRef::Kind::Piece, id}});
+            TestAccess::sequenceTimeline(window)->selectObjects({{core::ObjectRef::Kind::Piece, id}});
             QCoreApplication::processEvents();
-            PropertiesPanel* panel = window.propertiesPanel();
-            ProgramMonitor* program = window.programMonitor();
+            PropertiesPanel* panel = TestAccess::propertiesPanel(window);
+            ProgramMonitor* program = TestAccess::programMonitor(window);
             const auto animation = [&]() -> const core::TransformAnimation& { return window.project().sequence().find(id)->animation; };
             const auto seek = [&](double seconds) {
                 program->seekTo(seconds);
@@ -341,9 +342,9 @@ int runManipTest(const QStringList& args, qsizetype at)
                 if (spin->isVisibleTo(panel))
                     posX = spin;
             }
-            check(panel->showingTransform() && key != nullptr && next != nullptr && prev != nullptr && posX != nullptr,
+            check(TestAccess::showingTransform(*panel) && key != nullptr && next != nullptr && prev != nullptr && posX != nullptr,
                   "il pannello mostra le trasformazioni con il rombo della posizione");
-            if (panel->showingTransform() && key != nullptr && next != nullptr && prev != nullptr && posX != nullptr) {
+            if (TestAccess::showingTransform(*panel) && key != nullptr && next != nullptr && prev != nullptr && posX != nullptr) {
                 seek(0.5);
                 check(key->isEnabled() && key->text() == QStringLiteral("◇") && !next->isEnabled() && !prev->isEnabled(),
                       "col cursore nel pezzo il rombo è attivo e vuoto, senza chiavi vicine");
@@ -406,7 +407,7 @@ int runManipTest(const QStringList& args, qsizetype at)
 
             // --- La riga dei rombi sulla linea del tempo (K5).
             {
-                SequenceTimeline* line = window.sequenceTimeline();
+                SequenceTimeline* line = TestAccess::sequenceTimeline(window);
                 const core::Fragment& piece = *window.project().sequence().find(id);
                 const double t1 = piece.start + 0.5;
                 const double t2 = piece.start + 1.5;
@@ -421,14 +422,14 @@ int runManipTest(const QStringList& args, qsizetype at)
                     return true;
                 });
                 QCoreApplication::processEvents();
-                check(line->keyRow().keys.size() == 2 && !line->keyRow().layerPiece && line->keyRow().id == id,
+                check(TestAccess::keyRow(*line).keys.size() == 2 && !TestAccess::keyRow(*line).layerPiece && TestAccess::keyRow(*line).id == id,
                       "la riga dei rombi mostra le due chiavi del pezzo scelto");
                 const auto send = [&](QEvent::Type type, const QPointF& p, bool left) {
                     QMouseEvent e(type, p, line->mapToGlobal(p), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
                                   left ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
                     QCoreApplication::sendEvent(line, &e);
                 };
-                const QPointF first = line->keyCenterForTest(0);
+                const QPointF first = TestAccess::keyCenterForTest(*line, 0);
                 check(first.x() > 0 && first.y() > 0, "il primo rombo si vede sulla linea del tempo");
                 // Un clic sceglie il rombo; Canc non toglie il pezzo ma la chiave.
                 send(QEvent::MouseButtonPress, first, true);
@@ -436,7 +437,7 @@ int runManipTest(const QStringList& args, qsizetype at)
                 check(std::abs(line->selectedKey() - t1) < 1e-6, "il clic sul rombo sceglie la chiave");
                 check(window.project().sequence().fragments().size() == 1, "il clic sul rombo non cambia il pezzo");
                 // Trascinare il rombo sposta la chiave (fra l'altra e la fine del pezzo).
-                const QPointF second = line->keyCenterForTest(1);
+                const QPointF second = TestAccess::keyCenterForTest(*line, 1);
                 const QPointF target(first.x() + (second.x() - first.x()) * 0.5, first.y());
                 send(QEvent::MouseButtonPress, first, true);
                 send(QEvent::MouseMove, QPointF(first.x() + 8, first.y()), true);
@@ -450,8 +451,8 @@ int runManipTest(const QStringList& args, qsizetype at)
                     check(std::abs(animation().track(core::AnimParam::Opacity)[0].value - 1.0) < 1e-9, "il valore della chiave resta");
                 }
                 // Trascinarlo sull'altro non è permesso: la chiave resta dov'era.
-                const QPointF a = line->keyCenterForTest(0);
-                const QPointF b = line->keyCenterForTest(1);
+                const QPointF a = TestAccess::keyCenterForTest(*line, 0);
+                const QPointF b = TestAccess::keyCenterForTest(*line, 1);
                 const double before = animation().track(core::AnimParam::Opacity)[0].time;
                 send(QEvent::MouseButtonPress, a, true);
                 send(QEvent::MouseMove, QPointF(a.x() + 10, a.y()), true);
@@ -463,7 +464,7 @@ int runManipTest(const QStringList& args, qsizetype at)
                       "una chiave non si lascia sopra un'altra");
                 // Doppio clic: il cursore va lì.
                 {
-                    const QPointF p = line->keyCenterForTest(1);
+                    const QPointF p = TestAccess::keyCenterForTest(*line, 1);
                     QMouseEvent e(QEvent::MouseButtonDblClick, p, line->mapToGlobal(p), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
                     QCoreApplication::sendEvent(line, &e);
                     QElapsedTimer settle;
@@ -483,7 +484,7 @@ int runManipTest(const QStringList& args, qsizetype at)
                         QCoreApplication::sendEvent(mini, &e);
                     };
                     const double firstTime = animation().track(core::AnimParam::Opacity)[0].time;
-                    const QPointF m0 = mini->markCenterForTest(0);
+                    const QPointF m0 = TestAccess::markCenterForTest(*mini, 0);
                     // Un clic sul rombo porta il cursore sulla chiave.
                     sendMini(QEvent::MouseButtonPress, m0, true);
                     sendMini(QEvent::MouseButtonRelease, m0, false);
@@ -496,9 +497,9 @@ int runManipTest(const QStringList& args, qsizetype at)
                         check(std::abs(program->position() - want) < 0.1, "un clic sul rombo della mini linea porta il cursore lì");
                     }
                     // Trascinarlo sposta la chiave (fra l'inizio del pezzo e l'altra chiave).
-                    const QPointF target(mini->pointForTimeForTest(core::AnimGroup::Opacity, piece.start + 0.2));
-                    sendMini(QEvent::MouseButtonPress, mini->markCenterForTest(0), true);
-                    sendMini(QEvent::MouseMove, QPointF(mini->markCenterForTest(0).x() + 6, m0.y()), true);
+                    const QPointF target(TestAccess::pointForTimeForTest(*mini, core::AnimGroup::Opacity, piece.start + 0.2));
+                    sendMini(QEvent::MouseButtonPress, TestAccess::markCenterForTest(*mini, 0), true);
+                    sendMini(QEvent::MouseMove, QPointF(TestAccess::markCenterForTest(*mini, 0).x() + 6, m0.y()), true);
                     sendMini(QEvent::MouseMove, target, true);
                     sendMini(QEvent::MouseButtonRelease, target, false);
                     QCoreApplication::processEvents();
@@ -506,7 +507,7 @@ int runManipTest(const QStringList& args, qsizetype at)
                               && std::abs(animation().track(core::AnimParam::Opacity)[0].time - (piece.start + 0.2)) < 0.08,
                           "trascinare un rombo della mini linea sposta la chiave");
                     // Clic sul vuoto: il cursore va lì.
-                    const QPointF empty = mini->pointForTimeForTest(core::AnimGroup::Opacity, piece.start + 3.0);
+                    const QPointF empty = TestAccess::pointForTimeForTest(*mini, core::AnimGroup::Opacity, piece.start + 3.0);
                     sendMini(QEvent::MouseButtonPress, empty, true);
                     sendMini(QEvent::MouseButtonRelease, empty, false);
                     {
@@ -518,13 +519,13 @@ int runManipTest(const QStringList& args, qsizetype at)
                     }
                 }
                 // Il tipo di passaggio (da menu: qui si chiama quello che il menu chiama).
-                check(line->keyRow().keys[0].interp == core::Interp::Linear, "all'inizio il passaggio è lineare");
-                line->onKeyInterp(line->keyRow().keys[0].group, line->keyRow().keys[0].time, core::Interp::Hold, 0, 0, 1, 1);
+                check(TestAccess::keyRow(*line).keys[0].interp == core::Interp::Linear, "all'inizio il passaggio è lineare");
+                line->onKeyInterp(TestAccess::keyRow(*line).keys[0].group, TestAccess::keyRow(*line).keys[0].time, core::Interp::Hold, 0, 0, 1, 1);
                 QCoreApplication::processEvents();
-                check(line->keyRow().keys[0].interp == core::Interp::Hold
+                check(TestAccess::keyRow(*line).keys[0].interp == core::Interp::Hold
                           && animation().track(core::AnimParam::Opacity)[0].interp == core::Interp::Hold,
                       "il tipo di passaggio cambia sulla chiave e nella riga");
-                line->onKeyInterp(line->keyRow().keys[0].group, line->keyRow().keys[0].time, core::Interp::Bezier, 0.34, 1.56, 0.64, 1.0);
+                line->onKeyInterp(TestAccess::keyRow(*line).keys[0].group, TestAccess::keyRow(*line).keys[0].time, core::Interp::Bezier, 0.34, 1.56, 0.64, 1.0);
                 QCoreApplication::processEvents();
                 check(animation().track(core::AnimParam::Opacity)[0].interp == core::Interp::Bezier
                           && std::abs(animation().track(core::AnimParam::Opacity)[0].c1y - 1.56) < 1e-9,
@@ -585,14 +586,14 @@ int runManipTest(const QStringList& args, qsizetype at)
                     QCoreApplication::processEvents();
                 }
                 // Canc: la chiave scelta si toglie (e non il pezzo).
-                const QPointF last = line->keyCenterForTest(1);
+                const QPointF last = TestAccess::keyCenterForTest(*line, 1);
                 send(QEvent::MouseButtonPress, last, true);
                 send(QEvent::MouseButtonRelease, last, false);
                 window.deleteSelection();
                 QCoreApplication::processEvents();
                 check(animation().track(core::AnimParam::Opacity).size() == 1 && window.project().sequence().fragments().size() == 1,
                       "Canc toglie la chiave scelta e non il pezzo");
-                check(line->keyRow().keys.size() == 1, "la riga dei rombi segue");
+                check(TestAccess::keyRow(*line).keys.size() == 1, "la riga dei rombi segue");
                 // Annulla riporta la chiave.
                 window.undo();
                 QCoreApplication::processEvents();
@@ -612,8 +613,8 @@ int runManipTest(const QStringList& args, qsizetype at)
                     int opacityMarks = 0;
                     int scaleIndexAtOpacityTime = -1;
                     int opacityIndex = -1;
-                    for (int i = 0; i < static_cast<int>(line->keyRow().keys.size()); ++i) {
-                        const auto& mark = line->keyRow().keys[static_cast<std::size_t>(i)];
+                    for (int i = 0; i < static_cast<int>(TestAccess::keyRow(*line).keys.size()); ++i) {
+                        const auto& mark = TestAccess::keyRow(*line).keys[static_cast<std::size_t>(i)];
                         scaleMarks += mark.group == core::AnimGroup::Scale;
                         opacityMarks += mark.group == core::AnimGroup::Opacity;
                         if (std::abs(mark.time - tOpacity) < 1e-6) {
@@ -626,8 +627,8 @@ int runManipTest(const QStringList& args, qsizetype at)
                     check(scaleMarks == 2 && opacityMarks == 2, "ogni gruppo ha i suoi rombi nella riga");
                     check(scaleIndexAtOpacityTime >= 0 && opacityIndex >= 0, "nello stesso istante ci sono un rombo di scala e uno di opacità");
                     if (scaleIndexAtOpacityTime >= 0 && opacityIndex >= 0) {
-                        const QPointF a = line->keyCenterForTest(scaleIndexAtOpacityTime);
-                        const QPointF b = line->keyCenterForTest(opacityIndex);
+                        const QPointF a = TestAccess::keyCenterForTest(*line, scaleIndexAtOpacityTime);
+                        const QPointF b = TestAccess::keyCenterForTest(*line, opacityIndex);
                         check(std::abs(a.x() - b.x()) < 1.0 && std::abs(a.y() - b.y()) > 4.0,
                               "i rombi dello stesso istante stanno su sotto-righe diverse");
                         // Clic sul rombo dell'opacità: sceglie quel gruppo; Canc toglie solo l'opacità di quell'istante.
@@ -685,7 +686,7 @@ int runManipTest(const QStringList& args, qsizetype at)
                         return true;
                     });
                     QCoreApplication::processEvents();
-                    window.programMonitor()->onMotionKeyMoved(false, id, tk, 300.0, -80.0);
+                    TestAccess::programMonitor(window)->onMotionKeyMoved(false, id, tk, 300.0, -80.0);
                     QCoreApplication::processEvents();
                     const core::AnimKey* kx = core::findKey(animation(), core::AnimParam::PosX, tk);
                     const core::AnimKey* ky = core::findKey(animation(), core::AnimParam::PosY, tk);
@@ -716,7 +717,7 @@ int runManipTest(const QStringList& args, qsizetype at)
                             check(scale.size() == 2 && std::abs(scale[0].time - piece.start) < 1e-6 && std::abs(scale[1].time - piece.end) < 1e-6
                                       && std::abs(scale[1].value - 1.15) < 1e-9,
                                   "il preset mette le chiavi di scala all'inizio e alla fine del pezzo");
-                            check(line->keyRow().keys.size() >= 2, "i rombi del preset si vedono sulla linea del tempo");
+                            check(TestAccess::keyRow(*line).keys.size() >= 2, "i rombi del preset si vedono sulla linea del tempo");
                             window.undo();
                             QCoreApplication::processEvents();
                             check(!animation().animated(core::AnimParam::ScaleX), "il preset è un solo passo di Annulla");
@@ -726,7 +727,7 @@ int runManipTest(const QStringList& args, qsizetype at)
                 // Un pezzo non scelto (selezione vuota): la riga sparisce.
                 line->selectObjects({});
                 QCoreApplication::processEvents();
-                check(line->keyRow().keys.empty(), "senza un pezzo scelto non c'è la riga dei rombi");
+                check(TestAccess::keyRow(*line).keys.empty(), "senza un pezzo scelto non c'è la riga dei rombi");
             }
 
             // --- La sezione «Trasforma» nella pagina della scritta (S3): stessi controlli, senza ritaglio, tempi dall'inizio della scritta.
@@ -741,7 +742,7 @@ int runManipTest(const QStringList& args, qsizetype at)
                     auto* rotation = panel->findChild<QDoubleSpinBox*>(QStringLiteral("rotazione"));
                     auto* cropLeft = panel->findChild<QDoubleSpinBox*>(QStringLiteral("ritaglioSinistra"));
                     auto* rotationKey = panel->findChild<QToolButton*>(QStringLiteral("chiave2"));  // gruppo Rotazione
-                    check(panel->showingText() && window.textPanel()->isVisibleTo(panel), "con una scritta scelta il pannello mostra il suo editor");
+                    check(TestAccess::showingText(*panel) && TestAccess::textPanel(window)->isVisibleTo(panel), "con una scritta scelta il pannello mostra il suo editor");
                     check(rotation != nullptr && rotation->isVisibleTo(panel) && rotationKey != nullptr && rotationKey->isVisibleTo(panel),
                           "in fondo all'editor ci sono i controlli della trasformazione (rotazione e il suo rombo)");
                     check(cropLeft != nullptr && !cropLeft->isVisibleTo(panel), "per le scritte il ritaglio non c'è");
@@ -816,7 +817,7 @@ int runManipTest(const QStringList& args, qsizetype at)
                         for (QDoubleSpinBox* spin : panel->findChildren<QDoubleSpinBox*>(QStringLiteral("posizioneY")))
                             posY = spin->isVisibleTo(panel) ? spin : posY;
                         check(posX != nullptr && posY != nullptr, "la scritta ha una sola posizione visibile (X e Y)");
-                        auto* grid = window.textPanel()->findChild<QToolButton*>(QStringLiteral("posto00"));  // in alto a sinistra: 20 %, 12 %
+                        auto* grid = TestAccess::textPanel(window)->findChild<QToolButton*>(QStringLiteral("posto00"));  // in alto a sinistra: 20 %, 12 %
                         if (posX != nullptr && posY != nullptr && grid != nullptr) {
                             const double frameW = window.project().format().video()->width;
                             const double frameH = window.project().format().video()->height;
@@ -855,8 +856,8 @@ int runManipTest(const QStringList& args, qsizetype at)
                     }
                     // --- La riga dei rombi sotto la scritta e le maniglie sul monitor (S4).
                     {
-                        SequenceTimeline* line = window.sequenceTimeline();
-                        check(line->keyRow().text && line->keyRow().id == textId && !line->keyRow().keys.empty(),
+                        SequenceTimeline* line = TestAccess::sequenceTimeline(window);
+                        check(TestAccess::keyRow(*line).text && TestAccess::keyRow(*line).id == textId && !TestAccess::keyRow(*line).keys.empty(),
                               "con una scritta animata scelta la linea del tempo ha la sua riga di rombi");
                         program->setTransformMode(true);
                         seek(start + 1.5);
@@ -902,9 +903,9 @@ int runManipTest(const QStringList& args, qsizetype at)
                         program->setTransformMode(false);
                     }
                     // Scegliendo di nuovo il pezzo video torna la sua pagina, con il ritaglio.
-                    window.sequenceTimeline()->selectObjects({{core::ObjectRef::Kind::Piece, id}});
+                    TestAccess::sequenceTimeline(window)->selectObjects({{core::ObjectRef::Kind::Piece, id}});
                     QCoreApplication::processEvents();
-                    check(panel->showingTransform() && cropLeft != nullptr && cropLeft->isVisibleTo(panel),
+                    check(TestAccess::showingTransform(*panel) && cropLeft != nullptr && cropLeft->isVisibleTo(panel),
                           "tornando a un pezzo video si rivede la sua pagina con il ritaglio");
                 }
             }

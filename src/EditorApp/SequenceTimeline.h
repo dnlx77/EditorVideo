@@ -137,7 +137,6 @@ public:
         std::vector<KeyMark> keys;
     };
     void setKeyRow(KeyRow row);
-    const KeyRow& keyRow() const { return keyRow_; }
     // La chiave scelta (tempo nel file; negativo = nessuna) e il suo gruppo.
     double selectedKey() const { return selectedKey_; }
     core::AnimGroup selectedKeyGroup() const { return selectedKeyGroup_; }
@@ -147,8 +146,6 @@ public:
         onKeyInterp;
     // «Personalizza…» nel menu della curva: si apre l'editor grafico della curva di quella chiave (lo fa la MainWindow).
     std::function<void(core::AnimGroup group, double fileTime)> onKeyEditCurve;
-    // Solo per le prove: dove sta il rombo della chiave `index` (coordinate del widget; fuori dal widget se non si vede).
-    QPointF keyCenterForTest(int index) const;
     // Mostra il menu del tipo di passaggio per la chiave a quel tempo (clic destro) e applica la scelta.
     void showKeyMenu(core::AnimGroup group, double fileTime, const QPoint& globalPos);
 
@@ -185,7 +182,6 @@ public:
     void setMuted(std::vector<core::TimeRange> ranges);  // tratti senza audio di A1, nei tempi della sequenza
     // Corsie audio: la prima è sempre A1. Se c'erano più corsie (o meno) il widget cambia altezza.
     void setAudioLanes(std::vector<AudioLane> lanes);
-    const std::vector<AudioLane>& audioLanes() const { return lanes_; }
     // Quando finisce una forma d'onda: aggiorna solo quelle dei blocchi (`forClip` dà quella di un file del progetto) e
     // delle clip audio (`forPath`), senza rifare il resto.
     void setWaveforms(const std::function<std::shared_ptr<const core::Waveform>(int clipId)>& forClip,
@@ -306,21 +302,7 @@ public:
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
-    // Solo per le prove: dove sta un tempo della sequenza e il centro della corsia video, in coordinate del widget.
-    double xForSequenceTime(double seconds) const { return xForTime(seconds); }
-    double videoLaneHeight() const { return videoLane().height(); }
-    double audioLaneHeight(int index = 0) const { return audioLane(index).height(); }
-    double videoLaneCenter() const { return videoLane().center().y(); }
-    double audioLaneCenter(int laneIndex) const { return audioLane(laneIndex).center().y(); }  // 0 = A1
-    QToolButton* addTrackButton() const { return addTrack_; }
-    QToolButton* removeTrackButton() const { return removeTrack_; }
     double xForBlockEdge(int index, bool atStart) const;  // dove sta il bordo del blocco `index`
-    // Solo per le prove: il riquadro di una transizione e dove sta la giunzione, in coordinate del widget.
-    QRectF transitionRectForTest(int id) const;
-    QRectF transformBadgeRectForTest(int fragmentId) const;  // il badge «fx» del pezzo (vuoto se non c'è)
-    double xForJunction(int blockIndex) const;  // fine del blocco `blockIndex`
-    int transitionDropBlock() const { return transDropIndex_; }
-    double textLaneCenter(int layerIndex) const { return textLane(layerIndex).center().y(); }  // 0 = il livello più basso
 
 protected:
     bool event(QEvent* event) override;
@@ -619,6 +601,28 @@ private:
 
     QPixmap cache_;
     bool cacheValid_ = false;
+
+private:
+    // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
+    friend class TestAccess;
+    const KeyRow& keyRow() const { return keyRow_; }
+    // Dove sta il rombo della chiave `index` (coordinate del widget; fuori dal widget se non si vede).
+    QPointF keyCenterForTest(int index) const;
+    const std::vector<AudioLane>& audioLanes() const { return lanes_; }
+    // Dove sta un tempo della sequenza e il centro delle corsie, in coordinate del widget.
+    double xForSequenceTime(double seconds) const { return xForTime(seconds); }
+    double videoLaneHeight() const { return videoLane().height(); }
+    double audioLaneHeight(int index = 0) const { return audioLane(index).height(); }
+    double videoLaneCenter() const { return videoLane().center().y(); }
+    double audioLaneCenter(int laneIndex) const { return audioLane(laneIndex).center().y(); }  // 0 = A1
+    QToolButton* addTrackButton() const { return addTrack_; }
+    QToolButton* removeTrackButton() const { return removeTrack_; }
+    // Il riquadro di una transizione e dove sta la giunzione, in coordinate del widget.
+    QRectF transitionRectForTest(int id) const;
+    QRectF transformBadgeRectForTest(int fragmentId) const;  // il badge «fx» del pezzo (vuoto se non c'è)
+    double xForJunction(int blockIndex) const;  // fine del blocco `blockIndex`
+    int transitionDropBlock() const { return transDropIndex_; }
+    double textLaneCenter(int layerIndex) const { return textLane(layerIndex).center().y(); }  // 0 = il livello più basso
 };
 
 // I file locali (percorsi nativi) trascinati in `mime`; vuoto se non ce ne sono.

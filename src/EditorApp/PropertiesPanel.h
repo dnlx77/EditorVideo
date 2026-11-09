@@ -60,15 +60,12 @@ public:
     void showTextTransform(const core::Transform& transform, const AnimationState& animation, double centerX, double centerY, int frameWidth,
                            int frameHeight);
     std::function<void(bool isX, double percent)> onTextPosition;
-    bool showingTransform() const;
     // La pagina delle scritte (l'editor, già costruito): il pannello ne prende possesso. showText() la mostra.
     void setTextPage(QWidget* page);
     void showText();
-    bool showingText() const;
     // La pagina di una transizione: tipo, direzione, durata (fra `minDuration` e `maxDuration`) e dissolvenza incrociata
     // dell'audio. I controlli già uguali non si toccano.
     void showTransitionClip(const core::TransitionClip& clip, double minDuration, double maxDuration);
-    bool showingTransitionClip() const;
     // I valori com'erano all'ultimo showTransform più le modifiche fatte dopo nei controlli.
     core::Transform transform() const;
 
@@ -163,6 +160,13 @@ private:
     int textFrameW_ = 1920;
     int textFrameH_ = 1080;
     bool updating_ = false;
+
+private:
+    // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
+    friend class TestAccess;
+    bool showingTransform() const;
+    bool showingText() const;
+    bool showingTransitionClip() const;
 };
 
 }  // namespace editor::app
