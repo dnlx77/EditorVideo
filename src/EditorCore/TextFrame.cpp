@@ -171,11 +171,17 @@ const AVFrame* TextFrameBlender::toYuv(const std::vector<BlendedText>& texts, co
     };
     std::size_t nextText = 0;
     const auto drawText = [&](const BlendedText& text) {
-        if (text.image == nullptr)
+        const TextImage* image = text.image;
+        TextImage warped;
+        if (image == nullptr && text.base != nullptr) {
+            warped = transformTextImage(*text.base, text.transform, text.pivotX, text.pivotY, width_, height_);
+            image = &warped;
+        }
+        if (image == nullptr || image->empty())
             return;
         if (swapped)
             swapRedBlue();
-        blendTextOver(rgba_.data(), width_ * 4, width_, height_, *text.image, text.opacity);
+        blendTextOver(rgba_.data(), width_ * 4, width_, height_, *image, text.opacity);
     };
     for (const BlendedLayer& layer : layers_) {
         for (; nextText < texts.size() && texts[nextText].level < layer.level; ++nextText)

@@ -481,6 +481,8 @@ private:
     bool prepareLayers(double sequenceTime);
     // Il fotogramma con le scritte sopra (alla misura del progetto), da dare all'encoder al posto di `frame`.
     const AVFrame* withText(const AVFrame* frame, const std::vector<BlendedText>& texts);
+    // Il compositore dei fotogrammi (GPU o CPU, vedi ReencodeOptions::compositor), creato al primo uso.
+    IFrameCompositor& compositor();
 
     const std::vector<ClipRanges>& clips_;
     const std::string& outputPath_;

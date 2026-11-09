@@ -218,6 +218,9 @@ void MainWindow::loadExportChoices()
     reencodeOptions_.decoder = s.value(QStringLiteral("esportazione/decoder")).toString() == QLatin1String("gpu")
                                    ? core::DecoderMode::Hardware
                                    : core::DecoderMode::Software;
+    reencodeOptions_.compositor = s.value(QStringLiteral("esportazione/compositore")).toString() == QLatin1String("cpu")
+                                      ? core::CompositorMode::CpuOnly
+                                      : core::CompositorMode::Auto;
     reencodeOptions_.audioCodec.reset();
     const QString codec = s.value(QStringLiteral("esportazione/codecAudio")).toString();
     for (const core::AudioCodec candidate : core::availableAudioCodecs()) {
@@ -236,6 +239,8 @@ void MainWindow::saveExportChoices()
     s.setValue(QStringLiteral("esportazione/cq"), reencodeOptions_.cq);
     s.setValue(QStringLiteral("esportazione/decoder"),
                reencodeOptions_.decoder == core::DecoderMode::Hardware ? QStringLiteral("gpu") : QStringLiteral("cpu"));
+    s.setValue(QStringLiteral("esportazione/compositore"),
+               reencodeOptions_.compositor == core::CompositorMode::CpuOnly ? QStringLiteral("cpu") : QStringLiteral("auto"));
     if (reencodeOptions_.audioCodec) {
         s.setValue(QStringLiteral("esportazione/codecAudio"), qs(core::audioCodecName(*reencodeOptions_.audioCodec)));
         s.setValue(QStringLiteral("esportazione/bitrateAudio"), reencodeOptions_.audioBitRate);
@@ -388,6 +393,11 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
                         .arg(r.blendCompositeSeconds, 0, 'f', 1)
                         .arg(r.blendOverlaySeconds, 0, 'f', 1)
                         .arg(r.blendToYuvSeconds, 0, 'f', 1);
+    if (!r.compositor.empty()) {
+        recoding += QStringLiteral("\nCompositore: %1.").arg(qs(r.compositor));
+        if (!r.compositorNote.empty())
+            recoding += QStringLiteral(" La GPU ha dato un errore (%1): il resto è stato fatto in CPU.").arg(qs(r.compositorNote));
+    }
     if (r.blendSeconds > 0.0)
         recoding += QStringLiteral("\nFotogrammi dell'originale: %1; thread di calcolo: %2.")
                         .arg(r.blendSourceFormat.empty() ? QStringLiteral("?") : QString::fromStdString(r.blendSourceFormat))

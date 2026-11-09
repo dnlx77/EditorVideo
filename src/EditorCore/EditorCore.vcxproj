@@ -52,6 +52,7 @@
     <ClInclude Include="ParallelFor.h" />
     <ClInclude Include="FrameCompositor.h" />
     <ClInclude Include="GpuColor.h" />
+    <ClInclude Include="GpuCompositor.h" />
     <ClInclude Include="GpuDevice.h" />
     <ClInclude Include="GpuInternal.h" />
     <ClInclude Include="TextFrame.h" />
@@ -109,6 +110,7 @@
     <ClCompile Include="Compositor.cpp" />
     <ClCompile Include="FrameCompositor.cpp" />
     <ClCompile Include="GpuColor.cpp" />
+    <ClCompile Include="GpuCompositor.cpp" />
     <ClCompile Include="GpuDevice.cpp" />
     <ClCompile Include="GpuLayer.cpp" />
     <ClCompile Include="TextFrame.cpp" />

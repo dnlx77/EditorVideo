@@ -328,6 +328,12 @@ void ExportDialog::buildVideo(QVBoxLayout* layout)
     decoder_->addItem(QStringLiteral("GPU (se la scheda lo gestisce, altrimenti CPU)"), static_cast<int>(core::DecoderMode::Hardware));
     decoder_->setCurrentIndex(input_.options.decoder == core::DecoderMode::Hardware ? 1 : 0);
     videoForm->addRow(QStringLiteral("Decoder:"), decoder_);
+    compositor_ = new QComboBox;
+    compositor_->addItem(QStringLiteral("Automatica (GPU se disponibile, altrimenti CPU)"), static_cast<int>(core::CompositorMode::Auto));
+    compositor_->addItem(QStringLiteral("Solo CPU"), static_cast<int>(core::CompositorMode::CpuOnly));
+    compositor_->setCurrentIndex(input_.options.compositor == core::CompositorMode::CpuOnly ? 1 : 0);
+    compositor_->setToolTip(QStringLiteral("Chi compone trasformazioni, livelli, scritte e transizioni sopra i fotogrammi."));
+    videoForm->addRow(QStringLiteral("Composizione:"), compositor_);
     videoForm->addRow(QStringLiteral("Encoder:"), encoder_);
     videoForm->addRow(QStringLiteral("Preset:"), preset_);
     videoForm->addRow(QStringLiteral("Qualità (CQ, meno = migliore):"), cqRow);
@@ -673,6 +679,7 @@ core::ReencodeOptions ExportDialog::options() const
     o.closeGaps = closeGaps_->isChecked();
     o.video = videoChange();
     o.decoder = static_cast<core::DecoderMode>(decoder_->currentData().toInt());
+    o.compositor = static_cast<core::CompositorMode>(compositor_->currentData().toInt());
     if (videoChoicesApply()) {
         const int index = encoder_->currentData().toInt();
         o.backend = index >= 0 && index < static_cast<int>(encoders_.size())

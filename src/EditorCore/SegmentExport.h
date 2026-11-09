@@ -66,6 +66,8 @@ struct ExportResult
     double blendOverlaySeconds = 0.0;
     double blendToYuvSeconds = 0.0;
     std::string blendSourceFormat;  // formato dei fotogrammi dell'originale nella fusione (es. yuv420p, nv12)
+    std::string compositor;         // chi ha composto i fotogrammi: «CPU» o «GPU: nome della scheda» (vuoto = nessuna composizione)
+    std::string compositorNote;     // se la GPU è stata abbandonata a metà esportazione: perché
     int workerThreads = 0;          // thread usati per le parti a bande
 };
 
@@ -98,6 +100,13 @@ enum class DecoderMode
 {
     Software,  // CPU (come sempre)
     Hardware,  // GPU (Direct3D 11) se la scheda e il flusso lo permettono, altrimenti CPU
+};
+
+// Chi compone i fotogrammi con trasformazioni, livelli, scritte e transizioni nei tratti da ricodificare.
+enum class CompositorMode
+{
+    Auto,     // la GPU (Direct3D 11) se c'è una scheda utilizzabile e il formato lo permette, altrimenti la CPU
+    CpuOnly,  // sempre la CPU
 };
 
 struct ReencodeOptions
@@ -135,6 +144,7 @@ struct ReencodeOptions
     // Codec, misura e fotogrammi al secondo del video, se diversi da quelli dei file (dopo gli altri campi: si inizializza in ordine).
     VideoChange video;
     DecoderMode decoder = DecoderMode::Software;
+    CompositorMode compositor = CompositorMode::Auto;
     // Secondi oltre la fine dell'ultimo pezzo di V1 che si esportano lo stesso: nero con sopra scritte, pezzi dei livelli e
     // l'audio che arrivano più in là (0 = si finisce con V1). Si fa solo se il nero si sa creare (vedi ExportPreview::problem).
     double tailSeconds = 0.0;
