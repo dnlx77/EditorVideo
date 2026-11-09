@@ -11,6 +11,7 @@
 #include "EditorCore/NalUnits.h"
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/LayerFrames.h"
+#include "EditorCore/FrameCompositor.h"
 #include "EditorCore/TextFrame.h"
 #include "EditorCore/TimeUtil.h"
 
@@ -512,7 +513,7 @@ private:
         std::optional<TextImage> transformed;
     };
     std::map<int, CachedText> textImages_;
-    std::unique_ptr<TextFrameBlender> blender_;
+    std::unique_ptr<IFrameCompositor> blender_;
     std::unique_ptr<LayerFrameSource> layerSource_;  // i fotogrammi dei pezzi dei livelli (vedi ReencodeOptions::layerFiles)
     std::vector<LayerFrameSource::Visible> layerFrames_;  // quelli del fotogramma in corso, tenuti vivi finché il blender li usa
     std::shared_ptr<AVBufferRef> hwDevice_;  // il dispositivo D3D11 per decodificare con la GPU, creato una volta sola

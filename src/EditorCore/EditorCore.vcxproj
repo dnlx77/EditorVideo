@@ -50,6 +50,7 @@
     <ClInclude Include="Compositor.h" />
     <ClInclude Include="BandedSws.h" />
     <ClInclude Include="ParallelFor.h" />
+    <ClInclude Include="FrameCompositor.h" />
     <ClInclude Include="TextFrame.h" />
     <ClInclude Include="TextImage.h" />
     <ClInclude Include="LayerFrames.h" />
@@ -103,6 +104,7 @@
     <ClCompile Include="Animation.cpp" />
     <ClCompile Include="TransformManip.cpp" />
     <ClCompile Include="Compositor.cpp" />
+    <ClCompile Include="FrameCompositor.cpp" />
     <ClCompile Include="TextFrame.cpp" />
     <ClCompile Include="TextImage.cpp" />
     <ClCompile Include="LayerFrames.cpp" />

@@ -1,5 +1,6 @@
 #include "EditorCore/Animation.h"
 #include "EditorCore/Encoder.h"
+#include "EditorCore/FrameCompositor.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/SegmentExport.h"
@@ -14,6 +15,8 @@ extern "C" {
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstring>
+#include <memory>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -239,6 +242,32 @@ TEST(TextBlender, TextsFollowTheOrderOfTheLevels)
     EXPECT_GT(under, 40);  // rosso, non nero
     EXPECT_GT(over, 200);
     EXPECT_GT(above, 200);
+}
+
+TEST(FrameCompositorFactory, GivesTheCpuCompositorThatBlendsLikeTheBlender)
+{
+    // Il compositore scelto dalla fabbrica (per ora sempre la CPU) dà gli stessi fotogrammi del TextFrameBlender.
+    constexpr int w = 64;
+    constexpr int h = 36;
+    const std::unique_ptr<IFrameCompositor> compositor = makeFrameCompositor(w, h, AV_PIX_FMT_YUV420P);
+    ASSERT_NE(compositor, nullptr);
+    EXPECT_STREQ(compositor->name(), "CPU");
+    EXPECT_FALSE(compositor->isHardware());
+
+    TextFrameBlender reference(w, h, AV_PIX_FMT_YUV420P);
+    TextImage white;
+    white.width = w / 2;
+    white.height = h;
+    white.rgba.assign(static_cast<std::size_t>(white.width) * h * 4, 255);
+    std::vector<std::uint8_t> bgra(static_cast<std::size_t>(w) * h * 4, 0);
+    for (std::size_t i = 3; i < bgra.size(); i += 4)
+        bgra[i] = 255;
+    AVFrame* props = av_frame_alloc();
+    const AVFrame* a = compositor->blendRaster(bgra.data(), w * 4, w, h, {{&white, 1.0, 0}}, props);
+    const AVFrame* b = reference.blendRaster(bgra.data(), w * 4, w, h, {{&white, 1.0, 0}}, props);
+    for (int y = 0; y < h; ++y)
+        EXPECT_EQ(0, std::memcmp(a->data[0] + y * a->linesize[0], b->data[0] + y * b->linesize[0], w));
+    av_frame_free(&props);
 }
 
 TEST_F(TextExport, WithoutARendererTheTextIsLeftOut)
