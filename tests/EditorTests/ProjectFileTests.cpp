@@ -271,15 +271,17 @@ TEST_F(ProjectFileTest, NewerFormatIsRefused)
 {
     ProjectView view;
     std::string json = projectToJson(projectPath(), sample(view), view);
-    const auto at = json.find("\"versione\": 1");
+    const std::string current = "\"versione\": " + std::to_string(kProjectFormatVersion);
+    const auto at = json.find(current);
     ASSERT_NE(at, std::string::npos);
-    json.replace(at, 13, "\"versione\": 9");
+    const std::string next = std::to_string(kProjectFormatVersion + 1);  // una versione che questo programma non conosce
+    json.replace(at, current.size(), "\"versione\": " + next);
     try {
         projectFromJson(projectPath(), json);
         ADD_FAILURE() << "doveva essere rifiutato";
     } catch (const ProjectFileError& e) {
         EXPECT_NE(std::string(e.what()).find("versione più recente"), std::string::npos) << e.what();
-        EXPECT_NE(std::string(e.what()).find("formato 9"), std::string::npos) << e.what();
+        EXPECT_NE(std::string(e.what()).find("formato " + next), std::string::npos) << e.what();
     }
 }
 
@@ -322,7 +324,7 @@ TEST_F(ProjectFileTest, GapsAreSavedAndOldProjectsHaveNone)
     ProjectView view;
     Project project = sample(view);
     const std::string plain = projectToJson(projectPath(), project, view);
-    EXPECT_NE(plain.find("\"versione\": 1"), std::string::npos);  // senza spazi: come i progetti di prima
+    EXPECT_EQ(parseJson(plain)["versione"].asInteger(), kProjectFormatVersion);  // sempre la versione attuale
     EXPECT_EQ(plain.find("spazioPrima"), std::string::npos);
 
     Sequence& s = project.sequence();
@@ -331,7 +333,7 @@ TEST_F(ProjectFileTest, GapsAreSavedAndOldProjectsHaveNone)
     ASSERT_EQ(s.gapCount(), 2);
     saveProjectFile(projectPath(), project, view);
     const std::string text = read(projectPath());
-    EXPECT_NE(text.find("\"versione\": 2"), std::string::npos);
+    EXPECT_EQ(parseJson(text)["versione"].asInteger(), kProjectFormatVersion);
     EXPECT_NE(text.find("spazioPrima"), std::string::npos);
 
     const LoadedProject loaded = loadProjectFile(projectPath());
@@ -391,7 +393,7 @@ TEST_F(ProjectFileTest, OldProjectWithReplacementOpensSavesAndReopensTheSame)
 
     saveProjectFile(projectPath(), loaded.project, loaded.view);
     const std::string saved = read(projectPath());
-    EXPECT_NE(saved.find("\"versione\": 1"), std::string::npos);
+    EXPECT_EQ(parseJson(saved)["versione"].asInteger(), kProjectFormatVersion);  // letto dalla 1, risalvato nell'attuale
     EXPECT_NE(saved.find("\"scostamento\": -882000000"), std::string::npos) << saved;
     EXPECT_EQ(saved.find("tracceAudio"), std::string::npos);
 
@@ -436,7 +438,7 @@ TEST_F(ProjectFileTest, AudioTracksAreSavedWithLevelsMuteAndSolo)
 
     saveProjectFile(projectPath(), project, view);
     const std::string text = read(projectPath());
-    EXPECT_NE(text.find("\"versione\": 3"), std::string::npos);
+    EXPECT_EQ(parseJson(text)["versione"].asInteger(), kProjectFormatVersion);
     EXPECT_NE(text.find("\"tracceAudio\""), std::string::npos);
     EXPECT_NE(text.find("\"livello\": -12.25"), std::string::npos) << text;
     EXPECT_NE(text.find("\"pan\": -0.4"), std::string::npos) << text;
@@ -632,7 +634,7 @@ TEST_F(ProjectFileTest, LayerPiecesRoundTripAsVersionSeven)
     piece.transform.posX = 120.0;
     ASSERT_NE(project.textTracks().addPiece(layer, piece), 0);
     const std::string json = projectToJson(projectPath(), project, view);
-    EXPECT_NE(json.find("\"versione\": 7"), std::string::npos);
+    EXPECT_EQ(parseJson(json)["versione"].asInteger(), kProjectFormatVersion);
     const LoadedProject loaded = projectFromJson(projectPath(), json);
     ASSERT_EQ(loaded.project.textTracks().layers().size(), 1u);
     const TextLayer& back = loaded.project.textTracks().layers()[0];
@@ -644,9 +646,9 @@ TEST_F(ProjectFileTest, LayerPiecesRoundTripAsVersionSeven)
     EXPECT_NEAR(back.pieces[0].transform.posX, 120.0, 1e-6);
     EXPECT_EQ(loaded.project.clips()[0].path, project.clips()[0].path);
     EXPECT_EQ(back.pieces[0].clipId, loaded.project.clips()[0].id);
-    // Senza pezzi nei livelli, il progetto resta com'era (versione 4 con le sole scritte).
+    // Senza pezzi nei livelli, i livelli non scrivono la chiave "pezzi".
     Project plain = sample(view);
     const int l2 = plain.textTracks().addLayer();
     plain.textTracks().add(l2, text);
-    EXPECT_NE(projectToJson(projectPath(), plain, view).find("\"versione\": 4"), std::string::npos);
+    EXPECT_EQ(projectToJson(projectPath(), plain, view).find("\"pezzi\""), std::string::npos);
 }

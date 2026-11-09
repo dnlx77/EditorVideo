@@ -612,7 +612,8 @@ int runProjectTest(const QStringList& args, qsizetype at)
             }
         };
         std::string newer = json;
-        newer.replace(newer.find("\"versione\": 1"), 13, "\"versione\": 9");
+        const std::string current = "\"versione\": " + std::to_string(core::kProjectFormatVersion);
+        newer.replace(newer.find(current), current.size(), "\"versione\": " + std::to_string(core::kProjectFormatVersion + 1));
         refused(newer, "versione sconosciuta rifiutata");
         refused(json.substr(0, json.size() / 3), "progetto rovinato rifiutato");
 

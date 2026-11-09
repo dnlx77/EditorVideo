@@ -204,7 +204,7 @@ TEST(AnimationFile, SavesAndReloadsPiecesAndLayerPieces)
     Project project = oneClip(id);
     ProjectView view;
     const std::string plain = projectToJson("C:/prova/montaggio.evproj", project, view);
-    EXPECT_EQ(parseJson(plain)["versione"].asInteger(), 1);
+    EXPECT_EQ(parseJson(plain)["versione"].asInteger(), kProjectFormatVersion);
     EXPECT_EQ(plain.find("animazione"), std::string::npos);
 
     TransformAnimation anim;
@@ -599,13 +599,15 @@ TEST(TextAnimation, SavesAndReloadsTheTransformAndTheKeysOfTexts)
     ASSERT_EQ(loaded.project.textTracks().baseLayer().clips.size(), 1u);
     EXPECT_TRUE(loaded.project.textTracks().baseLayer().clips[0].transform.flipHorizontal);
 
-    // Senza animazione il file resta nella versione 6 (così si apre con i programmi di prima) e un testo normale non scrive niente.
+    // Senza animazione il file non scrive la chiave (ma è sempre della versione attuale), e un testo normale non scrive niente.
     Project plain;
     const int l2 = plain.textTracks().addLayer();
     TextClip fixed = titleAt(0.0, 2.0);
     fixed.transform.rotation = 10.0;
     ASSERT_NE(plain.textTracks().add(l2, fixed), 0);
-    EXPECT_EQ(parseJson(projectToJson("C:/prova/montaggio.evproj", plain, view))["versione"].asInteger(), 6);
+    const std::string plainJson = projectToJson("C:/prova/montaggio.evproj", plain, view);
+    EXPECT_EQ(parseJson(plainJson)["versione"].asInteger(), kProjectFormatVersion);
+    EXPECT_EQ(plainJson.find("animazione"), std::string::npos);
     Project untouched;
     ASSERT_NE(untouched.textTracks().add(untouched.textTracks().addLayer(), titleAt(0.0, 2.0)), 0);
     const std::string untouchedJson = projectToJson("C:/prova/montaggio.evproj", untouched, view);
