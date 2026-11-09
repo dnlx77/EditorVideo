@@ -1,4 +1,5 @@
 #include "EditorCore/Project.h"
+#include "EditorCore/Json.h"
 #include "EditorCore/ProjectFile.h"
 #include "EditorCore/TextTracks.h"
 
@@ -194,16 +195,16 @@ TEST(TextTracks, SurviveSaveAndReopen)
     EXPECT_DOUBLE_EQ(back.layers()[1].clips[0].position, 2.0);
 }
 
-TEST(TextTracks, ProjectWithoutTextKeepsOldFormatVersion)
+TEST(TextTracks, ProjectWithoutTextHasNoTextSection)
 {
     Project project;
     const std::string json = projectToJson("C:/prova/p.evproj", project, ProjectView{});
     EXPECT_EQ(json.find("scritte"), std::string::npos);
-    EXPECT_NE(json.find("\"versione\": 1"), std::string::npos) << json;
-    // Un livello vuoto si salva comunque: la versione sale a 4.
+    EXPECT_EQ(parseJson(json)["versione"].asInteger(), kProjectFormatVersion);
+    // Un livello vuoto si salva comunque.
     project.textTracks().addLayer();
     const std::string withLayer = projectToJson("C:/prova/p.evproj", project, ProjectView{});
-    EXPECT_NE(withLayer.find("\"versione\": 4"), std::string::npos);
+    EXPECT_NE(withLayer.find("\"scritte\""), std::string::npos);
     EXPECT_EQ(projectFromJson("C:/prova/p.evproj", withLayer).project.textTracks().layers().size(), 1u);
 }
 

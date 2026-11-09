@@ -215,9 +215,9 @@ TEST(TransformFile, SavesAndReloadsAndOldFilesStayOldVersion)
     int id = 0;
     Project project = oneClip(id);
     ProjectView view;
-    // Senza trasformazioni il file resta di versione 1 e non ha la chiave.
+    // Senza trasformazioni il file non ha la chiave.
     const std::string plain = projectToJson("C:/prova/montaggio.evproj", project, view);
-    EXPECT_EQ(parseJson(plain)["versione"].asInteger(), 1);
+    EXPECT_EQ(parseJson(plain)["versione"].asInteger(), kProjectFormatVersion);
     EXPECT_EQ(plain.find("trasformazione"), std::string::npos);
 
     Transform t;
@@ -232,7 +232,7 @@ TEST(TransformFile, SavesAndReloadsAndOldFilesStayOldVersion)
     t.opacity = 0.4;
     project.setTransform({id}, t);
     const std::string json = projectToJson("C:/prova/montaggio.evproj", project, view);
-    EXPECT_EQ(parseJson(json)["versione"].asInteger(), 6);
+    EXPECT_EQ(parseJson(json)["versione"].asInteger(), kProjectFormatVersion);
 
     const LoadedProject loaded = projectFromJson("C:/prova/montaggio.evproj", json);
     ASSERT_EQ(loaded.project.sequence().fragments().size(), 1u);

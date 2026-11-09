@@ -741,14 +741,10 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         audioTracks = audioTracksToJson(dir, project.audioTracks());
     }
 
-    // Il file resta nella versione più vecchia che basta, così si apre anche con i programmi di prima: 1 senza spazi
-    // vuoti, 2 con gli spazi vuoti, 3 con tracce audio che non sono una semplice traccia sostitutiva.
-    const bool pieceLines = std::any_of(project.sequence().fragments().begin(), project.sequence().fragments().end(),
-                                        [](const Fragment& f) { return !f.envelope.empty(); });
     // I gruppi: ogni oggetto per posizione (pezzo nella sequenza, clip audio per traccia e posizione nella traccia), gli id
     // cambiano riaprendo il progetto.
     JsonValue::Array groups;
-    JsonValue::Array groupNames;  // in parallelo a `groups`, scritto solo se almeno un gruppo ha un nome (versione 3 lo ignora)
+    JsonValue::Array groupNames;  // in parallelo a `groups`, scritto solo se almeno un gruppo ha un nome
     bool anyGroupName = false;
     for (const ObjectGroup& group : project.validGroupList()) {
         JsonValue::Array items;
@@ -809,30 +805,9 @@ std::string projectToJson(const std::string& projectPath, const Project& project
         groups.emplace_back(std::move(items));
     }
     const JsonValue transitions = transitionsToJson(project);
-    const bool hasText = !project.textTracks().layers().empty() || !project.textStyles().empty();
-    const bool pieceTransforms = std::any_of(project.sequence().fragments().begin(), project.sequence().fragments().end(),
-                                             [](const Fragment& f) { return !f.transform.isIdentity(); });
-    const bool layerPieces = std::any_of(project.textTracks().layers().begin(), project.textTracks().layers().end(),
-                                         [](const TextLayer& l) { return !l.pieces.empty(); });
-    const auto animated = [](const auto& list) {
-        return std::any_of(list.begin(), list.end(), [](const auto& item) { return !item.animation.empty(); });
-    };
-    const auto textsOf = [&](auto&& test) {
-        const TextTracks& tracks = project.textTracks();
-        return std::any_of(tracks.baseLayer().clips.begin(), tracks.baseLayer().clips.end(), test)
-               || std::any_of(tracks.layers().begin(), tracks.layers().end(), [&](const TextLayer& l) {
-                      return std::any_of(l.clips.begin(), l.clips.end(), test);
-                  });
-    };
-    const bool animations = animated(project.sequence().fragments())
-                            || textsOf([](const TextClip& c) { return !c.animation.empty(); })
-                            || std::any_of(project.textTracks().layers().begin(), project.textTracks().layers().end(),
-                                           [&](const TextLayer& l) { return animated(l.pieces); });
-    const bool textTransforms = textsOf([](const TextClip& c) { return !c.transform.isIdentity(); });
-    const int version = animations ? 8 : layerPieces ? 7 : (pieceTransforms || textTransforms) ? 6 : !transitions.asArray().empty() ? 5 : hasText ? 4 : !audioTracks.isNull() || pieceLines || !groups.empty() ? 3 : project.sequence().gapCount() > 0 ? 2 : 1;
     JsonValue::Object root{
         {"formato", kFormatName},
-        {"versione", version},
+        {"versione", kProjectFormatVersion},  // sempre la versione attuale; si leggono anche tutte le precedenti
         {"formatoProgetto", formatToJson(project.format())},
         {"unitaDiTempo", JsonValue::Object{{"tickAlSecondo", kProjectTicksPerSecond},
                                            {"nota", "i tempi sono numeri interi di tick (1/705600000 di secondo)"}}},
