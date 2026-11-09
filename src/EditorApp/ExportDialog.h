@@ -58,22 +58,15 @@ public:
 
     // Per le prove automatiche.
     void setDestination(const QString& path);
-    QPushButton* exportButton() const { return exportButton_; }
-    QString warningText() const;  // l'avviso sotto la destinazione ("Il file esiste già...")
     bool canExport() const;
-    QComboBox* encoderCombo() const { return encoder_; }
     QComboBox* codecCombo() const { return codec_; }
     QComboBox* decoderCombo() const { return decoder_; }
-    QComboBox* profileCombo() const { return profile_; }
     void storeProfileAs(const QString& name);  // salva le scelte attuali come profilo (sostituisce quello con lo stesso nome)
     QString sizeText() const;  // la stima della dimensione del file, come si legge nel riepilogo
     QComboBox* resolutionCombo() const { return resolution_; }
     QComboBox* frameRateCombo() const { return frameRate_; }
     QComboBox* containerCombo() const { return container_; }
     QComboBox* audioCodecCombo() const { return audioCodec_; }
-    QCheckBox* includeAudioCheck() const { return includeAudio_; }
-    QCheckBox* reencodeAllCheck() const { return reencodeAll_; }
-    QSlider* cqSlider() const { return cqSlider_; }
 
 private:
     // La costruzione, a pezzi (nell'ordine in cui compaiono nella finestra).
@@ -141,6 +134,17 @@ private:
     QLabel* summary_ = nullptr;
     QPushButton* exportButton_ = nullptr;
     std::vector<QWidget*> videoWidgets_;
+
+private:
+    // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
+    friend class TestAccess;
+    QPushButton* exportButton() const { return exportButton_; }
+    QString warningText() const;  // l'avviso sotto la destinazione ("Il file esiste già...")
+    QComboBox* encoderCombo() const { return encoder_; }
+    QComboBox* profileCombo() const { return profile_; }
+    QCheckBox* includeAudioCheck() const { return includeAudio_; }
+    QCheckBox* reencodeAllCheck() const { return reencodeAll_; }
+    QSlider* cqSlider() const { return cqSlider_; }
 };
 
 }  // namespace editor::app

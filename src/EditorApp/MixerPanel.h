@@ -40,8 +40,6 @@ public:
     // I picchi (0..1, sinistra e destra) di ogni traccia (e del Master, con id core::kMasterTrackId) nell'ultimo intervallo di `seconds` secondi (AudioMixer::takePeaks):
     // le barre salgono subito e scendono piano. Una traccia senza picchi scende verso il silenzio.
     void feedPeaks(const std::map<int, std::array<float, 2>>& peaks, double seconds);
-    void resetMeters();                    // tutte a zero (riproduzione ferma)
-    double meterDb(int index, int channel) const;  // livello mostrato, in dB
     // Il Master (una colonna a parte, a destra): il suo livello e il suo vu-meter. Il cambio del livello arriva a
     // onLevel con trackId core::kMasterTrackId.
     void setMaster(double levelDb, const std::vector<core::AudioEffect>& effects = {});
@@ -52,9 +50,6 @@ public:
     int spectrumTrack() const;
     // Lo spettro (core::spectrumDb) per la finestra aperta di quella traccia; vuoto = non suona.
     void feedSpectrum(int trackId, const std::vector<float>& db);
-    double masterMeterDb(int channel) const;
-    int stripCount() const { return static_cast<int>(strips_.size()); }
-    const Track& trackAt(int index) const { return tracks_[static_cast<std::size_t>(index)]; }  // com'è mostrata
 
     std::function<void(int trackId, double db)> onLevel;
     std::function<void(int trackId, bool muted)> onMuted;
@@ -68,6 +63,15 @@ private:
     std::vector<MixerStrip*> strips_;
     MixerStrip* master_ = nullptr;
     std::vector<Track> tracks_;
+
+private:
+    // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
+    friend class TestAccess;
+    void resetMeters();                    // tutte a zero (riproduzione ferma)
+    double meterDb(int index, int channel) const;  // livello mostrato, in dB
+    double masterMeterDb(int channel) const;
+    int stripCount() const { return static_cast<int>(strips_.size()); }
+    const Track& trackAt(int index) const { return tracks_[static_cast<std::size_t>(index)]; }  // com'è mostrata
 };
 
 }  // namespace editor::app

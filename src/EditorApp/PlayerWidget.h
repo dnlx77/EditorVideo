@@ -156,7 +156,6 @@ public:
     // Tratto del video già in memoria (vedi core::VideoDecoder::cachedRange), nei tempi del file; {0, 0} se nessuno.
     std::pair<double, double> cachedRange() const;
     double currentPosition();  // secondi
-    QString statusText() const;  // es. "Decodifica: GPU (D3D11VA)"
 
     // Segmento da tenere. IN resta dove lo si mette (taglio preciso), anche prima che arrivino i fotogrammi chiave;
     // OUT comprende il fotogramma visibile. Si lavora sul fotogramma che si vede.
@@ -281,6 +280,11 @@ private:
     bool audioClock_ = false;
     double wallBase_ = 0.0;
     std::chrono::steady_clock::time_point wallStart_;
+
+private:
+    // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
+    friend class TestAccess;
+    QString statusText() const;  // es. "Decodifica: GPU (D3D11VA)"
 };
 
 }  // namespace editor::app

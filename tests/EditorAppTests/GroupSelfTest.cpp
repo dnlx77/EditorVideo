@@ -1,6 +1,7 @@
 #include "EditorApp/GroupListPanel.h"
 #include "EditorApp/GroupMime.h"
 #include "EditorApp/MainWindow.h"
+#include "EditorApp/TestAccess.h"
 #include "SelfTests.h"
 
 #include <QtCore/QStringList>
@@ -35,9 +36,9 @@ int runGroupTest(const QStringList&, qsizetype)
                     {{Kind::PieceAudio, 2}, QStringLiteral("Audio del video"), QStringLiteral("b.mp4"), 4.0}};
 
     GroupListPanel panel;
-    check(panel.groupCount() == 0 && panel.tree()->isHidden(), "senza gruppi l'albero è nascosto");
+    check(TestAccess::groupCount(panel) == 0 && panel.tree()->isHidden(), "senza gruppi l'albero è nascosto");
     panel.setGroups({user, pair});
-    check(panel.groupCount() == 2, "un nodo per gruppo");
+    check(TestAccess::groupCount(panel) == 2, "un nodo per gruppo");
     const QTreeWidgetItem* first = panel.tree()->topLevelItem(0);
     const QTreeWidgetItem* second = panel.tree()->topLevelItem(1);
     check(first != nullptr && first->childCount() == 2 && first->text(0).startsWith(QStringLiteral("Gruppo 3")),
@@ -91,7 +92,7 @@ int runGroupTest(const QStringList&, qsizetype)
     check(panel.tree()->currentItem() == nullptr && chosenCalls == calls, "nessuna selezione: niente, e onChosen non è chiamata");
 
     panel.setGroups({});
-    check(panel.groupCount() == 0 && panel.tree()->isHidden(), "senza più gruppi l'albero si nasconde");
+    check(TestAccess::groupCount(panel) == 0 && panel.tree()->isHidden(), "senza più gruppi l'albero si nasconde");
 
     // Trascinamento: solo le voci dei gruppi dell'utente si trascinano, e solo i loro nodi accolgono voci.
     panel.setGroups({user, pair});
@@ -184,24 +185,24 @@ int runGroupTest(const QStringList&, qsizetype)
 
     // Le tre schede nella finestra.
     MainWindow window;
-    QTabWidget* tabs = window.leftTabs();
+    QTabWidget* tabs = TestAccess::leftTabs(window);
     check(tabs != nullptr && tabs->count() == 3 && tabs->tabText(0) == QStringLiteral("File del progetto")
               && tabs->tabText(1) == QStringLiteral("Transizioni") && tabs->tabText(2) == QStringLiteral("Gruppi"),
           "il blocco in alto a sinistra ha le schede File del progetto, Transizioni e Gruppi");
-    check(window.groupPanel() != nullptr && tabs != nullptr && tabs->widget(2) == window.groupPanel()
-              && window.groupPanel()->groupCount() == 0,
+    check(TestAccess::groupPanel(window) != nullptr && tabs != nullptr && tabs->widget(2) == TestAccess::groupPanel(window)
+              && TestAccess::groupCount(*TestAccess::groupPanel(window)) == 0,
           "la scheda Gruppi c'è ed è vuota in un progetto vuoto");
 
     // L'ultima scheda aperta si ricorda alla prossima apertura della finestra.
     tabs->setCurrentIndex(2);
     {
         MainWindow again;
-        check(again.leftTabs()->currentIndex() == 2, "la scheda Gruppi, se era l'ultima aperta, si riapre");
+        check(TestAccess::leftTabs(again)->currentIndex() == 2, "la scheda Gruppi, se era l'ultima aperta, si riapre");
     }
     tabs->setCurrentIndex(0);
     {
         MainWindow again;
-        check(again.leftTabs()->currentIndex() == 0, "tornando a File del progetto si riapre quella");
+        check(TestAccess::leftTabs(again)->currentIndex() == 0, "tornando a File del progetto si riapre quella");
     }
 
     std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());

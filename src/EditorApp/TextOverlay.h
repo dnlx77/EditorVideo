@@ -28,9 +28,6 @@ public:
     // Il riquadro della scritta in frazioni del fotogramma (0..1), per sapere se un clic la prende. Vuoto se non ha niente da vedere.
     QRectF bounds(const core::TextClip& clip, int frameWidth, int frameHeight) const;
 
-    // Quante volte una scritta è stata disegnata da capo (per le prove).
-    int renderCount() const { return renderCount_; }
-
 private:
     struct Entry
     {
@@ -43,6 +40,12 @@ private:
     QtTextRenderer renderer_;
     std::map<int, Entry> entries_;  // per id di scritta
     int renderCount_ = 0;
+
+private:
+    // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
+    friend class TestAccess;
+    // Quante volte una scritta è stata disegnata da capo.
+    int renderCount() const { return renderCount_; }
 };
 
 }  // namespace editor::app

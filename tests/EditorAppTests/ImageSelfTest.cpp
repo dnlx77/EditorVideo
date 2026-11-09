@@ -1,5 +1,6 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
+#include "EditorApp/TestAccess.h"
 #include "SelfTests.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/MediaProbe.h"
@@ -125,13 +126,13 @@ int runImageTest(const QStringList&, qsizetype)
 
     monitor.seekTo(1.5);
     QCoreApplication::processEvents();
-    check(monitor.layerFramesShown() == 1, "a 1,5 s si vede il pezzo-immagine di V2");
+    check(TestAccess::layerFramesShown(monitor) == 1, "a 1,5 s si vede il pezzo-immagine di V2");
     const QColor middle = centerColor(monitor, *player, QColor(20, 220, 20));
     check(middle.green() > 150 && middle.red() < 80, "al centro, sopra la rossa, c'è la verde di V2");
 
     monitor.seekTo(2.5);
     QCoreApplication::processEvents();
-    check(monitor.layerFramesShown() == 0, "dopo la fine del pezzo di V2 non si vede più");
+    check(TestAccess::layerFramesShown(monitor) == 0, "dopo la fine del pezzo di V2 non si vede più");
 
     // In riproduzione sull'immagine di V1 (da prima di V2): il tempo avanza e il fotogramma resta quello.
     monitor.seekTo(0.1);

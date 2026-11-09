@@ -49,7 +49,6 @@ public:
     // (progetto e impostazioni), che si possono applicare, salvare e togliere. I controlli già uguali non si toccano
     // (così non salta il cursore del testo mentre si scrive).
     void setClip(const core::TextClip* clip, std::vector<core::NamedTextStyle> styles);
-    bool hasClip() const { return hasClip_; }
     // La scritta come è ora nei controlli (id e posizione nella sequenza restano quelli di partenza).
     core::TextClip clip() const;
     // Gli stili con nome come sono ora nel pannello (con quelli salvati o tolti qui).
@@ -116,6 +115,11 @@ private:
     QWidget* controls_ = nullptr;
     QVBoxLayout* controlsLayout_ = nullptr;
     QWidget* extra_ = nullptr;
+
+private:
+    // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
+    friend class TestAccess;
+    bool hasClip() const { return hasClip_; }
 };
 
 }  // namespace editor::app

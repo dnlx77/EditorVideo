@@ -2,6 +2,7 @@
 #include "EditorApp/PlayerWidget.h"
 #include "SelfTests.h"
 #include "EditorApp/SequenceTimeline.h"
+#include "EditorApp/TestAccess.h"
 #include "EditorApp/TransitionMime.h"
 #include "EditorApp/TransitionListPanel.h"
 #include "EditorApp/TransitionPreview.h"
@@ -122,9 +123,9 @@ int runTransitionTest(const QStringList&, qsizetype)
         line.setBlocks({a, b});
         line.fitAll();
         QCoreApplication::processEvents();
-        const double junctionX = line.xForJunction(0);
-        const double y = line.videoLaneCenter();
-        check(std::abs(junctionX - line.xForSequenceTime(4.0)) < 1.0, "la giunzione è alla fine del primo pezzo");
+        const double junctionX = TestAccess::xForJunction(line, 0);
+        const double y = TestAccess::videoLaneCenter(line);
+        check(std::abs(junctionX - TestAccess::xForSequenceTime(line, 4.0)) < 1.0, "la giunzione è alla fine del primo pezzo");
 
         // Si lascia sulla giunzione: arriva il tipo e il pezzo prima; lontano dalla giunzione: rifiutata.
         QString droppedType;
@@ -143,7 +144,7 @@ int runTransitionTest(const QStringList&, qsizetype)
             const QPoint at(static_cast<int>(x), static_cast<int>(y));
             QDragEnterEvent enter(at, Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
             QCoreApplication::sendEvent(&line, &enter);
-            const int hovered = line.transitionDropBlock();
+            const int hovered = TestAccess::transitionDropBlock(line);
             QDropEvent drop(QPointF(at), Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
             QCoreApplication::sendEvent(&line, &drop);
             return hovered;
@@ -152,7 +153,7 @@ int runTransitionTest(const QStringList&, qsizetype)
         check(onJunction == 0 && droppedType == QStringLiteral("scorrimento") && droppedAt == 11 && refusedAt == -1,
               "lasciata sulla giunzione: arrivano il tipo e il pezzo prima");
         droppedAt = -1;
-        const int far = dropAt(line.xForSequenceTime(1.0));
+        const int far = dropAt(TestAccess::xForSequenceTime(line, 1.0));
         check(far == -1 && droppedAt == -1 && refusedAt == 0, "lasciata lontano da una giunzione: rifiutata");
         allow = false;
         refusedAt = -1;
@@ -162,8 +163,8 @@ int runTransitionTest(const QStringList&, qsizetype)
 
         // Il blocco della transizione sta a cavallo della giunzione.
         line.setTransitions({{5, QStringLiteral("Dissolvenza incrociata"), 3.0, 5.0, 4.0}});
-        const QRectF block = line.transitionRectForTest(5);
-        check(std::abs(block.left() - line.xForSequenceTime(3.0)) < 1.0 && std::abs(block.right() - line.xForSequenceTime(5.0)) < 1.0
+        const QRectF block = TestAccess::transitionRectForTest(line, 5);
+        check(std::abs(block.left() - TestAccess::xForSequenceTime(line, 3.0)) < 1.0 && std::abs(block.right() - TestAccess::xForSequenceTime(line, 5.0)) < 1.0
                   && std::abs(block.center().x() - junctionX) < 1.0,
               "il blocco della transizione è a cavallo della giunzione");
 
@@ -192,11 +193,11 @@ int runTransitionTest(const QStringList&, qsizetype)
         mouse(QEvent::MouseButtonPress, block.right(), Qt::LeftButton);
         mouse(QEvent::MouseButtonRelease, block.right(), Qt::NoButton);
         check(callCount == 0, "un clic sul bordo senza trascinare non cambia la durata");
-        const double perSecond = line.xForSequenceTime(1.0) - line.xForSequenceTime(0.0);
+        const double perSecond = TestAccess::xForSequenceTime(line, 1.0) - TestAccess::xForSequenceTime(line, 0.0);
         mouse(QEvent::MouseButtonPress, block.right(), Qt::LeftButton);
         mouse(QEvent::MouseMove, block.right() + 0.25 * perSecond, Qt::LeftButton);
         mouse(QEvent::MouseMove, block.right() + 0.5 * perSecond, Qt::LeftButton);
-        const QRectF during = line.transitionRectForTest(5);
+        const QRectF during = TestAccess::transitionRectForTest(line, 5);
         mouse(QEvent::MouseButtonRelease, block.right() + 0.5 * perSecond, Qt::NoButton);
         check(callCount == 1 && changedId == 5 && std::abs(changedTo - 3.0) < 0.05 && std::abs(during.width() - 3.0 * perSecond) < 2.0,
               "trascinando il bordo la durata diventa il doppio della distanza dalla giunzione (3 s)");
@@ -215,7 +216,7 @@ int runTransitionTest(const QStringList&, qsizetype)
             QCoreApplication::sendEvent(&line, &e);
         }
         check(activated == 5, "il doppio clic sul blocco apre la transizione");
-        const double awayX = line.xForSequenceTime(0.5);
+        const double awayX = TestAccess::xForSequenceTime(line, 0.5);
         mouse(QEvent::MouseButtonPress, awayX, Qt::LeftButton);
         mouse(QEvent::MouseButtonRelease, awayX, Qt::NoButton);
         check(line.selectedTransition() == 0 && line.selected() == 11, "un clic su un pezzo toglie la selezione della transizione");
@@ -231,13 +232,13 @@ int runTransitionTest(const QStringList&, qsizetype)
         fx.transformNote = QStringLiteral("Scala 150%");
         line.setBlocks({fx, b});
         QCoreApplication::processEvents();
-        check(!line.transformBadgeRectForTest(11).isEmpty() && line.transformBadgeRectForTest(12).isEmpty(),
+        check(!TestAccess::transformBadgeRectForTest(line, 11).isEmpty() && TestAccess::transformBadgeRectForTest(line, 12).isEmpty(),
               "il badge c'è solo sul pezzo con una trasformazione");
         int badgeClicked = 0;
         int badgeSelected = 0;
         line.onTransformBadge = [&](int id) { badgeClicked = id; };
         line.onSelect = [&](int id) { badgeSelected = id; };
-        const QPointF badgeCenter = line.transformBadgeRectForTest(11).center();
+        const QPointF badgeCenter = TestAccess::transformBadgeRectForTest(line, 11).center();
         {
             QMouseEvent press(QEvent::MouseButtonPress, badgeCenter, line.mapToGlobal(badgeCenter), Qt::LeftButton, Qt::LeftButton,
                               Qt::NoModifier);
@@ -251,27 +252,27 @@ int runTransitionTest(const QStringList&, qsizetype)
 
     // Le due schede nella finestra.
     MainWindow window;
-    QTabWidget* tabs = window.leftTabs();
+    QTabWidget* tabs = TestAccess::leftTabs(window);
     check(tabs != nullptr && tabs->count() >= 2 && tabs->tabText(0) == QStringLiteral("File del progetto")
               && tabs->tabText(1) == QStringLiteral("Transizioni"),
           "il blocco in alto a sinistra ha le schede File del progetto e Transizioni");
-    check(tabs != nullptr && tabs->currentIndex() == 0 && window.filesDock()->widget() == tabs,
+    check(tabs != nullptr && tabs->currentIndex() == 0 && TestAccess::filesDock(window)->widget() == tabs,
           "all'inizio è aperta la scheda dei file, nel pannello dei file");
-    check(window.transitionPanel() != nullptr && tabs != nullptr && tabs->widget(1) == window.transitionPanel()
-              && window.transitionPanel()->count() == static_cast<int>(registry.size()),
+    check(TestAccess::transitionPanel(window) != nullptr && tabs != nullptr && tabs->widget(1) == TestAccess::transitionPanel(window)
+              && TestAccess::transitionPanel(window)->count() == static_cast<int>(registry.size()),
           "la scheda Transizioni ha l'elenco completo");
 
     // Scegliendo una transizione la Sorgente ne mostra l'anteprima; il file scelto riporta il lettore.
-    check(window.sourceStack() != nullptr && window.sourceStack()->currentWidget() == window.player(),
+    check(TestAccess::sourceStack(window) != nullptr && TestAccess::sourceStack(window)->currentWidget() == window.player(),
           "all'inizio la Sorgente mostra il lettore");
-    window.transitionPanel()->select("scorrimento");
-    check(window.sourceStack()->currentWidget() == window.transitionPreview()
-              && window.transitionPreview()->transition() == core::findTransition("scorrimento"),
+    TestAccess::transitionPanel(window)->select("scorrimento");
+    check(TestAccess::sourceStack(window)->currentWidget() == TestAccess::transitionPreview(window)
+              && TestAccess::transitionPreview(window)->transition() == core::findTransition("scorrimento"),
           "scegliendo una transizione la Sorgente ne mostra l'anteprima");
-    window.transitionPanel()->select("dissolvenza");
-    check(window.transitionPreview()->transition() == crossfade, "la nuova scelta cambia l'anteprima");
+    TestAccess::transitionPanel(window)->select("dissolvenza");
+    check(TestAccess::transitionPreview(window)->transition() == crossfade, "la nuova scelta cambia l'anteprima");
     window.showSourcePlayer();
-    check(window.sourceStack()->currentWidget() == window.player(), "scegliendo un file torna il lettore");
+    check(TestAccess::sourceStack(window)->currentWidget() == window.player(), "scegliendo un file torna il lettore");
 
     std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
     return check.failures() == 0 ? 0 : 3;

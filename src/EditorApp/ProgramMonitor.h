@@ -86,17 +86,9 @@ public:
     bool isPlaying() const { return playing_; }
     double position() const { return position_; }
     int currentIndex() const { return index_; }  // pezzo mostrato (-1 = sequenza vuota o spazio vuoto)
-    bool inGap() const { return gapIndex_ >= 0; }  // in uno spazio vuoto
-    // Nel tratto di una transizione (id, 0 = no): il monitor mostra i due pezzi fusi, non un file solo. Il fotogramma
-    // mostrato per ultimo (nullptr se non c'è) serve alle prove.
-    int transitionShown() const { return transitionId_; }
-    std::shared_ptr<core::VideoFrame> transitionFrame() const { return transitionFrame_; }
     int currentClipId() const;  // file del pezzo mostrato (0 = nessuno)
     // Le scritte che si vedono ora sopra l'immagine (nessuna mentre si mostra un fotogramma di un file con showSourceFrame).
     std::vector<core::TextClip> visibleText() const;
-    const TextOverlay& textOverlay() const { return overlay_; }
-    // Quanti pezzi di livelli sopra V1 si vedono ora con il loro fotogramma (per le prove).
-    int layerFramesShown() const { return layerFramesShown_; }
 
     // Proxy (vedi PlayerWidget::videoSourceFor e reloadVideo) e menu della qualità dell'anteprima.
     void setVideoSource(std::function<QString(const QString& path)> source);
@@ -119,7 +111,6 @@ public:
     // (rotazione; Maiusc = scatti di 15°). `onTransformEdited` arriva una volta sola, al rilascio, con il pezzo e la nuova
     // trasformazione (un gesto = un passo di Annulla).
     void setTransformMode(bool on);
-    bool transformMode() const { return transformMode_; }
     std::function<void(int fragmentId, const core::Transform& transform)> onTransformEdited;
     // Il pezzo di un livello (V2, V3...) scelto sulla linea del tempo (0 = nessuno): le maniglie agiscono su quello, se è
     // sotto il cursore. Il gesto finito arriva a `onLayerTransformEdited`.
@@ -154,15 +145,11 @@ public:
     // Ritaglio sul monitor (tasto W): maniglie sui quattro lati e sugli angoli del riquadro ritagliato; il lato va dove porti il
     // mouse. Si esclude con la modalità Trasforma.
     void setCropMode(bool on);
-    bool cropMode() const { return cropMode_; }
     std::function<void(bool on)> onCropModeChanged;  // cambiato dal pulsante del monitor o da Trasforma
     // La griglia dei terzi sopra l'immagine (sempre, anche senza manipolatori).
     void setThirdsGrid(bool on);
-    bool thirdsGrid() const { return thirdsGrid_; }
     // Per le prove: i manipolatori sono visibili e sul pezzo (non in riproduzione, né in una transizione o in uno spazio vuoto).
     bool manipulatorsVisible() const;
-    // Per le prove: i quattro angoli del riquadro mostrato, in pixel del progetto (vuoto se le maniglie non si vedono).
-    std::optional<std::array<core::Point2, 4>> manipQuad() const;
 
     QSize minimumSizeHint() const override { return {120, 60}; }
 
@@ -312,6 +299,23 @@ private:
     bool muted_ = false;
     double playStart_ = 0.0;
     bool hasPlayStart_ = false;
+
+private:
+    // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
+    friend class TestAccess;
+    bool inGap() const { return gapIndex_ >= 0; }  // in uno spazio vuoto
+    // Nel tratto di una transizione (id, 0 = no): il monitor mostra i due pezzi fusi, non un file solo; il fotogramma
+    // mostrato per ultimo (nullptr se non c'è).
+    int transitionShown() const { return transitionId_; }
+    std::shared_ptr<core::VideoFrame> transitionFrame() const { return transitionFrame_; }
+    const TextOverlay& textOverlay() const { return overlay_; }
+    // Quanti pezzi di livelli sopra V1 si vedono ora con il loro fotogramma.
+    int layerFramesShown() const { return layerFramesShown_; }
+    bool transformMode() const { return transformMode_; }
+    bool cropMode() const { return cropMode_; }
+    bool thirdsGrid() const { return thirdsGrid_; }
+    // I quattro angoli del riquadro mostrato, in pixel del progetto (vuoto se le maniglie non si vedono).
+    std::optional<std::array<core::Point2, 4>> manipQuad() const;
 };
 
 }  // namespace editor::app

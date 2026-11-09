@@ -2,6 +2,7 @@
 #include "EditorApp/ProgramMonitor.h"
 #include "SelfTests.h"
 #include "EditorApp/SequenceTimeline.h"
+#include "EditorApp/TestAccess.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Project.h"
@@ -79,13 +80,13 @@ int runLayerTest(const QStringList&, qsizetype)
                       type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, mods);
         QCoreApplication::sendEvent(&line, &e);
     };
-    const double yLow = line.textLaneCenter(0);
-    const double yHigh = line.textLaneCenter(1);
-    const double perSecond = line.xForSequenceTime(1.0) - line.xForSequenceTime(0.0);
+    const double yLow = TestAccess::textLaneCenter(line, 0);
+    const double yHigh = TestAccess::textLaneCenter(line, 1);
+    const double perSecond = TestAccess::xForSequenceTime(line, 1.0) - TestAccess::xForSequenceTime(line, 0.0);
     check(yHigh < yLow, "il livello più alto sta più in alto");
 
     // Si prende al centro, si porta sul livello sopra, 1 secondo più avanti.
-    const double grabX = line.xForSequenceTime(6.0);
+    const double grabX = TestAccess::xForSequenceTime(line, 6.0);
     mouse(QEvent::MouseButtonPress, {grabX, yLow});
     check(selectedText == 11 && line.selectedTextClip() == 11, "un clic sul pezzo lo sceglie");
     mouse(QEvent::MouseMove, {grabX + perSecond / 2, (yLow + yHigh) / 2});
@@ -94,7 +95,7 @@ int runLayerTest(const QStringList&, qsizetype)
     check(movedClip == 11 && movedLayer == 2 && std::abs(movedTo - 5.0) < 0.1, "trascinato sul livello V3, da 5 secondi");
 
     // Ctrl+clic: il pezzo entra nella selezione multipla insieme a una scritta.
-    const double titleX = line.xForSequenceTime(2.0);
+    const double titleX = TestAccess::xForSequenceTime(line, 2.0);
     mouse(QEvent::MouseButtonPress, {titleX, yLow}, Qt::ControlModifier);
     mouse(QEvent::MouseButtonRelease, {titleX, yLow}, Qt::ControlModifier);
     const auto picked = line.selectedObjects();
@@ -117,22 +118,22 @@ int runLayerTest(const QStringList&, qsizetype)
         line.onAddTrack = [&] { ++addedAudio; };
         line.setSelectedTextLayer(1);
         check(line.videoTrackChosen(), "con un livello scelto la traccia scelta è video");
-        line.addTrackButton()->click();
+        TestAccess::addTrackButton(line)->click();
         check(addedLayers == 1 && addedAudio == 0, "\"+\" con un livello video scelto aggiunge un livello video");
-        line.removeTrackButton()->click();
+        TestAccess::removeTrackButton(line)->click();
         check(removedLayer == 1, "\"−\" toglie il livello video scelto");
         line.setSelectedTextLayer(0);
         line.setSelectedTextClip(0);
         line.setSelectedTrack(0);
         check(!line.videoTrackChosen(), "con una traccia audio scelta non è video");
-        line.addTrackButton()->click();
+        TestAccess::addTrackButton(line)->click();
         check(addedLayers == 1 && addedAudio == 1, "\"+\" con una traccia audio scelta aggiunge una traccia audio");
         line.setSelectedTrack(-1);
         line.setSelectedTextClip(11);  // com'era prima: il pezzo del livello è scelto
     }
 
     // Il bordo sinistro, 1 secondo più avanti: si accorcia l'inizio.
-    const double edgeX = line.xForSequenceTime(4.0) + 1;
+    const double edgeX = TestAccess::xForSequenceTime(line, 4.0) + 1;
     mouse(QEvent::MouseButtonPress, {edgeX, yLow});
     mouse(QEvent::MouseMove, {edgeX + perSecond / 2, yLow});
     mouse(QEvent::MouseMove, {edgeX + perSecond, yLow});
@@ -140,9 +141,9 @@ int runLayerTest(const QStringList&, qsizetype)
     check(trimmedClip == 11 && trimmedStart && std::abs(trimmedValue - 5.0) < 0.1, "il bordo sinistro si sposta (inizio a 5 s)");
 
     // In alto a sinistra, dove nelle scritte c'è la maniglia della dissolvenza: sul pezzo non c'è.
-    mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(4.0) + 8, yLow - 6});
-    mouse(QEvent::MouseMove, {line.xForSequenceTime(4.0) + 40, yLow - 6});
-    mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(4.0) + 40, yLow - 6});
+    mouse(QEvent::MouseButtonPress, {TestAccess::xForSequenceTime(line, 4.0) + 8, yLow - 6});
+    mouse(QEvent::MouseMove, {TestAccess::xForSequenceTime(line, 4.0) + 40, yLow - 6});
+    mouse(QEvent::MouseButtonRelease, {TestAccess::xForSequenceTime(line, 4.0) + 40, yLow - 6});
     check(!fadeChanged, "un pezzo non ha le maniglie delle dissolvenze");
 
     // Un video di V1 trascinato su un livello: arriva la richiesta con il livello e il punto.
@@ -160,8 +161,8 @@ int runLayerTest(const QStringList&, qsizetype)
         loweredPiece = piece;
         loweredAt = position;
     };
-    const double yVideo = line.videoLaneCenter();
-    const double v1X = line.xForSequenceTime(3.0);
+    const double yVideo = TestAccess::videoLaneCenter(line);
+    const double v1X = TestAccess::xForSequenceTime(line, 3.0);
     mouse(QEvent::MouseButtonPress, {v1X, yVideo});
     mouse(QEvent::MouseMove, {v1X + perSecond / 2, (yVideo + yHigh) / 2});
     mouse(QEvent::MouseMove, {v1X + perSecond, yHigh});
@@ -182,10 +183,10 @@ int runLayerTest(const QStringList&, qsizetype)
     check(loweredPiece == 11 && std::abs(loweredAt - 5.0) < 0.15, "un pezzo di livello lasciato su V1 torna nella sequenza (da 5 s)");
     loweredPiece = 0;
     movedClip = 0;
-    mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(2.0), yLow});
-    mouse(QEvent::MouseMove, {line.xForSequenceTime(2.0) + perSecond / 2, (yLow + yVideo) / 2});
-    mouse(QEvent::MouseMove, {line.xForSequenceTime(2.0) + perSecond, yVideo});
-    mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(2.0) + perSecond, yVideo});
+    mouse(QEvent::MouseButtonPress, {TestAccess::xForSequenceTime(line, 2.0), yLow});
+    mouse(QEvent::MouseMove, {TestAccess::xForSequenceTime(line, 2.0) + perSecond / 2, (yLow + yVideo) / 2});
+    mouse(QEvent::MouseMove, {TestAccess::xForSequenceTime(line, 2.0) + perSecond, yVideo});
+    mouse(QEvent::MouseButtonRelease, {TestAccess::xForSequenceTime(line, 2.0) + perSecond, yVideo});
     check(loweredPiece == 0, "una scritta lasciata su V1 non è un pezzo che torna nella sequenza");
     check(movedClip == 10 && movedLayer == 0, "una scritta lasciata su V1 chiede di spostarsi su V1 (livello 0)");
 
@@ -195,25 +196,25 @@ int runLayerTest(const QStringList&, qsizetype)
     line.setBaseTexts({onV1});
     QCoreApplication::processEvents();
     selectedText = 0;
-    mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(14.0), yVideo});
-    mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(14.0), yVideo});
+    mouse(QEvent::MouseButtonPress, {TestAccess::xForSequenceTime(line, 14.0), yVideo});
+    mouse(QEvent::MouseButtonRelease, {TestAccess::xForSequenceTime(line, 14.0), yVideo});
     check(selectedText == 20, "un clic su una scritta di V1 la sceglie");
     movedClip = 0;
-    mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(14.0), yVideo});
-    mouse(QEvent::MouseMove, {line.xForSequenceTime(14.0) + perSecond / 2, yVideo});
-    mouse(QEvent::MouseMove, {line.xForSequenceTime(14.0) + perSecond, yVideo});
-    mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(14.0) + perSecond, yVideo});
+    mouse(QEvent::MouseButtonPress, {TestAccess::xForSequenceTime(line, 14.0), yVideo});
+    mouse(QEvent::MouseMove, {TestAccess::xForSequenceTime(line, 14.0) + perSecond / 2, yVideo});
+    mouse(QEvent::MouseMove, {TestAccess::xForSequenceTime(line, 14.0) + perSecond, yVideo});
+    mouse(QEvent::MouseButtonRelease, {TestAccess::xForSequenceTime(line, 14.0) + perSecond, yVideo});
     check(movedClip == 20 && movedLayer == 0 && std::abs(movedTo - 14.0) < 0.5, "una scritta di V1 si sposta lungo V1 (a 14 s)");
     selectedText = 0;
-    mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(5.0), yVideo});
-    mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(5.0), yVideo});
+    mouse(QEvent::MouseButtonPress, {TestAccess::xForSequenceTime(line, 5.0), yVideo});
+    mouse(QEvent::MouseButtonRelease, {TestAccess::xForSequenceTime(line, 5.0), yVideo});
     check(selectedText == 0 && line.selectedTextClip() == 0, "un clic sul video di V1, lontano dalle scritte, non sceglie scritte");
     // Dalla corsia di V1 una scritta sale su un livello.
     movedClip = 0;
-    mouse(QEvent::MouseButtonPress, {line.xForSequenceTime(14.0), yVideo});
-    mouse(QEvent::MouseMove, {line.xForSequenceTime(14.0), (yVideo + yLow) / 2});
-    mouse(QEvent::MouseMove, {line.xForSequenceTime(14.0), yLow});
-    mouse(QEvent::MouseButtonRelease, {line.xForSequenceTime(14.0), yLow});
+    mouse(QEvent::MouseButtonPress, {TestAccess::xForSequenceTime(line, 14.0), yVideo});
+    mouse(QEvent::MouseMove, {TestAccess::xForSequenceTime(line, 14.0), (yVideo + yLow) / 2});
+    mouse(QEvent::MouseMove, {TestAccess::xForSequenceTime(line, 14.0), yLow});
+    mouse(QEvent::MouseButtonRelease, {TestAccess::xForSequenceTime(line, 14.0), yLow});
     check(movedClip == 20 && movedLayer == 1, "una scritta di V1 trascinata su V2 chiede il livello 1");
 
     std::printf(check.failures() == 0 ? "Tutte le prove sono riuscite.\n" : "Prove non riuscite: %d\n", check.failures());
@@ -261,16 +262,16 @@ int runLayerMonitorTest(const QStringList& args, qsizetype at)
 
     monitor.seekTo(0.3);
     QCoreApplication::processEvents();
-    check(monitor.layerFramesShown() == 0, "prima dei pezzi dei livelli non se ne vede nessuno");
+    check(TestAccess::layerFramesShown(monitor) == 0, "prima dei pezzi dei livelli non se ne vede nessuno");
     monitor.seekTo(1.2);
     QCoreApplication::processEvents();
-    check(monitor.layerFramesShown() == 1, "dentro il primo pezzo se ne vede uno");
+    check(TestAccess::layerFramesShown(monitor) == 1, "dentro il primo pezzo se ne vede uno");
     monitor.seekTo(1.7);
     QCoreApplication::processEvents();
-    check(monitor.layerFramesShown() == 2, "dove i due pezzi si sovrappongono sui due livelli se ne vedono due");
+    check(TestAccess::layerFramesShown(monitor) == 2, "dove i due pezzi si sovrappongono sui due livelli se ne vedono due");
     monitor.seekTo(2.7);
     QCoreApplication::processEvents();
-    check(monitor.layerFramesShown() == 0, "dopo la fine dei pezzi non se ne vede nessuno");
+    check(TestAccess::layerFramesShown(monitor) == 0, "dopo la fine dei pezzi non se ne vede nessuno");
 
     // In riproduzione da prima del pezzo: arrivato dentro, il fotogramma arriva.
     monitor.seekTo(0.7);
@@ -280,7 +281,7 @@ int runLayerMonitorTest(const QStringList& args, qsizetype at)
         QThread::msleep(20);
         QCoreApplication::processEvents();
         if (monitor.position() > 1.1 && monitor.position() < 1.9)
-            best = std::max(best, monitor.layerFramesShown());
+            best = std::max(best, TestAccess::layerFramesShown(monitor));
     }
     monitor.setPlaying(false);
     check(best >= 1, "in riproduzione il fotogramma del livello arriva quando il pezzo inizia");
@@ -346,7 +347,7 @@ int runLayerMonitorTest(const QStringList& args, qsizetype at)
     monitor.seekTo(length + 1.0);
     QCoreApplication::processEvents();
     check(std::abs(monitor.position() - (length + 1.0)) < 0.05, "ci si può posizionare dopo la fine di V1");
-    check(monitor.layerFramesShown() == 1, "dopo la fine di V1 si vede il pezzo del livello");
+    check(TestAccess::layerFramesShown(monitor) == 1, "dopo la fine di V1 si vede il pezzo del livello");
     monitor.seekTo(length - 0.3);
     monitor.setPlaying(true);
     double reached = 0.0;

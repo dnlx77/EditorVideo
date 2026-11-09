@@ -68,8 +68,6 @@ public:
     void addFiles(const QStringList& paths);
 
     PlayerWidget* player() const { return player_; }  // anteprima di partenza (Sorgente)
-    ProgramMonitor* programMonitor() const { return program_; }
-    SequenceTimeline* sequenceTimeline() const { return timeline_; }
 
     // Pannelli (File del progetto, Sorgente, Montaggio, Linea del tempo del montaggio): spostabili, ridimensionabili e
     // staccabili come finestre. La disposizione si salva chiudendo il programma.
@@ -86,15 +84,8 @@ public:
     // Un controllo della linea del tempo staccata (ogni 50 ms, o dalle prove con valori finti): se il pulsante del mouse
     // è appena stato rilasciato dopo averla spostata, si guarda dove è stata lasciata (redockTimelineIfDroppedLow).
     void timelinePollStep(bool buttonDown, const QPoint& cursor);
-    // Solo per le prove: il controllo periodico vero si spegne e i passi li dà la prova.
-    void setTimelinePollAutomatic(bool automatic) { timelinePollAutomatic_ = automatic; }
-    // Solo per le prove: la posizione del cursore (al posto di quella vera) e chi fa lo spostamento della finestra
-    // staccata al posto di Windows (riceve la finestra e il punto in cui è stata presa).
-    void setTestCursor(std::optional<QPoint> cursor) { testCursor_ = cursor; }
-    void setNativeDragForTest(std::function<void(void* hwnd, QPoint grab)> drag) { nativeDragForTest_ = std::move(drag); }
     // Il titolo di un pannello agganciato evidenziato (mouse sopra: da lì si trascina).
     bool isTitleHighlighted(QDockWidget* dock) const;
-    bool isDockPreviewVisible() const { return dockPreview_ != nullptr && dockPreview_->isVisible(); }
     int timelineHeight() const { return timelineHeight_; }  // altezza da agganciata, da riprendere riagganciandola
 
     // File trascinati da Esplora file (o un progetto, o una cartella): sempre aggiunti all'elenco dei file; lasciati
@@ -106,19 +97,11 @@ public:
         Sequence,
     };
     void dropFiles(const QStringList& paths, DropTarget target, int sequenceIndex = -1);
-    bool isPanelFullScreen() const { return fullScreenDock_ != nullptr; }
-    QDockWidget* sourceDock() const { return sourceDock_; }
-    QDockWidget* programDock() const { return programDock_; }
-    QDockWidget* filesDock() const { return filesDock_; }
-    QDockWidget* timelineDock() const { return timelineDock_; }
-    QDockWidget* propertiesDock() const { return propertiesDock_; }
-    QString currentFile() const { return currentPath_; }
     const core::Project& project() const { return project_; }
     int currentClipId() const { return currentClipId_; }
     // Qualità dell'anteprima (menu dei player): 1 = file originali, 2, 4, 8 = proxy a quella frazione della risoluzione.
     // Qualità dell'anteprima di un file (1 = originale, 2, 4, 8 = proxy), indipendente da quella degli altri file.
     void setPreviewQuality(const QString& path, int divisor);
-    int previewQuality(const QString& path) const;
     // Cartella dei proxy: accanto al progetto (<nome>.proxy), o <cartella di lavoro>\proxy se mai salvato.
     QString proxyFolder() const;
 
@@ -132,8 +115,6 @@ public:
     void selectClip(int id);
 
     // Audio della sequenza: comandi del menu Audio (usati anche dalle prove automatiche).
-    // Solo per le prove automatiche: toglie l'audio dei pezzi nel tratto (tempi della sequenza), come un passo di Annulla.
-    void muteRangeForTest(double from, double to);
     // La traccia audio di tutta la sequenza diventa questo file. false, con un messaggio, se non si può usare.
     bool replaceAudio(const QString& path, bool showProblems = true);
     void restoreOriginalAudio();
@@ -169,7 +150,6 @@ public:
     bool applyTextEdit(const core::TextClip& edited, const std::vector<core::NamedTextStyle>* styles = nullptr, bool merge = false);
     void showTextPanel(int clipId, bool focusText);  // l'editor della scritta nel pannello Proprietà
     void refreshTextPanel();                          // la rimette in pari con la scritta scelta e col progetto
-    TextEditorPanel* textPanel() const { return textPanel_; }
     // Pannello Proprietà (a destra): il contenuto segue l'oggetto scelto. Per i pezzi video sono le trasformazioni.
     void refreshPropertiesPanel(bool cursorOnly = false);  // cursorOnly: il cursore si è mosso (le maniglie del monitor non cambiano)
     // Il pezzo video (di V1 o di un livello) scelto da solo, con le sue trasformazioni e i fotogrammi chiave, e dove si trova il
@@ -201,8 +181,6 @@ public:
     std::array<double, 4> keyCurve(core::AnimGroup group, double time) const;
     bool applyKeyCurve(core::AnimGroup group, double time, const std::array<double, 4>& c);
     void refreshKeyRow();  // la riga dei rombi sulla linea del tempo segue il pezzo scelto
-    PropertiesPanel* propertiesPanel() const { return propertiesPanel_; }
-    MixerPanel* mixerPanel() const { return mixerPanel_; }
     // Cambia la trasformazione dei pezzi video scelti con `edit` (un campo alla volta: `field` unisce le modifiche di
     // seguito dello stesso campo in una voce di Annulla). false se nessun pezzo è cambiato.
     bool applyTransformEdit(const std::function<void(core::Transform&)>& edit, const std::string& field);
@@ -214,12 +192,7 @@ public:
     bool commitMonitorTextTransform(int clipId, const core::Transform& transform);
     // "Adatta" / "Riempi" sui pezzi scelti.
     void fitSelectedPieces(bool fill);
-    QTabWidget* leftTabs() const { return leftTabs_; }
-    TransitionListPanel* transitionPanel() const { return transitionPanel_; }
-    GroupListPanel* groupPanel() const { return groupPanel_; }
     // La Sorgente mostra il file (il lettore) o l'anteprima della transizione scelta.
-    QStackedWidget* sourceStack() const { return sourceStack_; }
-    TransitionPreviewWidget* transitionPreview() const { return transitionPreview_; }
     void showSourcePlayer();
     std::vector<core::NamedTextStyle> availableTextStyles() const;  // del progetto e dell'elenco globale
     void keepTextStyles(const std::vector<core::NamedTextStyle>& styles);
@@ -256,8 +229,6 @@ public:
     void setTrackEffects(int trackId, const std::vector<core::AudioEffect>& effects);  // trackId -1 = Master
     void setJunctionLevel(const core::Project::Junction& junction, std::optional<double> db);  // pallino sulla giunzione
     void setEnvelope(bool fragment, int id, const std::vector<core::LevelPoint>& points);  // linea del livello di un pezzo o clip
-    // Forme d'onda ancora da calcolare (0 = tutte pronte).
-    int pendingWaveforms() const;
 
     // Progetto salvato (.evproj). interactive = false: nessuna domanda né messaggio (prove automatiche; i file
     // mancanti vengono tolti) e il progetto non va nei recenti.
@@ -265,15 +236,11 @@ public:
     bool saveProject();                                              // Ctrl+S (chiede dove, la prima volta)
     bool saveProjectAs(const QString& path, bool remember = true);  // senza chiedere niente
     QString projectPath() const { return projectPath_; }
-    bool isModified() const { return modified_; }
 
     // Annulla / Ripeti (menu Modifica): tutte le modifiche a file, montaggio e audio.
     bool undo();
     bool redo();
     QString undoText() const;  // es. "Annulla Dividi pezzo"
-    // Miniature della timeline ancora da preparare, e quante sono pronte.
-    int pendingThumbnails() const;
-    int readyThumbnails() const;
 
     // Esporta il montaggio, o il solo IN-OUT se la sequenza è vuota (chiede dove salvare).
     void exportDialog();
@@ -282,15 +249,11 @@ public:
     // slowDown rallenta di proposito i passi del primo secondo e mezzo (solo per le prove: così la finestra di
     // avanzamento compare anche con file piccoli).
     bool startExport(const QString& target, bool showResult, std::chrono::milliseconds slowDown = {});
-    bool isExporting() const { return exportThread_ != nullptr; }
-    bool lastExportSucceeded() const { return lastExportOk_; }
-    QString lastExportProblem() const { return lastExportProblem_; }  // "annullata" o il messaggio d'errore
     // Cosa verrebbe esportato adesso (vuoto = niente) e quanto dura.
     // Il progetto da esportare: com'è, o (con "Chiudi gli spazi vuoti") senza il vuoto vero; `closed` tiene la copia.
     const core::Project& exportSource(std::optional<core::Project>& closed) const;
     std::vector<core::ClipRanges> exportPlan() const;
     bool hasExportPlan() const;  // come !exportPlan().empty(), senza costruire il piano
-    double exportLength();  // durata del file che si esporterebbe (per le prove)
     std::vector<core::ClipRanges> previewPlan();  // come exportPlan(), con le caratteristiche dei file già lette
     double frameDurationOf(int clipId) const;  // un fotogramma del video del file (1/30 s se non si sa)
     std::optional<double> knownFrameDurationOf(int clipId) const;  // std::nullopt se non si sa (ancora) o è solo audio
@@ -569,6 +532,47 @@ private:
     std::atomic<bool> cancelExport_{false};
     bool lastExportOk_ = false;
     QString lastExportProblem_;
+
+private:
+    // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
+    friend class TestAccess;
+    ProgramMonitor* programMonitor() const { return program_; }
+    SequenceTimeline* sequenceTimeline() const { return timeline_; }
+    // Il controllo periodico vero si spegne e i passi li dà la prova.
+    void setTimelinePollAutomatic(bool automatic) { timelinePollAutomatic_ = automatic; }
+    // La posizione del cursore (al posto di quella vera) e chi fa lo spostamento della finestra
+    // staccata al posto di Windows (riceve la finestra e il punto in cui è stata presa).
+    void setTestCursor(std::optional<QPoint> cursor) { testCursor_ = cursor; }
+    void setNativeDragForTest(std::function<void(void* hwnd, QPoint grab)> drag) { nativeDragForTest_ = std::move(drag); }
+    bool isDockPreviewVisible() const { return dockPreview_ != nullptr && dockPreview_->isVisible(); }
+    bool isPanelFullScreen() const { return fullScreenDock_ != nullptr; }
+    QDockWidget* sourceDock() const { return sourceDock_; }
+    QDockWidget* programDock() const { return programDock_; }
+    QDockWidget* filesDock() const { return filesDock_; }
+    QDockWidget* timelineDock() const { return timelineDock_; }
+    QDockWidget* propertiesDock() const { return propertiesDock_; }
+    QString currentFile() const { return currentPath_; }
+    int previewQuality(const QString& path) const;
+    // Toglie l'audio dei pezzi nel tratto (tempi della sequenza), come un passo di Annulla.
+    void muteRangeForTest(double from, double to);
+    TextEditorPanel* textPanel() const { return textPanel_; }
+    PropertiesPanel* propertiesPanel() const { return propertiesPanel_; }
+    MixerPanel* mixerPanel() const { return mixerPanel_; }
+    QTabWidget* leftTabs() const { return leftTabs_; }
+    TransitionListPanel* transitionPanel() const { return transitionPanel_; }
+    GroupListPanel* groupPanel() const { return groupPanel_; }
+    QStackedWidget* sourceStack() const { return sourceStack_; }
+    TransitionPreviewWidget* transitionPreview() const { return transitionPreview_; }
+    // Forme d'onda ancora da calcolare (0 = tutte pronte).
+    int pendingWaveforms() const;
+    bool isModified() const { return modified_; }
+    // Miniature della timeline ancora da preparare, e quante sono pronte.
+    int pendingThumbnails() const;
+    int readyThumbnails() const;
+    bool isExporting() const { return exportThread_ != nullptr; }
+    bool lastExportSucceeded() const { return lastExportOk_; }
+    QString lastExportProblem() const { return lastExportProblem_; }  // "annullata" o il messaggio d'errore
+    double exportLength();  // durata del file che si esporterebbe
 };
 
 // Testo con le versioni di Qt e FFmpeg, usato nella barra di stato e in "Informazioni".

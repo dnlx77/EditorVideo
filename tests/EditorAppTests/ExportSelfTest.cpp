@@ -1,4 +1,5 @@
 #include "EditorApp/ExportDialog.h"
+#include "EditorApp/TestAccess.h"
 #include "SelfTests.h"
 
 #include <QtCore/QDir>
@@ -64,11 +65,11 @@ int runExportPanelTest(const QStringList&, qsizetype)
 
     {
         ExportDialog dialog(input, nullptr);
-        check(dialog.canExport() && dialog.warningText().isEmpty(), "destinazione nuova: si può esportare, nessun avviso");
+        check(dialog.canExport() && TestAccess::warningText(dialog).isEmpty(), "destinazione nuova: si può esportare, nessun avviso");
         check(!asked.empty(), "il riepilogo si calcola all'apertura");
 
         dialog.setDestination(file("esiste.mkv"));
-        check(dialog.canExport() && dialog.warningText().contains(QStringLiteral("sovrascritto")),
+        check(dialog.canExport() && TestAccess::warningText(dialog).contains(QStringLiteral("sovrascritto")),
               "il file che esiste già: avviso di sovrascrittura, ma si può esportare");
         dialog.setDestination(file("origine.mkv"));
         check(!dialog.canExport(), "uno dei file originali non è una destinazione");
@@ -89,20 +90,20 @@ int runExportPanelTest(const QStringList&, qsizetype)
 
         // Le scelte arrivano alle opzioni e al riepilogo.
         const std::size_t before = asked.size();
-        dialog.includeAudioCheck()->setChecked(false);
+        TestAccess::includeAudioCheck(dialog)->setChecked(false);
         check(!dialog.options().includeAudio && asked.size() > before && !asked.back().includeAudio,
               "togliere l'audio arriva alle opzioni e ricalcola il riepilogo");
-        dialog.includeAudioCheck()->setChecked(true);
-        dialog.reencodeAllCheck()->setChecked(true);
+        TestAccess::includeAudioCheck(dialog)->setChecked(true);
+        TestAccess::reencodeAllCheck(dialog)->setChecked(true);
         check(dialog.options().all && asked.back().all, "\"Ricodifica tutto\" arriva alle opzioni e al riepilogo");
-        dialog.cqSlider()->setValue(dialog.cqSlider()->minimum() + 10);
-        check(dialog.options().cq == dialog.cqSlider()->minimum() + 10, "il cursore della qualità arriva alle opzioni");
+        TestAccess::cqSlider(dialog)->setValue(TestAccess::cqSlider(dialog)->minimum() + 10);
+        check(dialog.options().cq == TestAccess::cqSlider(dialog)->minimum() + 10, "il cursore della qualità arriva alle opzioni");
 
-        const QComboBox* encoders = dialog.encoderCombo();
+        const QComboBox* encoders = TestAccess::encoderCombo(dialog);
         if (encoders->count() > 2) {
-            dialog.encoderCombo()->setCurrentIndex(1);
+            TestAccess::encoderCombo(dialog)->setCurrentIndex(1);
             check(dialog.options().backend.has_value(), "scegliere un encoder lo mette nelle opzioni");
-            dialog.encoderCombo()->setCurrentIndex(0);
+            TestAccess::encoderCombo(dialog)->setCurrentIndex(0);
             check(!dialog.options().backend.has_value(), "\"Automatico\" lascia scegliere al programma");
         } else {
             std::printf("  (un solo encoder su questo PC: scelta dell'encoder non provata)\n");
@@ -157,7 +158,7 @@ int runExportPanelTest(const QStringList&, qsizetype)
         input.options.cq = 27;
         input.options.audioBitRate = 128000;
         ExportDialog dialog(input, nullptr);
-        check(dialog.options().cq == 27 && dialog.cqSlider()->value() == 27, "la qualità ricordata riappare");
+        check(dialog.options().cq == 27 && TestAccess::cqSlider(dialog)->value() == 27, "la qualità ricordata riappare");
         check(dialog.options().audioBitRate == 128000, "il bitrate audio ricordato riappare");
     }
 
@@ -166,7 +167,7 @@ int runExportPanelTest(const QStringList&, qsizetype)
         input.options = core::ReencodeOptions{};
         input.sourceBitRate = 8'000'000.0;
         ExportDialog dialog(input, nullptr);
-        QComboBox* profiles = dialog.profileCombo();
+        QComboBox* profiles = TestAccess::profileCombo(dialog);
         check(profiles->count() >= 4 && profiles->currentIndex() == 0, "i profili ci sono, si parte da Personalizzato");
         check(dialog.sizeText().startsWith(QStringLiteral("circa")), "la dimensione stimata si mostra");
         const int whatsapp = profiles->findData(QStringLiteral("Piccolo per WhatsApp"));
@@ -210,7 +211,7 @@ int runExportPanelTest(const QStringList&, qsizetype)
         quick.mixedAudioFiles = 0;
         quick.projectCodec.reset();
         ExportDialog dialog(quick, nullptr);
-        check(!dialog.encoderCombo()->isEnabled() && !dialog.reencodeAllCheck()->isEnabled(),
+        check(!TestAccess::encoderCombo(dialog)->isEnabled() && !TestAccess::reencodeAllCheck(dialog)->isEnabled(),
               "nel taglio veloce niente scelte di ricodifica");
         check(dialog.canExport(), "il taglio veloce si esporta");
     }

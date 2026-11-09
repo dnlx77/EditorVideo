@@ -2,6 +2,7 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/PropertiesPanel.h"
 #include "SelfTests.h"
+#include "EditorApp/TestAccess.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorCore/VideoDecoder.h"
 
@@ -91,10 +92,10 @@ int runTransformTest(const QStringList&, qsizetype)
     {
         PropertiesPanel panel;
         panel.resize(320, 700);
-        check(!panel.showingTransform(), "all'inizio il pannello mostra un messaggio, non le trasformazioni");
+        check(!TestAccess::showingTransform(panel), "all'inizio il pannello mostra un messaggio, non le trasformazioni");
         core::Transform t;
         panel.showTransform(t, 1);
-        check(panel.showingTransform(), "con un pezzo scelto mostra le trasformazioni");
+        check(TestAccess::showingTransform(panel), "con un pezzo scelto mostra le trasformazioni");
 
         core::Transform applied;
         std::string lastField;
@@ -182,12 +183,12 @@ int runTransformTest(const QStringList&, qsizetype)
                   && std::abs(rotation->value() + 12.5) < 1e-9,
               "i campi mostrano i valori nuovi");
         panel.showNothing(QStringLiteral("niente"));
-        check(!panel.showingTransform(), "senza pezzo scelto torna il messaggio");
+        check(!TestAccess::showingTransform(panel), "senza pezzo scelto torna il messaggio");
 
         // La pagina delle scritte: l'editor sta nel pannello e si alterna con le altre pagine.
         TextEditorPanel textPage;
         panel.setTextPage(&textPage);
-        check(!panel.showingText(), "la pagina delle scritte non si vede finché non serve");
+        check(!TestAccess::showingText(panel), "la pagina delle scritte non si vede finché non serve");
         core::TextClip clip;
         clip.id = 1;
         clip.text = "Ciao";
@@ -196,13 +197,13 @@ int runTransformTest(const QStringList&, qsizetype)
         textPage.onEdited = [&](const core::TextClip&) { ++textEdits; };
         textPage.setClip(&clip, {});
         panel.showText();
-        check(panel.showingText() && !panel.showingTransform() && textPage.isVisibleTo(&panel),
+        check(TestAccess::showingText(panel) && !TestAccess::showingTransform(panel) && textPage.isVisibleTo(&panel),
               "con una scritta scelta il pannello mostra il suo editor");
         if (auto* edit = textPage.findChild<QPlainTextEdit*>("testo"))
             edit->setPlainText(QStringLiteral("Altro"));
         check(textEdits > 0, "scrivere nell'editor nel pannello arriva a chi ascolta");
         panel.showTransform(other, 1);
-        check(panel.showingTransform() && !panel.showingText(), "con un pezzo scelto torna la pagina delle trasformazioni");
+        check(TestAccess::showingTransform(panel) && !TestAccess::showingText(panel), "con un pezzo scelto torna la pagina delle trasformazioni");
 
         // La pagina delle transizioni: i controlli mostrano i valori e ogni modifica porta tutti i valori a chi ascolta.
         core::TransitionClip transition;
@@ -224,7 +225,7 @@ int runTransformTest(const QStringList&, qsizetype)
         panel.showTransitionClip(transition, 0.1, 3.0);
         auto* durationBox = child<QDoubleSpinBox>(panel, "transizioneDurata");
         auto* audioBox = child<QCheckBox>(panel, "transizioneAudio");
-        check(panel.showingTransitionClip() && !panel.showingTransform() && transitionEdits == 0,
+        check(TestAccess::showingTransitionClip(panel) && !TestAccess::showingTransform(panel) && transitionEdits == 0,
               "scegliendo una transizione il pannello mostra la sua pagina (senza contare come modifica)");
         check(std::abs(durationBox->value() - 1.5) < 1e-9 && !audioBox->isChecked() && durationBox->maximum() == 3.0,
               "la pagina mostra durata, audio e limite della transizione");
@@ -235,7 +236,7 @@ int runTransformTest(const QStringList&, qsizetype)
         check(transitionEdits == 2 && transitionField == "audio" && lastAudio && std::abs(lastDuration - 2.25) < 1e-9,
               "la dissolvenza incrociata dell'audio arriva a chi ascolta");
         panel.showTransform(other, 1);
-        check(panel.showingTransform() && !panel.showingTransitionClip(), "da una transizione si torna alle trasformazioni");
+        check(TestAccess::showingTransform(panel) && !TestAccess::showingTransitionClip(panel), "da una transizione si torna alle trasformazioni");
     }
 
     // --- Il fotogramma disegnato con la trasformazione (a pixel).
@@ -300,14 +301,14 @@ int runTransformTest(const QStringList&, qsizetype)
         MainWindow window;
         window.show();
         QCoreApplication::processEvents();
-        QDockWidget* dock = window.propertiesDock();
-        check(dock != nullptr && window.propertiesPanel() != nullptr && dock->widget() == window.propertiesPanel(),
+        QDockWidget* dock = TestAccess::propertiesDock(window);
+        check(dock != nullptr && TestAccess::propertiesPanel(window) != nullptr && dock->widget() == TestAccess::propertiesPanel(window),
               "la finestra ha il pannello Proprietà");
         check(dock != nullptr && dock->windowTitle() == QStringLiteral("Proprietà") && !dock->isFloating() && dock->isVisible(),
               "è agganciato, visibile e si chiama Proprietà");
-        check(dock != nullptr && dock->geometry().left() >= window.programDock()->geometry().right() - 2,
+        check(dock != nullptr && dock->geometry().left() >= TestAccess::programDock(window)->geometry().right() - 2,
               "sta all'estremo destro, dopo il Montaggio");
-        check(window.propertiesPanel() != nullptr && !window.propertiesPanel()->showingTransform(),
+        check(TestAccess::propertiesPanel(window) != nullptr && !TestAccess::showingTransform(*TestAccess::propertiesPanel(window)),
               "senza pezzi scelti non mostra le trasformazioni");
     }
 

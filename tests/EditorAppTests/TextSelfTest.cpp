@@ -1,5 +1,6 @@
 #include "EditorApp/QtTextRenderer.h"
 #include "SelfTests.h"
+#include "EditorApp/TestAccess.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/TextOverlay.h"
 #include "EditorCore/Animation.h"
@@ -260,9 +261,9 @@ int runTextTest(const QStringList&, qsizetype)
         titolo.style.bold = true;
         titolo.style.centerY = 0.2;
         TextEditorPanel dialog;
-        check(!dialog.hasClip(), "senza una scritta il pannello è spento");
+        check(!TestAccess::hasClip(dialog), "senza una scritta il pannello è spento");
         dialog.setClip(&start, {titolo});
-        check(dialog.hasClip(), "con una scritta il pannello si accende");
+        check(TestAccess::hasClip(dialog), "con una scritta il pannello si accende");
         int edits = 0;
         core::TextClip lastEdit;
         dialog.onEdited = [&](const core::TextClip& c) {
@@ -333,7 +334,7 @@ int runTextTest(const QStringList&, qsizetype)
             dialog.setClip(&changed, dialog.styles());
             check(edits == before && box->textCursor().position() == 2, "ricaricare la stessa scritta non tocca il cursore del testo");
             dialog.setClip(nullptr, {});
-            check(!dialog.hasClip(), "senza scritta il pannello si spegne");
+            check(!TestAccess::hasClip(dialog), "senza scritta il pannello si spegne");
         }
     }
 
@@ -358,7 +359,7 @@ int runTextTest(const QStringList&, qsizetype)
         overlay.paint(p, target, 1.0, {low, high}, 0.0);
         overlay.paint(p, target, 1.0, {low, high}, 0.0);
         p.end();
-        check(overlay.renderCount() == 2, "se le scritte e la misura non cambiano non si ridisegnano da capo (una volta per scritta)");
+        check(TestAccess::renderCount(overlay) == 2, "se le scritte e la misura non cambiano non si ridisegnano da capo (una volta per scritta)");
         // Dove la scritta bassa da sola è rossa e le due insieme sono verdi: la più alta copre.
         QImage lowOnly(400, 300, QImage::Format_ARGB32_Premultiplied);
         lowOnly.fill(QColor(20, 20, 20));
@@ -388,7 +389,7 @@ int runTextTest(const QStringList&, qsizetype)
         changed.text = "YYYY";
         overlay.paint(again, target, 1.0, {changed}, 0.0);
         again.end();
-        check(overlay.renderCount() == 3, "se il testo cambia si ridisegna, e solo quella scritta");
+        check(TestAccess::renderCount(overlay) == 3, "se il testo cambia si ridisegna, e solo quella scritta");
         // Dissolvenze: a metà dissolvenza la scritta è a metà opacità, senza ridisegnarla.
         core::TextClip fading = high;
         fading.position = 0.0;
@@ -425,7 +426,7 @@ int runTextTest(const QStringList&, qsizetype)
             }
         }
         check(brightestFull > 240 && brightestHalf > 100 && brightestHalf < 160, "a metà dissolvenza la scritta è a metà luminosità");
-        check(fadeOverlay.renderCount() == 1, "la dissolvenza non fa ridisegnare la scritta");
+        check(TestAccess::renderCount(fadeOverlay) == 1, "la dissolvenza non fa ridisegnare la scritta");
         // Trasformazione e animazione della scritta (S2): spostamento, rotazione, opacità animata; nessun ridisegno del testo.
         {
             const QSize project(400, 300);
@@ -499,7 +500,7 @@ int runTextTest(const QStringList&, qsizetype)
             boundsOf(fading2, 3.0, animated, &atEnd);
             check(atStart < 20 && atMiddle > 100 && atMiddle < 160 && atEnd > 240,
                   "l'opacità animata cambia la luminosità lungo la scritta (tempi dall'inizio)");
-            check(animated.renderCount() == 1, "l'animazione non fa ridisegnare il testo");
+            check(TestAccess::renderCount(animated) == 1, "l'animazione non fa ridisegnare il testo");
         }
         // Il riquadro (per afferrare la scritta col mouse): contiene il centro e sta dentro il fotogramma.
         const QRectF box = overlay.bounds(low, 400, 300);
