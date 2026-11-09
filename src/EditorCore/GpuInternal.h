@@ -60,7 +60,9 @@ struct GpuFrameConverter::Impl
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> view;
     };
     bool layerReady = false;
-    Microsoft::WRL::ComPtr<ID3D11PixelShader> psLayer, psCopy, psText;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> psLayer, psCopy, psText, psTransition;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> scratch;  // dove si scrive la transizione prima di rimetterla nel fotogramma
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> scratchTarget;
     Microsoft::WRL::ComPtr<ID3D11BlendState> textBlend;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> borderSampler;  // fuori dalla scritta è trasparente
     Microsoft::WRL::ComPtr<ID3D11Buffer> layerParams;

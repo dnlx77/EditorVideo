@@ -2,6 +2,7 @@
 #include "EditorCore/GpuColor.h"
 #include "EditorCore/GpuDevice.h"
 #include "EditorCore/TextImage.h"
+#include "EditorCore/Transitions.h"
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -397,3 +398,63 @@ TEST_P(GpuTextCompare, MatchesTheCpuBlend)
 }
 
 INSTANTIATE_TEST_SUITE_P(Cases, GpuTextCompare, ::testing::Range(0, 5));
+
+// --- Transizioni: stesso risultato di Transition::blend (CPU) ---
+
+TEST(GpuTransition, EveryTransitionInTheRegistryHasAShader)
+{
+    // Aggiungere una transizione alla CPU senza il suo shader fa fallire questa prova (e l'esportazione ripiegherebbe sulla CPU).
+    for (const Transition* transition : transitionRegistry())
+        EXPECT_TRUE(GpuFrameConverter::supportsTransition(transition->id())) << transition->id();
+    EXPECT_FALSE(GpuFrameConverter::supportsTransition("inesistente"));
+}
+
+TEST(GpuTransition, MatchesTheCpuTransitions)
+{
+    const auto device = makeDevice();
+    if (!device)
+        GTEST_SKIP() << "nessun dispositivo D3D11 in questo ambiente";
+    constexpr int w = 96;
+    constexpr int h = 54;
+    auto from = GpuFrameConverter::create(*device, w, h);
+    auto to = GpuFrameConverter::create(*device, w, h);
+    ASSERT_NE(from, nullptr);
+    ASSERT_NE(to, nullptr);
+    const std::vector<std::uint8_t> a = patternBgra(w, h, 0);
+    const std::vector<std::uint8_t> b = patternBgra(w, h, 1);
+    // La CPU lavora in RGBA: stessi byte con rosso e blu scambiati.
+    std::vector<std::uint8_t> aRgba = a;
+    std::vector<std::uint8_t> bRgba = b;
+    for (std::size_t i = 0; i < aRgba.size(); i += 4) {
+        std::swap(aRgba[i], aRgba[i + 2]);
+        std::swap(bRgba[i], bRgba[i + 2]);
+    }
+
+    for (const Transition* transition : transitionRegistry()) {
+        const std::vector<TransitionDirection> directions =
+            transition->usesDirection()
+                ? std::vector<TransitionDirection>{TransitionDirection::Left, TransitionDirection::Right, TransitionDirection::Up, TransitionDirection::Down}
+                : std::vector<TransitionDirection>{TransitionDirection::Left};
+        for (const TransitionDirection direction : directions)
+            for (const double progress : {0.0, 0.2, 0.5, 0.73, 1.0}) {
+                TransitionParams params;
+                params.direction = direction;
+                ASSERT_TRUE(from->setCanvasBgra({a.data(), w * 4, w, h}));
+                ASSERT_TRUE(to->setCanvasBgra({b.data(), w * 4, w, h}));
+                ASSERT_TRUE(from->blendTransition(*to, transition->id(), progress, params)) << transition->id();
+                std::vector<std::uint16_t> half;
+                ASSERT_TRUE(from->readRgbaHalf(half));
+
+                std::vector<std::uint8_t> cpu(static_cast<std::size_t>(w) * h * 4);
+                transition->blend({aRgba.data(), w, h, w * 4}, {bRgba.data(), w, h, w * 4}, progress, params, {cpu.data(), w * 4});
+                double total = 0.0;
+                for (int i = 0; i < w * h; ++i)
+                    for (int ch = 0; ch < 3; ++ch) {
+                        const int gpu = static_cast<int>(std::lround(std::clamp(halfToFloat(half[static_cast<std::size_t>(i) * 4 + ch]), 0.0f, 1.0f) * 255.0f));
+                        total += std::abs(gpu - cpu[static_cast<std::size_t>(i) * 4 + ch]);
+                    }
+                const double mean = total / (static_cast<double>(w) * h * 3);
+                EXPECT_LT(mean, 0.6) << transition->id() << " direzione " << static_cast<int>(direction) << " a " << progress;
+            }
+    }
+}

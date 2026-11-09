@@ -25,6 +25,7 @@ cbuffer Layer : register(b1)
     float4 misc;    // opacità, livello di mip, larghezza e altezza del file
 };
 Texture2D<float4> layerTex : register(t3);
+Texture2D<float4> fromTex : register(t2);  // transizioni: il fotogramma che finisce (layerTex è quello che inizia)
 SamplerState linearSampler : register(s0);
 SamplerState borderSampler : register(s1);
 
@@ -51,6 +52,31 @@ float4 psText(VSOut i) : SV_Target
     return layerTex.SampleLevel(borderSampler, float2(u / misc.z, v / misc.w), 0) * misc.x;
 }
 
+// Transizioni. bounds = (peso di «da», peso di «a», spostamento in pixel, direzione 0 sinistra 1 destra 2 su 3 giù), misc.x = effetto
+// (0 dissolvenza incrociata, 1 dissolvenza al nero: solo i pesi; 2 scorrimento), misc.zw = misura.
+float4 psTransition(VSOut i) : SV_Target
+{
+    int2 xy = int2(i.pos.xy);
+    if (misc.x < 1.5) {
+        float3 a = fromTex.Load(int3(xy, 0)).rgb;
+        float3 b = layerTex.Load(int3(xy, 0)).rgb;
+        return float4(min(a * bounds.x + b * bounds.y, 1.0), 1.0);
+    }
+    int dir = (int)(bounds.w + 0.5);
+    bool horizontal = dir < 2;
+    bool forward = dir == 0 || dir == 2;
+    int size = (int)(horizontal ? misc.z : misc.w);
+    int shift = (int)(bounds.z + 0.5);
+    int c = horizontal ? xy.x : xy.y;
+    int pos = forward ? c : size - 1 - c;
+    bool fromSide = pos < size - shift;
+    int sx = fromSide ? pos + shift : pos - (size - shift);
+    int src = forward ? sx : size - 1 - sx;
+    int2 at = horizontal ? int2(src, xy.y) : int2(xy.x, src);
+    float3 color = fromSide ? fromTex.Load(int3(at, 0)).rgb : layerTex.Load(int3(at, 0)).rgb;
+    return float4(color, 1.0);
+}
+
 float4 psCopy(VSOut i) : SV_Target
 {
     return float4(layerTex.Load(int3(int2(i.pos.xy), 0)).rgb, 1.0);
@@ -66,11 +92,16 @@ bool GpuFrameConverter::Impl::ensureLayerResources()
     const ComPtr<ID3DBlob> layerCode = compileShader(kLayerShaders, "psLayer", "ps_5_0");
     const ComPtr<ID3DBlob> copyCode = compileShader(kLayerShaders, "psCopy", "ps_5_0");
     const ComPtr<ID3DBlob> textCode = compileShader(kLayerShaders, "psText", "ps_5_0");
-    if (!layerCode || !copyCode || !textCode)
+    const ComPtr<ID3DBlob> transitionCode = compileShader(kLayerShaders, "psTransition", "ps_5_0");
+    if (!layerCode || !copyCode || !textCode || !transitionCode)
         return false;
     if (FAILED(device->CreatePixelShader(layerCode->GetBufferPointer(), layerCode->GetBufferSize(), nullptr, &psLayer))
         || FAILED(device->CreatePixelShader(copyCode->GetBufferPointer(), copyCode->GetBufferSize(), nullptr, &psCopy))
-        || FAILED(device->CreatePixelShader(textCode->GetBufferPointer(), textCode->GetBufferSize(), nullptr, &psText)))
+        || FAILED(device->CreatePixelShader(textCode->GetBufferPointer(), textCode->GetBufferSize(), nullptr, &psText))
+        || FAILED(device->CreatePixelShader(transitionCode->GetBufferPointer(), transitionCode->GetBufferSize(), nullptr, &psTransition)))
+        return false;
+    scratch = makeTexture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
+    if (!scratch || FAILED(device->CreateRenderTargetView(scratch.Get(), nullptr, &scratchTarget)))
         return false;
     D3D11_BUFFER_DESC bufferDesc{};
     bufferDesc.ByteWidth = 5 * 16;
@@ -184,6 +215,50 @@ bool GpuFrameConverter::drawLayer(const BgraImage& source, const Transform& tran
     return true;
 }
 
+bool GpuFrameConverter::supportsTransition(const std::string& transitionId)
+{
+    return transitionId == "dissolvenza" || transitionId == "dissolvenza-nero" || transitionId == "scorrimento";
+}
+
+bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string& transitionId, double progress, const TransitionParams& params)
+{
+    Impl& d = *impl_;
+    Impl& other = *to.impl_;
+    if (other.width != d.width || other.height != d.height || other.device != d.device || !d.ensureLayerResources())
+        return false;
+    const double p = std::clamp(progress, 0.0, 1.0);
+    float weightFrom = 0.0f;
+    float weightTo = 0.0f;
+    float shift = 0.0f;
+    float effect = 0.0f;
+    if (transitionId == "dissolvenza") {
+        weightFrom = static_cast<float>(1.0 - p);
+        weightTo = static_cast<float>(p);
+    } else if (transitionId == "dissolvenza-nero") {
+        effect = 1.0f;
+        weightFrom = p < 0.5 ? static_cast<float>(1.0 - 2.0 * p) : 0.0f;
+        weightTo = p < 0.5 ? 0.0f : static_cast<float>(2.0 * p - 1.0);
+    } else if (transitionId == "scorrimento") {
+        effect = 2.0f;
+        const bool horizontal = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Right;
+        const int size = horizontal ? d.width : d.height;
+        shift = static_cast<float>(std::clamp(static_cast<int>(std::lround(p * size)), 0, size));
+    } else {
+        return false;
+    }
+    const float values[20] = {
+        0, 0, 0, 0, 0, 0, 0, 0,
+        weightFrom, weightTo, shift, static_cast<float>(static_cast<int>(params.direction)),
+        0, 0, 0, 0,
+        effect, 0.0f, static_cast<float>(d.width), static_cast<float>(d.height),
+    };
+    d.context->UpdateSubresource(d.layerParams.Get(), 0, nullptr, values, 0, 0);
+    ID3D11ShaderResourceView* views[4] = {nullptr, nullptr, d.rgbView.Get(), other.rgbView.Get()};
+    d.pass(d.scratchTarget.Get(), 0, 0, d.width, d.height, d.psTransition.Get(), views, 4);
+    d.context->CopyResource(d.rgbTex.Get(), d.scratch.Get());
+    return true;
+}
+
 std::shared_ptr<GpuTextImage> GpuFrameConverter::createText(const TextImage& image)
 {
     Impl& d = *impl_;
@@ -259,6 +334,8 @@ bool GpuFrameConverter::clearCanvas(float, float, float) { return false; }
 bool GpuFrameConverter::setCanvasBgra(const BgraImage&) { return false; }
 bool GpuFrameConverter::drawLayer(const BgraImage&, const Transform&) { return false; }
 std::shared_ptr<GpuTextImage> GpuFrameConverter::createText(const TextImage&) { return nullptr; }
+bool GpuFrameConverter::supportsTransition(const std::string&) { return false; }
+bool GpuFrameConverter::blendTransition(GpuFrameConverter&, const std::string&, double, const TransitionParams&) { return false; }
 bool GpuFrameConverter::drawText(const GpuTextImage&, const Transform&, double, double, double) { return false; }
 
 }  // namespace editor::core
