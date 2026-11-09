@@ -3,6 +3,7 @@
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/MixerPanel.h"
 #include "EditorCore/AudioMixer.h"
+#include "EditorCore/GpuDevice.h"
 #include "EditorApp/PropertiesPanel.h"
 #include "EditorCore/StillImage.h"
 #include "EditorApp/TextEditorPanel.h"
@@ -2761,11 +2762,15 @@ void MainWindow::showAbout()
     QApplication::restoreOverrideCursor();
     if (encoders.isEmpty())
         encoders = QStringLiteral("<br>• nessuno (la ricodifica non sarà disponibile)");
+    std::string gpuError;
+    const std::unique_ptr<core::GpuDevice> gpu = core::GpuDevice::create(false, &gpuError);
+    const QString gpuLine = gpu ? QStringLiteral("Composizione su GPU: %1 (Direct3D 11)").arg(qs(gpu->info().adapterName).toHtmlEscaped())
+                                : QStringLiteral("Composizione su GPU: non disponibile, si usa la CPU (%1)").arg(qs(gpuError).toHtmlEscaped());
     QMessageBox::about(this, QStringLiteral("Informazioni su EditorVideo"),
                        QStringLiteral("<b>EditorVideo</b><br>Taglio e unione di video, con ricodifica solo dove serve.<br><br>")
                            + versionSummary().toHtmlEscaped()
                            + QStringLiteral("<br><br>Encoder video funzionanti su questo PC:") + encoders
-                           + QStringLiteral("<br>Audio: AAC (FFmpeg)"));
+                           + QStringLiteral("<br>Audio: AAC (FFmpeg)<br>") + gpuLine);
 }
 
 QString versionSummary()
