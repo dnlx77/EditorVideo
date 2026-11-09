@@ -4,8 +4,6 @@
 
 #include "EditorCore/GpuInternal.h"
 
-#include <d3dcompiler.h>
-
 #include <algorithm>
 #include <cstring>
 
@@ -91,147 +89,140 @@ float2 psRgbToUV(VSOut i) : SV_Target
 
 ComPtr<ID3DBlob> compile(const char* entry, const char* target)
 {
-    ComPtr<ID3DBlob> code;
-    ComPtr<ID3DBlob> errors;
-    const HRESULT result =
-        D3DCompile(kShaders, std::strlen(kShaders), "compositor.hlsl", nullptr, nullptr, entry, target, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
-    return SUCCEEDED(result) ? code : nullptr;
+    return compileShader(kShaders, entry, target);
 }
 
 }  // namespace
 
-struct GpuFrameConverter::Impl
+ComPtr<ID3DBlob> compileShader(const char* source, const char* entry, const char* target)
 {
-    GpuDevice* gpu = nullptr;
-    ID3D11Device* device = nullptr;
-    ID3D11DeviceContext* context = nullptr;
-    int width = 0;
-    int height = 0;
+    ComPtr<ID3DBlob> code;
+    ComPtr<ID3DBlob> errors;
+    const HRESULT result =
+        D3DCompile(source, std::strlen(source), "compositor.hlsl", nullptr, nullptr, entry, target, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+    if (FAILED(result) && errors)
+        OutputDebugStringA(static_cast<const char*>(errors->GetBufferPointer()));
+    return SUCCEEDED(result) ? code : nullptr;
+}
 
-    ComPtr<ID3D11VertexShader> vs;
-    ComPtr<ID3D11PixelShader> psToRgb, psToY, psToUV;
-    ComPtr<ID3D11Buffer> params;
-    ComPtr<ID3D11SamplerState> sampler;
-    ComPtr<ID3D11RasterizerState> raster;
+ComPtr<ID3D11Texture2D> GpuFrameConverter::Impl::makeTexture(int w, int h, DXGI_FORMAT format, UINT bind, D3D11_USAGE usage, UINT cpu,
+                                                               UINT mips, UINT misc)
+{
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = static_cast<UINT>(w);
+    desc.Height = static_cast<UINT>(h);
+    desc.MipLevels = mips;
+    desc.ArraySize = 1;
+    desc.Format = format;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = usage;
+    desc.BindFlags = bind;
+    desc.CPUAccessFlags = cpu;
+    desc.MiscFlags = misc;
+    ComPtr<ID3D11Texture2D> texture;
+    return SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &texture)) ? texture : nullptr;
+}
 
-    ComPtr<ID3D11Texture2D> yTex, uvTex, rgbTex, yOut, uvOut;
-    ComPtr<ID3D11ShaderResourceView> yView, uvView, rgbView;
-    ComPtr<ID3D11RenderTargetView> rgbTarget, yTarget, uvTarget;
-    ComPtr<ID3D11Texture2D> yStage, uvStage, rgbStage;
+bool GpuFrameConverter::Impl::init()
+{
+    const ComPtr<ID3DBlob> vsCode = compile("vs", "vs_5_0");
+    const ComPtr<ID3DBlob> toRgbCode = compile("psNv12ToRgb", "ps_5_0");
+    const ComPtr<ID3DBlob> toYCode = compile("psRgbToY", "ps_5_0");
+    const ComPtr<ID3DBlob> toUVCode = compile("psRgbToUV", "ps_5_0");
+    if (!vsCode || !toRgbCode || !toYCode || !toUVCode)
+        return false;
+    if (FAILED(device->CreateVertexShader(vsCode->GetBufferPointer(), vsCode->GetBufferSize(), nullptr, &vs))
+        || FAILED(device->CreatePixelShader(toRgbCode->GetBufferPointer(), toRgbCode->GetBufferSize(), nullptr, &psToRgb))
+        || FAILED(device->CreatePixelShader(toYCode->GetBufferPointer(), toYCode->GetBufferSize(), nullptr, &psToY))
+        || FAILED(device->CreatePixelShader(toUVCode->GetBufferPointer(), toUVCode->GetBufferSize(), nullptr, &psToUV)))
+        return false;
 
-    ComPtr<ID3D11Texture2D> makeTexture(int w, int h, DXGI_FORMAT format, UINT bind, D3D11_USAGE usage = D3D11_USAGE_DEFAULT, UINT cpu = 0)
-    {
-        D3D11_TEXTURE2D_DESC desc{};
-        desc.Width = static_cast<UINT>(w);
-        desc.Height = static_cast<UINT>(h);
-        desc.MipLevels = 1;
-        desc.ArraySize = 1;
-        desc.Format = format;
-        desc.SampleDesc.Count = 1;
-        desc.Usage = usage;
-        desc.BindFlags = bind;
-        desc.CPUAccessFlags = cpu;
-        ComPtr<ID3D11Texture2D> texture;
-        return SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &texture)) ? texture : nullptr;
-    }
+    D3D11_BUFFER_DESC bufferDesc{};
+    bufferDesc.ByteWidth = 16;
+    bufferDesc.Usage = D3D11_USAGE_DEFAULT;
+    bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    if (FAILED(device->CreateBuffer(&bufferDesc, nullptr, &params)))
+        return false;
+    D3D11_SAMPLER_DESC samplerDesc{};
+    samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(device->CreateSamplerState(&samplerDesc, &sampler)))
+        return false;
+    D3D11_RASTERIZER_DESC rasterDesc{};
+    rasterDesc.FillMode = D3D11_FILL_SOLID;
+    rasterDesc.CullMode = D3D11_CULL_NONE;
+    rasterDesc.DepthClipEnable = TRUE;
+    if (FAILED(device->CreateRasterizerState(&rasterDesc, &raster)))
+        return false;
 
-    bool init()
-    {
-        const ComPtr<ID3DBlob> vsCode = compile("vs", "vs_5_0");
-        const ComPtr<ID3DBlob> toRgbCode = compile("psNv12ToRgb", "ps_5_0");
-        const ComPtr<ID3DBlob> toYCode = compile("psRgbToY", "ps_5_0");
-        const ComPtr<ID3DBlob> toUVCode = compile("psRgbToUV", "ps_5_0");
-        if (!vsCode || !toRgbCode || !toYCode || !toUVCode)
-            return false;
-        if (FAILED(device->CreateVertexShader(vsCode->GetBufferPointer(), vsCode->GetBufferSize(), nullptr, &vs))
-            || FAILED(device->CreatePixelShader(toRgbCode->GetBufferPointer(), toRgbCode->GetBufferSize(), nullptr, &psToRgb))
-            || FAILED(device->CreatePixelShader(toYCode->GetBufferPointer(), toYCode->GetBufferSize(), nullptr, &psToY))
-            || FAILED(device->CreatePixelShader(toUVCode->GetBufferPointer(), toUVCode->GetBufferSize(), nullptr, &psToUV)))
-            return false;
+    const int cw = width / 2;
+    const int ch = height / 2;
+    yTex = makeTexture(width, height, DXGI_FORMAT_R8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+    uvTex = makeTexture(cw, ch, DXGI_FORMAT_R8G8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+    rgbTex = makeTexture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
+    yOut = makeTexture(width, height, DXGI_FORMAT_R8_UNORM, D3D11_BIND_RENDER_TARGET);
+    uvOut = makeTexture(cw, ch, DXGI_FORMAT_R8G8_UNORM, D3D11_BIND_RENDER_TARGET);
+    yStage = makeTexture(width, height, DXGI_FORMAT_R8_UNORM, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ);
+    uvStage = makeTexture(cw, ch, DXGI_FORMAT_R8G8_UNORM, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ);
+    rgbStage = makeTexture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ);
+    if (!yTex || !uvTex || !rgbTex || !yOut || !uvOut || !yStage || !uvStage || !rgbStage)
+        return false;
+    return SUCCEEDED(device->CreateShaderResourceView(yTex.Get(), nullptr, &yView))
+        && SUCCEEDED(device->CreateShaderResourceView(uvTex.Get(), nullptr, &uvView))
+        && SUCCEEDED(device->CreateShaderResourceView(rgbTex.Get(), nullptr, &rgbView))
+        && SUCCEEDED(device->CreateRenderTargetView(rgbTex.Get(), nullptr, &rgbTarget))
+        && SUCCEEDED(device->CreateRenderTargetView(yOut.Get(), nullptr, &yTarget))
+        && SUCCEEDED(device->CreateRenderTargetView(uvOut.Get(), nullptr, &uvTarget));
+}
 
-        D3D11_BUFFER_DESC bufferDesc{};
-        bufferDesc.ByteWidth = 16;
-        bufferDesc.Usage = D3D11_USAGE_DEFAULT;
-        bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-        if (FAILED(device->CreateBuffer(&bufferDesc, nullptr, &params)))
-            return false;
-        D3D11_SAMPLER_DESC samplerDesc{};
-        samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
-        samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-        samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-        if (FAILED(device->CreateSamplerState(&samplerDesc, &sampler)))
-            return false;
-        D3D11_RASTERIZER_DESC rasterDesc{};
-        rasterDesc.FillMode = D3D11_FILL_SOLID;
-        rasterDesc.CullMode = D3D11_CULL_NONE;
-        rasterDesc.DepthClipEnable = TRUE;
-        if (FAILED(device->CreateRasterizerState(&rasterDesc, &raster)))
-            return false;
 
-        const int cw = width / 2;
-        const int ch = height / 2;
-        yTex = makeTexture(width, height, DXGI_FORMAT_R8_UNORM, D3D11_BIND_SHADER_RESOURCE);
-        uvTex = makeTexture(cw, ch, DXGI_FORMAT_R8G8_UNORM, D3D11_BIND_SHADER_RESOURCE);
-        rgbTex = makeTexture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
-        yOut = makeTexture(width, height, DXGI_FORMAT_R8_UNORM, D3D11_BIND_RENDER_TARGET);
-        uvOut = makeTexture(cw, ch, DXGI_FORMAT_R8G8_UNORM, D3D11_BIND_RENDER_TARGET);
-        yStage = makeTexture(width, height, DXGI_FORMAT_R8_UNORM, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ);
-        uvStage = makeTexture(cw, ch, DXGI_FORMAT_R8G8_UNORM, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ);
-        rgbStage = makeTexture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ);
-        if (!yTex || !uvTex || !rgbTex || !yOut || !uvOut || !yStage || !uvStage || !rgbStage)
-            return false;
-        return SUCCEEDED(device->CreateShaderResourceView(yTex.Get(), nullptr, &yView))
-            && SUCCEEDED(device->CreateShaderResourceView(uvTex.Get(), nullptr, &uvView))
-            && SUCCEEDED(device->CreateShaderResourceView(rgbTex.Get(), nullptr, &rgbView))
-            && SUCCEEDED(device->CreateRenderTargetView(rgbTex.Get(), nullptr, &rgbTarget))
-            && SUCCEEDED(device->CreateRenderTargetView(yOut.Get(), nullptr, &yTarget))
-            && SUCCEEDED(device->CreateRenderTargetView(uvOut.Get(), nullptr, &uvTarget));
-    }
+void GpuFrameConverter::Impl::setParams(const GpuColorSpace& colors)
+{
+    const float values[4] = {static_cast<float>(colors.kr), static_cast<float>(colors.kb), colors.fullRange ? 1.0f : 0.0f, 0.0f};
+    context->UpdateSubresource(params.Get(), 0, nullptr, values, 0, 0);
+}
 
-    void setParams(const GpuColorSpace& colors)
-    {
-        const float values[4] = {static_cast<float>(colors.kr), static_cast<float>(colors.kb), colors.fullRange ? 1.0f : 0.0f, 0.0f};
-        context->UpdateSubresource(params.Get(), 0, nullptr, values, 0, 0);
-    }
 
-    // Un passaggio a tutto schermo su `target` (di `w` x `h`) con `shader`; `views` sono i t0.. dello shader.
-    void pass(ID3D11RenderTargetView* target, int w, int h, ID3D11PixelShader* shader, ID3D11ShaderResourceView* const* views, UINT viewCount)
-    {
-        D3D11_VIEWPORT viewport{0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h), 0.0f, 1.0f};
-        context->OMSetRenderTargets(1, &target, nullptr);
-        context->RSSetViewports(1, &viewport);
-        context->RSSetState(raster.Get());
-        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        context->IASetInputLayout(nullptr);
-        context->VSSetShader(vs.Get(), nullptr, 0);
-        context->PSSetShader(shader, nullptr, 0);
-        ID3D11Buffer* constants = params.Get();
-        context->PSSetConstantBuffers(0, 1, &constants);
-        ID3D11SamplerState* samplers = sampler.Get();
-        context->PSSetSamplers(0, 1, &samplers);
-        context->PSSetShaderResources(0, viewCount, views);
-        context->Draw(3, 0);
-        // Si sciolgono i legami: la stessa texture può essere subito dopo scritta e letta.
-        ID3D11ShaderResourceView* none[3] = {nullptr, nullptr, nullptr};
-        context->PSSetShaderResources(0, 3, none);
-        ID3D11RenderTargetView* noTarget = nullptr;
-        context->OMSetRenderTargets(1, &noTarget, nullptr);
-    }
+void GpuFrameConverter::Impl::pass(ID3D11RenderTargetView* target, int vx, int vy, int vw, int vh, ID3D11PixelShader* shader,
+                                   ID3D11ShaderResourceView* const* views, UINT viewCount, ID3D11BlendState* blend)
+{
+    D3D11_VIEWPORT viewport{static_cast<float>(vx), static_cast<float>(vy), static_cast<float>(vw), static_cast<float>(vh), 0.0f, 1.0f};
+    context->OMSetRenderTargets(1, &target, nullptr);
+    context->OMSetBlendState(blend, nullptr, 0xffffffff);
+    context->RSSetViewports(1, &viewport);
+    context->RSSetState(raster.Get());
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->IASetInputLayout(nullptr);
+    context->VSSetShader(vs.Get(), nullptr, 0);
+    context->PSSetShader(shader, nullptr, 0);
+    ID3D11Buffer* constants[2] = {params.Get(), layerParams.Get()};
+    context->PSSetConstantBuffers(0, 2, constants);
+    ID3D11SamplerState* samplers = sampler.Get();
+    context->PSSetSamplers(0, 1, &samplers);
+    context->PSSetShaderResources(0, viewCount, views);
+    context->Draw(3, 0);
+    // Si sciolgono i legami: la stessa texture può essere subito dopo scritta e letta.
+    ID3D11ShaderResourceView* none[4] = {nullptr, nullptr, nullptr, nullptr};
+    context->PSSetShaderResources(0, 4, none);
+    ID3D11RenderTargetView* noTarget = nullptr;
+    context->OMSetRenderTargets(1, &noTarget, nullptr);
+    context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+}
 
-    // Copia `rows` righe di `bytesPerRow` byte della texture di prova `stage` (già riempita) in `dst`.
-    bool readStage(ID3D11Texture2D* stage, std::uint8_t* dst, int dstStride, int rows, int bytesPerRow)
-    {
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        if (FAILED(context->Map(stage, 0, D3D11_MAP_READ, 0, &mapped)))
-            return false;
-        const auto* src = static_cast<const std::uint8_t*>(mapped.pData);
-        for (int y = 0; y < rows; ++y)
-            std::memcpy(dst + static_cast<std::ptrdiff_t>(y) * dstStride, src + static_cast<std::size_t>(y) * mapped.RowPitch,
-                        static_cast<std::size_t>(bytesPerRow));
-        context->Unmap(stage, 0);
-        return true;
-    }
-};
+// Copia `rows` righe di `bytesPerRow` byte della texture di prova `stage` (già riempita) in `dst`.
+bool GpuFrameConverter::Impl::readStage(ID3D11Texture2D* stage, std::uint8_t* dst, int dstStride, int rows, int bytesPerRow)
+{
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(context->Map(stage, 0, D3D11_MAP_READ, 0, &mapped)))
+        return false;
+    const auto* src = static_cast<const std::uint8_t*>(mapped.pData);
+    for (int y = 0; y < rows; ++y)
+        std::memcpy(dst + static_cast<std::ptrdiff_t>(y) * dstStride, src + static_cast<std::size_t>(y) * mapped.RowPitch,
+                    static_cast<std::size_t>(bytesPerRow));
+    context->Unmap(stage, 0);
+    return true;
+}
 
 GpuFrameConverter::GpuFrameConverter() = default;
 GpuFrameConverter::~GpuFrameConverter() = default;
@@ -266,7 +257,7 @@ bool GpuFrameConverter::uploadNv12(const AVFrame* nv12, const GpuColorSpace& col
     d.context->UpdateSubresource(d.uvTex.Get(), 0, nullptr, nv12->data[1], static_cast<UINT>(nv12->linesize[1]), 0);
     d.setParams(colors);
     ID3D11ShaderResourceView* views[2] = {d.yView.Get(), d.uvView.Get()};
-    d.pass(d.rgbTarget.Get(), d.width, d.height, d.psToRgb.Get(), views, 2);
+    d.pass(d.rgbTarget.Get(), 0, 0, d.width, d.height, d.psToRgb.Get(), views, 2);
     return true;
 }
 
@@ -279,8 +270,8 @@ bool GpuFrameConverter::downloadNv12(AVFrame* nv12, const GpuColorSpace& colors)
     d.setParams(colors);
     // Il passaggio vuole la texture RGBA al posto t2 (come nello shader): si mettono t0 e t1 vuoti.
     ID3D11ShaderResourceView* views[3] = {nullptr, nullptr, d.rgbView.Get()};
-    d.pass(d.yTarget.Get(), d.width, d.height, d.psToY.Get(), views, 3);
-    d.pass(d.uvTarget.Get(), d.width / 2, d.height / 2, d.psToUV.Get(), views, 3);
+    d.pass(d.yTarget.Get(), 0, 0, d.width, d.height, d.psToY.Get(), views, 3);
+    d.pass(d.uvTarget.Get(), 0, 0, d.width / 2, d.height / 2, d.psToUV.Get(), views, 3);
     d.context->CopyResource(d.yStage.Get(), d.yOut.Get());
     d.context->CopyResource(d.uvStage.Get(), d.uvOut.Get());
     return d.readStage(d.yStage.Get(), nv12->data[0], nv12->linesize[0], d.height, d.width)
