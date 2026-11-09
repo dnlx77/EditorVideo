@@ -2,6 +2,7 @@
 
 #include "EditorCore/Compositor.h"
 #include "EditorCore/GpuDevice.h"
+#include "EditorCore/TextImage.h"
 #include "EditorCore/Transform.h"
 
 #include <cstdint>
@@ -11,6 +12,9 @@
 struct AVFrame;
 
 namespace editor::core {
+
+// Una scritta già disegnata (TextImage) caricata nella scheda video: si crea una volta e si disegna su tutti i fotogrammi in cui compare.
+class GpuTextImage;
 
 // Come si passa da YUV a RGB: i coefficienti della luminanza (kr, kb) e se i valori vanno da 0 a 255 invece che da 16 a 235.
 struct GpuColorSpace
@@ -51,6 +55,12 @@ public:
     // compositeLayer (scala 100% = file adattato al fotogramma, ritaglio, rotazione, specchio, bordi sfumati di mezzo pixel,
     // opacità), con interpolazione bilineare della scheda e, se il pezzo si rimpicciolisce, i mipmap.
     bool drawLayer(const BgraImage& source, const Transform& transform);
+    // Carica la scritta nella scheda video (nullptr se è vuota o non si riesce). Vale per questo convertitore.
+    std::shared_ptr<GpuTextImage> createText(const TextImage& image);
+    // Sovrappone la scritta al fotogramma come blendTextOver(transformTextImage(...)): con la trasformazione `transform` (scala,
+    // rotazione, specchio, spostamento; l'opacità della trasformazione non conta) attorno al punto (`pivotX`, `pivotY`) in pixel del
+    // fotogramma, e `opacity` (0..1) per le dissolvenze. Il colore è premoltiplicato come nella scritta.
+    bool drawText(const GpuTextImage& text, const Transform& transform, double pivotX, double pivotY, double opacity);
     // Legge la texture RGBA16F così com'è: width * height * 4 mezzi float (valore half IEEE a 16 bit), R G B A per pixel.
     bool readRgbaHalf(std::vector<std::uint16_t>& out);
 
