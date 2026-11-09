@@ -311,6 +311,7 @@ bool checkThumbnails(SmokeRun& run)
 bool checkZoom(SmokeRun& run)
 {
     MainWindow* window = run.window;
+    bool ok = true;
     bool zoomOk = true;
     for (ZoomableTimeline* timeline :
          {static_cast<ZoomableTimeline*>(TestAccess::sequenceTimeline(*window)), static_cast<ZoomableTimeline*>(window->player()->timeline())}) {
@@ -338,11 +339,12 @@ bool checkZoom(SmokeRun& run)
     std::printf("Zoom delle linee del tempo: massimo, minimo e Adatta %s, miniature in attesa %d\n", zoomOk ? "OK" : "NON riusciti",
                 TestAccess::pendingThumbnails(*window));
     std::fflush(stdout);
-    return zoomOk && TestAccess::pendingThumbnails(*window) < 200;
+    ok = ok && zoomOk && TestAccess::pendingThumbnails(*window) < 200;
     QElapsedTimer thumbs;
     thumbs.start();
     while (TestAccess::pendingThumbnails(*window) > 0 && thumbs.elapsed() < 20000)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    return ok;
 }
 
 // Pannelli: la Sorgente staccata come finestra durante la riproduzione (il video deve continuare ad andare
@@ -561,6 +563,7 @@ bool checkPanels(SmokeRun& run)
 bool checkFileDrops(SmokeRun& run)
 {
     MainWindow* window = run.window;
+    bool ok = true;
     SequenceTimeline* timeline = TestAccess::sequenceTimeline(*window);
     const auto& seq = window->project().sequence();
     const QString source = QString::fromStdString(window->project().clips().front().path);
@@ -607,8 +610,9 @@ bool checkFileDrops(SmokeRun& run)
                 inserted ? "OK" : "NON riuscito", qPrintable(label.mid(1)), undone ? "annullato" : "NON annullato",
                 static_cast<int>(afterFolder - clips), folderOk && folderUndone ? "e annullati" : "NON riuscito");
     std::fflush(stdout);
-    return inserted && undone && label.contains(QStringLiteral("Aggiungi file")) && folderOk && folderUndone;
+    ok = ok && inserted && undone && label.contains(QStringLiteral("Aggiungi file")) && folderOk && folderUndone;
     folder.removeRecursively();
+    return ok;
 }
 
 // Progetto: salvato e riaperto, con gli stessi pezzi e lo stesso audio tolto (e senza modifiche
@@ -618,6 +622,7 @@ bool checkProjectSaveAndOpen(SmokeRun& run)
     MainWindow* window = run.window;
     QElapsedTimer& analysis = run.analysis;
     const core::Sequence& sequence = window->project().sequence();
+    bool ok = true;
     const QString projectFile =
         QDir::temp().filePath(QStringLiteral("EditorVideoProvaProgetto") + core::kProjectExtension);
     const std::size_t pieces = sequence.fragments().size();
@@ -630,9 +635,10 @@ bool checkProjectSaveAndOpen(SmokeRun& run)
                 static_cast<int>(again.fragments().size()));
     std::fflush(stdout);
     QFile::remove(projectFile);
-    return same;
+    ok = ok && same;
     while (!window->project().allAnalyzed() && analysis.elapsed() < 40000)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    return ok;
 }
 
 // Anteprima del montaggio: da poco prima della prima giunzione, 1 s di riproduzione deve passare al
@@ -1078,7 +1084,6 @@ bool checkTexts(SmokeRun& run)
 bool checkTransitions(SmokeRun& run)
 {
     MainWindow* window = run.window;
-    bool ok = true;
     const core::Project& proj = window->project();
     auto* line = TestAccess::sequenceTimeline(*window);
     line->resize(line->width(), std::max(line->height(), 320));
@@ -1232,7 +1237,7 @@ bool checkTransitions(SmokeRun& run)
                 widened ? "sì" : "NO", removed ? "sì" : "NO", redone && undone ? "sì" : "NO", onMonitor ? "sì" : "NO",
                 reopenedKept ? "sì" : "NO");
     std::fflush(stdout);
-    return ok && all;
+    return all;
 }
 
 // Mix e file solo audio (step 19): un file solo audio non va mai nella traccia video (né rilasciato né con A),
