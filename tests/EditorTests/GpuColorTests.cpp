@@ -6,6 +6,10 @@
 #include "EditorCore/TextImage.h"
 #include "EditorCore/Transitions.h"
 
+#ifdef _WIN32
+#include <d3d11.h>  // fuori da extern "C" (ha overload C++); poi hwcontext_d3d11va.h lo trova già incluso
+#endif
+
 extern "C" {
 #include <libavutil/frame.h>
 #include <libavutil/hwcontext.h>
