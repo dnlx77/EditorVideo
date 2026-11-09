@@ -262,7 +262,12 @@ bool GpuFrameConverter::drawD3d11Frame(const AVFrame* frame, const GpuColorSpace
     const UINT slice = static_cast<UINT>(reinterpret_cast<std::intptr_t>(frame->data[1]));
     ComPtr<ID3D11Device> owner;
     decoded->GetDevice(&owner);
-    if (owner.Get() != d.device)
+    // Lo stesso oggetto può dare puntatori diversi per interfacce diverse: si confronta l'identità COM (IUnknown).
+    ComPtr<IUnknown> ownerIdentity, ourIdentity;
+    if (owner)
+        owner.As(&ownerIdentity);
+    d.device->QueryInterface(IID_PPV_ARGS(&ourIdentity));
+    if (!ownerIdentity || !ourIdentity || ownerIdentity.Get() != ourIdentity.Get())
         return no("il decoder usa un altro dispositivo D3D11");
     D3D11_TEXTURE2D_DESC desc{};
     decoded->GetDesc(&desc);
