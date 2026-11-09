@@ -40,7 +40,7 @@ struct FrameDeleter
 };
 using Frame = std::unique_ptr<AVFrame, FrameDeleter>;
 
-// Un fotogramma NV12 con sfumature lisce, dentro la gamma RGB (così l'andata e ritorno non taglia nulla).
+// Un fotogramma NV12 con sfumature lisce, dentro la gamma RGB anche con la gamma limitata (così l'andata e ritorno non taglia nulla).
 Frame smoothNv12(int w, int h)
 {
     Frame frame(av_frame_alloc());
@@ -50,7 +50,7 @@ Frame smoothNv12(int w, int h)
     EXPECT_GE(av_frame_get_buffer(frame.get(), 32), 0);
     for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x)
-            frame->data[0][y * frame->linesize[0] + x] = static_cast<std::uint8_t>(50 + (x * 120) / w + (y * 60) / h);
+            frame->data[0][y * frame->linesize[0] + x] = static_cast<std::uint8_t>(60 + (x * 80) / w + (y * 50) / h);
     for (int y = 0; y < h / 2; ++y)
         for (int x = 0; x < w / 2; ++x) {
             frame->data[1][y * frame->linesize[1] + 2 * x] = static_cast<std::uint8_t>(108 + (x * 40) / (w / 2));      // Cb
