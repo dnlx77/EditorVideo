@@ -207,7 +207,7 @@ const AVFrame* GpuCompositor::compose(const AVFrame* source, const std::uint8_t*
     } else {
         bool drawn = false;
         if (direct != nullptr) {
-            drawn = canvas_->drawD3d11Frame(direct, GpuColorSpace::bt601(fullRange), transform);
+            drawn = canvas_->drawD3d11Frame(direct, GpuColorSpace::bt601(fullRange), transform, &timing_.directNote);
             if (drawn) {
                 ++timing_.directFrames;
             } else {

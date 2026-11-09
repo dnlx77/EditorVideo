@@ -70,7 +70,7 @@ public:
     // Come drawNv12, ma `frame` è un fotogramma D3D11 (AV_PIX_FMT_D3D11, NV12) appena decodificato dalla scheda video di questo stesso
     // dispositivo (vedi GpuDevice::createFfmpegDevice): si copia da scheda a scheda, senza passare dalla memoria. false (senza aver
     // disegnato niente) se non si può: altro dispositivo, altro formato, texture non adatta.
-    bool drawD3d11Frame(const AVFrame* frame, const GpuColorSpace& colors, const Transform& transform);
+    bool drawD3d11Frame(const AVFrame* frame, const GpuColorSpace& colors, const Transform& transform, std::string* why = nullptr);
     // Carica la scritta nella scheda video (nullptr se è vuota o non si riesce). Vale per questo convertitore.
     std::shared_ptr<GpuTextImage> createText(const TextImage& image);
     // Sovrappone la scritta al fotogramma come blendTextOver(transformTextImage(...)): con la trasformazione `transform` (scala,

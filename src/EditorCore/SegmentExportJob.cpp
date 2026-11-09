@@ -1038,6 +1038,7 @@ ExportResult ExportJob::run()
             result_.compositor = blender_->name();
             result_.compositorNote = blender_->fallbackReason();
             result_.compositorDirectFrames = blender_->timing().directFrames;
+            result_.compositorDirectNote = blender_->timing().directNote;
         }
         result_.totalSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - runStarted).count();
         return result_;

@@ -7,12 +7,14 @@
 extern "C" {
 #include <libavutil/frame.h>
 #include <libavutil/hwcontext.h>
+#include <libavutil/pixdesc.h>
 #include <libavutil/pixfmt.h>
 }
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 using Microsoft::WRL::ComPtr;
 
@@ -242,39 +244,45 @@ GpuFrameConverter::Impl::Nv12Source* GpuFrameConverter::Impl::nv12Source(int w, 
     return &source;
 }
 
-bool GpuFrameConverter::drawD3d11Frame(const AVFrame* frame, const GpuColorSpace& colors, const Transform& transform)
+bool GpuFrameConverter::drawD3d11Frame(const AVFrame* frame, const GpuColorSpace& colors, const Transform& transform, std::string* why)
 {
+    const auto no = [&](const std::string& reason) {
+        if (why != nullptr)
+            *why = reason;
+        return false;
+    };
     Impl& d = *impl_;
     if (frame == nullptr || frame->format != AV_PIX_FMT_D3D11 || frame->hw_frames_ctx == nullptr || frame->data[0] == nullptr
         || frame->width <= 0 || frame->height <= 0 || (frame->width & 1) != 0 || (frame->height & 1) != 0)
-        return false;
+        return no("fotogramma non adatto (formato o misura dispari)");
     const auto* frames = reinterpret_cast<const AVHWFramesContext*>(frame->hw_frames_ctx->data);
     if (frames->sw_format != AV_PIX_FMT_NV12)
-        return false;
+        return no(std::string("formato dei fotogrammi del decoder non NV12 (") + av_get_pix_fmt_name(frames->sw_format) + ")");
     auto* decoded = reinterpret_cast<ID3D11Texture2D*>(frame->data[0]);
     const UINT slice = static_cast<UINT>(reinterpret_cast<std::intptr_t>(frame->data[1]));
     ComPtr<ID3D11Device> owner;
     decoded->GetDevice(&owner);
     if (owner.Get() != d.device)
-        return false;  // il decoder usa un'altra scheda o un altro dispositivo
+        return no("il decoder usa un altro dispositivo D3D11");
     D3D11_TEXTURE2D_DESC desc{};
     decoded->GetDesc(&desc);
     const int w = frame->width;
     const int h = frame->height;
     if (desc.Format != DXGI_FORMAT_NV12 || desc.Width < static_cast<UINT>(w) || desc.Height < static_cast<UINT>(h) || slice >= desc.ArraySize)
-        return false;
+        return no("texture del decoder inattesa (formato " + std::to_string(desc.Format) + ", " + std::to_string(desc.Width) + "x"
+                  + std::to_string(desc.Height) + ", indice " + std::to_string(slice) + "/" + std::to_string(desc.ArraySize) + ")");
     const Transform t = normalized(transform);
     if (t.opacity <= 0.0)
         return true;
     if (!d.ensureLayerResources())
-        return false;
+        return no("risorse dei livelli non create");
     Impl::Nv12Source* found = d.nv12Source(w, h);
     if (found == nullptr)
-        return false;
+        return no("texture di conversione non create");
     Impl::Nv12Source& source = *found;
     if (!source.packed) {
         if (source.packedFailed)
-            return false;
+            return no("texture NV12 non creabile su questa scheda");
         source.packedFailed = true;  // si toglie solo se tutto va bene: se questa scheda non lo sa fare non si riprova a ogni fotogramma
         D3D11_TEXTURE2D_DESC packed{};
         packed.Width = static_cast<UINT>(w);
@@ -290,14 +298,17 @@ bool GpuFrameConverter::drawD3d11Frame(const AVFrame* frame, const GpuColorSpace
         view.Texture2D.MipLevels = 1;
         ComPtr<ID3D11Texture2D> texture;
         ComPtr<ID3D11ShaderResourceView> yView, uvView;
-        if (FAILED(d.device->CreateTexture2D(&packed, nullptr, &texture)))
-            return false;
+        HRESULT result = d.device->CreateTexture2D(&packed, nullptr, &texture);
+        if (FAILED(result))
+            return no("texture NV12 non creabile (errore " + std::to_string(static_cast<unsigned long>(result)) + ")");
         view.Format = DXGI_FORMAT_R8_UNORM;
-        if (FAILED(d.device->CreateShaderResourceView(texture.Get(), &view, &yView)))
-            return false;
+        result = d.device->CreateShaderResourceView(texture.Get(), &view, &yView);
+        if (FAILED(result))
+            return no("vista del piano Y non creabile (errore " + std::to_string(static_cast<unsigned long>(result)) + ")");
         view.Format = DXGI_FORMAT_R8G8_UNORM;
-        if (FAILED(d.device->CreateShaderResourceView(texture.Get(), &view, &uvView)))
-            return false;
+        result = d.device->CreateShaderResourceView(texture.Get(), &view, &uvView);
+        if (FAILED(result))
+            return no("vista dei piani UV non creabile (errore " + std::to_string(static_cast<unsigned long>(result)) + ")");
         source.packed = texture;
         source.packedY = yView;
         source.packedUV = uvView;
@@ -465,7 +476,12 @@ bool GpuFrameConverter::clearCanvas(float, float, float) { return false; }
 bool GpuFrameConverter::setCanvasBgra(const BgraImage&) { return false; }
 bool GpuFrameConverter::drawLayer(const BgraImage&, const Transform&) { return false; }
 bool GpuFrameConverter::drawNv12(const AVFrame*, const GpuColorSpace&, const Transform&) { return false; }
-bool GpuFrameConverter::drawD3d11Frame(const AVFrame*, const GpuColorSpace&, const Transform&) { return false; }
+bool GpuFrameConverter::drawD3d11Frame(const AVFrame*, const GpuColorSpace&, const Transform&, std::string* why)
+{
+    if (why != nullptr)
+        *why = "solo Windows";
+    return false;
+}
 std::shared_ptr<GpuTextImage> GpuFrameConverter::createText(const TextImage&) { return nullptr; }
 bool GpuFrameConverter::supportsTransition(const std::string&) { return false; }
 bool GpuFrameConverter::blendTransition(GpuFrameConverter&, const std::string&, double, const TransitionParams&) { return false; }

@@ -49,6 +49,7 @@ struct CompositorTiming
     double overlays = 0.0;
     double toYuv = 0.0;
     AVPixelFormat sourceFormat = AV_PIX_FMT_NONE;  // formato dei fotogrammi dell'originale (per capire le conversioni lente)
+    std::string directNote;  // perché la lettura diretta non è partita (vuoto se va o non c'era niente da leggere)
     int directFrames = 0;  // fotogrammi della scheda video letti direttamente dalla texture del decoder (senza passare dalla memoria)
 };
 
