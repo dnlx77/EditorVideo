@@ -7,12 +7,14 @@
 extern "C" {
 #include <libavutil/frame.h>
 #include <libavutil/hwcontext.h>
+#include <libavutil/hwcontext_d3d11va.h>
 #include <libavutil/pixdesc.h>
 #include <libavutil/pixfmt.h>
 }
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <string>
 
@@ -267,8 +269,16 @@ bool GpuFrameConverter::drawD3d11Frame(const AVFrame* frame, const GpuColorSpace
     if (owner)
         owner.As(&ownerIdentity);
     d.device->QueryInterface(IID_PPV_ARGS(&ourIdentity));
-    if (!ownerIdentity || !ourIdentity || ownerIdentity.Get() != ourIdentity.Get())
-        return no("il decoder usa un altro dispositivo D3D11");
+    if (!ownerIdentity || !ourIdentity || ownerIdentity.Get() != ourIdentity.Get()) {
+        const auto* deviceContext = frames->device_ctx;
+        const auto* hardware = deviceContext != nullptr ? static_cast<const AVD3D11VADeviceContext*>(deviceContext->hwctx) : nullptr;
+        char text[256];
+        std::snprintf(text, sizeof text, "il decoder usa un altro dispositivo D3D11 (nostro %p, texture %p, contesto FFmpeg %p, tipo %d)",
+                      static_cast<void*>(ourIdentity.Get()), static_cast<void*>(ownerIdentity.Get()),
+                      hardware != nullptr ? static_cast<void*>(hardware->device) : nullptr,
+                      deviceContext != nullptr ? static_cast<int>(deviceContext->type) : -1);
+        return no(text);
+    }
     D3D11_TEXTURE2D_DESC desc{};
     decoded->GetDesc(&desc);
     const int w = frame->width;
