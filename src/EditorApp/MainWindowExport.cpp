@@ -395,6 +395,8 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
                         .arg(r.blendToYuvSeconds, 0, 'f', 1);
     if (!r.compositor.empty()) {
         recoding += QStringLiteral("\nCompositore: %1.").arg(qs(r.compositor));
+        if (r.compositorDirectFrames > 0)
+            recoding += QStringLiteral(" Fotogrammi letti direttamente dalla decodifica GPU: %1.").arg(r.compositorDirectFrames);
         if (!r.compositorNote.empty())
             recoding += QStringLiteral(" La GPU ha dato un errore (%1): il resto è stato fatto in CPU.").arg(qs(r.compositorNote));
     }

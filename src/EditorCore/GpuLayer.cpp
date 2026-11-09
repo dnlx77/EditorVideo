@@ -6,6 +6,7 @@
 
 extern "C" {
 #include <libavutil/frame.h>
+#include <libavutil/hwcontext.h>
 #include <libavutil/pixfmt.h>
 }
 
@@ -205,28 +206,107 @@ bool GpuFrameConverter::drawNv12(const AVFrame* nv12, const GpuColorSpace& color
         return false;
     const int w = nv12->width;
     const int h = nv12->height;
-    const int cw = (w + 1) / 2;
-    const int ch = (h + 1) / 2;
-    if (d.nv12Sources.size() > 4)
-        d.nv12Sources.clear();
-    Impl::Nv12Source& source = d.nv12Sources[{w, h}];
-    if (!source.y) {
-        source.y = d.makeTexture(w, h, DXGI_FORMAT_R8_UNORM, D3D11_BIND_SHADER_RESOURCE);
-        source.uv = d.makeTexture(cw, ch, DXGI_FORMAT_R8G8_UNORM, D3D11_BIND_SHADER_RESOURCE);
-        source.rgb = d.makeTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE,
-                                   D3D11_USAGE_DEFAULT, 0, 0, D3D11_RESOURCE_MISC_GENERATE_MIPS);
-        if (!source.y || !source.uv || !source.rgb || FAILED(d.device->CreateShaderResourceView(source.y.Get(), nullptr, &source.yView))
-            || FAILED(d.device->CreateShaderResourceView(source.uv.Get(), nullptr, &source.uvView))
-            || FAILED(d.device->CreateShaderResourceView(source.rgb.Get(), nullptr, &source.rgbView))
-            || FAILED(d.device->CreateRenderTargetView(source.rgb.Get(), nullptr, &source.rgbTarget))) {
-            d.nv12Sources.erase({w, h});
-            return false;
-        }
-    }
+    Impl::Nv12Source* found = d.nv12Source(w, h);
+    if (found == nullptr)
+        return false;
+    Impl::Nv12Source& source = *found;
     d.context->UpdateSubresource(source.y.Get(), 0, nullptr, nv12->data[0], static_cast<UINT>(nv12->linesize[0]), 0);
     d.context->UpdateSubresource(source.uv.Get(), 0, nullptr, nv12->data[1], static_cast<UINT>(nv12->linesize[1]), 0);
     d.setParams(colors);
     ID3D11ShaderResourceView* views[2] = {source.yView.Get(), source.uvView.Get()};
+    d.pass(source.rgbTarget.Get(), 0, 0, w, h, d.psToRgb.Get(), views, 2);
+    d.context->GenerateMips(source.rgbView.Get());
+    return d.drawLayerView(source.rgbView.Get(), w, h, t);
+}
+
+GpuFrameConverter::Impl::Nv12Source* GpuFrameConverter::Impl::nv12Source(int w, int h)
+{
+    const int cw = (w + 1) / 2;
+    const int ch = (h + 1) / 2;
+    if (nv12Sources.size() > 4)
+        nv12Sources.clear();
+    Nv12Source& source = nv12Sources[{w, h}];
+    if (!source.y) {
+        source.y = makeTexture(w, h, DXGI_FORMAT_R8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+        source.uv = makeTexture(cw, ch, DXGI_FORMAT_R8G8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+        source.rgb = makeTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE,
+                                 D3D11_USAGE_DEFAULT, 0, 0, D3D11_RESOURCE_MISC_GENERATE_MIPS);
+        if (!source.y || !source.uv || !source.rgb || FAILED(device->CreateShaderResourceView(source.y.Get(), nullptr, &source.yView))
+            || FAILED(device->CreateShaderResourceView(source.uv.Get(), nullptr, &source.uvView))
+            || FAILED(device->CreateShaderResourceView(source.rgb.Get(), nullptr, &source.rgbView))
+            || FAILED(device->CreateRenderTargetView(source.rgb.Get(), nullptr, &source.rgbTarget))) {
+            nv12Sources.erase({w, h});
+            return nullptr;
+        }
+    }
+    return &source;
+}
+
+bool GpuFrameConverter::drawD3d11Frame(const AVFrame* frame, const GpuColorSpace& colors, const Transform& transform)
+{
+    Impl& d = *impl_;
+    if (frame == nullptr || frame->format != AV_PIX_FMT_D3D11 || frame->hw_frames_ctx == nullptr || frame->data[0] == nullptr
+        || frame->width <= 0 || frame->height <= 0 || (frame->width & 1) != 0 || (frame->height & 1) != 0)
+        return false;
+    const auto* frames = reinterpret_cast<const AVHWFramesContext*>(frame->hw_frames_ctx->data);
+    if (frames->sw_format != AV_PIX_FMT_NV12)
+        return false;
+    auto* decoded = reinterpret_cast<ID3D11Texture2D*>(frame->data[0]);
+    const UINT slice = static_cast<UINT>(reinterpret_cast<std::intptr_t>(frame->data[1]));
+    ComPtr<ID3D11Device> owner;
+    decoded->GetDevice(&owner);
+    if (owner.Get() != d.device)
+        return false;  // il decoder usa un'altra scheda o un altro dispositivo
+    D3D11_TEXTURE2D_DESC desc{};
+    decoded->GetDesc(&desc);
+    const int w = frame->width;
+    const int h = frame->height;
+    if (desc.Format != DXGI_FORMAT_NV12 || desc.Width < static_cast<UINT>(w) || desc.Height < static_cast<UINT>(h) || slice >= desc.ArraySize)
+        return false;
+    const Transform t = normalized(transform);
+    if (t.opacity <= 0.0)
+        return true;
+    if (!d.ensureLayerResources())
+        return false;
+    Impl::Nv12Source* found = d.nv12Source(w, h);
+    if (found == nullptr)
+        return false;
+    Impl::Nv12Source& source = *found;
+    if (!source.packed) {
+        if (source.packedFailed)
+            return false;
+        source.packedFailed = true;  // si toglie solo se tutto va bene: se questa scheda non lo sa fare non si riprova a ogni fotogramma
+        D3D11_TEXTURE2D_DESC packed{};
+        packed.Width = static_cast<UINT>(w);
+        packed.Height = static_cast<UINT>(h);
+        packed.MipLevels = 1;
+        packed.ArraySize = 1;
+        packed.Format = DXGI_FORMAT_NV12;
+        packed.SampleDesc.Count = 1;
+        packed.Usage = D3D11_USAGE_DEFAULT;
+        packed.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SHADER_RESOURCE_VIEW_DESC view{};
+        view.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        view.Texture2D.MipLevels = 1;
+        ComPtr<ID3D11Texture2D> texture;
+        ComPtr<ID3D11ShaderResourceView> yView, uvView;
+        if (FAILED(d.device->CreateTexture2D(&packed, nullptr, &texture)))
+            return false;
+        view.Format = DXGI_FORMAT_R8_UNORM;
+        if (FAILED(d.device->CreateShaderResourceView(texture.Get(), &view, &yView)))
+            return false;
+        view.Format = DXGI_FORMAT_R8G8_UNORM;
+        if (FAILED(d.device->CreateShaderResourceView(texture.Get(), &view, &uvView)))
+            return false;
+        source.packed = texture;
+        source.packedY = yView;
+        source.packedUV = uvView;
+        source.packedFailed = false;
+    }
+    const D3D11_BOX box{0, 0, 0, static_cast<UINT>(w), static_cast<UINT>(h), 1};
+    d.context->CopySubresourceRegion(source.packed.Get(), 0, 0, 0, 0, decoded, D3D11CalcSubresource(0, slice, desc.MipLevels), &box);
+    d.setParams(colors);
+    ID3D11ShaderResourceView* views[2] = {source.packedY.Get(), source.packedUV.Get()};
     d.pass(source.rgbTarget.Get(), 0, 0, w, h, d.psToRgb.Get(), views, 2);
     d.context->GenerateMips(source.rgbView.Get());
     return d.drawLayerView(source.rgbView.Get(), w, h, t);
@@ -385,6 +465,7 @@ bool GpuFrameConverter::clearCanvas(float, float, float) { return false; }
 bool GpuFrameConverter::setCanvasBgra(const BgraImage&) { return false; }
 bool GpuFrameConverter::drawLayer(const BgraImage&, const Transform&) { return false; }
 bool GpuFrameConverter::drawNv12(const AVFrame*, const GpuColorSpace&, const Transform&) { return false; }
+bool GpuFrameConverter::drawD3d11Frame(const AVFrame*, const GpuColorSpace&, const Transform&) { return false; }
 std::shared_ptr<GpuTextImage> GpuFrameConverter::createText(const TextImage&) { return nullptr; }
 bool GpuFrameConverter::supportsTransition(const std::string&) { return false; }
 bool GpuFrameConverter::blendTransition(GpuFrameConverter&, const std::string&, double, const TransitionParams&) { return false; }

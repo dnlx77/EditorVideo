@@ -92,6 +92,9 @@ CodecContextPtr openDecoder(const AVCodec* codec, const AVStream* stream, int th
             ctx->get_format = hardware->getFormat;
             ctx->opaque = hardware->opaque;
             ctx->thread_count = 1;
+            // I fotogrammi decodificati restano nella scheda video finché li usa il compositore (e uno è tenuto di riserva): servono
+            // superfici in più oltre a quelle del decoder.
+            ctx->extra_hw_frames = 6;
         }
         if (ret = avcodec_open2(ctx.get(), codec, nullptr); ret < 0)
             return CodecContextPtr{};

@@ -64,6 +64,9 @@ struct GpuFrameConverter::Impl
         Microsoft::WRL::ComPtr<ID3D11Texture2D> y, uv, rgb;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> yView, uvView, rgbView;
         Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rgbTarget;
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> packed;  // NV12 vero (due piani in una texture), dove si copia il fotogramma del decoder
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> packedY, packedUV;
+        bool packedFailed = false;
     };
     std::map<std::pair<int, int>, Nv12Source> nv12Sources;
     bool layerReady = false;
@@ -85,6 +88,8 @@ struct GpuFrameConverter::Impl
               ID3D11ShaderResourceView* const* views, UINT viewCount, ID3D11BlendState* blend = nullptr);
     bool readStage(ID3D11Texture2D* stage, std::uint8_t* dst, int dstStride, int rows, int bytesPerRow);
     bool ensureLayerResources();
+    // Le texture di un fotogramma NV12 di quella misura e la sua versione RGBA16F (create al primo uso); nullptr se non si riesce.
+    Nv12Source* nv12Source(int w, int h);
     // Una texture BGRA 8 bit di quella misura (con tutti i livelli di mip) con `source` caricato dentro.
     SourceTexture* uploadSource(const BgraImage& source, bool mips);
     // Disegna la texture `view` (di `sourceWidth` x `sourceHeight`, con i mipmap se serve) sul fotogramma con `transform`.

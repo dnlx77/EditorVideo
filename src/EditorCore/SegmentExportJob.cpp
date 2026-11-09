@@ -442,8 +442,19 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             const AVPixelFormat format = d3d11FormatFor(codec);
             if (format != AV_PIX_FMT_NONE && !hwDevice_ && !hwDeviceTried_) {
                 hwDeviceTried_ = true;
-                if (AVBufferRef* device = createD3d11Device())
-                    hwDevice_.reset(device, [](AVBufferRef* ref) { av_buffer_unref(&ref); });
+                // Con il compositore GPU decodifica e composizione condividono lo stesso dispositivo: i fotogrammi decodificati restano
+                // nella scheda video fino alla composizione.
+                if (reencode_.compositor == CompositorMode::Auto) {
+                    std::shared_ptr<GpuDevice> shared(GpuDevice::create(false));
+                    if (shared)
+                        if (AVBufferRef* device = shared->createFfmpegDevice()) {
+                            hwDevice_.reset(device, [](AVBufferRef* ref) { av_buffer_unref(&ref); });
+                            gpuDevice_ = std::move(shared);
+                        }
+                }
+                if (!hwDevice_)
+                    if (AVBufferRef* device = createD3d11Device())
+                        hwDevice_.reset(device, [](AVBufferRef* ref) { av_buffer_unref(&ref); });
             }
             if (format != AV_PIX_FMT_NONE && hwDevice_) {
                 hardwareFormat = format;
@@ -631,7 +642,9 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     if (!downloaded)
         throw MediaError(kOutOfMemory);
     const auto onDecodedVideo = [&](AVFrame* decoded) {
-        if (hardwareFormat == AV_PIX_FMT_NONE || decoded->format != hardwareFormat) {
+        // Con il dispositivo condiviso il fotogramma resta nella scheda video: lo legge il compositore (o l'encoder, o la CPU, che
+        // lo copiano in memoria da soli se serve).
+        if (hardwareFormat == AV_PIX_FMT_NONE || decoded->format != hardwareFormat || gpuDevice_) {
             onVideoFrame(decoded);
             return;
         }
@@ -789,7 +802,8 @@ IFrameCompositor& ExportJob::compositor()
 {
     if (!blender_) {
         const StreamSignature& format = *plan_.reference.video();
-        blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format), reencode_.compositor == CompositorMode::Auto);
+        blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format), reencode_.compositor == CompositorMode::Auto,
+                                       gpuDevice_);
     }
     return *blender_;
 }
@@ -1023,6 +1037,7 @@ ExportResult ExportJob::run()
             result_.workerThreads = ThreadPool::instance().size();
             result_.compositor = blender_->name();
             result_.compositorNote = blender_->fallbackReason();
+            result_.compositorDirectFrames = blender_->timing().directFrames;
         }
         result_.totalSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - runStarted).count();
         return result_;

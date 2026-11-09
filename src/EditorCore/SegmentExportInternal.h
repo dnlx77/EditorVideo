@@ -12,6 +12,7 @@
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/LayerFrames.h"
 #include "EditorCore/FrameCompositor.h"
+#include "EditorCore/GpuDevice.h"
 #include "EditorCore/TextFrame.h"
 #include "EditorCore/TimeUtil.h"
 
@@ -520,6 +521,8 @@ private:
     std::vector<LayerFrameSource::Visible> layerFrames_;  // quelli del fotogramma in corso, tenuti vivi finché il blender li usa
     std::shared_ptr<AVBufferRef> hwDevice_;  // il dispositivo D3D11 per decodificare con la GPU, creato una volta sola
     bool hwDeviceTried_ = false;
+    std::shared_ptr<GpuDevice> gpuDevice_;  // se c'è, hwDevice_ è questo stesso dispositivo: i fotogrammi decodificati li legge il compositore
+
     std::unique_ptr<TransitionRenderer> transitionRenderer_;  // per le parti dentro una transizione
     PacketPtr packet_;
     ExportResult result_;

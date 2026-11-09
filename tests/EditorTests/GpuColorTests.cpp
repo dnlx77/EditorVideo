@@ -6,10 +6,18 @@
 #include "EditorCore/TextImage.h"
 #include "EditorCore/Transitions.h"
 
+#ifdef _WIN32
+#include <d3d11.h>  // fuori da extern "C" (ha overload C++); poi hwcontext_d3d11va.h lo trova già incluso
+#endif
+
 extern "C" {
 #include <libavutil/frame.h>
+#include <libavutil/hwcontext.h>
 #include <libavutil/imgutils.h>
 #include <libswscale/swscale.h>
+#ifdef _WIN32
+#include <libavutil/hwcontext_d3d11va.h>
+#endif
 }
 
 #include <gtest/gtest.h>
@@ -663,3 +671,89 @@ TEST(GpuCompositor, FactoryNeverGivesTheSoftwareRasterizerAndAcceptsOnlyEightBit
     ASSERT_NE(forced, nullptr);
     EXPECT_FALSE(forced->isHardware());
 }
+
+// --- Fotogrammi della scheda video (D3D11) letti direttamente dal compositore ---
+
+namespace {
+
+struct BufferRefDeleter
+{
+    void operator()(AVBufferRef* ref) const { av_buffer_unref(&ref); }
+};
+using BufferRef = std::unique_ptr<AVBufferRef, BufferRefDeleter>;
+
+// Un fotogramma D3D11 (NV12) del dispositivo dato, con dentro `source` (yuv420p, riordinato in NV12 da swscale e caricato con FFmpeg).
+Frame uploadToD3d11(AVBufferRef* device, const AVFrame* source, BufferRef& framesOut)
+{
+    BufferRef frames(av_hwframe_ctx_alloc(device));
+    if (!frames)
+        return nullptr;
+    auto* context = reinterpret_cast<AVHWFramesContext*>(frames->data);
+    context->format = AV_PIX_FMT_D3D11;
+    context->sw_format = AV_PIX_FMT_NV12;
+    context->width = source->width;
+    context->height = source->height;
+    context->initial_pool_size = 2;
+    auto* hardware = static_cast<AVD3D11VAFramesContext*>(context->hwctx);
+    hardware->BindFlags = D3D11_BIND_SHADER_RESOURCE;  // fuori dal decoder, per le prove
+    if (av_hwframe_ctx_init(frames.get()) < 0)
+        return nullptr;
+    Frame nv12(av_frame_alloc());
+    nv12->format = AV_PIX_FMT_NV12;
+    nv12->width = source->width;
+    nv12->height = source->height;
+    if (av_frame_get_buffer(nv12.get(), 32) < 0)
+        return nullptr;
+    SwsContext* sws = sws_getContext(source->width, source->height, AV_PIX_FMT_YUV420P, source->width, source->height, AV_PIX_FMT_NV12,
+                                     SWS_POINT, nullptr, nullptr, nullptr);
+    if (sws == nullptr)
+        return nullptr;
+    sws_scale(sws, source->data, source->linesize, 0, source->height, nv12->data, nv12->linesize);
+    sws_freeContext(sws);
+    Frame hw(av_frame_alloc());
+    if (av_hwframe_get_buffer(frames.get(), hw.get(), 0) < 0)
+        return nullptr;
+    if (av_hwframe_transfer_data(hw.get(), nv12.get(), 0) < 0)
+        return nullptr;
+    hw->sample_aspect_ratio = {1, 1};
+    hw->color_range = AVCOL_RANGE_MPEG;
+    framesOut = std::move(frames);
+    return hw;
+}
+
+}  // namespace
+
+#ifdef _WIN32
+TEST(GpuCompositor, DecodedD3d11FrameIsReadDirectlyAndMatchesTheMemoryPath)
+{
+    constexpr int w = 128;
+    constexpr int h = 72;
+    std::string error;
+    std::shared_ptr<GpuDevice> device(GpuDevice::create(true, &error));
+    if (!device)
+        GTEST_SKIP() << "nessuna GPU: " << error;
+    BufferRef ffmpegDevice(device->createFfmpegDevice());
+    if (!ffmpegDevice)
+        GTEST_SKIP() << "il dispositivo non si dà a FFmpeg";
+    const Frame source = smoothYuv420p(w, h);
+    BufferRef frames;
+    const Frame hw = uploadToD3d11(ffmpegDevice.get(), source.get(), frames);
+    if (!hw)
+        GTEST_SKIP() << "fotogrammi D3D11 non creabili su questo dispositivo";
+    std::string why;
+    const auto direct = GpuCompositor::create(w, h, AV_PIX_FMT_YUV420P, true, &why, device);
+    ASSERT_NE(direct, nullptr) << why;
+    const auto viaMemory = GpuCompositor::create(w, h, AV_PIX_FMT_YUV420P, true, &why);
+    ASSERT_NE(viaMemory, nullptr) << why;
+    Transform transform;
+    transform.scaleX = 0.6;
+    transform.scaleY = 0.6;
+    transform.rotation = 12.0;
+    const AVFrame* a = direct->blendTransformed(hw.get(), transform, {});
+    const AVFrame* b = viaMemory->blendTransformed(hw.get(), transform, {});  // l'altro compositore ha un altro dispositivo: passa dalla memoria
+    expectSameFrames(a, b, w, h, 1.0, 1.0, "fotogramma D3D11 diretto");
+    EXPECT_EQ(direct->timing().directFrames, 1);
+    EXPECT_EQ(viaMemory->timing().directFrames, 0);
+    EXPECT_TRUE(direct->isHardware());
+}
+#endif
