@@ -22,6 +22,18 @@ struct GpuDevice::Impl
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
 };
 
+// Vedi GpuFrameConverter::createText.
+class GpuTextImage
+{
+public:
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> view;
+    int x = 0;  // dove sta il riquadro nel fotogramma (come TextImage)
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
 struct GpuFrameConverter::Impl
 {
     GpuDevice* gpu = nullptr;
@@ -48,7 +60,9 @@ struct GpuFrameConverter::Impl
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> view;
     };
     bool layerReady = false;
-    Microsoft::WRL::ComPtr<ID3D11PixelShader> psLayer, psCopy;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> psLayer, psCopy, psText;
+    Microsoft::WRL::ComPtr<ID3D11BlendState> textBlend;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> borderSampler;  // fuori dalla scritta è trasparente
     Microsoft::WRL::ComPtr<ID3D11Buffer> layerParams;
     Microsoft::WRL::ComPtr<ID3D11BlendState> layerBlend;
     std::map<std::pair<int, int>, SourceTexture> sources;  // per misura, riusate fra un livello e l'altro

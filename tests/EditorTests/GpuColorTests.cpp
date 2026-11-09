@@ -1,6 +1,7 @@
 #include "EditorCore/Compositor.h"
 #include "EditorCore/GpuColor.h"
 #include "EditorCore/GpuDevice.h"
+#include "EditorCore/TextImage.h"
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -292,3 +293,107 @@ TEST_P(GpuLayerCompare, MatchesCompositeLayer)
 }
 
 INSTANTIATE_TEST_SUITE_P(Cases, GpuLayerCompare, ::testing::Range(0, 6));
+
+// --- Scritte: stesso risultato di transformTextImage + blendTextOver (CPU) ---
+
+namespace {
+
+// Una scritta premoltiplicata di prova: un riquadro con colore e trasparenza variabili e un bordo pieno.
+TextImage sampleText(int x, int y, int w, int h)
+{
+    TextImage text;
+    text.x = x;
+    text.y = y;
+    text.width = w;
+    text.height = h;
+    text.rgba.assign(static_cast<std::size_t>(w) * h * 4, 0);
+    for (int j = 0; j < h; ++j)
+        for (int i = 0; i < w; ++i) {
+            const bool border = i < 3 || j < 3 || i >= w - 3 || j >= h - 3;
+            const int alpha = border ? 255 : 90 + (i * 120) / w;
+            std::uint8_t* px = &text.rgba[(static_cast<std::size_t>(j) * w + i) * 4];
+            px[0] = static_cast<std::uint8_t>(alpha * (border ? 255 : 200) / 255);
+            px[1] = static_cast<std::uint8_t>(alpha * (border ? 255 : 60 + (j * 100) / h) / 255);
+            px[2] = static_cast<std::uint8_t>(alpha * (border ? 0 : 30) / 255);
+            px[3] = static_cast<std::uint8_t>(alpha);
+        }
+    return text;
+}
+
+struct TextCase
+{
+    const char* name;
+    int x, y;
+    Transform transform;
+    double opacity;
+};
+
+class GpuTextCompare : public ::testing::TestWithParam<int>
+{
+};
+
+}  // namespace
+
+TEST_P(GpuTextCompare, MatchesTheCpuBlend)
+{
+    const auto device = makeDevice();
+    if (!device)
+        GTEST_SKIP() << "nessun dispositivo D3D11 in questo ambiente";
+    std::vector<TextCase> cases;
+    cases.push_back({"com'e", 20, 10, Transform{}, 1.0});
+    cases.push_back({"con dissolvenza", 20, 10, Transform{}, 0.6});
+    cases.push_back({"in parte fuori dal fotogramma", -14, 50, Transform{}, 1.0});
+    {
+        Transform t;
+        t.scaleX = t.scaleY = 1.5;
+        t.rotation = 20;
+        t.posX = 5;
+        t.posY = -3;
+        cases.push_back({"scala, rotazione e posizione", 30, 20, t, 0.8});
+    }
+    {
+        Transform t;
+        t.scaleX = 0.6;
+        t.scaleY = 0.9;
+        t.flipHorizontal = true;
+        cases.push_back({"rimpicciolita e specchiata", 30, 20, t, 1.0});
+    }
+    const TextCase& c = cases[static_cast<std::size_t>(GetParam())];
+
+    constexpr int w = 128;
+    constexpr int h = 72;
+    auto converter = GpuFrameConverter::create(*device, w, h);
+    ASSERT_NE(converter, nullptr);
+    // Il fotogramma di partenza: BGRA per la GPU, lo stesso in RGBA per la CPU.
+    const std::vector<std::uint8_t> bgra = patternBgra(w, h, 1);
+    std::vector<std::uint8_t> rgba = bgra;
+    for (std::size_t i = 0; i < rgba.size(); i += 4)
+        std::swap(rgba[i], rgba[i + 2]);
+    const TextImage text = sampleText(c.x, c.y, 60, 24);
+    const double pivotX = text.x + text.width / 2.0;
+    const double pivotY = text.y + text.height / 2.0;
+
+    ASSERT_TRUE(converter->setCanvasBgra({bgra.data(), w * 4, w, h}));
+    const std::shared_ptr<GpuTextImage> gpuText = converter->createText(text);
+    ASSERT_NE(gpuText, nullptr);
+    ASSERT_TRUE(converter->drawText(*gpuText, c.transform, pivotX, pivotY, c.opacity));
+    std::vector<std::uint16_t> half;
+    ASSERT_TRUE(converter->readRgbaHalf(half));
+
+    blendTextOver(rgba.data(), w * 4, w, h, transformTextImage(text, c.transform, pivotX, pivotY, w, h), c.opacity);
+
+    double total = 0.0;
+    int worst = 0;
+    for (int i = 0; i < w * h; ++i)
+        for (int ch = 0; ch < 3; ++ch) {
+            const int gpu = static_cast<int>(std::lround(std::clamp(halfToFloat(half[static_cast<std::size_t>(i) * 4 + ch]), 0.0f, 1.0f) * 255.0f));
+            const int diff = std::abs(gpu - rgba[static_cast<std::size_t>(i) * 4 + ch]);
+            total += diff;
+            worst = std::max(worst, diff);
+        }
+    const double mean = total / (static_cast<double>(w) * h * 3);
+    std::cout << "[gpu] scritta «" << c.name << "»: differenza dalla CPU media " << mean << ", massima " << worst << std::endl;
+    EXPECT_LT(mean, 1.0) << c.name;
+}
+
+INSTANTIATE_TEST_SUITE_P(Cases, GpuTextCompare, ::testing::Range(0, 5));

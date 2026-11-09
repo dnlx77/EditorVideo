@@ -149,6 +149,10 @@ bool GpuFrameConverter::Impl::init()
     samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
     if (FAILED(device->CreateSamplerState(&samplerDesc, &sampler)))
         return false;
+    D3D11_SAMPLER_DESC borderDesc = samplerDesc;
+    borderDesc.AddressU = borderDesc.AddressV = borderDesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;  // bordo (0, 0, 0, 0) = trasparente
+    if (FAILED(device->CreateSamplerState(&borderDesc, &borderSampler)))
+        return false;
     D3D11_RASTERIZER_DESC rasterDesc{};
     rasterDesc.FillMode = D3D11_FILL_SOLID;
     rasterDesc.CullMode = D3D11_CULL_NONE;
@@ -198,8 +202,8 @@ void GpuFrameConverter::Impl::pass(ID3D11RenderTargetView* target, int vx, int v
     context->PSSetShader(shader, nullptr, 0);
     ID3D11Buffer* constants[2] = {params.Get(), layerParams.Get()};
     context->PSSetConstantBuffers(0, 2, constants);
-    ID3D11SamplerState* samplers = sampler.Get();
-    context->PSSetSamplers(0, 1, &samplers);
+    ID3D11SamplerState* samplers[2] = {sampler.Get(), borderSampler.Get()};
+    context->PSSetSamplers(0, 2, samplers);
     context->PSSetShaderResources(0, viewCount, views);
     context->Draw(3, 0);
     // Si sciolgono i legami: la stessa texture può essere subito dopo scritta e letta.

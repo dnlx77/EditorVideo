@@ -26,6 +26,7 @@ cbuffer Layer : register(b1)
 };
 Texture2D<float4> layerTex : register(t3);
 SamplerState linearSampler : register(s0);
+SamplerState borderSampler : register(s1);
 
 struct VSOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 
@@ -42,6 +43,14 @@ float4 psLayer(VSOut i) : SV_Target
     return float4(color, coverage * misc.x);
 }
 
+// Una scritta (colori premoltiplicati): rowU/rowV portano la posizione del pixel nella scritta (in pixel), misc.x l'opacità.
+float4 psText(VSOut i) : SV_Target
+{
+    float u = rowU.x * i.pos.x + rowU.y * i.pos.y + rowU.z;
+    float v = rowV.x * i.pos.x + rowV.y * i.pos.y + rowV.z;
+    return layerTex.SampleLevel(borderSampler, float2(u / misc.z, v / misc.w), 0) * misc.x;
+}
+
 float4 psCopy(VSOut i) : SV_Target
 {
     return float4(layerTex.Load(int3(int2(i.pos.xy), 0)).rgb, 1.0);
@@ -56,10 +65,12 @@ bool GpuFrameConverter::Impl::ensureLayerResources()
         return true;
     const ComPtr<ID3DBlob> layerCode = compileShader(kLayerShaders, "psLayer", "ps_5_0");
     const ComPtr<ID3DBlob> copyCode = compileShader(kLayerShaders, "psCopy", "ps_5_0");
-    if (!layerCode || !copyCode)
+    const ComPtr<ID3DBlob> textCode = compileShader(kLayerShaders, "psText", "ps_5_0");
+    if (!layerCode || !copyCode || !textCode)
         return false;
     if (FAILED(device->CreatePixelShader(layerCode->GetBufferPointer(), layerCode->GetBufferSize(), nullptr, &psLayer))
-        || FAILED(device->CreatePixelShader(copyCode->GetBufferPointer(), copyCode->GetBufferSize(), nullptr, &psCopy)))
+        || FAILED(device->CreatePixelShader(copyCode->GetBufferPointer(), copyCode->GetBufferSize(), nullptr, &psCopy))
+        || FAILED(device->CreatePixelShader(textCode->GetBufferPointer(), textCode->GetBufferSize(), nullptr, &psText)))
         return false;
     D3D11_BUFFER_DESC bufferDesc{};
     bufferDesc.ByteWidth = 5 * 16;
@@ -78,6 +89,10 @@ bool GpuFrameConverter::Impl::ensureLayerResources()
     blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
     blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
     if (FAILED(device->CreateBlendState(&blendDesc, &layerBlend)))
+        return false;
+    // La scritta è premoltiplicata: colore + quello che c'è sotto per (1 - alfa).
+    blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+    if (FAILED(device->CreateBlendState(&blendDesc, &textBlend)))
         return false;
     layerReady = true;
     return true;
@@ -169,6 +184,71 @@ bool GpuFrameConverter::drawLayer(const BgraImage& source, const Transform& tran
     return true;
 }
 
+std::shared_ptr<GpuTextImage> GpuFrameConverter::createText(const TextImage& image)
+{
+    Impl& d = *impl_;
+    if (image.empty() || image.rgba.size() < static_cast<std::size_t>(image.width) * image.height * 4)
+        return nullptr;
+    auto text = std::make_shared<GpuTextImage>();
+    text->x = image.x;
+    text->y = image.y;
+    text->width = image.width;
+    text->height = image.height;
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = static_cast<UINT>(image.width);
+    desc.Height = static_cast<UINT>(image.height);
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA data{};
+    data.pSysMem = image.rgba.data();
+    data.SysMemPitch = static_cast<UINT>(image.width) * 4;
+    if (FAILED(d.device->CreateTexture2D(&desc, &data, &text->texture)) || FAILED(d.device->CreateShaderResourceView(text->texture.Get(), nullptr, &text->view)))
+        return nullptr;
+    return text;
+}
+
+bool GpuFrameConverter::drawText(const GpuTextImage& text, const Transform& transform, double pivotX, double pivotY, double opacity)
+{
+    Impl& d = *impl_;
+    const double op = std::clamp(opacity, 0.0, 1.0);
+    if (op <= 0.0)
+        return true;
+    if (!d.ensureLayerResources())
+        return false;
+    // Dal pixel del fotogramma al pixel della scritta: la stessa geometria di transformTextImage.
+    const Transform t = normalized(transform);
+    Affine forward;  // identità: la scritta sta dov'è
+    if (t.movesPicture()) {
+        forward = linearPart(t);
+        forward.tx = pivotX + t.posX - (forward.a * pivotX + forward.c * pivotY);
+        forward.ty = pivotY + t.posY - (forward.b * pivotX + forward.d * pivotY);
+    }
+    const Affine inverse = forward.inverse();
+    const double left = text.x;
+    const double top = text.y;
+    const double right = text.x + text.width;
+    const double bottom = text.y + text.height;
+    const PixelBounds box = pixelBounds({forward.apply(left, top), forward.apply(right, top), forward.apply(right, bottom), forward.apply(left, bottom)},
+                                        d.width, d.height);
+    if (box.empty())
+        return true;
+    const float values[20] = {
+        static_cast<float>(inverse.a), static_cast<float>(inverse.c), static_cast<float>(inverse.tx - text.x), 0.0f,
+        static_cast<float>(inverse.b), static_cast<float>(inverse.d), static_cast<float>(inverse.ty - text.y), 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        static_cast<float>(op), 0.0f, static_cast<float>(text.width), static_cast<float>(text.height),
+    };
+    d.context->UpdateSubresource(d.layerParams.Get(), 0, nullptr, values, 0, 0);
+    ID3D11ShaderResourceView* views[4] = {nullptr, nullptr, nullptr, text.view.Get()};
+    d.pass(d.rgbTarget.Get(), box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0, d.psText.Get(), views, 4, d.textBlend.Get());
+    return true;
+}
+
 }  // namespace editor::core
 
 #else  // altri sistemi
@@ -178,6 +258,8 @@ namespace editor::core {
 bool GpuFrameConverter::clearCanvas(float, float, float) { return false; }
 bool GpuFrameConverter::setCanvasBgra(const BgraImage&) { return false; }
 bool GpuFrameConverter::drawLayer(const BgraImage&, const Transform&) { return false; }
+std::shared_ptr<GpuTextImage> GpuFrameConverter::createText(const TextImage&) { return nullptr; }
+bool GpuFrameConverter::drawText(const GpuTextImage&, const Transform&, double, double, double) { return false; }
 
 }  // namespace editor::core
 
