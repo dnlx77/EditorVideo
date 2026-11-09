@@ -1,6 +1,8 @@
 #pragma once
 
+#include "EditorCore/Compositor.h"
 #include "EditorCore/GpuDevice.h"
+#include "EditorCore/Transform.h"
 
 #include <cstdint>
 #include <memory>
@@ -41,6 +43,14 @@ public:
     bool uploadNv12(const AVFrame* nv12, const GpuColorSpace& colors);
     // Converte la texture RGBA16F in NV12 e lo scrive in `nv12` (AV_PIX_FMT_NV12 già allocato, della misura del convertitore).
     bool downloadNv12(AVFrame* nv12, const GpuColorSpace& colors);
+    // Riempie la texture RGBA16F (il «fotogramma» su cui si disegnano i livelli) di un colore opaco, valori 0..1.
+    bool clearCanvas(float r, float g, float b);
+    // La riempie con un'immagine BGRA a 8 bit della sua stessa misura (opaca).
+    bool setCanvasBgra(const BgraImage& image);
+    // Disegna `source` (BGRA a 8 bit, qualunque misura) sulla texture con `transform`: stessa geometria e stesse regole di
+    // compositeLayer (scala 100% = file adattato al fotogramma, ritaglio, rotazione, specchio, bordi sfumati di mezzo pixel,
+    // opacità), con interpolazione bilineare della scheda e, se il pezzo si rimpicciolisce, i mipmap.
+    bool drawLayer(const BgraImage& source, const Transform& transform);
     // Legge la texture RGBA16F così com'è: width * height * 4 mezzi float (valore half IEEE a 16 bit), R G B A per pixel.
     bool readRgbaHalf(std::vector<std::uint16_t>& out);
 

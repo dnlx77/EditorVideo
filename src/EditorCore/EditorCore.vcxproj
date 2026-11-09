@@ -110,6 +110,7 @@
     <ClCompile Include="FrameCompositor.cpp" />
     <ClCompile Include="GpuColor.cpp" />
     <ClCompile Include="GpuDevice.cpp" />
+    <ClCompile Include="GpuLayer.cpp" />
     <ClCompile Include="TextFrame.cpp" />
     <ClCompile Include="TextImage.cpp" />
     <ClCompile Include="LayerFrames.cpp" />

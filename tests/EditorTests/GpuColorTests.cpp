@@ -1,3 +1,4 @@
+#include "EditorCore/Compositor.h"
 #include "EditorCore/GpuColor.h"
 #include "EditorCore/GpuDevice.h"
 
@@ -180,3 +181,114 @@ TEST(GpuColor, RgbaHalfMatchesTheSwscaleConversionOfTheCpuPath)
     EXPECT_LT(mean, 2.0);
     EXPECT_LE(worst, 8);
 }
+
+// --- Livelli trasformati: stessi risultati di compositeLayer (CPU) ---
+
+namespace {
+
+// Un'immagine BGRA opaca con una sfumatura e dei riquadri (per vedere dove finiscono ritaglio, specchio e rotazione).
+std::vector<std::uint8_t> patternBgra(int w, int h, int seed)
+{
+    std::vector<std::uint8_t> out(static_cast<std::size_t>(w) * h * 4);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            std::uint8_t* px = &out[(static_cast<std::size_t>(y) * w + x) * 4];
+            const bool square = ((x / 12) + (y / 12) + seed) % 2 == 0;
+            px[0] = static_cast<std::uint8_t>(square ? 40 + (x * 150) / w : 200 - (y * 120) / h);  // B
+            px[1] = static_cast<std::uint8_t>(60 + (y * 160) / h);                                   // G
+            px[2] = static_cast<std::uint8_t>(square ? 220 - (x * 120) / w : 50 + (x * 100) / w);   // R
+            px[3] = 255;
+        }
+    return out;
+}
+
+struct LayerCase
+{
+    const char* name;
+    Transform transform;
+    int sourceWidth;
+    int sourceHeight;
+    double maxMean;
+};
+
+class GpuLayerCompare : public ::testing::TestWithParam<int>
+{
+};
+
+}  // namespace
+
+TEST_P(GpuLayerCompare, MatchesCompositeLayer)
+{
+    const auto device = makeDevice();
+    if (!device)
+        GTEST_SKIP() << "nessun dispositivo D3D11 in questo ambiente";
+    std::vector<LayerCase> cases;
+    cases.push_back({"identica", Transform{}, 160, 90, 1.0});
+    {
+        Transform t;
+        t.scaleX = t.scaleY = 0.5;
+        t.posX = 20;
+        t.posY = -10;
+        cases.push_back({"scala 50% e posizione", t, 160, 90, 1.5});
+    }
+    {
+        Transform t;
+        t.rotation = 30;
+        t.opacity = 0.7;
+        cases.push_back({"rotazione 30 e opacita 70%", t, 160, 90, 2.0});
+    }
+    {
+        Transform t;
+        t.cropLeft = 0.2;
+        t.cropTop = 0.1;
+        t.cropRight = 0.15;
+        t.flipHorizontal = true;
+        cases.push_back({"ritaglio e specchio", t, 160, 90, 1.5});
+    }
+    {
+        Transform t;
+        t.scaleX = t.scaleY = 0.2;
+        t.posX = -30;
+        cases.push_back({"rimpicciolito al 20%", t, 320, 180, 5.0});
+    }
+    {
+        Transform t;
+        t.scaleX = 1.8;
+        t.scaleY = 1.2;
+        t.rotation = -12;
+        t.posY = 8;
+        cases.push_back({"ingrandito e ruotato", t, 100, 100, 3.0});
+    }
+    const LayerCase& c = cases[static_cast<std::size_t>(GetParam())];
+
+    constexpr int w = 128;
+    constexpr int h = 72;
+    auto converter = GpuFrameConverter::create(*device, w, h);
+    ASSERT_NE(converter, nullptr);
+    std::vector<std::uint8_t> canvas = patternBgra(w, h, 1);
+    const std::vector<std::uint8_t> sourcePixels = patternBgra(c.sourceWidth, c.sourceHeight, 0);
+    const BgraImage source{sourcePixels.data(), c.sourceWidth * 4, c.sourceWidth, c.sourceHeight};
+
+    ASSERT_TRUE(converter->setCanvasBgra({canvas.data(), w * 4, w, h}));
+    ASSERT_TRUE(converter->drawLayer(source, c.transform));
+    std::vector<std::uint16_t> half;
+    ASSERT_TRUE(converter->readRgbaHalf(half));
+
+    compositeLayer(canvas.data(), w * 4, w, h, source, c.transform);
+
+    double total = 0.0;
+    int worst = 0;
+    for (int i = 0; i < w * h; ++i)
+        for (int ch = 0; ch < 3; ++ch) {
+            const float value = halfToFloat(half[static_cast<std::size_t>(i) * 4 + (ch == 0 ? 2 : ch == 2 ? 0 : 1)]);  // BGRA <- RGBA
+            const int gpu = static_cast<int>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
+            const int diff = std::abs(gpu - canvas[static_cast<std::size_t>(i) * 4 + ch]);
+            total += diff;
+            worst = std::max(worst, diff);
+        }
+    const double mean = total / (static_cast<double>(w) * h * 3);
+    std::cout << "[gpu] livello «" << c.name << "»: differenza dalla CPU media " << mean << ", massima " << worst << std::endl;
+    EXPECT_LT(mean, c.maxMean) << c.name;
+}
+
+INSTANTIATE_TEST_SUITE_P(Cases, GpuLayerCompare, ::testing::Range(0, 6));
