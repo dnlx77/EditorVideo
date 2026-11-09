@@ -1,6 +1,6 @@
 #include "EditorApp/PlayerWidget.h"
 #include "EditorApp/ProgramMonitor.h"
-#include "EditorApp/SelfTests.h"
+#include "SelfTests.h"
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorCore/Compatibility.h"
 #include "EditorCore/MediaProbe.h"

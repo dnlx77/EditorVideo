@@ -1,5 +1,5 @@
 #include "EditorApp/QtTextRenderer.h"
-#include "EditorApp/SelfTests.h"
+#include "SelfTests.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/TextOverlay.h"
 #include "EditorCore/Animation.h"

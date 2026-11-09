@@ -1,6 +1,7 @@
 #pragma once
 
-// Prove da riga di comando, per la build automatica e per le verifiche a mano.
+// Prove da riga di comando di EditorVideoTests.exe, per la build automatica e per le verifiche a mano. La prova
+// --smoke-test resta in EditorVideo.exe (vedi EditorApp/SmokeTest.h).
 
 #include <QtCore/QString>
 #include <QtCore/QStringList>
@@ -11,8 +12,6 @@
 class QApplication;
 
 namespace editor::app {
-
-class MainWindow;
 
 // Un controllo di una prova: stampa "OK" o "NO" con la descrizione e conta quelli falliti.
 class SelfCheck
@@ -79,11 +78,5 @@ int runProjectExportTest(QApplication& app, const QString& project, const QStrin
 // destinazione, poi il messaggio finale), con la finestra guidata da un timer e il messaggio da un altro thread. Codice 0
 // se arriva in fondo e l'esportazione riesce, 3 se si blocca o non riesce.
 int runExportDialogTest(QApplication& app, const QString& project, const QString& output);
-
-// --smoke-test: scrive le versioni e chiude subito. Con un file (già aperto nella finestra) lo riproduce per 2 secondi,
-// segna IN e OUT, costruisce un montaggio, toglie l'audio da un tratto, annulla e ripete, aspetta miniature e forme
-// d'onda, salva e riapre il progetto, prova l'anteprima del montaggio ed esporta; esce con 0 se è tutto giusto, 2
-// altrimenti. Con EDITORVIDEO_SMOKE_SCREENSHOT=percorso.png salva anche un'immagine della finestra.
-void startSmokeTest(QApplication& app, MainWindow& window, const QString& file);
 
 }  // namespace editor::app

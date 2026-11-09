@@ -131,11 +131,11 @@ jobs:
         shell: pwsh
         run: bin\x64\Release\EditorTests.exe
 
-      # Le prove che seguono avviano EditorVideo.exe con ci\run-editorvideo.ps1: aspetta la fine, mostra l'output e
-      # controlla il codice di uscita.
+      # Le prove che seguono avviano EditorVideo.exe (solo --smoke-test) o EditorVideoTests.exe (tutte le altre) con
+      # ci\run-editorvideo.ps1: aspetta la fine, mostra l'output e controlla il codice di uscita.
       - name: Avvio dell'applicazione
         shell: pwsh
-        run: '& ci\run-editorvideo.ps1 -Name avvio -Arguments ''--smoke-test'''
+        run: '& ci\run-editorvideo.ps1 -Name avvio -Exe EditorVideo.exe -Arguments ''--smoke-test'''
 
       - name: Prova della riproduzione
         shell: pwsh
@@ -145,7 +145,7 @@ jobs:
           # software e l'orologio senza audio.
           bin\x64\Release\EditorTests.exe --gtest_also_run_disabled_tests --gtest_filter=*GeneraVideoDimostrativi*
           foreach ($f in 'demo_mpeg2_gpu.mkv', 'demo_mpeg4_software.mkv', 'demo_solo_audio.wav') {
-            & ci\run-editorvideo.ps1 -Name $f -Arguments '--smoke-test', "`"$env:TEMP\EditorVideoDemo\$f`""
+            & ci\run-editorvideo.ps1 -Name $f -Exe EditorVideo.exe -Arguments '--smoke-test', "`"$env:TEMP\EditorVideoDemo\$f`""
           }
 
       - name: Prova dell'esportazione

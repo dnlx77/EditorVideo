@@ -1,6 +1,6 @@
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/PlayerWidget.h"
-#include "EditorApp/SelfTests.h"
+#include "SelfTests.h"
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/TransitionMime.h"
 #include "EditorApp/TransitionListPanel.h"

@@ -1,6 +1,6 @@
 #include "EditorApp/MainWindow.h"
 #include "EditorApp/QtImageLoader.h"
-#include "EditorApp/SelfTests.h"
+#include "EditorApp/SmokeTest.h"
 #include "EditorCore/ProjectFile.h"
 
 #include <QtWidgets/QApplication>
@@ -23,16 +23,9 @@ int main(int argc, char* argv[])
 
     // I percorsi si leggono da QApplication::arguments(): argv su Windows perde le lettere accentate.
     const QStringList arguments = QApplication::arguments();
-    // Le prove automatiche (opzioni "--...") non aprono finestre di conferma.
-    for (const QString& argument : arguments) {
-        if (argument.startsWith(QStringLiteral("--")))
-            editor::app::MainWindow::confirmRemovals = false;
-    }
-    if (const auto code = editor::app::runCommandLineTest(arguments))
-        return *code;
-
-    if (const auto code = editor::app::runWindowTest(app, arguments))
-        return *code;
+    // La prova automatica non apre finestre di conferma. (Le altre prove sono in EditorVideoTests.exe.)
+    if (smokeTest)
+        editor::app::MainWindow::confirmRemovals = false;
 
     editor::app::MainWindow window;
     // La disposizione dei pannelli salvata l'ultima volta; le prove partono sempre da quella iniziale.
