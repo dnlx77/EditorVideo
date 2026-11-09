@@ -3,10 +3,12 @@
 #include "EditorCore/Compositor.h"
 #include "EditorCore/GpuDevice.h"
 #include "EditorCore/TextImage.h"
+#include "EditorCore/Transitions.h"
 #include "EditorCore/Transform.h"
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 struct AVFrame;
@@ -55,6 +57,12 @@ public:
     // compositeLayer (scala 100% = file adattato al fotogramma, ritaglio, rotazione, specchio, bordi sfumati di mezzo pixel,
     // opacità), con interpolazione bilineare della scheda e, se il pezzo si rimpicciolisce, i mipmap.
     bool drawLayer(const BgraImage& source, const Transform& transform);
+    // true se la transizione con quell'id ha lo shader (tutte quelle di transitionRegistry(): c'è una prova che lo controlla).
+    static bool supportsTransition(const std::string& transitionId);
+    // La transizione: il fotogramma di questo convertitore (quello che finisce) e quello di `to` (quello che inizia, stessa misura e
+    // stessa scheda video) si fondono a `progress` (0..1) e il risultato resta in questo convertitore. Come
+    // Transition::blend della CPU (Dissolvenza incrociata, Dissolvenza al nero, Scorrimento nella direzione data).
+    bool blendTransition(GpuFrameConverter& to, const std::string& transitionId, double progress, const TransitionParams& params);
     // Carica la scritta nella scheda video (nullptr se è vuota o non si riesce). Vale per questo convertitore.
     std::shared_ptr<GpuTextImage> createText(const TextImage& image);
     // Sovrappone la scritta al fotogramma come blendTextOver(transformTextImage(...)): con la trasformazione `transform` (scala,
