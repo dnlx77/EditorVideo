@@ -4,6 +4,7 @@
 #include <string>
 
 struct AVBufferRef;
+struct AVFrame;
 
 namespace editor::core {
 
@@ -26,6 +27,12 @@ public:
     // normale è false, così senza GPU si passa alla CPU, che è più veloce di un rasterizzatore software.
     // `error`, se dato, riceve il motivo del rifiuto.
     static std::unique_ptr<GpuDevice> create(bool allowSoftware = false, std::string* error = nullptr);
+    // Il dispositivo a cui appartiene la texture di `frame` (un fotogramma AV_PIX_FMT_D3D11 del decoder): così composizione e decodifica
+    // sono sicuramente sullo stesso dispositivo, qualunque cosa abbia creato quello del decoder. nullptr (con il motivo in `error`) se
+    // non si può. Solo Windows.
+    static std::unique_ptr<GpuDevice> adopt(const AVFrame* frame, std::string* error = nullptr);
+    // true se la texture di `frame` appartiene a questo stesso dispositivo.
+    bool ownsTextureOf(const AVFrame* frame) const;
     ~GpuDevice();
     GpuDevice(const GpuDevice&) = delete;
     GpuDevice& operator=(const GpuDevice&) = delete;
