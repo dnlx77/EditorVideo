@@ -42,7 +42,8 @@ GpuCompositor::GpuCompositor(int width, int height, AVPixelFormat pixelFormat)
 
 GpuCompositor::~GpuCompositor() = default;
 
-std::unique_ptr<GpuCompositor> GpuCompositor::create(int width, int height, AVPixelFormat pixelFormat, bool allowSoftware, std::string* why)
+std::unique_ptr<GpuCompositor> GpuCompositor::create(int width, int height, AVPixelFormat pixelFormat, bool allowSoftware, std::string* why,
+                                                      std::shared_ptr<GpuDevice> shared)
 {
     const auto fail = [&](const std::string& reason) -> std::unique_ptr<GpuCompositor> {
         if (why)
@@ -54,7 +55,7 @@ std::unique_ptr<GpuCompositor> GpuCompositor::create(int width, int height, AVPi
     if (width <= 0 || height <= 0 || (width & 1) != 0 || (height & 1) != 0)
         return fail("Misura del fotogramma non gestita dalla GPU.");
     std::string error;
-    std::unique_ptr<GpuDevice> device = GpuDevice::create(allowSoftware, &error);
+    std::shared_ptr<GpuDevice> device = shared ? std::move(shared) : std::shared_ptr<GpuDevice>(GpuDevice::create(allowSoftware, &error));
     if (!device)
         return fail(error);
     std::unique_ptr<GpuFrameConverter> canvas = GpuFrameConverter::create(*device, width, height);
@@ -175,16 +176,24 @@ const AVFrame* GpuCompositor::compose(const AVFrame* source, const std::uint8_t*
                                       const std::vector<BlendedText>& texts, const AVFrame* props)
 {
     const AVFrame* nv12 = nullptr;
+    const AVFrame* direct = nullptr;
     bool fullRange = false;
     auto mark = Clock::now();
     if (source != nullptr) {
-        nv12 = nv12Of(source, fullRange);
-        if (nv12 == nullptr)
-            return nullptr;  // formato non gestito: questo fotogramma lo fa la CPU
         // Pixel non quadrati: l'adattamento al fotogramma (blend senza trasformazione) tiene conto delle proporzioni dei pixel, la GPU no.
         const AVRational sar = source->sample_aspect_ratio;
         if (transform.isIdentity() && sar.num > 0 && sar.den > 0 && sar.num != sar.den)
             return nullptr;
+        if (source->format == AV_PIX_FMT_D3D11 && source->hw_frames_ctx != nullptr && !directFailed_) {
+            // Fotogramma appena decodificato dalla scheda video: si legge direttamente da lì (se non va, si passa dalla memoria).
+            direct = source;
+            fullRange = source->color_range == AVCOL_RANGE_JPEG;
+            timing_.sourceFormat = AV_PIX_FMT_NV12;
+        } else {
+            nv12 = nv12Of(source, fullRange);
+            if (nv12 == nullptr)
+                return nullptr;  // formato non gestito: questo fotogramma lo fa la CPU
+        }
     }
     if (!canvas_->clearCanvas(0.0f, 0.0f, 0.0f)) {
         fail("pulizia del fotogramma non riuscita");
@@ -195,9 +204,23 @@ const AVFrame* GpuCompositor::compose(const AVFrame* source, const std::uint8_t*
             fail("caricamento della transizione non riuscito");
             return nullptr;
         }
-    } else if (!canvas_->drawNv12(nv12, GpuColorSpace::bt601(fullRange), transform)) {
-        fail("disegno del fotogramma non riuscito");
-        return nullptr;
+    } else {
+        bool drawn = false;
+        if (direct != nullptr) {
+            drawn = canvas_->drawD3d11Frame(direct, GpuColorSpace::bt601(fullRange), transform);
+            if (drawn) {
+                ++timing_.directFrames;
+            } else {
+                directFailed_ = true;
+                nv12 = nv12Of(source, fullRange);
+                if (nv12 == nullptr)
+                    return nullptr;
+            }
+        }
+        if (!drawn && !canvas_->drawNv12(nv12, GpuColorSpace::bt601(fullRange), transform)) {
+            fail("disegno del fotogramma non riuscito");
+            return nullptr;
+        }
     }
     timing_.composite += since(mark);
     mark = Clock::now();

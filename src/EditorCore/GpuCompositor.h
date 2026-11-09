@@ -23,9 +23,10 @@ class GpuCompositor final : public IFrameCompositor
 {
 public:
     // nullptr se non c'è una GPU utilizzabile o il formato d'uscita non è yuv420p/nv12; `why` dice perché.
-    // `allowSoftware`: solo per le prove (il rasterizzatore software della CI).
+    // `allowSoftware`: solo per le prove (il rasterizzatore software della CI). `device`: il dispositivo già creato (per darlo anche al
+    // decoder, vedi GpuDevice::createFfmpegDevice); se manca se ne crea uno.
     static std::unique_ptr<GpuCompositor> create(int width, int height, AVPixelFormat pixelFormat, bool allowSoftware = false,
-                                                 std::string* why = nullptr);
+                                                 std::string* why = nullptr, std::shared_ptr<GpuDevice> device = nullptr);
     ~GpuCompositor() override;
 
     const char* name() const override { return name_.c_str(); }
@@ -58,8 +59,9 @@ private:
     AVPixelFormat pixelFormat_;
     std::string name_;
     bool failed_ = false;
+    bool directFailed_ = false;  // i fotogrammi del decoder non si leggono direttamente: si passa dalla memoria
     std::string failure_;
-    std::unique_ptr<GpuDevice> device_;
+    std::shared_ptr<GpuDevice> device_;
     std::unique_ptr<GpuFrameConverter> canvas_;
     std::unique_ptr<TextFrameBlender> cpu_;
     std::vector<BlendedLayer> layers_;

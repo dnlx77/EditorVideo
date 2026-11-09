@@ -3,6 +3,8 @@
 #include <memory>
 #include <string>
 
+struct AVBufferRef;
+
 namespace editor::core {
 
 // Che scheda video si sta usando per comporre (per le impostazioni e le statistiche).
@@ -29,6 +31,11 @@ public:
     GpuDevice& operator=(const GpuDevice&) = delete;
 
     const GpuInfo& info() const { return info_; }
+
+    // Lo stesso dispositivo come dispositivo D3D11VA di FFmpeg (da liberare con av_buffer_unref), da dare ai decoder: i fotogrammi
+    // decodificati sono allora texture di questo dispositivo e il compositore le legge senza passare dalla memoria. nullptr se non
+    // si riesce (sempre nullptr fuori da Windows).
+    AVBufferRef* createFfmpegDevice();
 
     struct Impl;  // D3D11, vedi GpuInternal.h
     Impl& impl() { return *impl_; }

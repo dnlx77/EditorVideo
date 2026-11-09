@@ -4,7 +4,14 @@
 
 #include "EditorCore/GpuInternal.h"
 
+#include <d3d11_4.h>
 #include <dxgi.h>
+
+extern "C" {
+#include <libavutil/buffer.h>
+#include <libavutil/hwcontext.h>
+#include <libavutil/hwcontext_d3d11va.h>
+}
 
 #include <windows.h>
 
@@ -28,14 +35,20 @@ std::string narrow(const wchar_t* text)
 }
 
 // Prova a creare il dispositivo con quel tipo di driver; i feature level da 11_1 a 11_0.
-bool tryCreate(D3D_DRIVER_TYPE type, ComPtr<ID3D11Device>& device, ComPtr<ID3D11DeviceContext>& context, D3D_FEATURE_LEVEL& level)
+bool tryCreateWith(UINT flags, D3D_DRIVER_TYPE type, ComPtr<ID3D11Device>& device, ComPtr<ID3D11DeviceContext>& context, D3D_FEATURE_LEVEL& level)
 {
     const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
-    HRESULT result = D3D11CreateDevice(nullptr, type, nullptr, 0, levels, 2, D3D11_SDK_VERSION, &device, &level, &context);
+    HRESULT result = D3D11CreateDevice(nullptr, type, nullptr, flags, levels, 2, D3D11_SDK_VERSION, &device, &level, &context);
     if (result == E_INVALIDARG) {  // un sistema senza 11_1 non conosce quel livello nell'elenco
-        result = D3D11CreateDevice(nullptr, type, nullptr, 0, levels + 1, 1, D3D11_SDK_VERSION, &device, &level, &context);
+        result = D3D11CreateDevice(nullptr, type, nullptr, flags, levels + 1, 1, D3D11_SDK_VERSION, &device, &level, &context);
     }
     return SUCCEEDED(result);
+}
+
+// Con il supporto video (serve a D3D11VA di FFmpeg, che userà lo stesso dispositivo); se non va, senza.
+bool tryCreate(D3D_DRIVER_TYPE type, ComPtr<ID3D11Device>& device, ComPtr<ID3D11DeviceContext>& context, D3D_FEATURE_LEVEL& level)
+{
+    return tryCreateWith(D3D11_CREATE_DEVICE_VIDEO_SUPPORT, type, device, context, level) || tryCreateWith(0, type, device, context, level);
 }
 
 }  // namespace
@@ -77,10 +90,32 @@ std::unique_ptr<GpuDevice> GpuDevice::create(bool allowSoftware, std::string* er
         return fail("C'è solo un rasterizzatore software (nessuna GPU vera): si compone in CPU.");
     if (warp && result->info_.adapterName.empty())
         result->info_.adapterName = "WARP (software)";
+    // Il dispositivo lo usa anche il decoder (stesso thread, ma FFmpeg e noi insieme): meglio la protezione.
+    {
+        ComPtr<ID3D11Multithread> multithread;
+        if (SUCCEEDED(context.As(&multithread)))
+            multithread->SetMultithreadProtected(TRUE);
+    }
     result->impl_ = std::make_unique<Impl>();
     result->impl_->device = std::move(device);
     result->impl_->context = std::move(context);
     return result;
+}
+
+AVBufferRef* GpuDevice::createFfmpegDevice()
+{
+    AVBufferRef* ref = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_D3D11VA);
+    if (ref == nullptr)
+        return nullptr;
+    auto* context = reinterpret_cast<AVHWDeviceContext*>(ref->data);
+    auto* hardware = static_cast<AVD3D11VADeviceContext*>(context->hwctx);
+    hardware->device = impl_->device.Get();
+    hardware->device->AddRef();  // FFmpeg lo rilascia quando libera il contesto
+    if (av_hwdevice_ctx_init(ref) < 0) {
+        av_buffer_unref(&ref);
+        return nullptr;
+    }
+    return ref;
 }
 
 }  // namespace editor::core
@@ -94,6 +129,7 @@ struct GpuDevice::Impl
 };
 GpuDevice::GpuDevice() = default;
 GpuDevice::~GpuDevice() = default;
+AVBufferRef* GpuDevice::createFfmpegDevice() { return nullptr; }
 
 std::unique_ptr<GpuDevice> GpuDevice::create(bool, std::string* error)
 {

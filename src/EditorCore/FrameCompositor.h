@@ -12,6 +12,8 @@
 
 namespace editor::core {
 
+class GpuDevice;
+
 // Una scritta già disegnata e quanto si vede (0..1: le dissolvenze).
 struct BlendedText
 {
@@ -47,6 +49,7 @@ struct CompositorTiming
     double overlays = 0.0;
     double toYuv = 0.0;
     AVPixelFormat sourceFormat = AV_PIX_FMT_NONE;  // formato dei fotogrammi dell'originale (per capire le conversioni lente)
+    int directFrames = 0;  // fotogrammi della scheda video letti direttamente dalla texture del decoder (senza passare dalla memoria)
 };
 
 // Chi compone i fotogrammi dell'esportazione: trasformazione del pezzo di V1, livelli, scritte e transizioni già fuse, e dà
@@ -81,7 +84,9 @@ public:
 };
 
 // Il compositore da usare per fotogrammi di `width` x `height` che escono in `pixelFormat`: quello su GPU (Direct3D 11) se
-// `allowGpu`, c'è una scheda video utilizzabile e il formato è YUV 4:2:0 a 8 bit (yuv420p o nv12); altrimenti la CPU.
-std::unique_ptr<IFrameCompositor> makeFrameCompositor(int width, int height, AVPixelFormat pixelFormat, bool allowGpu = true);
+// `allowGpu`, c'è una scheda video utilizzabile e il formato è YUV 4:2:0 a 8 bit (yuv420p o nv12); altrimenti la CPU. `device`:
+// il dispositivo GPU già creato (lo stesso del decoder), se c'è.
+std::unique_ptr<IFrameCompositor> makeFrameCompositor(int width, int height, AVPixelFormat pixelFormat, bool allowGpu = true,
+                                                      std::shared_ptr<GpuDevice> device = nullptr);
 
 }  // namespace editor::core
