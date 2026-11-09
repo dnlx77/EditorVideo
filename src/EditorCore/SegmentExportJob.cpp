@@ -522,7 +522,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             if (!mixed)
                 throw MediaError("La transizione non si riesce a fare: i file dei due pezzi non si leggono.");
             if (!blender_)
-                blender_ = std::make_unique<TextFrameBlender>(format.width, format.height, blendPixelFormat(format));
+                blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format));
             const AVFrame* blended = blender_->blendRaster(mixed->pixels.data(), mixed->stride, mixed->width, mixed->height, texts, frame);
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
@@ -530,7 +530,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         } else if (piece.transformed) {
             // Tratto trasformato: scala, posizione, rotazione e ritaglio sul fotogramma, poi le scritte (se ci sono).
             if (!blender_)
-                blender_ = std::make_unique<TextFrameBlender>(format.width, format.height, blendPixelFormat(format));
+                blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format));
             // Con i fotogrammi chiave la trasformazione è quella del tempo del fotogramma nel file.
             const Transform now = piece.animation.empty()
                                       ? piece.transform
@@ -757,7 +757,7 @@ bool ExportJob::prepareLayers(double sequenceTime)
     if (layerFrames_.empty())
         return false;
     if (!blender_)
-        blender_ = std::make_unique<TextFrameBlender>(format.width, format.height, blendPixelFormat(format));
+        blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format));
     std::vector<BlendedLayer> layers;
     for (const LayerFrameSource::Visible& v : layerFrames_)
         layers.push_back({v.frame.get(), v.transform, v.level});
@@ -769,7 +769,7 @@ const AVFrame* ExportJob::withText(const AVFrame* frame, const std::vector<Blend
 {
     if (!blender_) {
         const StreamSignature& format = *plan_.reference.video();
-        blender_ = std::make_unique<TextFrameBlender>(format.width, format.height, blendPixelFormat(format));
+        blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format));
     }
     return blender_->blend(frame, texts);
 }
@@ -992,7 +992,7 @@ ExportResult ExportJob::run()
         result_.clipCount = static_cast<int>(clips_.size());
         result_.parametersInStream = plan_.parametersInStream;
         if (blender_) {
-            const TextFrameBlender::Timing& t = blender_->timing();
+            const CompositorTiming& t = blender_->timing();
             result_.blendToRgbaSeconds = t.toRgba;
             result_.blendFillSeconds = t.fill;
             result_.blendCompositeSeconds = t.composite;
