@@ -51,6 +51,9 @@
     <ClInclude Include="BandedSws.h" />
     <ClInclude Include="ParallelFor.h" />
     <ClInclude Include="FrameCompositor.h" />
+    <ClInclude Include="GpuColor.h" />
+    <ClInclude Include="GpuDevice.h" />
+    <ClInclude Include="GpuInternal.h" />
     <ClInclude Include="TextFrame.h" />
     <ClInclude Include="TextImage.h" />
     <ClInclude Include="LayerFrames.h" />
@@ -105,6 +108,8 @@
     <ClCompile Include="TransformManip.cpp" />
     <ClCompile Include="Compositor.cpp" />
     <ClCompile Include="FrameCompositor.cpp" />
+    <ClCompile Include="GpuColor.cpp" />
+    <ClCompile Include="GpuDevice.cpp" />
     <ClCompile Include="TextFrame.cpp" />
     <ClCompile Include="TextImage.cpp" />
     <ClCompile Include="LayerFrames.cpp" />

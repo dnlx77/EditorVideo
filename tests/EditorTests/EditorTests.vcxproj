@@ -45,6 +45,7 @@
     <ClCompile Include="AnimationTests.cpp" />
     <ClCompile Include="BandedSwsTests.cpp" />
     <ClCompile Include="CompositorTests.cpp" />
+    <ClCompile Include="GpuColorTests.cpp" />
     <ClCompile Include="TextImageTests.cpp" />
     <ClCompile Include="TransitionsTests.cpp" />
     <ClCompile Include="LayerPlaybackTests.cpp" />
