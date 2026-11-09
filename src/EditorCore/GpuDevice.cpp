@@ -102,6 +102,69 @@ std::unique_ptr<GpuDevice> GpuDevice::create(bool allowSoftware, std::string* er
     return result;
 }
 
+namespace {
+// Il dispositivo della texture di un fotogramma D3D11 (nullptr se non lo è).
+ComPtr<ID3D11Device> deviceOfFrame(const AVFrame* frame)
+{
+    ComPtr<ID3D11Device> owner;
+    if (frame == nullptr || frame->format != AV_PIX_FMT_D3D11 || frame->data[0] == nullptr)
+        return owner;
+    reinterpret_cast<ID3D11Texture2D*>(frame->data[0])->GetDevice(&owner);
+    return owner;
+}
+
+bool sameObject(IUnknown* a, IUnknown* b)
+{
+    ComPtr<IUnknown> x, y;
+    if (a == nullptr || b == nullptr || FAILED(a->QueryInterface(IID_PPV_ARGS(&x))) || FAILED(b->QueryInterface(IID_PPV_ARGS(&y))))
+        return false;
+    return x.Get() == y.Get();
+}
+}  // namespace
+
+bool GpuDevice::ownsTextureOf(const AVFrame* frame) const
+{
+    const ComPtr<ID3D11Device> owner = deviceOfFrame(frame);
+    return owner && sameObject(owner.Get(), impl_->device.Get());
+}
+
+std::unique_ptr<GpuDevice> GpuDevice::adopt(const AVFrame* frame, std::string* error)
+{
+    const auto fail = [&](const char* why) -> std::unique_ptr<GpuDevice> {
+        if (error)
+            *error = why;
+        return nullptr;
+    };
+    ComPtr<ID3D11Device> device = deviceOfFrame(frame);
+    if (!device)
+        return fail("il fotogramma non è una texture D3D11");
+    ComPtr<ID3D11DeviceContext> context;
+    device->GetImmediateContext(&context);
+    if (!context)
+        return fail("contesto del dispositivo del decoder non disponibile");
+    auto result = std::unique_ptr<GpuDevice>(new GpuDevice());
+    result->info_.featureLevel = device->GetFeatureLevel() >= D3D_FEATURE_LEVEL_11_1 ? 111 : 110;
+    if (device->GetFeatureLevel() < D3D_FEATURE_LEVEL_11_0)
+        return fail("il dispositivo del decoder ha un feature level troppo basso");
+    ComPtr<IDXGIDevice> dxgiDevice;
+    ComPtr<IDXGIAdapter> adapter;
+    if (SUCCEEDED(device.As(&dxgiDevice)) && SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
+        DXGI_ADAPTER_DESC desc{};
+        if (SUCCEEDED(adapter->GetDesc(&desc))) {
+            result->info_.adapterName = narrow(desc.Description);
+            if (desc.VendorId == 0x1414)
+                return fail("il decoder usa un rasterizzatore software");
+        }
+    }
+    ComPtr<ID3D11Multithread> multithread;
+    if (SUCCEEDED(context.As(&multithread)))
+        multithread->SetMultithreadProtected(TRUE);
+    result->impl_ = std::make_unique<Impl>();
+    result->impl_->device = std::move(device);
+    result->impl_->context = std::move(context);
+    return result;
+}
+
 AVBufferRef* GpuDevice::createFfmpegDevice()
 {
     AVBufferRef* ref = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_D3D11VA);
@@ -130,6 +193,13 @@ struct GpuDevice::Impl
 GpuDevice::GpuDevice() = default;
 GpuDevice::~GpuDevice() = default;
 AVBufferRef* GpuDevice::createFfmpegDevice() { return nullptr; }
+std::unique_ptr<GpuDevice> GpuDevice::adopt(const AVFrame*, std::string* error)
+{
+    if (error)
+        *error = "Il compositore GPU è solo per Windows.";
+    return nullptr;
+}
+bool GpuDevice::ownsTextureOf(const AVFrame*) const { return false; }
 
 std::unique_ptr<GpuDevice> GpuDevice::create(bool, std::string* error)
 {

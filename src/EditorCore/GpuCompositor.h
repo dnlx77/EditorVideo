@@ -53,12 +53,15 @@ private:
     bool drawText(const BlendedText& text);
     TextFrameBlender& cpu();
     void fail(const std::string& reason);
+    // Con fotogrammi D3D11 del decoder: se la loro texture non è su questo dispositivo, si passa a quello (una volta sola).
+    void followDecoderDevice(const AVFrame* frame);
 
     int width_;
     int height_;
     AVPixelFormat pixelFormat_;
     std::string name_;
     bool failed_ = false;
+    bool directChecked_ = false;  // si è già visto se il dispositivo del decoder è questo (o lo si è adottato)
     bool directFailed_ = false;  // i fotogrammi del decoder non si leggono direttamente: si passa dalla memoria
     std::string failure_;
     std::shared_ptr<GpuDevice> device_;

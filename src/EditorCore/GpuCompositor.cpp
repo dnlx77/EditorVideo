@@ -80,6 +80,32 @@ TextFrameBlender& GpuCompositor::cpu()
     return *cpu_;
 }
 
+void GpuCompositor::followDecoderDevice(const AVFrame* frame)
+{
+    directChecked_ = true;
+    if (device_->ownsTextureOf(frame))
+        return;
+    std::string why;
+    std::shared_ptr<GpuDevice> adopted(GpuDevice::adopt(frame, &why));
+    if (!adopted) {
+        directFailed_ = true;
+        timing_.directNote = "dispositivo del decoder non adottabile: " + why;
+        return;
+    }
+    // Scritte e texture di lavoro appartengono al vecchio dispositivo: si rifanno su quello del decoder.
+    textCache_.clear();
+    canvas_.reset();
+    std::unique_ptr<GpuFrameConverter> canvas = GpuFrameConverter::create(*adopted, width_, height_);
+    if (!canvas) {
+        device_ = std::move(adopted);
+        fail("risorse non create sul dispositivo del decoder");
+        return;
+    }
+    device_ = std::move(adopted);
+    canvas_ = std::move(canvas);
+    name_ = std::string("GPU: ") + device_->info().adapterName;
+}
+
 void GpuCompositor::fail(const std::string& reason)
 {
     failed_ = true;
@@ -183,6 +209,10 @@ const AVFrame* GpuCompositor::compose(const AVFrame* source, const std::uint8_t*
         // Pixel non quadrati: l'adattamento al fotogramma (blend senza trasformazione) tiene conto delle proporzioni dei pixel, la GPU no.
         const AVRational sar = source->sample_aspect_ratio;
         if (transform.isIdentity() && sar.num > 0 && sar.den > 0 && sar.num != sar.den)
+            return nullptr;
+        if (source->format == AV_PIX_FMT_D3D11 && source->hw_frames_ctx != nullptr && !directFailed_ && !failed_ && !directChecked_)
+            followDecoderDevice(source);
+        if (failed_)
             return nullptr;
         if (source->format == AV_PIX_FMT_D3D11 && source->hw_frames_ctx != nullptr && !directFailed_) {
             // Fotogramma appena decodificato dalla scheda video: si legge direttamente da lì (se non va, si passa dalla memoria).
