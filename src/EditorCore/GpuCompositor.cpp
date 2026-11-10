@@ -309,6 +309,8 @@ const AVFrame* GpuCompositor::compose(const AVFrame* source, const std::uint8_t*
             timing_.hardwareOutputNote = why;
         }
         // Niente texture libera (o non va): questo fotogramma passa dalla memoria; l'encoder lo carica da sé.
+        if (timing_.hardwareOutputNote.empty() && !hardwareOutputFailed_)
+            timing_.hardwareOutputNote = "nessuna texture libera nel gruppo dell'encoder";
     }
     if (av_frame_make_writable(output_.get()) < 0)
         throw MediaError("Memoria insufficiente per il fotogramma da codificare.");

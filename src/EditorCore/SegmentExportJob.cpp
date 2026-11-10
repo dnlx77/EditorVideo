@@ -427,6 +427,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     ProjectVideoEncoder video(format, fps, Rational{0, 1}, reencode_, gpuFfmpegDevice());
     const PacketSink videoSink = videoSinkFor(video, 1, frameSeconds);
     std::optional<HardwareOutputScope> hardwareOutput;  // il compositore scrive direttamente nelle texture dell'encoder, se si può
+    noteEncoder(video);
     if (AVBufferRef* frames = video.encoder.d3d11Frames())
         hardwareOutput.emplace(compositor(), frames);
 
@@ -812,6 +813,17 @@ void ExportJob::ensureGpuDevice()
     }
 }
 
+// Se l'encoder non ha preso le texture D3D11 si ricorda perché (per il dialogo finale); se le prende, il motivo di prima non vale più.
+void ExportJob::noteEncoder(const ProjectVideoEncoder& video)
+{
+    if (video.encoder.d3d11Frames() != nullptr)
+        encoderNote_.clear();
+    else if (!video.encoder.d3d11Note().empty())
+        encoderNote_ = video.encoder.d3d11Note();
+    else if (gpuDevice_ && encoderNote_.empty())
+        encoderNote_ = std::string("encoder ") + video.encoder.info().ffmpegName + ": senza texture D3D11";
+}
+
 AVBufferRef* ExportJob::gpuFfmpegDevice()
 {
     ensureGpuDevice();
@@ -845,6 +857,7 @@ std::pair<double, double> ExportJob::writeBlack(double seconds)
     constexpr int kTicks = 90000;
     ProjectVideoEncoder video(format, fps, Rational{1, kTicks}, reencode_, gpuFfmpegDevice());
     std::optional<HardwareOutputScope> hardwareOutput;
+    noteEncoder(video);
     if (AVBufferRef* frames = video.encoder.d3d11Frames())
         hardwareOutput.emplace(compositor(), frames);
     const PacketSink videoSink = videoSinkFor(video, std::llround(frameSeconds * kTicks), frameSeconds);
@@ -1064,7 +1077,7 @@ ExportResult ExportJob::run()
             result_.compositorDirectFrames = blender_->timing().directFrames;
             result_.compositorDirectNote = blender_->timing().directNote;
             result_.compositorEncoderFrames = blender_->timing().hardwareOutputFrames;
-            result_.compositorEncoderNote = blender_->timing().hardwareOutputNote;
+            result_.compositorEncoderNote = !blender_->timing().hardwareOutputNote.empty() ? blender_->timing().hardwareOutputNote : encoderNote_;
         }
         result_.totalSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - runStarted).count();
         return result_;

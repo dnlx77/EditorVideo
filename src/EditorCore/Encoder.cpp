@@ -343,12 +343,18 @@ bool works(const Candidate& candidate)
 
 // Prova vera dei fotogrammi D3D11: l'encoder si apre così e codifica un fotogramma nero caricato in una texture. Si fa una volta sola
 // per esecuzione (il risultato vale per le esportazioni dopo).
-bool d3d11InputWorks(const Candidate& candidate, AVBufferRef* device)
+bool d3d11InputWorks(const Candidate& candidate, AVBufferRef* device, std::string& why)
 {
-    static std::atomic<int> state{0};  // 0 = da provare, 1 = funziona, 2 = no
-    if (state.load() != 0)
-        return state.load() == 1;
+    static std::mutex lock;
+    static int state = 0;  // 0 = da provare, 1 = funziona, 2 = no
+    static std::string failure;
+    const std::lock_guard<std::mutex> guard(lock);
+    if (state != 0) {
+        why = failure;
+        return state == 1;
+    }
     bool ok = false;
+    failure = "la prova non ha dato pacchetti";
     try {
         VideoEncoderSettings s;
         s.codec = candidate.codec;
@@ -370,12 +376,20 @@ bool d3d11InputWorks(const Candidate& candidate, AVBufferRef* device)
                 sendAndDrain(ctx.get(), hw.get(), count);
                 sendAndDrain(ctx.get(), nullptr, count);
                 ok = packets > 0;
+            } else {
+                failure = "fotogramma nero non caricabile nella texture";
             }
+        } else {
+            failure = "nessuna texture dal gruppo dell'encoder";
         }
-    } catch (const MediaError&) {
+    } catch (const MediaError& error) {
+        failure = error.what();
         ok = false;
     }
     state = ok ? 1 : 2;
+    if (ok)
+        failure.clear();
+    why = failure;
     return ok;
 }
 
@@ -597,6 +611,7 @@ struct VideoEncoder::Impl
     FramePtr fitted{av_frame_alloc()};      // immagine ridimensionata, prima di metterla fra le bande nere
     FramePtr uploaded{av_frame_alloc()};    // con fotogrammi D3D11: il fotogramma in memoria caricato nella scheda video
     bool d3d11 = false;                     // l'encoder prende fotogrammi D3D11
+    std::string d3d11Note;                  // se si era chiesto e non è partito: perché
     // Con cui è preparato `sws`: formato, misura di ingresso e di uscita, gamma dei colori.
     struct SwsKey
     {
@@ -630,14 +645,23 @@ VideoEncoder::VideoEncoder(const VideoEncoderSettings& settings)
     for (const VideoEncoderInfo& info : choices) {
         try {
             const Candidate& candidate = *findCandidate(info.codec, info.backend);
-            if (settings.d3d11Device != nullptr && info.backend == EncoderBackend::Nvenc && d3d11InputWorks(candidate, settings.d3d11Device)) {
-                try {
-                    impl_->ctx = openVideo(candidate, settings, settings.d3d11Device);
-                    impl_->d3d11 = true;
-                    impl_->info = info;
-                    return;
-                } catch (const MediaError&) {
-                    // si riprova nel modo di sempre
+            if (settings.d3d11Device != nullptr) {
+                std::string why;
+                if (info.backend != EncoderBackend::Nvenc) {
+                    impl_->d3d11Note = std::string("l'encoder ") + candidate.name + " non è NVENC";
+                } else if (!d3d11InputWorks(candidate, settings.d3d11Device, why)) {
+                    impl_->d3d11Note = "prova di NVENC con texture D3D11 fallita: " + why;
+                } else {
+                    try {
+                        impl_->ctx = openVideo(candidate, settings, settings.d3d11Device);
+                        impl_->d3d11 = true;
+                        impl_->d3d11Note.clear();
+                        impl_->info = info;
+                        return;
+                    } catch (const MediaError& error) {
+                        impl_->d3d11Note = std::string("apertura di NVENC con texture D3D11 fallita: ") + error.what();
+                        // si riprova nel modo di sempre
+                    }
                 }
             }
             impl_->ctx = openVideo(candidate, settings);
@@ -665,6 +689,11 @@ Rational VideoEncoder::timeBase() const
 void VideoEncoder::copyParameters(AVCodecParameters* parameters) const
 {
     avcodec_parameters_from_context(parameters, impl_->ctx.get());
+}
+
+const std::string& VideoEncoder::d3d11Note() const
+{
+    return impl_->d3d11Note;
 }
 
 AVBufferRef* VideoEncoder::d3d11Frames() const

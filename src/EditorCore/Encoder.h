@@ -158,6 +158,8 @@ public:
     // Se l'encoder prende fotogrammi D3D11 (vedi VideoEncoderSettings::d3d11Device): il gruppo da cui prenderli
     // (av_hwframe_get_buffer), vale finché esiste l'encoder. Altrimenti nullptr.
     AVBufferRef* d3d11Frames() const;
+    // Se si era chiesto di prendere fotogrammi D3D11 e non è partito: perché (altrimenti vuoto).
+    const std::string& d3d11Note() const;
 
     // Codifica un fotogramma decodificato, con pts nell'unità timeBase(). Qualsiasi formato dei pixel e misura
     // (anche un fotogramma della scheda video): se serve viene convertito e ridimensionato. forceKeyframe = questo
