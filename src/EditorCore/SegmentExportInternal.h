@@ -491,6 +491,7 @@ private:
                                    const TimeRange& range, bool continues, double shiftSeconds, std::size_t c, double& audioEnd);
     PacketSink videoSinkFor(ProjectVideoEncoder& video, std::int64_t defaultDuration, double frameSeconds);
     void ensureGpuDevice();
+    void noteEncoder(const ProjectVideoEncoder& video);
     AVBufferRef* gpuFfmpegDevice();  // il dispositivo D3D11 condiviso di FFmpeg, o nullptr
     PacketSink audioSinkFor(int rate, StreamCopy* muting, double& audioEnd);
     std::pair<double, double> reencodeRange(InputFile& current, const TimeRange& range, std::size_t c, const Piece& piece);
@@ -543,6 +544,7 @@ private:
     std::shared_ptr<AVBufferRef> hwDevice_;  // il dispositivo D3D11 per decodificare con la GPU, creato una volta sola
     bool hwDeviceTried_ = false;
     bool gpuDeviceTried_ = false;
+    std::string encoderNote_;  // perché l'encoder non prende texture D3D11 (vuoto se le prende)
     std::shared_ptr<GpuDevice> gpuDevice_;  // se c'è, hwDevice_ è questo stesso dispositivo: i fotogrammi decodificati li legge il compositore
 
     std::unique_ptr<TransitionRenderer> transitionRenderer_;  // per le parti dentro una transizione
