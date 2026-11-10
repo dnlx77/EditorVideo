@@ -363,6 +363,7 @@ PacketSink ExportJob::videoSinkFor(ProjectVideoEncoder& video, std::int64_t defa
     const Rational encoderTb = video.encoder.timeBase();
     AVStream* outV = output_->streams[outVideo_];
     return [&, &parameters = video.parameters, prefixed = video.lengthPrefixed, encoderTb, outV, defaultDuration, frameSeconds](AVPacket* p) {
+        const std::lock_guard<std::mutex> lock(muxMutex_);
         const bool key = (p->flags & AV_PKT_FLAG_KEY) != 0;
         if (prefixed && !encodedToLengthPrefixed(p, outLength_, key ? parameters.nals : std::vector<std::vector<std::uint8_t>>{}))
             throw MediaError("Un pacchetto dell'encoder non si legge.");
@@ -384,6 +385,7 @@ PacketSink ExportJob::audioSinkFor(int rate, StreamCopy* muting, double& audioEn
 {
     AVStream* outA = output_->streams[outAudio_];
     return [&, &audioEnd = audioEnd, rate, outA, muting](AVPacket* p) {
+        const std::lock_guard<std::mutex> lock(muxMutex_);
         if (p->pts < 0)
             return;  // il ritardo iniziale dell'encoder (qualche millesimo): non si sente
         const double time = outputPosition_ + static_cast<double>(p->pts) / rate;
@@ -430,6 +432,9 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     noteEncoder(video);
     if (AVBufferRef* frames = video.encoder.d3d11Frames())
         hardwareOutput.emplace(compositor(), frames);
+
+    // La codifica in un thread suo: mentre si compone il fotogramma dopo, l'encoder lavora sul precedente.
+    AsyncFrameEncoder encoding([&](const AVFrame* frame, bool key) { video.encoder.encode(frame, key, videoSink); });
 
     // Decoder del video (e dell'audio, se si ricodifica).
     AVPixelFormat hardwareFormat = AV_PIX_FMT_NONE;  // formato D3D11 dei fotogrammi, se il video si decodifica con la GPU
@@ -567,7 +572,16 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         emitted->pts = base + k;
         const auto encodeStarted = std::chrono::steady_clock::now();
         result_.blendSeconds += std::chrono::duration<double>(encodeStarted - blendStarted).count();
-        video.encoder.encode(emitted.get(), k == 0, videoSink);
+        // Un fotogramma ancora della scheda video del decoder (non composto) l'encoder lo legge dal gruppo del decoder, che ha pochi
+        // fotogrammi di scorta: si codifica subito (dopo quelli in coda) invece di tenerlo in coda.
+        const bool decoderSurface = emitted->format == AV_PIX_FMT_D3D11 && emitted->hw_frames_ctx != nullptr
+                                    && (video.encoder.d3d11Frames() == nullptr || emitted->hw_frames_ctx->data != video.encoder.d3d11Frames()->data);
+        if (decoderSurface) {
+            encoding.drain();
+            video.encoder.encode(emitted.get(), k == 0, videoSink);
+        } else {
+            encoding.push(emitted.get(), k == 0);
+        }
         const auto encodeDone = std::chrono::steady_clock::now();
         result_.composeSeconds += std::chrono::duration<double>(encodeStarted - composeStarted).count();
         result_.encodeSeconds += std::chrono::duration<double>(encodeDone - encodeStarted).count();
@@ -641,6 +655,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             audioDone = true;
             return;
         }
+        const std::lock_guard<std::mutex> lock(muxMutex_);
         copyAudioPacket(pkt, copy, in, time, start, range, continues, range.start + start - outputPosition_, c, audioEnd);
     };
 
@@ -701,6 +716,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         throw MediaError("Nel tratto da ricodificare di " + clips_[c].path + " non c'è nessun fotogramma.");
     while (k < frames)
         emit(held.get());
+    encoding.drain();
     video.encoder.finish(videoSink);
     if (audioEncoder) {
         // Il file non ha audio: silenzio per tutto il tratto.

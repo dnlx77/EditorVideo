@@ -20,6 +20,12 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <exception>
+#include <functional>
+#include <mutex>
+#include <thread>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -460,6 +466,102 @@ bool canMux(const AVOutputFormat* format, const std::string& extension, AVFormat
 std::string replacementProblem(AVFormatContext* ctx, int index, const std::string& audioPath,
                                const std::string& outputPath);
 
+// La codifica del video in un thread suo: la composizione dei fotogrammi (sul thread di chi chiama) e la codifica vanno in parallelo.
+// push() mette un fotogramma in coda (ne tiene un riferimento: il suo contenuto non deve più cambiare) e aspetta solo se la coda è
+// piena; il thread chiama `encode(frame, key)` nell'ordine. Un errore del thread (anche ExportCancelled) si rilancia al push() o
+// al drain() dopo. Il distruttore ferma il thread (scarta i fotogrammi in coda) senza lanciare.
+class AsyncFrameEncoder
+{
+public:
+    using EncodeFn = std::function<void(const AVFrame* frame, bool key)>;
+    explicit AsyncFrameEncoder(EncodeFn encode, std::size_t depth = 3)
+        : encode_(std::move(encode))
+        , depth_(std::max<std::size_t>(1, depth))
+        , worker_([this] { run(); })
+    {
+    }
+    ~AsyncFrameEncoder()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stop_ = true;
+            queue_.clear();
+        }
+        wake_.notify_all();
+        space_.notify_all();
+        worker_.join();
+    }
+    AsyncFrameEncoder(const AsyncFrameEncoder&) = delete;
+    AsyncFrameEncoder& operator=(const AsyncFrameEncoder&) = delete;
+
+    void push(const AVFrame* frame, bool key)
+    {
+        FramePtr copy(av_frame_clone(frame));
+        if (!copy)
+            throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
+        std::unique_lock<std::mutex> lock(mutex_);
+        space_.wait(lock, [&] { return queue_.size() < depth_ || error_; });
+        rethrow(lock);
+        queue_.emplace_back(std::move(copy), key);
+        wake_.notify_one();
+    }
+    // Aspetta che tutti i fotogrammi in coda siano codificati (prima di finish() dell'encoder o di usarlo da un altro thread).
+    void drain()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        space_.wait(lock, [&] { return (queue_.empty() && !busy_) || error_; });
+        rethrow(lock);
+    }
+
+private:
+    void rethrow(std::unique_lock<std::mutex>&)
+    {
+        if (error_) {
+            const std::exception_ptr error = error_;
+            error_ = nullptr;
+            std::rethrow_exception(error);
+        }
+    }
+    void run()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        for (;;) {
+            wake_.wait(lock, [&] { return stop_ || !queue_.empty(); });
+            if (stop_)
+                return;
+            auto item = std::move(queue_.front());
+            queue_.pop_front();
+            busy_ = true;
+            lock.unlock();
+            std::exception_ptr failure;
+            try {
+                encode_(item.first.get(), item.second);
+            } catch (...) {
+                failure = std::current_exception();
+            }
+            item.first.reset();
+            lock.lock();
+            busy_ = false;
+            if (failure) {
+                error_ = failure;
+                queue_.clear();
+            }
+            space_.notify_all();
+        }
+    }
+
+    EncodeFn encode_;
+    std::size_t depth_;
+    std::mutex mutex_;
+    std::condition_variable wake_;   // c'è lavoro (o ci si ferma)
+    std::condition_variable space_;  // c'è posto in coda, la coda è vuota, o c'è un errore
+    std::deque<std::pair<FramePtr, bool>> queue_;
+    bool busy_ = false;
+    bool stop_ = false;
+    std::exception_ptr error_;
+    std::thread worker_;  // ultimo: parte quando il resto è pronto
+};
+
 // Una esportazione: il costruttore controlla gli argomenti, apre i file e prepara i flussi del file creato; run() scrive
 // i tratti uno dopo l'altro (copiati, ricodificati o spazi vuoti) e chiude il file.
 class ExportJob
@@ -547,6 +649,7 @@ private:
     std::string encoderNote_;  // perché l'encoder non prende texture D3D11 (vuoto se le prende)
     std::shared_ptr<GpuDevice> gpuDevice_;  // se c'è, hwDevice_ è questo stesso dispositivo: i fotogrammi decodificati li legge il compositore
 
+    std::mutex muxMutex_;  // i pacchetti dei due flussi (video dal thread dell'encoder, audio dall'altro) si scrivono uno alla volta
     std::unique_ptr<TransitionRenderer> transitionRenderer_;  // per le parti dentro una transizione
     PacketPtr packet_;
     ExportResult result_;
