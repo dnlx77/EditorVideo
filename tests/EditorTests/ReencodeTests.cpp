@@ -3,6 +3,7 @@
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/PathUtil.h"
 #include "EditorCore/SegmentExport.h"
+#include "EditorCore/SegmentExportInternal.h"
 #include "MediaChecks.h"
 #include "SampleMedia.h"
 
@@ -16,7 +17,10 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <atomic>
+#include <chrono>
 #include <filesystem>
+#include <thread>
 
 namespace fs = std::filesystem;
 using namespace editor::core;
@@ -436,3 +440,77 @@ TEST_F(Reencode, GpuDecoderGivesTheSameVideoAsTheCpuOne)
 
 
 }  // namespace
+
+// --- La codifica in un thread suo ---
+
+namespace {
+detail::FramePtr testFrame(int pts)
+{
+    detail::FramePtr frame(av_frame_alloc());
+    frame->format = AV_PIX_FMT_GRAY8;
+    frame->width = 16;
+    frame->height = 16;
+    av_frame_get_buffer(frame.get(), 0);
+    frame->pts = pts;
+    return frame;
+}
+}  // namespace
+
+TEST(AsyncFrameEncoder, EncodesEveryFrameInOrderWhileTheCallerKeepsGoing)
+{
+    std::vector<std::int64_t> seen;
+    std::vector<bool> keys;
+    {
+        segment::AsyncFrameEncoder encoder([&](const AVFrame* frame, bool key) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            seen.push_back(frame->pts);
+            keys.push_back(key);
+        }, 2);
+        for (int i = 0; i < 50; ++i) {
+            const detail::FramePtr frame = testFrame(i);
+            encoder.push(frame.get(), i == 0);
+        }
+        encoder.drain();
+        EXPECT_EQ(seen.size(), 50u);
+    }
+    ASSERT_EQ(seen.size(), 50u);
+    for (int i = 0; i < 50; ++i)
+        EXPECT_EQ(seen[static_cast<std::size_t>(i)], i);
+    EXPECT_TRUE(keys.front());
+    EXPECT_FALSE(keys.back());
+}
+
+TEST(AsyncFrameEncoder, AnErrorInTheThreadComesBackToTheCaller)
+{
+    segment::AsyncFrameEncoder encoder([&](const AVFrame* frame, bool) {
+        if (frame->pts == 3)
+            throw MediaError("codifica fallita");
+    }, 2);
+    bool thrown = false;
+    try {
+        for (int i = 0; i < 20; ++i) {
+            const detail::FramePtr frame = testFrame(i);
+            encoder.push(frame.get(), false);
+        }
+        encoder.drain();
+    } catch (const MediaError& error) {
+        thrown = std::string(error.what()).find("codifica fallita") != std::string::npos;
+    }
+    EXPECT_TRUE(thrown);
+}
+
+TEST(AsyncFrameEncoder, DestroyingItWithFramesQueuedDoesNotHang)
+{
+    std::atomic<int> encoded{0};
+    {
+        segment::AsyncFrameEncoder encoder([&](const AVFrame*, bool) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            ++encoded;
+        }, 3);
+        for (int i = 0; i < 3; ++i) {
+            const detail::FramePtr frame = testFrame(i);
+            encoder.push(frame.get(), false);
+        }
+    }
+    EXPECT_LE(encoded.load(), 3);
+}
