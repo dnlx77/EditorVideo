@@ -505,6 +505,12 @@ public:
         queue_.emplace_back(std::move(copy), key);
         wake_.notify_one();
     }
+    // Quanto ha lavorato il thread (secondi di orologio dentro encode); da leggere dopo drain().
+    double busySeconds()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return busySeconds_;
+    }
     // Aspetta che tutti i fotogrammi in coda siano codificati (prima di finish() dell'encoder o di usarlo da un altro thread).
     void drain()
     {
@@ -534,13 +540,16 @@ private:
             busy_ = true;
             lock.unlock();
             std::exception_ptr failure;
+            const auto began = std::chrono::steady_clock::now();
             try {
                 encode_(item.first.get(), item.second);
             } catch (...) {
                 failure = std::current_exception();
             }
             item.first.reset();
+            const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - began).count();
             lock.lock();
+            busySeconds_ += took;
             busy_ = false;
             if (failure) {
                 error_ = failure;
@@ -557,6 +566,7 @@ private:
     std::condition_variable space_;  // c'è posto in coda, la coda è vuota, o c'è un errore
     std::deque<std::pair<FramePtr, bool>> queue_;
     bool busy_ = false;
+    double busySeconds_ = 0.0;
     bool stop_ = false;
     std::exception_ptr error_;
     std::thread worker_;  // ultimo: parte quando il resto è pronto

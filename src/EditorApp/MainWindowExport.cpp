@@ -381,6 +381,11 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
                         .arg(r.composeSeconds, 0, 'f', 1)
                         .arg(r.encodeSeconds, 0, 'f', 1)
                         .arg(std::max(0.0, r.totalSeconds - r.mixSeconds - r.composeSeconds - r.encodeSeconds), 0, 'f', 1);
+    if (r.readSeconds > 0.0 || r.decodeSeconds > 0.0 || r.encoderThreadSeconds > 0.0)
+        recoding += QStringLiteral("\nThread: lettura del file %1 s, chiamate al decoder %2 s, encoder al lavoro %3 s (in parallelo).")
+                        .arg(r.readSeconds, 0, 'f', 1)
+                        .arg(r.decodeSeconds, 0, 'f', 1)
+                        .arg(r.encoderThreadSeconds, 0, 'f', 1);
     if (r.composeSeconds > 0.0)
         recoding += QStringLiteral("\nComposizione: scritte %1 s, livelli %2 s, fusione %3 s.")
                         .arg(r.textPrepSeconds, 0, 'f', 1)
