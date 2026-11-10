@@ -25,6 +25,7 @@ extern "C" {
 #include <cctype>
 #include <cstdlib>
 #include <cmath>
+#include <cstdio>
 #include <mutex>
 #include <thread>
 
@@ -192,9 +193,56 @@ void attachD3d11Frames(AVCodecContext* ctx, AVBufferRef* device, int width, int 
     context->height = height;
     context->initial_pool_size = 12;
     static_cast<AVD3D11VAFramesContext*>(context->hwctx)->BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-    if (const int ret = av_hwframe_ctx_init(frames); ret < 0) {
+    int ret = av_hwframe_ctx_init(frames);
+    if (ret < 0) {
+        // Senza gruppo di texture in anticipo: ogni fotogramma è una texture a sé (più semplice per il driver).
         av_buffer_unref(&frames);
-        throw MediaError("Fotogrammi D3D11 dell'encoder non creabili: " + ffmpegError(ret));
+        frames = av_hwframe_ctx_alloc(device);
+        if (frames == nullptr)
+            throw MediaError("Memoria insufficiente per i fotogrammi D3D11 dell'encoder.");
+        context = reinterpret_cast<AVHWFramesContext*>(frames->data);
+        context->format = AV_PIX_FMT_D3D11;
+        context->sw_format = AV_PIX_FMT_NV12;
+        context->width = width;
+        context->height = height;
+        context->initial_pool_size = 0;
+        static_cast<AVD3D11VAFramesContext*>(context->hwctx)->BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        const int retDynamic = av_hwframe_ctx_init(frames);
+        if (retDynamic < 0) {
+            av_buffer_unref(&frames);
+            // Diagnostica: prova a creare a mano una texture NV12 con vari usi sullo stesso dispositivo.
+            std::string why = "Fotogrammi D3D11 dell'encoder non creabili: " + ffmpegError(ret);
+            auto* dev = reinterpret_cast<AVHWDeviceContext*>(device->data);
+            ID3D11Device* d3d = static_cast<AVD3D11VADeviceContext*>(dev->hwctx)->device;
+            if (d3d != nullptr) {
+                UINT support = 0;
+                const HRESULT hrSupport = d3d->CheckFormatSupport(DXGI_FORMAT_NV12, &support);
+                why += " [NV12: supporto 0x" + [&] { char b[16]; std::snprintf(b, sizeof b, "%X", support); return std::string(b); }() +
+                       (FAILED(hrSupport) ? " (errore)" : "") + "; livello 0x" +
+                       [&] { char b[16]; std::snprintf(b, sizeof b, "%X", static_cast<unsigned>(d3d->GetFeatureLevel())); return std::string(b); }();
+                const UINT binds[] = {0, D3D11_BIND_SHADER_RESOURCE, D3D11_BIND_RENDER_TARGET, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE};
+                for (const UINT bind : binds) {
+                    D3D11_TEXTURE2D_DESC desc{};
+                    desc.Width = static_cast<UINT>(width);
+                    desc.Height = static_cast<UINT>(height);
+                    desc.MipLevels = 1;
+                    desc.ArraySize = 1;
+                    desc.Format = DXGI_FORMAT_NV12;
+                    desc.SampleDesc.Count = 1;
+                    desc.Usage = D3D11_USAGE_DEFAULT;
+                    desc.BindFlags = bind;
+                    ID3D11Texture2D* tex = nullptr;
+                    const HRESULT hr = d3d->CreateTexture2D(&desc, nullptr, &tex);
+                    char b[48];
+                    std::snprintf(b, sizeof b, "; bind %u: 0x%08X", bind, static_cast<unsigned>(hr));
+                    why += b;
+                    if (tex != nullptr)
+                        tex->Release();
+                }
+                why += "]";
+            }
+            throw MediaError(why);
+        }
     }
     ctx->hw_frames_ctx = frames;  // l'encoder ne è il proprietario
     ctx->pix_fmt = AV_PIX_FMT_D3D11;
