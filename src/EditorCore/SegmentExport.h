@@ -58,6 +58,11 @@ struct ExportResult
     double textPrepSeconds = 0.0;
     double layerPrepSeconds = 0.0;
     double blendSeconds = 0.0;
+    // Per trovare il collo di bottiglia: lettura dei pacchetti dal file, chiamate al decoder del video (senza la composizione che le
+    // segue) e lavoro del thread dell'encoder (parallelo al resto: se è vicino al totale, è lui a frenare).
+    double readSeconds = 0.0;
+    double decodeSeconds = 0.0;
+    double encoderThreadSeconds = 0.0;
     // Dentro la fusione: conversione dell'originale in RGBA, riempimento del nero, disegno del pezzo trasformato, livelli e
     // scritte sopra, conversione in YUV (solo per i fotogrammi trasformati o con scritte).
     double blendToRgbaSeconds = 0.0;

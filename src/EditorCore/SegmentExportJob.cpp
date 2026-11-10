@@ -679,21 +679,33 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
                              + "): nella finestra Esporta scegli il decoder CPU.");
         onVideoFrame(downloaded.get());
     };
+    using TimingClock = std::chrono::steady_clock;
+    const auto secondsSince = [](TimingClock::time_point from) { return std::chrono::duration<double>(TimingClock::now() - from).count(); };
     const auto drain = [&](AVCodecContext* decoder, const auto& onFrame) {
-        while (avcodec_receive_frame(decoder, frame.get()) >= 0) {
+        for (;;) {
+            const auto began = TimingClock::now();
+            const bool got = avcodec_receive_frame(decoder, frame.get()) >= 0;
+            result_.decodeSeconds += secondsSince(began);
+            if (!got)
+                break;
             onFrame(frame.get());
             av_frame_unref(frame.get());
         }
     };
     while (!(videoDone && audioDone)) {
+        const auto readBegan = TimingClock::now();
         const int ret = av_read_frame(input, pkt.get());
+        result_.readSeconds += secondsSince(readBegan);
         if (ret == AVERROR_EOF)
             break;
         if (ret < 0)
             throw MediaError("Errore durante la lettura del file originale (" + ffmpegError(ret) + ").");
         const PacketUnref release{pkt.get()};
         if (pkt->stream_index == videoIndex && !videoDone) {
-            if (avcodec_send_packet(videoDecoder.get(), pkt.get()) >= 0)  // un pacchetto rovinato si salta
+            const auto sendBegan = TimingClock::now();
+            const bool sent = avcodec_send_packet(videoDecoder.get(), pkt.get()) >= 0;  // un pacchetto rovinato si salta
+            result_.decodeSeconds += secondsSince(sendBegan);
+            if (sent)
                 drain(videoDecoder.get(), onDecodedVideo);
         } else if (pkt->stream_index == audioIndex && !audioDone) {
             if (copyAudio) {
@@ -717,6 +729,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     while (k < frames)
         emit(held.get());
     encoding.drain();
+    result_.encoderThreadSeconds += encoding.busySeconds();
     video.encoder.finish(videoSink);
     if (audioEncoder) {
         // Il file non ha audio: silenzio per tutto il tratto.
