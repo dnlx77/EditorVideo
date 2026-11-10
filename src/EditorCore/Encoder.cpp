@@ -2,6 +2,10 @@
 
 #include "EditorCore/FfmpegUtil.h"
 
+#ifdef _WIN32
+#include <d3d11.h>  // fuori da extern "C": ha overload C++
+#endif
+
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/audio_fifo.h>
@@ -11,9 +15,13 @@ extern "C" {
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
+#ifdef _WIN32
+#include <libavutil/hwcontext_d3d11va.h>
+#endif
 }
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
 #include <cmath>
@@ -169,8 +177,38 @@ void qualityOptions(AVCodecContext* ctx, AVDictionary** opts, EncoderBackend bac
     }
 }
 
-// Encoder video aperto (senza fotogrammi ancora). Lancia MediaError se non si apre.
-CodecContextPtr openVideo(const Candidate& candidate, const VideoEncoderSettings& s)
+// L'encoder prenderà fotogrammi D3D11 NV12 di un gruppo creato qui sul dispositivo dato (con BIND_RENDER_TARGET: il compositore
+// ci scrive dentro). Lancia MediaError se non si può.
+void attachD3d11Frames(AVCodecContext* ctx, AVBufferRef* device, int width, int height)
+{
+#ifdef _WIN32
+    AVBufferRef* frames = av_hwframe_ctx_alloc(device);
+    if (frames == nullptr)
+        throw MediaError("Memoria insufficiente per i fotogrammi D3D11 dell'encoder.");
+    auto* context = reinterpret_cast<AVHWFramesContext*>(frames->data);
+    context->format = AV_PIX_FMT_D3D11;
+    context->sw_format = AV_PIX_FMT_NV12;
+    context->width = width;
+    context->height = height;
+    context->initial_pool_size = 12;
+    static_cast<AVD3D11VAFramesContext*>(context->hwctx)->BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    if (const int ret = av_hwframe_ctx_init(frames); ret < 0) {
+        av_buffer_unref(&frames);
+        throw MediaError("Fotogrammi D3D11 dell'encoder non creabili: " + ffmpegError(ret));
+    }
+    ctx->hw_frames_ctx = frames;  // l'encoder ne è il proprietario
+    ctx->pix_fmt = AV_PIX_FMT_D3D11;
+#else
+    (void)ctx;
+    (void)device;
+    (void)width;
+    (void)height;
+    throw MediaError("I fotogrammi D3D11 sono solo per Windows.");
+#endif
+}
+
+// Encoder video aperto (senza fotogrammi ancora). Lancia MediaError se non si apre. Con `d3d11Device` prende fotogrammi D3D11.
+CodecContextPtr openVideo(const Candidate& candidate, const VideoEncoderSettings& s, AVBufferRef* d3d11Device = nullptr)
 {
     const AVCodec* codec = avcodec_find_encoder_by_name(candidate.name);
     if (codec == nullptr)
@@ -185,6 +223,8 @@ CodecContextPtr openVideo(const Candidate& candidate, const VideoEncoderSettings
     ctx->time_base = s.timeBase.num > 0 ? toAv(s.timeBase) : AVRational{rate.den, rate.num};
     ctx->sample_aspect_ratio = s.sampleAspectRatio.num > 0 ? toAv(s.sampleAspectRatio) : AVRational{1, 1};
     ctx->pix_fmt = choosePixelFormat(codec, AV_PIX_FMT_YUV420P);
+    if (d3d11Device != nullptr)
+        attachD3d11Frames(ctx.get(), d3d11Device, s.width, s.height);
     ctx->color_range = AVCOL_RANGE_MPEG;
     ctx->gop_size = s.gopFrames > 0 ? s.gopFrames : std::max(1, static_cast<int>(2 * av_q2d(ctx->framerate) + 0.5));
     if (s.referenceFrames > 0)
@@ -299,6 +339,44 @@ bool works(const Candidate& candidate)
     } catch (const MediaError&) {
         return false;
     }
+}
+
+// Prova vera dei fotogrammi D3D11: l'encoder si apre così e codifica un fotogramma nero caricato in una texture. Si fa una volta sola
+// per esecuzione (il risultato vale per le esportazioni dopo).
+bool d3d11InputWorks(const Candidate& candidate, AVBufferRef* device)
+{
+    static std::atomic<int> state{0};  // 0 = da provare, 1 = funziona, 2 = no
+    if (state.load() != 0)
+        return state.load() == 1;
+    bool ok = false;
+    try {
+        VideoEncoderSettings s;
+        s.codec = candidate.codec;
+        s.width = 320;
+        s.height = 240;
+        CodecContextPtr ctx = openVideo(candidate, s, device);
+        FramePtr black(av_frame_alloc());
+        black->format = AV_PIX_FMT_NV12;
+        black->width = ctx->width;
+        black->height = ctx->height;
+        FramePtr hw(av_frame_alloc());
+        if (av_frame_get_buffer(black.get(), 0) >= 0 && av_hwframe_get_buffer(ctx->hw_frames_ctx, hw.get(), 0) >= 0) {
+            const std::ptrdiff_t linesizes[4] = {black->linesize[0], black->linesize[1], black->linesize[2], black->linesize[3]};
+            av_image_fill_black(black->data, linesizes, AV_PIX_FMT_NV12, AVCOL_RANGE_MPEG, ctx->width, ctx->height);
+            if (av_hwframe_transfer_data(hw.get(), black.get(), 0) >= 0) {
+                hw->pts = 0;
+                int packets = 0;
+                const PacketSink count = [&](AVPacket*) { ++packets; };
+                sendAndDrain(ctx.get(), hw.get(), count);
+                sendAndDrain(ctx.get(), nullptr, count);
+                ok = packets > 0;
+            }
+        }
+    } catch (const MediaError&) {
+        ok = false;
+    }
+    state = ok ? 1 : 2;
+    return ok;
 }
 
 const Candidate* findCandidate(VideoCodec codec, EncoderBackend backend)
@@ -517,6 +595,8 @@ struct VideoEncoder::Impl
     FramePtr referenced{av_frame_alloc()};  // fotogramma già nel formato dell'encoder: solo un riferimento
     FramePtr converted{av_frame_alloc()};   // fotogramma convertito alla misura e al formato dell'encoder
     FramePtr fitted{av_frame_alloc()};      // immagine ridimensionata, prima di metterla fra le bande nere
+    FramePtr uploaded{av_frame_alloc()};    // con fotogrammi D3D11: il fotogramma in memoria caricato nella scheda video
+    bool d3d11 = false;                     // l'encoder prende fotogrammi D3D11
     // Con cui è preparato `sws`: formato, misura di ingresso e di uscita, gamma dei colori.
     struct SwsKey
     {
@@ -549,7 +629,18 @@ VideoEncoder::VideoEncoder(const VideoEncoderSettings& settings)
     std::string problems;
     for (const VideoEncoderInfo& info : choices) {
         try {
-            impl_->ctx = openVideo(*findCandidate(info.codec, info.backend), settings);
+            const Candidate& candidate = *findCandidate(info.codec, info.backend);
+            if (settings.d3d11Device != nullptr && info.backend == EncoderBackend::Nvenc && d3d11InputWorks(candidate, settings.d3d11Device)) {
+                try {
+                    impl_->ctx = openVideo(candidate, settings, settings.d3d11Device);
+                    impl_->d3d11 = true;
+                    impl_->info = info;
+                    return;
+                } catch (const MediaError&) {
+                    // si riprova nel modo di sempre
+                }
+            }
+            impl_->ctx = openVideo(candidate, settings);
             impl_->info = info;
             return;
         } catch (const MediaError& e) {
@@ -576,16 +667,26 @@ void VideoEncoder::copyParameters(AVCodecParameters* parameters) const
     avcodec_parameters_from_context(parameters, impl_->ctx.get());
 }
 
+AVBufferRef* VideoEncoder::d3d11Frames() const
+{
+    return impl_->d3d11 ? impl_->ctx->hw_frames_ctx : nullptr;
+}
+
 void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const PacketSink& sink)
 {
     if (impl_->finished)
         throw MediaError("L'encoder video è già stato chiuso.");
     AVCodecContext* ctx = impl_->ctx.get();
+    // Con fotogrammi D3D11 i fotogrammi in memoria si portano in NV12 e si caricano nella scheda video; quelli già nel gruppo
+    // dell'encoder (scritti dal compositore) vanno diritti.
+    const bool d3d11 = impl_->d3d11;
+    const bool own = d3d11 && frame->hw_frames_ctx != nullptr && frame->hw_frames_ctx->data == ctx->hw_frames_ctx->data;
+    const AVPixelFormat swFormat = d3d11 ? AV_PIX_FMT_NV12 : ctx->pix_fmt;
 
     // Fotogramma della scheda video: prima in memoria normale.
     FramePtr software;
     const AVFrame* source = frame;
-    if (frame->hw_frames_ctx != nullptr) {
+    if (!own && frame->hw_frames_ctx != nullptr) {
         software.reset(av_frame_alloc());
         if (const int ret = downloadHardwareFrame(software.get(), frame); ret < 0)
             throw MediaError("Fotogramma della scheda video non leggibile: " + ffmpegError(ret));
@@ -593,8 +694,13 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
     }
 
     AVFrame* work = nullptr;
-    if (source->format == ctx->pix_fmt && source->width == ctx->width && source->height == ctx->height
-        && source->color_range != AVCOL_RANGE_JPEG) {
+    if (own) {
+        work = impl_->referenced.get();
+        av_frame_unref(work);
+        if (av_frame_ref(work, frame) < 0)
+            throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
+    } else if (source->format == swFormat && source->width == ctx->width && source->height == ctx->height
+               && source->color_range != AVCOL_RANGE_JPEG) {
         work = impl_->referenced.get();
         av_frame_unref(work);
         if (av_frame_ref(work, source) < 0)
@@ -603,7 +709,7 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
         // Formato o misura diversi: conversione. Le proporzioni dell'immagine restano quelle dell'originale (con le
         // proporzioni dei suoi pixel): se sono diverse da quelle del video codificato, bande nere ai lati o sopra e sotto.
         work = impl_->converted.get();
-        prepareBuffer(work, ctx->pix_fmt, ctx->width, ctx->height);
+        prepareBuffer(work, swFormat, ctx->width, ctx->height);
         const FittedSize fit = fitInto(source, ctx->width, ctx->height);
         const int width = fit.width;
         const int height = fit.height;
@@ -613,7 +719,7 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
         bool fullRange = source->color_range == AVCOL_RANGE_JPEG;
         normalizeJpegRange(sourceFormat, fullRange);
         impl_->sws.reset(sws_getCachedContext(impl_->sws.release(), source->width, source->height, sourceFormat, width, height,
-                                              ctx->pix_fmt, SWS_BICUBIC, nullptr, nullptr, nullptr));
+                                              swFormat, SWS_BICUBIC, nullptr, nullptr, nullptr));
         if (!impl_->sws)
             throw MediaError("Conversione del fotogramma da codificare non possibile.");
         // I colori si dicono al convertitore solo quando cambia qualcosa (di solito mai dopo il primo fotogramma).
@@ -627,20 +733,20 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
             sws_scale(impl_->sws.get(), source->data, source->linesize, 0, source->height, work->data, work->linesize);
         } else {
             AVFrame* fitted = impl_->fitted.get();
-            prepareBuffer(fitted, ctx->pix_fmt, width, height);
+            prepareBuffer(fitted, swFormat, width, height);
             sws_scale(impl_->sws.get(), source->data, source->linesize, 0, source->height, fitted->data, fitted->linesize);
             // Nero dappertutto, poi l'immagine al centro (in posizioni pari, per il colore sottocampionato).
             const std::ptrdiff_t linesizes[4] = {work->linesize[0], work->linesize[1], work->linesize[2], work->linesize[3]};
-            av_image_fill_black(work->data, linesizes, ctx->pix_fmt, AVCOL_RANGE_MPEG, ctx->width, ctx->height);
+            av_image_fill_black(work->data, linesizes, swFormat, AVCOL_RANGE_MPEG, ctx->width, ctx->height);
             const int x = fit.x;
             const int y = fit.y;
-            const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(ctx->pix_fmt);
-            for (int plane = 0; plane < av_pix_fmt_count_planes(ctx->pix_fmt); ++plane) {
+            const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(swFormat);
+            for (int plane = 0; plane < av_pix_fmt_count_planes(swFormat); ++plane) {
                 const bool chroma = plane == 1 || plane == 2;
                 const int rows = chroma ? AV_CEIL_RSHIFT(height, desc->log2_chroma_h) : height;
                 const int top = chroma ? y >> desc->log2_chroma_h : y;
-                const int left = av_image_get_linesize(ctx->pix_fmt, x, plane);
-                const int bytes = av_image_get_linesize(ctx->pix_fmt, width, plane);
+                const int left = av_image_get_linesize(swFormat, x, plane);
+                const int bytes = av_image_get_linesize(swFormat, width, plane);
                 av_image_copy_plane(work->data[plane] + static_cast<std::ptrdiff_t>(top) * work->linesize[plane] + left,
                                     work->linesize[plane], fitted->data[plane], fitted->linesize[plane], bytes, rows);
             }
@@ -648,14 +754,26 @@ void VideoEncoder::encode(const AVFrame* frame, bool forceKeyframe, const Packet
         av_frame_copy_props(work, source);
         work->sample_aspect_ratio = {1, 1};
     }
-    work->pts = frame->pts;
-    work->pict_type = forceKeyframe ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
+    AVFrame* toSend = work;
+    if (d3d11 && !own) {
+        // Fotogramma in memoria (NV12): si carica in una texture del gruppo dell'encoder.
+        AVFrame* uploaded = impl_->uploaded.get();
+        av_frame_unref(uploaded);
+        if (const int ret = av_hwframe_get_buffer(ctx->hw_frames_ctx, uploaded, 0); ret < 0)
+            throw MediaError("Nessuna texture libera per l'encoder: " + ffmpegError(ret));
+        if (const int ret = av_hwframe_transfer_data(uploaded, work, 0); ret < 0)
+            throw MediaError("Fotogramma non caricabile nella scheda video per l'encoder: " + ffmpegError(ret));
+        toSend = uploaded;
+    }
+    toSend->pts = frame->pts;
+    toSend->pict_type = forceKeyframe ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
     if (forceKeyframe)
-        work->flags |= AV_FRAME_FLAG_KEY;
+        toSend->flags |= AV_FRAME_FLAG_KEY;
     else
-        work->flags &= ~AV_FRAME_FLAG_KEY;
-    sendAndDrain(ctx, work, sink, impl_->packet.get());
+        toSend->flags &= ~AV_FRAME_FLAG_KEY;
+    sendAndDrain(ctx, toSend, sink, impl_->packet.get());
     av_frame_unref(impl_->referenced.get());  // non tiene in vita il fotogramma dell'originale fino al prossimo
+    av_frame_unref(impl_->uploaded.get());
 }
 
 void VideoEncoder::finish(const PacketSink& sink)

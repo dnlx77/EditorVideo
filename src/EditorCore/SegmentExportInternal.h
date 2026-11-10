@@ -292,12 +292,29 @@ inline AVRational projectFrameRate(const StreamSignature& format)
     return av_d2q(format.frameRate > 0 ? format.frameRate : 30.0, 1001000);
 }
 
+// Finché c'è un encoder che prende fotogrammi D3D11, il compositore scrive i fotogrammi finiti direttamente nelle sue texture.
+struct HardwareOutputScope
+{
+    HardwareOutputScope(IFrameCompositor& compositor, AVBufferRef* frames)
+        : compositor_(compositor)
+    {
+        compositor_.setHardwareOutput(frames);
+    }
+    ~HardwareOutputScope() { compositor_.setHardwareOutput(nullptr); }
+    HardwareOutputScope(const HardwareOutputScope&) = delete;
+    HardwareOutputScope& operator=(const HardwareOutputScope&) = delete;
+
+private:
+    IFrameCompositor& compositor_;
+};
+
 // Encoder video nel formato del progetto (H.264 o HEVC) con i suoi parametri di codifica già letti, per i tratti da
 // ricodificare e per il nero.
 struct ProjectVideoEncoder
 {
-    ProjectVideoEncoder(const StreamSignature& format, AVRational fps, Rational timeBase, const ReencodeOptions& options)
-        : encoder(settingsFor(format, fps, timeBase, options))
+    ProjectVideoEncoder(const StreamSignature& format, AVRational fps, Rational timeBase, const ReencodeOptions& options,
+                        AVBufferRef* d3d11Device = nullptr)
+        : encoder(settingsFor(format, fps, timeBase, options, d3d11Device))
     {
         AVCodecParameters* par = avcodec_parameters_alloc();
         if (par == nullptr)
@@ -330,7 +347,8 @@ struct ProjectVideoEncoder
     std::vector<std::uint8_t> extradata;  // i parametri di codifica come li dà l'encoder (per il flusso del file)
 
 private:
-    static VideoEncoderSettings settingsFor(const StreamSignature& format, AVRational fps, Rational timeBase, const ReencodeOptions& options)
+    static VideoEncoderSettings settingsFor(const StreamSignature& format, AVRational fps, Rational timeBase, const ReencodeOptions& options,
+                                            AVBufferRef* d3d11Device)
     {
         VideoEncoderSettings settings;
         settings.codec = videoCodecFromName(format.codec).value_or(VideoCodec::H264);
@@ -342,6 +360,7 @@ private:
         settings.backend = options.backend;
         settings.preset = options.preset;
         settings.cq = options.cq;
+        settings.d3d11Device = d3d11Device;
         return settings;
     }
 };
@@ -471,6 +490,8 @@ private:
     bool copyAudioPacket(AVPacket* pkt, StreamCopy& copy, const AVStream* in, double time, double start,
                                    const TimeRange& range, bool continues, double shiftSeconds, std::size_t c, double& audioEnd);
     PacketSink videoSinkFor(ProjectVideoEncoder& video, std::int64_t defaultDuration, double frameSeconds);
+    void ensureGpuDevice();
+    AVBufferRef* gpuFfmpegDevice();  // il dispositivo D3D11 condiviso di FFmpeg, o nullptr
     PacketSink audioSinkFor(int rate, StreamCopy* muting, double& audioEnd);
     std::pair<double, double> reencodeRange(InputFile& current, const TimeRange& range, std::size_t c, const Piece& piece);
     std::pair<double, double> writeBlack(double seconds);
@@ -521,6 +542,7 @@ private:
     std::vector<LayerFrameSource::Visible> layerFrames_;  // quelli del fotogramma in corso, tenuti vivi finché il blender li usa
     std::shared_ptr<AVBufferRef> hwDevice_;  // il dispositivo D3D11 per decodificare con la GPU, creato una volta sola
     bool hwDeviceTried_ = false;
+    bool gpuDeviceTried_ = false;
     std::shared_ptr<GpuDevice> gpuDevice_;  // se c'è, hwDevice_ è questo stesso dispositivo: i fotogrammi decodificati li legge il compositore
 
     std::unique_ptr<TransitionRenderer> transitionRenderer_;  // per le parti dentro una transizione

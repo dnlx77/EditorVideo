@@ -9,6 +9,7 @@
 #include <vector>
 
 // Tipi di FFmpeg usati solo per puntatore (le definizioni sono negli header di FFmpeg).
+struct AVBufferRef;
 struct AVCodecParameters;
 struct AVFrame;
 struct AVPacket;
@@ -106,6 +107,10 @@ struct VideoEncoderSettings
     // precedenza su `quality`.
     std::string preset;
     int cq = 0;
+    // Dispositivo D3D11 di FFmpeg (da GpuDevice::createFfmpegDevice, non è dell'encoder): con NVENC l'encoder prende fotogrammi
+    // D3D11 NV12 (vedi VideoEncoder::d3d11Frames) invece di fotogrammi in memoria, se la prova lo conferma; altrimenti si usa il
+    // percorso di sempre.
+    AVBufferRef* d3d11Device = nullptr;
 };
 
 // Un preset di un encoder: il valore da passargli e il nome da mostrare.
@@ -150,6 +155,9 @@ public:
     Rational timeBase() const;
     // Codec, misure e dati extra del flusso, per il contenitore (dopo l'apertura sono già quelli definitivi).
     void copyParameters(AVCodecParameters* parameters) const;
+    // Se l'encoder prende fotogrammi D3D11 (vedi VideoEncoderSettings::d3d11Device): il gruppo da cui prenderli
+    // (av_hwframe_get_buffer), vale finché esiste l'encoder. Altrimenti nullptr.
+    AVBufferRef* d3d11Frames() const;
 
     // Codifica un fotogramma decodificato, con pts nell'unità timeBase(). Qualsiasi formato dei pixel e misura
     // (anche un fotogramma della scheda video): se serve viene convertito e ridimensionato. forceKeyframe = questo

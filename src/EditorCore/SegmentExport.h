@@ -68,6 +68,8 @@ struct ExportResult
     std::string blendSourceFormat;  // formato dei fotogrammi dell'originale nella fusione (es. yuv420p, nv12)
     std::string compositor;         // chi ha composto i fotogrammi: «CPU» o «GPU: nome della scheda» (vuoto = nessuna composizione)
     std::string compositorDirectNote;  // se i fotogrammi del decoder non si sono potuti leggere direttamente: perché
+    std::string compositorEncoderNote;  // se il compositore non ha potuto scrivere nelle texture dell'encoder: perché
+    int compositorEncoderFrames = 0;    // fotogrammi scritti direttamente nelle texture dell'encoder NVENC (senza lettura in memoria)
     int compositorDirectFrames = 0;  // fotogrammi decodificati dalla GPU passati al compositore senza copia in memoria
     std::string compositorNote;     // se la GPU è stata abbandonata a metà esportazione: perché
     int workerThreads = 0;          // thread usati per le parti a bande

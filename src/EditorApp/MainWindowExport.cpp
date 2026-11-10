@@ -397,6 +397,10 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
         recoding += QStringLiteral("\nCompositore: %1.").arg(qs(r.compositor));
         if (r.compositorDirectFrames > 0)
             recoding += QStringLiteral(" Fotogrammi letti direttamente dalla decodifica GPU: %1.").arg(r.compositorDirectFrames);
+        if (r.compositorEncoderFrames > 0)
+            recoding += QStringLiteral(" Fotogrammi scritti direttamente nell'encoder: %1.").arg(r.compositorEncoderFrames);
+        else if (!r.compositorEncoderNote.empty())
+            recoding += QStringLiteral(" Scrittura diretta nell'encoder non riuscita: %1.").arg(qs(r.compositorEncoderNote));
         if (r.compositorDirectFrames == 0 && !r.compositorDirectNote.empty())
             recoding += QStringLiteral(" Lettura diretta della decodifica GPU non riuscita: %1.").arg(qs(r.compositorDirectNote));
         if (!r.compositorNote.empty())
