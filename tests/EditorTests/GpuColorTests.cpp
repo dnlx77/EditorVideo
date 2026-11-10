@@ -5,6 +5,7 @@
 #include "EditorCore/GpuDevice.h"
 #include "EditorCore/TextImage.h"
 #include "EditorCore/Transitions.h"
+#include "EditorCore/TransitionRender.h"
 
 #ifdef _WIN32
 #include "EditorCore/GpuInternal.h"
@@ -602,6 +603,64 @@ TEST(GpuCompositor, RasterAndLayersMatchTheCpuBlender)
     const AVFrame* b = cpu.blendRaster(raster.data(), w * 4, w, h, {belowLayer, aboveLayer}, props);
     expectSameFrames(a, b, w, h, 2.5, 3.0, "transizione, livello e scritte");
     EXPECT_EQ(a->pts, 42);
+    av_frame_free(&props);
+}
+
+TEST(GpuCompositor, TransitionOfTwoTransformedSidesMatchesTheCpuFusion)
+{
+    constexpr int w = 128;
+    constexpr int h = 72;
+    std::string why;
+    const auto gpu = GpuCompositor::create(w, h, AV_PIX_FMT_YUV420P, true, &why);
+    if (!gpu)
+        GTEST_SKIP() << "nessuna GPU: " << why;
+    TextFrameBlender cpu(w, h, AV_PIX_FMT_YUV420P);
+    TransitionRenderer renderer;
+    renderer.setBox(w, h);
+    auto makeSide = [&](int seed) {
+        auto frame = std::make_shared<VideoFrame>();
+        frame->width = w;
+        frame->height = h;
+        frame->stride = w * 4;
+        frame->pixels = patternBgra(w, h, seed);
+        return frame;
+    };
+    TransitionSides sides;
+    sides.from = makeSide(0);
+    sides.to = makeSide(1);
+    sides.toTransform.scaleX = sides.toTransform.scaleY = 0.75;
+    sides.toTransform.posX = 10;
+    AVFrame* props = av_frame_alloc();
+    props->pts = 7;
+    const TextImage text = sampleText(10, 8, 40, 16);
+    BlendedText blended;
+    blended.image = &text;
+    for (const char* id : {"dissolvenza", "dissolvenza-nero", "scorrimento"}) {
+        TransitionJob job;
+        job.typeId = id;
+        job.params.direction = TransitionDirection::Left;
+        sides.progress = 0.4;
+        TransitionBlend request;
+        request.typeId = job.typeId;
+        request.params = job.params;
+        request.progress = sides.progress;
+        request.from = sides.from.get();
+        request.to = sides.to.get();
+        request.fromTransform = sides.fromTransform;
+        request.toTransform = sides.toTransform;
+        const AVFrame* a = gpu->blendTransition(request, {blended}, props);
+        const std::shared_ptr<VideoFrame> fused = renderer.fuse(job, sides);
+        ASSERT_NE(fused, nullptr);
+        const AVFrame* b = cpu.blendRaster(fused->pixels.data(), fused->stride, w, h, {blended}, props);
+        expectSameFrames(a, b, w, h, 3.0, 3.5, id);
+        EXPECT_EQ(a->pts, 7);
+    }
+    // Un effetto senza shader: la GPU rinuncia (si fa con la CPU) e la CPU non offre la fusione.
+    TransitionBlend unknown;
+    unknown.typeId = "inesistente";
+    unknown.from = sides.from.get();
+    unknown.to = sides.to.get();
+    EXPECT_EQ(gpu->blendTransition(unknown, {}, props), nullptr);
     av_frame_free(&props);
 }
 

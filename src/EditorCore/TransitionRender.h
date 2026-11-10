@@ -37,6 +37,18 @@ struct TransitionJob
     TransformAnimation animationB;
 };
 
+// I due lati di una transizione a un certo tempo, già decodificati (BGRA, al più della misura del riquadro) e con la trasformazione
+// di ognuno valutata a quel tempo: la fusione la fa chi li prende (la CPU con TransitionRenderer::fuse, la GPU col suo shader).
+struct TransitionSides
+{
+    std::shared_ptr<VideoFrame> from;
+    std::shared_ptr<VideoFrame> to;
+    Transform fromTransform;
+    Transform toTransform;
+    double progress = 0.0;  // 0..1
+    double time = 0.0;      // nella sequenza
+};
+
 // std::nullopt se la transizione, i pezzi o i file non ci sono.
 std::optional<TransitionJob> makeTransitionJob(const Project& project, const TransitionPlacement& placement);
 
@@ -83,6 +95,10 @@ public:
     // BGRA, boxWidth x boxHeight.
     std::shared_ptr<VideoFrame> render(const Project& project, const TransitionPlacement& placement, double sequenceTime);
     std::shared_ptr<VideoFrame> render(const TransitionJob& job, double sequenceTime);
+    // La stessa cosa a metà: i due lati decodificati senza fonderli. false se la transizione o i file non ci sono.
+    bool renderSides(const TransitionJob& job, double sequenceTime, TransitionSides& sides);
+    // La fusione con la CPU di quello che dà renderSides() (con i bordi neri e le trasformazioni); come render().
+    std::shared_ptr<VideoFrame> fuse(const TransitionJob& job, const TransitionSides& sides);
 
 private:
     struct Side;
