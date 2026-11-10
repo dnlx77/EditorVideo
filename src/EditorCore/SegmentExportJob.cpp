@@ -524,11 +524,26 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
                 transitionRenderer_ = std::make_unique<TransitionRenderer>();
                 transitionRenderer_->setBox(format.width, format.height);
             }
-            const std::shared_ptr<VideoFrame> mixed =
-                transitionRenderer_->render(transition.job, transition.job.start + transition.before + (frameTime - junction));
-            if (!mixed)
+            const double transitionTime = transition.job.start + transition.before + (frameTime - junction);
+            TransitionSides sides;
+            if (!transitionRenderer_->renderSides(transition.job, transitionTime, sides))
                 throw MediaError("La transizione non si riesce a fare: i file dei due pezzi non si leggono.");
-            const AVFrame* blended = compositor().blendRaster(mixed->pixels.data(), mixed->stride, mixed->width, mixed->height, texts, frame);
+            // Prima la fusione sulla scheda video (se c'è e l'effetto ha lo shader); altrimenti la fa la CPU.
+            TransitionBlend gpuBlend;
+            gpuBlend.typeId = transition.job.typeId;
+            gpuBlend.params = transition.job.params;
+            gpuBlend.progress = sides.progress;
+            gpuBlend.from = sides.from.get();
+            gpuBlend.fromTransform = sides.fromTransform;
+            gpuBlend.to = sides.to.get();
+            gpuBlend.toTransform = sides.toTransform;
+            const AVFrame* blended = compositor().blendTransition(gpuBlend, texts, frame);
+            if (blended == nullptr) {
+                const std::shared_ptr<VideoFrame> mixed = transitionRenderer_->fuse(transition.job, sides);
+                if (!mixed)
+                    throw MediaError("La transizione non si riesce a fare: i file dei due pezzi non si leggono.");
+                blended = compositor().blendRaster(mixed->pixels.data(), mixed->stride, mixed->width, mixed->height, texts, frame);
+            }
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
                 throw MediaError(kOutOfMemory);

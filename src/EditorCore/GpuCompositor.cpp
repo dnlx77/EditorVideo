@@ -121,6 +121,7 @@ void GpuCompositor::followDecoderDevice(const AVFrame* frame)
     // Scritte e texture di lavoro appartengono al vecchio dispositivo: si rifanno su quello del decoder.
     textCache_.clear();
     canvas_.reset();
+    canvasB_.reset();
     std::unique_ptr<GpuFrameConverter> canvas = GpuFrameConverter::create(*adopted, width_, height_);
     if (!canvas) {
         device_ = std::move(adopted);
@@ -139,6 +140,7 @@ void GpuCompositor::fail(const std::string& reason)
     name_ = "CPU (ripiego: " + reason + ")";
     textCache_.clear();
     canvas_.reset();
+    canvasB_.reset();
     device_.reset();
 }
 
@@ -225,7 +227,7 @@ bool GpuCompositor::drawOverlays(const std::vector<BlendedText>& texts)
 }
 
 const AVFrame* GpuCompositor::compose(const AVFrame* source, const std::uint8_t* raster, int rasterStride, const Transform& transform,
-                                      const std::vector<BlendedText>& texts, const AVFrame* props)
+                                      const std::vector<BlendedText>& texts, const AVFrame* props, const TransitionBlend* transition)
 {
     const AVFrame* nv12 = nullptr;
     const AVFrame* direct = nullptr;
@@ -255,7 +257,20 @@ const AVFrame* GpuCompositor::compose(const AVFrame* source, const std::uint8_t*
         fail("pulizia del fotogramma non riuscita");
         return nullptr;
     }
-    if (raster != nullptr) {
+    if (transition != nullptr) {
+        // Ogni pezzo sul nero con la sua trasformazione (uno su canvas_, l'altro su canvasB_), poi l'effetto li fonde in canvas_.
+        if (!canvasB_)
+            canvasB_ = GpuFrameConverter::create(*device_, width_, height_);
+        const VideoFrame& a = *transition->from;
+        const VideoFrame& b = *transition->to;
+        if (!canvasB_ || !canvasB_->clearCanvas(0.0f, 0.0f, 0.0f)
+            || !canvas_->drawLayer(BgraImage{a.pixels.data(), a.stride, a.width, a.height}, transition->fromTransform)
+            || !canvasB_->drawLayer(BgraImage{b.pixels.data(), b.stride, b.width, b.height}, transition->toTransform)
+            || !canvas_->blendTransition(*canvasB_, transition->typeId, transition->progress, transition->params)) {
+            fail("fusione della transizione non riuscita");
+            return nullptr;
+        }
+    } else if (raster != nullptr) {
         if (!canvas_->setCanvasBgra(BgraImage{raster, rasterStride, width_, height_})) {
             fail("caricamento della transizione non riuscito");
             return nullptr;
@@ -362,6 +377,13 @@ const AVFrame* GpuCompositor::blendTransformed(const AVFrame* source, const Tran
     cpu().setLayers(std::move(layers_));
     layers_.clear();
     return cpu().blendTransformed(source, transform, texts);
+}
+
+const AVFrame* GpuCompositor::blendTransition(const TransitionBlend& transition, const std::vector<BlendedText>& texts, const AVFrame* props)
+{
+    if (failed_ || transition.from == nullptr || transition.to == nullptr || !GpuFrameConverter::supportsTransition(transition.typeId))
+        return nullptr;
+    return compose(nullptr, nullptr, 0, Transform{}, texts, props, &transition);
 }
 
 const AVFrame* GpuCompositor::blendRaster(const std::uint8_t* bgra, int stride, int width, int height, const std::vector<BlendedText>& texts,

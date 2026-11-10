@@ -38,6 +38,7 @@ public:
     const AVFrame* blendRaster(const std::uint8_t* bgra, int stride, int width, int height, const std::vector<BlendedText>& texts,
                                const AVFrame* props) override;
     const AVFrame* blendTransformed(const AVFrame* source, const Transform& transform, const std::vector<BlendedText>& texts) override;
+    const AVFrame* blendTransition(const TransitionBlend& transition, const std::vector<BlendedText>& texts, const AVFrame* props) override;
     void setHardwareOutput(AVBufferRef* frames) override;
     const CompositorTiming& timing() const override { return timing_; }
 
@@ -48,7 +49,8 @@ private:
     // BGRA `raster` (se non nullo); poi livelli e scritte; poi il risultato nel formato d'uscita. nullptr se la GPU non può
     // (formato non gestito: `unsupported`; errore: `failed_`).
     const AVFrame* compose(const AVFrame* source, const std::uint8_t* raster, int rasterStride, const Transform& transform,
-                           const std::vector<BlendedText>& texts, const AVFrame* props);
+                           const std::vector<BlendedText>& texts, const AVFrame* props,
+                           const TransitionBlend* transition = nullptr);
     const AVFrame* nv12Of(const AVFrame* source, bool& fullRange);
     bool drawOverlays(const std::vector<BlendedText>& texts);
     bool drawText(const BlendedText& text);
@@ -71,6 +73,7 @@ private:
     std::string failure_;
     std::shared_ptr<GpuDevice> device_;
     std::unique_ptr<GpuFrameConverter> canvas_;
+    std::unique_ptr<GpuFrameConverter> canvasB_;  // il secondo pezzo di una transizione (si crea alla prima)
     std::unique_ptr<TextFrameBlender> cpu_;
     std::vector<BlendedLayer> layers_;
     std::map<std::uint64_t, std::shared_ptr<GpuTextImage>> textCache_;

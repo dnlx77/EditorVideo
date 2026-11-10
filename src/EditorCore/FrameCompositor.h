@@ -3,6 +3,7 @@
 #include "EditorCore/FfmpegUtil.h"
 #include "EditorCore/TextImage.h"
 #include "EditorCore/Transform.h"
+#include "EditorCore/Transitions.h"
 #include "EditorCore/VideoDecoder.h"
 
 #include <cstdint>
@@ -55,6 +56,19 @@ struct CompositorTiming
     int directFrames = 0;  // fotogrammi della scheda video letti direttamente dalla texture del decoder (senza passare dalla memoria)
 };
 
+// Una transizione da fondere: i due fotogrammi (BGRA, già della misura del progetto o più piccoli) con la trasformazione di ognuno
+// (scala, posizione, rotazione...), l'effetto e a che punto è (0..1). I fotogrammi valgono per la chiamata.
+struct TransitionBlend
+{
+    std::string typeId;
+    TransitionParams params;
+    double progress = 0.0;
+    const VideoFrame* from = nullptr;  // il pezzo che finisce
+    Transform fromTransform;
+    const VideoFrame* to = nullptr;  // il pezzo che inizia
+    Transform toTransform;
+};
+
 // Chi compone i fotogrammi dell'esportazione: trasformazione del pezzo di V1, livelli, scritte e transizioni già fuse, e dà
 // il fotogramma finito nel formato dell'encoder. Ha più realizzazioni (CPU: TextFrameBlender; GPU in arrivo) con lo stesso
 // risultato; la CPU è il riferimento e il ripiego quando la scheda video non c'è o non si può usare.
@@ -82,6 +96,17 @@ public:
     // Come blend(), ma `source` prima si trasforma (vedi compositeLayer) e si disegna sul nero a piena risoluzione.
     virtual const AVFrame* blendTransformed(const AVFrame* source, const Transform& transform,
                                             const std::vector<BlendedText>& texts) = 0;
+
+    // La transizione fusa sulla scheda video (ogni pezzo con la sua trasformazione sul nero, poi l'effetto), con livelli e scritte sopra.
+    // nullptr se non si può (CPU, effetto senza shader, errore della GPU): chi chiama fa allora la fusione con la CPU e usa blendRaster().
+    // Non tocca i livelli di setLayers() se dà nullptr.
+    virtual const AVFrame* blendTransition(const TransitionBlend& transition, const std::vector<BlendedText>& texts, const AVFrame* props)
+    {
+        (void)transition;
+        (void)texts;
+        (void)props;
+        return nullptr;
+    }
 
     // Per la GPU: l'encoder prende fotogrammi D3D11 di questo gruppo (AVHWFramesContext, NV12); se si può, i fotogrammi finiti si
     // scrivono direttamente in quelle texture e blend*() restituisce un fotogramma D3D11 (senza lettura in memoria). nullptr = no.

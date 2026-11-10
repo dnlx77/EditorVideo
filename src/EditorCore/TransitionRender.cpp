@@ -186,9 +186,14 @@ std::shared_ptr<VideoFrame> TransitionRenderer::render(const Project& project, c
 
 std::shared_ptr<VideoFrame> TransitionRenderer::render(const TransitionJob& job, double sequenceTime)
 {
-    const Transition* effect = findTransition(job.typeId);
-    if (effect == nullptr)
-        return nullptr;
+    TransitionSides sides;
+    return renderSides(job, sequenceTime, sides) ? fuse(job, sides) : nullptr;
+}
+
+bool TransitionRenderer::renderSides(const TransitionJob& job, double sequenceTime, TransitionSides& sides)
+{
+    if (findTransition(job.typeId) == nullptr)
+        return false;
 
     const double t = std::clamp(sequenceTime, job.start, job.end);
     // Tempi nei file: il pezzo che finisce continua oltre la sua fine, quello che inizia parte prima del suo inizio.
@@ -221,7 +226,7 @@ std::shared_ptr<VideoFrame> TransitionRenderer::render(const TransitionJob& job,
         }
     };
     if (!open(*from_, job.pathA) || !open(*to_, job.pathB))
-        return nullptr;
+        return false;
     std::shared_ptr<VideoFrame> frameA;
     std::shared_ptr<VideoFrame> frameB;
     const auto now = [] { return std::chrono::steady_clock::now(); };
@@ -238,22 +243,35 @@ std::shared_ptr<VideoFrame> TransitionRenderer::render(const TransitionJob& job,
         timing_.hardwareTo = to_->decoder->usingHardware();
     } catch (const std::exception&) {
         reset();
-        return nullptr;
+        return false;
     }
     if (frameA == nullptr || frameB == nullptr)
+        return false;
+    const double duration = job.end - job.start;
+    sides.from = std::move(frameA);
+    sides.to = std::move(frameB);
+    sides.fromTransform = evaluateTransform(job.transformA, job.animationA, timeA);
+    sides.toTransform = evaluateTransform(job.transformB, job.animationB, timeB);
+    sides.progress = duration > 0 ? (t - job.start) / duration : 1.0;
+    sides.time = t;
+    return true;
+}
+
+std::shared_ptr<VideoFrame> TransitionRenderer::fuse(const TransitionJob& job, const TransitionSides& sides)
+{
+    const Transition* effect = findTransition(job.typeId);
+    if (effect == nullptr || !sides.from || !sides.to)
         return nullptr;
+    const auto blendBegin = std::chrono::steady_clock::now();
 
     // Se un lato ha un fotogramma più piccolo del riquadro (o di altre proporzioni) sta al centro, con i bordi neri.
-    const auto blendBegin = now();
-    std::shared_ptr<VideoFrame> out = onCanvasTransformed(*frameA, boxWidth_, boxHeight_, evaluateTransform(job.transformA, job.animationA, timeA));
-    const std::shared_ptr<VideoFrame> second = onCanvasTransformed(*frameB, boxWidth_, boxHeight_, evaluateTransform(job.transformB, job.animationB, timeB));
-    const double duration = job.end - job.start;
-    const double progress = duration > 0 ? (t - job.start) / duration : 1.0;
+    std::shared_ptr<VideoFrame> out = onCanvasTransformed(*sides.from, boxWidth_, boxHeight_, sides.fromTransform);
+    const std::shared_ptr<VideoFrame> second = onCanvasTransformed(*sides.to, boxWidth_, boxHeight_, sides.toTransform);
     effect->blend({out->pixels.data(), out->width, out->height, out->stride},
-                  {second->pixels.data(), second->width, second->height, second->stride}, progress, job.params,
+                  {second->pixels.data(), second->width, second->height, second->stride}, sides.progress, job.params,
                   {out->pixels.data(), out->stride});
-    out->time = t;
-    timing_.blend = since(blendBegin);
+    out->time = sides.time;
+    timing_.blend = std::chrono::duration<double>(std::chrono::steady_clock::now() - blendBegin).count();
     return out;
 }
 
