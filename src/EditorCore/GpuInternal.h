@@ -68,6 +68,11 @@ struct GpuFrameConverter::Impl
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> packedY, packedUV;
         bool packedFailed = false;
     };
+    struct PlaneTargets  // le viste di scrittura dei due piani di una texture NV12 dell'encoder
+    {
+        Microsoft::WRL::ComPtr<ID3D11RenderTargetView> y, uv;
+    };
+    std::map<std::pair<void*, unsigned>, PlaneTargets> planeTargets;
     std::map<std::pair<int, int>, Nv12Source> nv12Sources;
     bool layerReady = false;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> psLayer, psCopy, psText, psTransition;

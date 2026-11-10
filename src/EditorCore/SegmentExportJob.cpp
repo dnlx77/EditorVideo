@@ -424,8 +424,11 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     const std::int64_t base = std::llround(outputPosition_ / frameSeconds);
 
     // Un encoder per tratto: alla fine si svuota, così i suoi pacchetti non si mescolano con quelli dopo.
-    ProjectVideoEncoder video(format, fps, Rational{0, 1}, reencode_);
+    ProjectVideoEncoder video(format, fps, Rational{0, 1}, reencode_, gpuFfmpegDevice());
     const PacketSink videoSink = videoSinkFor(video, 1, frameSeconds);
+    std::optional<HardwareOutputScope> hardwareOutput;  // il compositore scrive direttamente nelle texture dell'encoder, se si può
+    if (AVBufferRef* frames = video.encoder.d3d11Frames())
+        hardwareOutput.emplace(compositor(), frames);
 
     // Decoder del video (e dell'audio, se si ricodifica).
     AVPixelFormat hardwareFormat = AV_PIX_FMT_NONE;  // formato D3D11 dei fotogrammi, se il video si decodifica con la GPU
@@ -440,18 +443,10 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         std::optional<HardwareDecoding> gpu;
         if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && reencode_.decoder == DecoderMode::Hardware) {
             const AVPixelFormat format = d3d11FormatFor(codec);
+            if (format != AV_PIX_FMT_NONE)
+                ensureGpuDevice();  // con il compositore GPU il dispositivo è quello condiviso
             if (format != AV_PIX_FMT_NONE && !hwDevice_ && !hwDeviceTried_) {
                 hwDeviceTried_ = true;
-                // Con il compositore GPU decodifica e composizione condividono lo stesso dispositivo: i fotogrammi decodificati restano
-                // nella scheda video fino alla composizione.
-                if (reencode_.compositor == CompositorMode::Auto) {
-                    std::shared_ptr<GpuDevice> shared(GpuDevice::create(false));
-                    if (shared)
-                        if (AVBufferRef* device = shared->createFfmpegDevice()) {
-                            hwDevice_.reset(device, [](AVBufferRef* ref) { av_buffer_unref(&ref); });
-                            gpuDevice_ = std::move(shared);
-                        }
-                }
                 if (!hwDevice_)
                     if (AVBufferRef* device = createD3d11Device())
                         hwDevice_.reset(device, [](AVBufferRef* ref) { av_buffer_unref(&ref); });
@@ -798,8 +793,34 @@ const AVFrame* ExportJob::withText(const AVFrame* frame, const std::vector<Blend
     return compositor().blend(frame, texts);
 }
 
+// Con il compositore GPU (modalità Automatica) c'è un solo dispositivo D3D11 per tutta l'esportazione: lo usano la decodifica, la
+// composizione e l'encoder NVENC, così i fotogrammi restano nella scheda video. Va creato prima di tutto il resto (il compositore
+// può servire già per uno spazio nero all'inizio, prima di aprire un decoder).
+void ExportJob::ensureGpuDevice()
+{
+    if (gpuDeviceTried_)
+        return;
+    gpuDeviceTried_ = true;
+    if (reencode_.compositor != CompositorMode::Auto)
+        return;
+    std::shared_ptr<GpuDevice> shared(GpuDevice::create(false));
+    if (!shared)
+        return;
+    if (AVBufferRef* device = shared->createFfmpegDevice()) {
+        hwDevice_.reset(device, [](AVBufferRef* ref) { av_buffer_unref(&ref); });
+        gpuDevice_ = std::move(shared);
+    }
+}
+
+AVBufferRef* ExportJob::gpuFfmpegDevice()
+{
+    ensureGpuDevice();
+    return gpuDevice_ ? hwDevice_.get() : nullptr;
+}
+
 IFrameCompositor& ExportJob::compositor()
 {
+    ensureGpuDevice();
     if (!blender_) {
         const StreamSignature& format = *plan_.reference.video();
         blender_ = makeFrameCompositor(format.width, format.height, blendPixelFormat(format), reencode_.compositor == CompositorMode::Auto,
@@ -822,7 +843,10 @@ std::pair<double, double> ExportJob::writeBlack(double seconds)
         return {outputPosition_, outputPosition_};
     // Tempi in 1/90000 s: il nero parte esattamente dove finisce il pezzo prima (non arrotondato ai fotogrammi).
     constexpr int kTicks = 90000;
-    ProjectVideoEncoder video(format, fps, Rational{1, kTicks}, reencode_);
+    ProjectVideoEncoder video(format, fps, Rational{1, kTicks}, reencode_, gpuFfmpegDevice());
+    std::optional<HardwareOutputScope> hardwareOutput;
+    if (AVBufferRef* frames = video.encoder.d3d11Frames())
+        hardwareOutput.emplace(compositor(), frames);
     const PacketSink videoSink = videoSinkFor(video, std::llround(frameSeconds * kTicks), frameSeconds);
     // Il fotogramma nero è sempre lo stesso, cambia solo il tempo.
     const FramePtr black = makeBlackFrame(format.width, format.height, blendPixelFormat(format));
@@ -1039,6 +1063,8 @@ ExportResult ExportJob::run()
             result_.compositorNote = blender_->fallbackReason();
             result_.compositorDirectFrames = blender_->timing().directFrames;
             result_.compositorDirectNote = blender_->timing().directNote;
+            result_.compositorEncoderFrames = blender_->timing().hardwareOutputFrames;
+            result_.compositorEncoderNote = blender_->timing().hardwareOutputNote;
         }
         result_.totalSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - runStarted).count();
         return result_;

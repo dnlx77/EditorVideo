@@ -38,6 +38,7 @@ public:
     const AVFrame* blendRaster(const std::uint8_t* bgra, int stride, int width, int height, const std::vector<BlendedText>& texts,
                                const AVFrame* props) override;
     const AVFrame* blendTransformed(const AVFrame* source, const Transform& transform, const std::vector<BlendedText>& texts) override;
+    void setHardwareOutput(AVBufferRef* frames) override;
     const CompositorTiming& timing() const override { return timing_; }
 
 private:
@@ -53,6 +54,7 @@ private:
     bool drawText(const BlendedText& text);
     TextFrameBlender& cpu();
     void fail(const std::string& reason);
+    void purgeTexts(const std::vector<BlendedText>& texts);
     // Con fotogrammi D3D11 del decoder: se la loro texture non è su questo dispositivo, si passa a quello (una volta sola).
     void followDecoderDevice(const AVFrame* frame);
 
@@ -61,6 +63,9 @@ private:
     AVPixelFormat pixelFormat_;
     std::string name_;
     bool failed_ = false;
+    AVBufferRef* hardwareOutput_ = nullptr;  // i fotogrammi dell'encoder (non nostri)
+    bool hardwareOutputFailed_ = false;
+    detail::FramePtr hardwareFrame_;  // l'ultimo fotogramma D3D11 dato (vale fino alla chiamata dopo)
     bool directChecked_ = false;  // si è già visto se il dispositivo del decoder è questo (o lo si è adottato)
     bool directFailed_ = false;  // i fotogrammi del decoder non si leggono direttamente: si passa dalla memoria
     std::string failure_;

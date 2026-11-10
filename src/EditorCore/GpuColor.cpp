@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -282,6 +283,74 @@ bool GpuFrameConverter::downloadNv12(AVFrame* nv12, const GpuColorSpace& colors)
         && d.readStage(d.uvStage.Get(), nv12->data[1], nv12->linesize[1], d.height / 2, d.width);
 }
 
+bool GpuFrameConverter::renderNv12Texture(void* texturePointer, unsigned slice, const GpuColorSpace& colors, std::string* why)
+{
+    Impl& d = *impl_;
+    const auto no = [&](const std::string& reason) {
+        if (why != nullptr)
+            *why = reason;
+        return false;
+    };
+    auto* texture = static_cast<ID3D11Texture2D*>(texturePointer);
+    if (texture == nullptr)
+        return no("nessuna texture");
+    ComPtr<ID3D11Device> owner;
+    texture->GetDevice(&owner);
+    ComPtr<IUnknown> ownerIdentity, ourIdentity;
+    if (owner)
+        owner.As(&ownerIdentity);
+    d.device->QueryInterface(IID_PPV_ARGS(&ourIdentity));
+    if (!ownerIdentity || !ourIdentity || ownerIdentity.Get() != ourIdentity.Get())
+        return no("la texture dell'encoder è su un altro dispositivo");
+    D3D11_TEXTURE2D_DESC desc{};
+    texture->GetDesc(&desc);
+    if (desc.Format != DXGI_FORMAT_NV12 || desc.Width < static_cast<UINT>(d.width) || desc.Height < static_cast<UINT>(d.height)
+        || (desc.BindFlags & D3D11_BIND_RENDER_TARGET) == 0 || slice >= desc.ArraySize)
+        return no("texture dell'encoder inattesa (formato " + std::to_string(desc.Format) + ", " + std::to_string(desc.Width) + "x"
+                  + std::to_string(desc.Height) + ", bind " + std::to_string(desc.BindFlags) + ")");
+    auto found = d.planeTargets.find({texturePointer, slice});
+    if (found == d.planeTargets.end()) {
+        if (d.planeTargets.size() > 32)
+            d.planeTargets.clear();
+        Impl::PlaneTargets targets;
+        D3D11_RENDER_TARGET_VIEW_DESC view{};
+        if (desc.ArraySize > 1) {
+            view.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+            view.Texture2DArray.MipSlice = 0;
+            view.Texture2DArray.FirstArraySlice = slice;
+            view.Texture2DArray.ArraySize = 1;
+        } else {
+            view.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+            view.Texture2D.MipSlice = 0;
+        }
+        view.Format = DXGI_FORMAT_R8_UNORM;
+        HRESULT result = d.device->CreateRenderTargetView(texture, &view, &targets.y);
+        if (FAILED(result))
+            return no("vista di scrittura del piano Y non creabile (errore " + std::to_string(static_cast<unsigned long>(result)) + ")");
+        view.Format = DXGI_FORMAT_R8G8_UNORM;
+        result = d.device->CreateRenderTargetView(texture, &view, &targets.uv);
+        if (FAILED(result))
+            return no("vista di scrittura dei piani UV non creabile (errore " + std::to_string(static_cast<unsigned long>(result)) + ")");
+        found = d.planeTargets.emplace(std::make_pair(texturePointer, slice), std::move(targets)).first;
+    }
+    d.setParams(colors);
+    ID3D11ShaderResourceView* views[3] = {nullptr, nullptr, d.rgbView.Get()};
+    d.pass(found->second.y.Get(), 0, 0, d.width, d.height, d.psToY.Get(), views, 3);
+    d.pass(found->second.uv.Get(), 0, 0, d.width / 2, d.height / 2, d.psToUV.Get(), views, 3);
+    d.context->Flush();  // l'encoder legge la texture con un altro contesto: i comandi devono essere partiti
+    return true;
+}
+
+bool GpuFrameConverter::renderNv12(const AVFrame* frame, const GpuColorSpace& colors, std::string* why)
+{
+    if (frame == nullptr || frame->format != AV_PIX_FMT_D3D11 || frame->data[0] == nullptr) {
+        if (why != nullptr)
+            *why = "il fotogramma dell'encoder non è una texture D3D11";
+        return false;
+    }
+    return renderNv12Texture(frame->data[0], static_cast<unsigned>(reinterpret_cast<std::intptr_t>(frame->data[1])), colors, why);
+}
+
 bool GpuFrameConverter::readRgbaHalf(std::vector<std::uint16_t>& out)
 {
     Impl& d = *impl_;
@@ -307,6 +376,18 @@ int GpuFrameConverter::height() const { return 0; }
 bool GpuFrameConverter::uploadNv12(const AVFrame*, const GpuColorSpace&) { return false; }
 bool GpuFrameConverter::downloadNv12(AVFrame*, const GpuColorSpace&) { return false; }
 bool GpuFrameConverter::readRgbaHalf(std::vector<std::uint16_t>&) { return false; }
+bool GpuFrameConverter::renderNv12(const AVFrame*, const GpuColorSpace&, std::string* why)
+{
+    if (why != nullptr)
+        *why = "solo Windows";
+    return false;
+}
+bool GpuFrameConverter::renderNv12Texture(void*, unsigned, const GpuColorSpace&, std::string* why)
+{
+    if (why != nullptr)
+        *why = "solo Windows";
+    return false;
+}
 
 }  // namespace editor::core
 

@@ -50,6 +50,8 @@ struct CompositorTiming
     double toYuv = 0.0;
     AVPixelFormat sourceFormat = AV_PIX_FMT_NONE;  // formato dei fotogrammi dell'originale (per capire le conversioni lente)
     std::string directNote;  // perché la lettura diretta non è partita (vuoto se va o non c'era niente da leggere)
+    int hardwareOutputFrames = 0;  // fotogrammi scritti direttamente nelle texture dell'encoder (senza lettura in memoria)
+    std::string hardwareOutputNote;  // perché la scrittura diretta nell'encoder non è partita
     int directFrames = 0;  // fotogrammi della scheda video letti direttamente dalla texture del decoder (senza passare dalla memoria)
 };
 
@@ -80,6 +82,11 @@ public:
     // Come blend(), ma `source` prima si trasforma (vedi compositeLayer) e si disegna sul nero a piena risoluzione.
     virtual const AVFrame* blendTransformed(const AVFrame* source, const Transform& transform,
                                             const std::vector<BlendedText>& texts) = 0;
+
+    // Per la GPU: l'encoder prende fotogrammi D3D11 di questo gruppo (AVHWFramesContext, NV12); se si può, i fotogrammi finiti si
+    // scrivono direttamente in quelle texture e blend*() restituisce un fotogramma D3D11 (senza lettura in memoria). nullptr = no.
+    // La CPU lo ignora.
+    virtual void setHardwareOutput(AVBufferRef* frames) { (void)frames; }
 
     virtual const CompositorTiming& timing() const = 0;
 };

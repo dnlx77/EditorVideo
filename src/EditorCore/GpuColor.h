@@ -77,6 +77,12 @@ public:
     // rotazione, specchio, spostamento; l'opacità della trasformazione non conta) attorno al punto (`pivotX`, `pivotY`) in pixel del
     // fotogramma, e `opacity` (0..1) per le dissolvenze. Il colore è premoltiplicato come nella scritta.
     bool drawText(const GpuTextImage& text, const Transform& transform, double pivotX, double pivotY, double opacity);
+    // Come downloadNv12, ma il risultato si scrive in una texture NV12 della scheda video (di `frame`: un fotogramma AV_PIX_FMT_D3D11 preso
+    // dal gruppo di fotogrammi dell'encoder, creato con BIND_RENDER_TARGET): senza passare dalla memoria. false (con il motivo in `why`) se
+    // non si può: altro dispositivo, texture non adatta.
+    bool renderNv12(const AVFrame* frame, const GpuColorSpace& colors, std::string* why = nullptr);
+    // La stessa cosa su una texture ID3D11Texture2D* (`texture`, NV12 con BIND_RENDER_TARGET), nell'elemento `slice` se è un array.
+    bool renderNv12Texture(void* texture, unsigned slice, const GpuColorSpace& colors, std::string* why = nullptr);
     // Legge la texture RGBA16F così com'è: width * height * 4 mezzi float (valore half IEEE a 16 bit), R G B A per pixel.
     bool readRgbaHalf(std::vector<std::uint16_t>& out);
 

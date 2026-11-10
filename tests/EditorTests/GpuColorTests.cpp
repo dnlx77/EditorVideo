@@ -7,6 +7,7 @@
 #include "EditorCore/Transitions.h"
 
 #ifdef _WIN32
+#include "EditorCore/GpuInternal.h"
 #include <d3d11.h>  // fuori da extern "C" (ha overload C++); poi hwcontext_d3d11va.h lo trova già incluso
 #endif
 
@@ -755,5 +756,83 @@ TEST(GpuCompositor, DecodedD3d11FrameIsReadDirectlyAndMatchesTheMemoryPath)
     EXPECT_EQ(direct->timing().directFrames, 1);
     EXPECT_EQ(viaMemory->timing().directFrames, 0);
     EXPECT_TRUE(direct->isHardware());
+}
+#endif
+
+#ifdef _WIN32
+// Il compositore scrive il fotogramma finito direttamente in una texture NV12 (quella dell'encoder): stesso risultato di downloadNv12.
+TEST(GpuColor, RendersNv12DirectlyIntoATextureLikeTheDownload)
+{
+    constexpr int w = 64;
+    constexpr int h = 48;
+    const auto device = makeDevice();
+    if (!device)
+        GTEST_SKIP() << "nessuna GPU";
+    const auto converter = GpuFrameConverter::create(*device, w, h);
+    ASSERT_NE(converter, nullptr);
+    const Frame yuv = smoothYuv420p(w, h);
+    Frame nv12(av_frame_alloc());
+    nv12->format = AV_PIX_FMT_NV12;
+    nv12->width = w;
+    nv12->height = h;
+    ASSERT_GE(av_frame_get_buffer(nv12.get(), 32), 0);
+    for (int y = 0; y < h; ++y)
+        std::memcpy(nv12->data[0] + y * nv12->linesize[0], yuv->data[0] + y * yuv->linesize[0], w);
+    for (int y = 0; y < h / 2; ++y)
+        for (int x = 0; x < w / 2; ++x) {
+            nv12->data[1][y * nv12->linesize[1] + 2 * x] = yuv->data[1][y * yuv->linesize[1] + x];
+            nv12->data[1][y * nv12->linesize[1] + 2 * x + 1] = yuv->data[2][y * yuv->linesize[2] + x];
+        }
+    const GpuColorSpace colors = GpuColorSpace::bt601(false);
+    ASSERT_TRUE(converter->uploadNv12(nv12.get(), colors));
+    Frame reference(av_frame_alloc());
+    reference->format = AV_PIX_FMT_NV12;
+    reference->width = w;
+    reference->height = h;
+    ASSERT_GE(av_frame_get_buffer(reference.get(), 32), 0);
+    ASSERT_TRUE(converter->downloadNv12(reference.get(), colors));
+
+    ID3D11Device* d3d = device->impl().device.Get();
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = w;
+    desc.Height = h;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_NV12;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> target;
+    if (FAILED(d3d->CreateTexture2D(&desc, nullptr, &target)))
+        GTEST_SKIP() << "texture NV12 con scrittura non creabile su questo dispositivo";
+    std::string why;
+    if (!converter->renderNv12Texture(target.Get(), 0, colors, &why)) {
+        if (why.find("non creabile") != std::string::npos)
+            GTEST_SKIP() << why;
+        FAIL() << why;
+    }
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.BindFlags = 0;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> stage;
+    if (FAILED(d3d->CreateTexture2D(&desc, nullptr, &stage)))
+        GTEST_SKIP() << "texture NV12 di lettura non creabile su questo dispositivo";
+    device->impl().context->CopyResource(stage.Get(), target.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    ASSERT_TRUE(SUCCEEDED(device->impl().context->Map(stage.Get(), 0, D3D11_MAP_READ, 0, &mapped)));
+    const auto* data = static_cast<const std::uint8_t*>(mapped.pData);
+    double diffY = 0.0;
+    double diffUV = 0.0;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x)
+            diffY += std::abs(data[y * mapped.RowPitch + x] - reference->data[0][y * reference->linesize[0] + x]);
+    const std::uint8_t* uv = data + static_cast<std::size_t>(mapped.RowPitch) * h;
+    for (int y = 0; y < h / 2; ++y)
+        for (int x = 0; x < w; ++x)
+            diffUV += std::abs(uv[y * mapped.RowPitch + x] - reference->data[1][y * reference->linesize[1] + x]);
+    device->impl().context->Unmap(stage.Get(), 0);
+    std::cout << "[gpu] scrittura diretta in NV12: differenza dal download Y " << diffY / (w * h) << ", UV " << diffUV / (w * h / 2) << std::endl;
+    EXPECT_LT(diffY / (w * h), 0.5);
+    EXPECT_LT(diffUV / (w * h / 2), 0.5);
 }
 #endif

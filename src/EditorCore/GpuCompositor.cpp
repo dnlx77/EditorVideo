@@ -2,6 +2,10 @@
 
 #include "EditorCore/MediaError.h"
 
+extern "C" {
+#include <libavutil/hwcontext.h>
+}
+
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -78,6 +82,28 @@ TextFrameBlender& GpuCompositor::cpu()
     if (!cpu_)
         cpu_ = std::make_unique<TextFrameBlender>(width_, height_, pixelFormat_);
     return *cpu_;
+}
+
+// Le scritte che non servono più si tolgono dalla scheda video: restano solo quelle di questo fotogramma.
+void GpuCompositor::purgeTexts(const std::vector<BlendedText>& texts)
+{
+    if (textCache_.empty())
+        return;
+    std::set<std::uint64_t> used;
+    for (const BlendedText& text : texts)
+        if (text.cacheId != 0)
+            used.insert(text.cacheId);
+    for (auto it = textCache_.begin(); it != textCache_.end();)
+        it = used.count(it->first) != 0 ? std::next(it) : textCache_.erase(it);
+}
+
+void GpuCompositor::setHardwareOutput(AVBufferRef* frames)
+{
+    if (frames != hardwareOutput_)
+        hardwareOutputFailed_ = false;
+    if (frames == nullptr)
+        hardwareFrame_.reset();  // il fotogramma è di un gruppo che sta per sparire con l'encoder
+    hardwareOutput_ = frames;
 }
 
 void GpuCompositor::followDecoderDevice(const AVFrame* frame)
@@ -261,9 +287,31 @@ const AVFrame* GpuCompositor::compose(const AVFrame* source, const std::uint8_t*
     timing_.overlays += since(mark);
     mark = Clock::now();
 
+    const GpuColorSpace out = GpuColorSpace::bt601(false);
+    if (hardwareOutput_ != nullptr && !hardwareOutputFailed_) {
+        // L'encoder prende texture D3D11: il fotogramma finito si scrive là dentro, senza passare dalla memoria.
+        FramePtr hw(av_frame_alloc());
+        if (hw && av_hwframe_get_buffer(hardwareOutput_, hw.get(), 0) >= 0) {
+            std::string why;
+            if (canvas_->renderNv12(hw.get(), out, &why)) {
+                av_frame_copy_props(hw.get(), props);
+                hw->sample_aspect_ratio = {1, 1};
+                hw->pts = props->pts;
+                hw->color_range = AVCOL_RANGE_MPEG;
+                timing_.toYuv += since(mark);
+                ++timing_.hardwareOutputFrames;
+                purgeTexts(texts);
+                layers_.clear();
+                hardwareFrame_ = std::move(hw);
+                return hardwareFrame_.get();
+            }
+            hardwareOutputFailed_ = true;
+            timing_.hardwareOutputNote = why;
+        }
+        // Niente texture libera (o non va): questo fotogramma passa dalla memoria; l'encoder lo carica da sé.
+    }
     if (av_frame_make_writable(output_.get()) < 0)
         throw MediaError("Memoria insufficiente per il fotogramma da codificare.");
-    const GpuColorSpace out = GpuColorSpace::bt601(false);
     AVFrame* target = pixelFormat_ == AV_PIX_FMT_NV12 ? output_.get() : nv12Out_.get();
     if (!canvas_->downloadNv12(target, out)) {
         fail("lettura del fotogramma finito non riuscita");
@@ -289,15 +337,7 @@ const AVFrame* GpuCompositor::compose(const AVFrame* source, const std::uint8_t*
     output_->color_range = AVCOL_RANGE_MPEG;
     timing_.toYuv += since(mark);
 
-    // Le scritte che non servono più si tolgono dalla scheda video: restano solo quelle di questo fotogramma.
-    if (!textCache_.empty()) {
-        std::set<std::uint64_t> used;
-        for (const BlendedText& text : texts)
-            if (text.cacheId != 0)
-                used.insert(text.cacheId);
-        for (auto it = textCache_.begin(); it != textCache_.end();)
-            it = used.count(it->first) != 0 ? std::next(it) : textCache_.erase(it);
-    }
+    purgeTexts(texts);
     layers_.clear();
     return output_.get();
 }
