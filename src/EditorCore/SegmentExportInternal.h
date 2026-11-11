@@ -572,6 +572,117 @@ private:
     std::thread worker_;  // ultimo: parte quando il resto è pronto
 };
 
+// Lettura e decodifica del video in un thread suo: `produce(channel)` gira nel thread e dà i fotogrammi con channel.push(); chi
+// consuma li prende con pop() (nullptr = finiti). Un errore del produttore (eccezione) si rilancia al pop() o al join().
+// Il distruttore ferma il produttore (il suo push() torna false) e lo aspetta, senza lanciare.
+class DecodeThread
+{
+public:
+    class Channel
+    {
+    public:
+        explicit Channel(std::size_t depth) : depth_(std::max<std::size_t>(1, depth)) {}
+        // Dal produttore: false se il consumatore non vuole più fotogrammi (il fotogramma si scarta).
+        bool push(FramePtr frame)
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            space_.wait(lock, [&] { return queue_.size() < depth_ || cancelled_; });
+            if (cancelled_)
+                return false;
+            queue_.push_back(std::move(frame));
+            ready_.notify_one();
+            return true;
+        }
+        // Dal consumatore: il prossimo fotogramma; nullptr quando il produttore ha finito. Rilancia il suo errore.
+        FramePtr pop()
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            ready_.wait(lock, [&] { return !queue_.empty() || finished_; });
+            if (queue_.empty()) {
+                if (error_) {
+                    const std::exception_ptr error = error_;
+                    error_ = nullptr;
+                    std::rethrow_exception(error);
+                }
+                return nullptr;
+            }
+            FramePtr frame = std::move(queue_.front());
+            queue_.pop_front();
+            space_.notify_one();
+            return frame;
+        }
+        // Il consumatore non vuole più fotogrammi: si svuota la coda e i push() tornano false.
+        void cancel()
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            cancelled_ = true;
+            queue_.clear();
+            space_.notify_all();
+        }
+        bool cancelled()
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return cancelled_;
+        }
+        void finish(std::exception_ptr error)
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            finished_ = true;
+            error_ = error;
+            ready_.notify_all();
+        }
+
+    private:
+        std::size_t depth_;
+        std::mutex mutex_;
+        std::condition_variable ready_;
+        std::condition_variable space_;
+        std::deque<FramePtr> queue_;
+        bool cancelled_ = false;
+        bool finished_ = false;
+        std::exception_ptr error_;
+    };
+
+    DecodeThread(std::size_t depth, std::function<void(Channel&)> produce)
+        : channel_(depth)
+        , worker_([this, produce = std::move(produce)] {
+            std::exception_ptr failure;
+            try {
+                produce(channel_);
+            } catch (...) {
+                failure = std::current_exception();
+            }
+            channel_.finish(failure);
+        })
+    {
+    }
+    ~DecodeThread()
+    {
+        channel_.cancel();
+        if (worker_.joinable())
+            worker_.join();
+    }
+    DecodeThread(const DecodeThread&) = delete;
+    DecodeThread& operator=(const DecodeThread&) = delete;
+
+    FramePtr pop() { return channel_.pop(); }
+    // Il consumatore ha finito coi fotogrammi: il produttore continua solo per quello che gli resta da fare (es. l'audio). Poi
+    // join() lo aspetta e rilancia il suo errore, se c'è.
+    void stopFrames() { channel_.cancel(); }
+    void join()
+    {
+        if (worker_.joinable())
+            worker_.join();
+        // Un errore non ancora visto dal pop() (il produttore ha fallito dopo l'ultimo fotogramma).
+        while (channel_.pop() != nullptr) {
+        }
+    }
+
+private:
+    Channel channel_;
+    std::thread worker_;  // ultimo: parte quando il resto è pronto
+};
+
 // Una esportazione: il costruttore controlla gli argomenti, apre i file e prepara i flussi del file creato; run() scrive
 // i tratti uno dopo l'altro (copiati, ricodificati o spazi vuoti) e chiude il file.
 class ExportJob
