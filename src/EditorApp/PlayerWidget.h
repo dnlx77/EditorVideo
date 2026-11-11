@@ -92,6 +92,9 @@ public:
     void reloadVideo();
     // Menu "Qualità anteprima" della barra dei comandi: 1 = originale, 2, 4, 8 (frazione della risoluzione).
     void setPreviewQuality(int divisor);
+    // Scrive sull'immagine quanto dura il disegno di ogni fotogramma e la decodifica, i fotogrammi saltati perché in ritardo e quanti
+    // ne aspettano in coda: per capire se l'anteprima è lenta (e cosa la rallenta).
+    void setShowStats(bool on);
     std::function<void(int divisor)> onPreviewQualityChosen;
 
     // Solo nero al posto dell'immagine (uno spazio vuoto del montaggio), senza chiudere il file.
@@ -265,6 +268,10 @@ private:
     std::thread videoThread_;
     std::thread audioThread_;
     std::atomic<bool> stopWorkers_{false};
+    std::atomic<double> decodeAvgMs_{0.0};  // tempo medio e massimo di decodifica di un fotogramma (thread del video)
+    std::atomic<double> decodeMaxMs_{0.0};
+    std::atomic<long long> skippedFrames_{0};  // fotogrammi già decodificati ma saltati perché in ritardo
+    int queuedFrameCount();
     std::mutex queueMutex_;
     std::condition_variable queueSpace_;
     std::deque<std::shared_ptr<core::VideoFrame>> queue_;

@@ -2123,6 +2123,20 @@ void MainWindow::createMenus()
     QAction* exitFull = windowMenu->addAction(QStringLiteral("Esci dallo schermo intero"), this, [this] { exitFullScreen(); });
     exitFull->setShortcut(QKeySequence(Qt::Key_Escape));
     windowMenu->addSeparator();
+    QAction* previewStats = windowMenu->addAction(QStringLiteral("Mostra i tempi dell'anteprima"));
+    previewStats->setCheckable(true);
+    previewStats->setChecked(settings().value(QStringLiteral("anteprima/mostraTempi"), false).toBool());
+    const auto applyPreviewStats = [this](bool on) {
+        player_->setShowStats(on);
+        program_->setShowStats(on);
+    };
+    applyPreviewStats(previewStats->isChecked());
+    connect(previewStats, &QAction::toggled, this, [this, applyPreviewStats](bool on) {
+        applyPreviewStats(on);
+        QSettings s = settings();
+        s.setValue(QStringLiteral("anteprima/mostraTempi"), on);
+    });
+    windowMenu->addSeparator();
     windowMenu->addAction(QStringLiteral("Riaggancia la &linea del tempo"), this, [this] { redockTimeline(); });
     windowMenu->addAction(QStringLiteral("&Ripristina disposizione"), this, [this] { resetLayout(); });
 
