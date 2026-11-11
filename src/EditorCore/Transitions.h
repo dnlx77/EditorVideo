@@ -56,6 +56,9 @@ public:
                        RgbaTarget out) const = 0;
 };
 
+// Larghezza in pixel della sfumatura del bordo della tendina, per un quadro di `size` pixel nella direzione del movimento.
+double wipeFeatherPixels(int size);
+
 // Tutte le transizioni disponibili, nell'ordine dell'elenco.
 const std::vector<const Transition*>& transitionRegistry();
 // La transizione con quell'id; nullptr se non c'è (progetto fatto con una versione più nuova).

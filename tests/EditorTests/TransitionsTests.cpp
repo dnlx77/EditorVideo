@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <set>
 #include <string>
 #include <vector>
@@ -192,4 +193,116 @@ TEST(Transitions, RespectsStrideAndKeepsAlphaOfFrom)
     EXPECT_EQ(out[16 + 4], 150);
     EXPECT_EQ(out[16 + 7], 128);
     EXPECT_EQ(out[16 + 8], 7);  // oltre la riga utile non si scrive
+}
+
+TEST(Transitions, DipToWhiteGoesThroughWhite)
+{
+    const Frame a(4, 4, 200, 100, 50);
+    const Frame b(4, 4, 80, 160, 240);
+    const Transition& t = *findTransition("dissolvenza-bianco");
+    const Frame mid = run(t, a, b, 0.5);
+    for (int c = 0; c < 3; ++c)
+        EXPECT_EQ(mid.px(2, 2)[c], 255);
+    EXPECT_EQ(mid.px(2, 2)[3], 255);
+    const Frame early = run(t, a, b, 0.25);  // metà a, metà bianco
+    EXPECT_EQ(early.px(0, 0)[0], 228);       // (200 + 255) / 2 = 227.5
+    EXPECT_EQ(early.px(0, 0)[1], 178);       // 177.5
+    const Frame late = run(t, a, b, 0.75);   // metà bianco, metà b
+    EXPECT_EQ(late.px(0, 0)[0], 168);        // 167.5
+    EXPECT_EQ(late.px(0, 0)[2], 248);        // 247.5
+}
+
+TEST(Transitions, WipeRevealsTheSecondFromTheEnteringSide)
+{
+    const Frame a(100, 10, 255, 0, 0);
+    const Frame b(100, 10, 0, 0, 255);
+    const Transition& t = *findTransition("tendina");
+    EXPECT_TRUE(t.usesDirection());
+    TransitionParams left;
+    left.direction = TransitionDirection::Left;
+    const Frame half = run(t, a, b, 0.5, left);
+    EXPECT_EQ(half.px(5, 4)[0], 255);   // lontano dal bordo: ancora a
+    EXPECT_EQ(half.px(94, 4)[2], 255);  // lato destro: già b
+    // Il bordo è vicino alla metà, e a destra del bordo c'è solo più b.
+    int firstB = -1;
+    for (int x = 0; x < 100; ++x)
+        if (half.px(x, 4)[2] > 128) {
+            firstB = x;
+            break;
+        }
+    EXPECT_NEAR(firstB, 50, 1);
+    for (int x = 1; x < 100; ++x)
+        EXPECT_GE(half.px(x, 4)[2], half.px(x - 1, 4)[2]);  // sfumatura monotona
+    // Tutte le righe uguali (tendina verticale al bordo).
+    for (int y = 1; y < 10; ++y)
+        EXPECT_EQ(std::memcmp(half.px(0, y), half.px(0, 0), 100 * 4), 0);
+    // Destra: speculare.
+    TransitionParams right;
+    right.direction = TransitionDirection::Right;
+    const Frame r = run(t, a, b, 0.5, right);
+    for (int x = 0; x < 100; ++x)
+        EXPECT_EQ(r.px(x, 4)[2], half.px(99 - x, 4)[2]);
+    // Su e giù: il bordo si muove in verticale.
+    const Frame a2(10, 100, 255, 0, 0);
+    const Frame b2(10, 100, 0, 0, 255);
+    TransitionParams up;
+    up.direction = TransitionDirection::Up;
+    const Frame u = run(t, a2, b2, 0.25, up);
+    EXPECT_EQ(u.px(3, 5)[0], 255);
+    EXPECT_EQ(u.px(3, 95)[2], 255);
+    TransitionParams down;
+    down.direction = TransitionDirection::Down;
+    const Frame d = run(t, a2, b2, 0.25, down);
+    EXPECT_EQ(d.px(3, 4)[2], 255);
+    EXPECT_EQ(d.px(3, 94)[0], 255);
+}
+
+TEST(Transitions, CoverKeepsTheFirstStillAndSlidesTheSecondOverIt)
+{
+    // a: gradiente orizzontale (x*10), b: gradiente diverso (255 - x*10).
+    Frame a(20, 4, 0, 0, 0);
+    Frame b(20, 4, 0, 0, 0);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 20; ++x) {
+            a.data[(static_cast<size_t>(y) * 20 + x) * 4] = static_cast<std::uint8_t>(x * 10);
+            b.data[(static_cast<size_t>(y) * 20 + x) * 4] = static_cast<std::uint8_t>(255 - x * 10);
+        }
+    TransitionParams left;
+    left.direction = TransitionDirection::Left;
+    const Frame out = run(*findTransition("copertura"), a, b, 0.25, left);  // 5 colonne di b a destra
+    EXPECT_EQ(out.px(0, 1)[0], 0);
+    EXPECT_EQ(out.px(14, 1)[0], 140);                      // a fermo
+    EXPECT_EQ(out.px(15, 1)[0], b.px(0, 1)[0]);            // il bordo sinistro di b
+    EXPECT_EQ(out.px(19, 1)[0], b.px(4, 1)[0]);
+    const Frame mid = run(*findTransition("copertura"), a, b, 0.5, left);
+    EXPECT_EQ(mid.px(9, 1)[0], 90);
+    EXPECT_EQ(mid.px(10, 1)[0], b.px(0, 1)[0]);
+}
+
+TEST(Transitions, UncoverSlidesTheFirstAwayAndShowsTheSecondStill)
+{
+    Frame a(20, 4, 0, 0, 0);
+    Frame b(20, 4, 0, 0, 0);
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 20; ++x) {
+            a.data[(static_cast<size_t>(y) * 20 + x) * 4] = static_cast<std::uint8_t>(x * 10);
+            b.data[(static_cast<size_t>(y) * 20 + x) * 4] = static_cast<std::uint8_t>(255 - x * 10);
+        }
+    TransitionParams left;
+    left.direction = TransitionDirection::Left;
+    const Frame out = run(*findTransition("scopertura"), a, b, 0.25, left);  // a va a sinistra di 5 colonne
+    EXPECT_EQ(out.px(0, 1)[0], a.px(5, 1)[0]);
+    EXPECT_EQ(out.px(14, 1)[0], a.px(19, 1)[0]);
+    EXPECT_EQ(out.px(15, 1)[0], b.px(15, 1)[0]);  // b fermo
+    EXPECT_EQ(out.px(19, 1)[0], b.px(19, 1)[0]);
+    TransitionParams down;
+    down.direction = TransitionDirection::Down;
+    const Frame a2(4, 20, 255, 0, 0);
+    const Frame b2(4, 20, 0, 0, 255);
+    const Frame d = run(*findTransition("scopertura"), a2, b2, 0.25, down);  // a scende: in alto compare b
+    EXPECT_EQ(d.px(1, 4)[2], 255);
+    EXPECT_EQ(d.px(1, 5)[0], 255);
+    const Frame c = run(*findTransition("copertura"), a2, b2, 0.25, down);  // b scende sopra a: entra dall'alto
+    EXPECT_EQ(c.px(1, 4)[2], 255);
+    EXPECT_EQ(c.px(1, 5)[0], 255);
 }
