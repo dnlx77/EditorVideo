@@ -69,6 +69,14 @@ int mosaicBlockSize(double progress, int width, int height);
 constexpr double kDiagonalFeather = 0.04;
 // Dissolvenza a granuli: valore fisso in [0, 1) del pixel (x, y); il pixel passa al secondo fotogramma quando l'avanzamento lo supera.
 double grainValue(int x, int y);
+// Cuore: dentro la curva (x²+y²-1)³ = x²y³ (X a destra, Y in alto); scala (in pixel) con cui riempie tutto il quadro.
+bool heartContains(double X, double Y);
+double heartMaxScale(int width, int height);
+// Scacchiera: lato in pixel dei quadrati.
+int checkerCellSize(int width, int height);
+// Spirale: giri e sfumatura del bordo.
+constexpr double kSpiralTurns = 2.0;
+constexpr double kSpiralFeather = 0.02;
 // Orologio: sfumatura del bordo della lancetta, in radianti.
 constexpr double kClockFeather = 0.05;
 
