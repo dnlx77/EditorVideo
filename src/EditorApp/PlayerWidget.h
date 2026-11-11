@@ -95,6 +95,8 @@ public:
     // Scrive sull'immagine quanto dura il disegno di ogni fotogramma e la decodifica, i fotogrammi saltati perché in ritardo e quanti
     // ne aspettano in coda: per capire se l'anteprima è lenta (e cosa la rallenta).
     void setShowStats(bool on);
+    // Una seconda riga per i tempi (ProgramMonitor ci mette quelli della transizione); vuota = niente.
+    void setExtraStats(std::function<QString()> text);
     std::function<void(int divisor)> onPreviewQualityChosen;
 
     // Solo nero al posto dell'immagine (uno spazio vuoto del montaggio), senza chiudere il file.
