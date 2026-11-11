@@ -12,7 +12,19 @@ double wipeFeatherPixels(int size)
     return std::max(2.0, size * 0.04);
 }
 
+double irisMaxRadius(int width, int height)
+{
+    return 0.5 * std::sqrt(static_cast<double>(width) * width + static_cast<double>(height) * height);
+}
+
+double irisFeatherPixels(int width, int height)
+{
+    return std::max(2.0, std::min(width, height) * 0.04);
+}
+
 namespace {
+
+constexpr double kTwoPi = 6.283185307179586;
 
 const std::uint8_t* rowOf(const RgbaView& v, int y)
 {
@@ -229,6 +241,68 @@ private:
     bool cover_;
 };
 
+// Peso (0..1) del secondo fotogramma nel pixel (x, y) per gli effetti che hanno un bordo sfumato; poi mescolati in 8 bit.
+void mixByWeight(const RgbaView& from, const RgbaView& to, RgbaTarget out, double (*weightAt)(int, int, int, int, double, double),
+                 double edge, double feather)
+{
+    for (int y = 0; y < from.height; ++y) {
+        const std::uint8_t* a = rowOf(from, y);
+        const std::uint8_t* b = rowOf(to, y);
+        std::uint8_t* o = rowOf(out, y);
+        for (int x = 0; x < from.width; ++x, a += 4, b += 4, o += 4) {
+            const int wt = static_cast<int>(std::lround(weightAt(x, y, from.width, from.height, edge, feather) * 256.0));
+            for (int k = 0; k < 3; ++k)
+                o[k] = static_cast<std::uint8_t>(std::min(255, (a[k] * (256 - wt) + b[k] * wt + 128) >> 8));
+            o[3] = a[3];
+        }
+    }
+}
+
+double irisWeight(int x, int y, int w, int h, double edge, double feather)
+{
+    const double dx = x + 0.5 - w / 2.0;
+    const double dy = y + 0.5 - h / 2.0;
+    return std::clamp((edge - std::sqrt(dx * dx + dy * dy)) / feather + 0.5, 0.0, 1.0);
+}
+
+double clockWeight(int x, int y, int w, int h, double edge, double feather)
+{
+    const double dx = x + 0.5 - w / 2.0;
+    const double dy = y + 0.5 - h / 2.0;
+    double angle = (dx * dx + dy * dy < 1e-8) ? 0.0 : std::atan2(dx, -dy);  // da ore 12, in senso orario
+    if (angle < 0.0)
+        angle += kTwoPi;
+    return std::clamp((edge - angle) / feather + 0.5, 0.0, 1.0);
+}
+
+// Un cerchio che si apre dal centro e scopre il secondo fotogramma.
+class Iris final : public Transition
+{
+public:
+    const char* id() const override { return "iris"; }
+    const char* name() const override { return "Iris"; }
+    void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const double radius = irisMaxRadius(from.width, from.height);
+        const double feather = irisFeatherPixels(from.width, from.height);
+        mixByWeight(from, to, out, irisWeight, p * (radius + feather) - feather / 2.0, feather);
+    }
+};
+
+// Una lancetta che gira in senso orario da ore 12 e scopre il secondo fotogramma.
+class Clock final : public Transition
+{
+public:
+    const char* id() const override { return "orologio"; }
+    const char* name() const override { return "Orologio"; }
+    void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        mixByWeight(from, to, out, clockWeight, p * (kTwoPi + kClockFeather) - kClockFeather / 2.0, kClockFeather);
+    }
+};
+
 }  // namespace
 
 const std::vector<const Transition*>& transitionRegistry()
@@ -240,7 +314,9 @@ const std::vector<const Transition*>& transitionRegistry()
     static const Wipe wipe;
     static const CoverUncover cover("copertura", "Copertura", true);
     static const CoverUncover uncover("scopertura", "Scopertura", false);
-    static const std::vector<const Transition*> all = {&crossfade, &dipToBlack, &dipToWhite, &slide, &wipe, &cover, &uncover};
+    static const Iris iris;
+    static const Clock clock;
+    static const std::vector<const Transition*> all = {&crossfade, &dipToBlack, &dipToWhite, &slide, &wipe, &cover, &uncover, &iris, &clock};
     return all;
 }
 

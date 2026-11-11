@@ -64,7 +64,8 @@ float4 psText(VSOut i) : SV_Target
 
 // Transizioni. bounds = (peso di «da», peso di «a», spostamento in pixel o posizione del bordo, direzione 0 sinistra 1 destra 2 su 3 giù),
 // misc.x = effetto (0 dissolvenza incrociata, 1 dissolvenza al nero/bianco: solo i pesi, misc.y = peso del bianco; 2 scorrimento;
-// 3 tendina, misc.y = sfumatura in pixel; 4 copertura; 5 scopertura), misc.zw = misura.
+// 3 tendina, misc.y = sfumatura in pixel; 4 copertura; 5 scopertura; 6 iris, bounds.z = raggio del bordo, misc.y = sfumatura in pixel;
+// 7 orologio, bounds.z = angolo del bordo, misc.y = sfumatura in radianti), misc.zw = misura.
 float4 psTransition(VSOut i) : SV_Target
 {
     int2 xy = int2(i.pos.xy);
@@ -72,6 +73,20 @@ float4 psTransition(VSOut i) : SV_Target
         float3 a = fromTex.Load(int3(xy, 0)).rgb;
         float3 b = layerTex.Load(int3(xy, 0)).rgb;
         return float4(min(a * bounds.x + b * bounds.y + misc.y, 1.0), 1.0);
+    }
+    if (misc.x > 5.5) {
+        float2 d = float2(xy) + 0.5 - float2(misc.z, misc.w) * 0.5;
+        float dist = length(d);
+        float t;
+        if (misc.x < 6.5) {
+            t = dist;
+        } else {
+            t = dist < 1e-4 ? 0.0 : atan2(d.x, -d.y);
+            if (t < 0.0)
+                t += 6.283185307179586;
+        }
+        float w = saturate((bounds.z - t) / misc.y + 0.5);
+        return float4(lerp(fromTex.Load(int3(xy, 0)).rgb, layerTex.Load(int3(xy, 0)).rgb, w), 1.0);
     }
     int dir = (int)(bounds.w + 0.5);
     bool horizontal = dir < 2;
@@ -383,7 +398,8 @@ bool GpuFrameConverter::Impl::drawLayerView(ID3D11ShaderResourceView* view, int 
 bool GpuFrameConverter::supportsTransition(const std::string& transitionId)
 {
     return transitionId == "dissolvenza" || transitionId == "dissolvenza-nero" || transitionId == "dissolvenza-bianco"
-        || transitionId == "scorrimento" || transitionId == "tendina" || transitionId == "copertura" || transitionId == "scopertura";
+        || transitionId == "scorrimento" || transitionId == "tendina" || transitionId == "copertura" || transitionId == "scopertura"
+        || transitionId == "iris" || transitionId == "orologio";
 }
 
 bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string& transitionId, double progress, const TransitionParams& params)
@@ -410,11 +426,20 @@ bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string
         weightFrom = p < 0.5 ? static_cast<float>(1.0 - 2.0 * p) : 0.0f;
         weightTo = p < 0.5 ? 0.0f : static_cast<float>(2.0 * p - 1.0);
         extra = p < 0.5 ? static_cast<float>(2.0 * p) : static_cast<float>(2.0 - 2.0 * p);
-    } else if (transitionId == "scorrimento" || transitionId == "copertura" || transitionId == "scopertura" || transitionId == "tendina") {
-        effect = transitionId == "scorrimento" ? 2.0f : transitionId == "tendina" ? 3.0f : transitionId == "copertura" ? 4.0f : 5.0f;
+    } else if (transitionId == "scorrimento" || transitionId == "copertura" || transitionId == "scopertura" || transitionId == "tendina"
+               || transitionId == "iris" || transitionId == "orologio") {
+        effect = transitionId == "scorrimento" ? 2.0f : transitionId == "tendina" ? 3.0f : transitionId == "copertura" ? 4.0f
+               : transitionId == "scopertura" ? 5.0f : transitionId == "iris" ? 6.0f : 7.0f;
         const bool horizontal = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Right;
         const int size = horizontal ? d.width : d.height;
-        if (effect == 3.0f) {
+        if (effect == 6.0f) {
+            const double feather = irisFeatherPixels(d.width, d.height);
+            shift = static_cast<float>(p * (irisMaxRadius(d.width, d.height) + feather) - feather / 2.0);
+            extra = static_cast<float>(feather);
+        } else if (effect == 7.0f) {
+            shift = static_cast<float>(p * (6.283185307179586 + kClockFeather) - kClockFeather / 2.0);
+            extra = static_cast<float>(kClockFeather);
+        } else if (effect == 3.0f) {
             const double feather = wipeFeatherPixels(size);
             shift = static_cast<float>(p * (size + feather) - feather / 2.0);
             extra = static_cast<float>(feather);

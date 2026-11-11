@@ -59,6 +59,12 @@ public:
 // Larghezza in pixel della sfumatura del bordo della tendina, per un quadro di `size` pixel nella direzione del movimento.
 double wipeFeatherPixels(int size);
 
+// Iris: raggio massimo (dal centro all'angolo) e larghezza in pixel della sfumatura del bordo del cerchio.
+double irisMaxRadius(int width, int height);
+double irisFeatherPixels(int width, int height);
+// Orologio: sfumatura del bordo della lancetta, in radianti.
+constexpr double kClockFeather = 0.05;
+
 // Tutte le transizioni disponibili, nell'ordine dell'elenco.
 const std::vector<const Transition*>& transitionRegistry();
 // La transizione con quell'id; nullptr se non c'è (progetto fatto con una versione più nuova).
