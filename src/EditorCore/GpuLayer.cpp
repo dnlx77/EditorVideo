@@ -62,25 +62,33 @@ float4 psText(VSOut i) : SV_Target
     return layerTex.SampleLevel(borderSampler, float2(u / misc.z, v / misc.w), 0) * misc.x;
 }
 
-// Transizioni. bounds = (peso di «da», peso di «a», spostamento in pixel, direzione 0 sinistra 1 destra 2 su 3 giù), misc.x = effetto
-// (0 dissolvenza incrociata, 1 dissolvenza al nero: solo i pesi; 2 scorrimento), misc.zw = misura.
+// Transizioni. bounds = (peso di «da», peso di «a», spostamento in pixel o posizione del bordo, direzione 0 sinistra 1 destra 2 su 3 giù),
+// misc.x = effetto (0 dissolvenza incrociata, 1 dissolvenza al nero/bianco: solo i pesi, misc.y = peso del bianco; 2 scorrimento;
+// 3 tendina, misc.y = sfumatura in pixel; 4 copertura; 5 scopertura), misc.zw = misura.
 float4 psTransition(VSOut i) : SV_Target
 {
     int2 xy = int2(i.pos.xy);
     if (misc.x < 1.5) {
         float3 a = fromTex.Load(int3(xy, 0)).rgb;
         float3 b = layerTex.Load(int3(xy, 0)).rgb;
-        return float4(min(a * bounds.x + b * bounds.y, 1.0), 1.0);
+        return float4(min(a * bounds.x + b * bounds.y + misc.y, 1.0), 1.0);
     }
     int dir = (int)(bounds.w + 0.5);
     bool horizontal = dir < 2;
     bool forward = dir == 0 || dir == 2;
     int size = (int)(horizontal ? misc.z : misc.w);
-    int shift = (int)(bounds.z + 0.5);
     int c = horizontal ? xy.x : xy.y;
+    if (misc.x > 2.5 && misc.x < 3.5) {
+        float d = (forward ? size - 1 - c : c) + 0.5;
+        float w = saturate((bounds.z - d) / misc.y + 0.5);
+        return float4(lerp(fromTex.Load(int3(xy, 0)).rgb, layerTex.Load(int3(xy, 0)).rgb, w), 1.0);
+    }
+    int shift = (int)(bounds.z + 0.5);
     int pos = forward ? c : size - 1 - c;
     bool fromSide = pos < size - shift;
-    int sx = fromSide ? pos + shift : pos - (size - shift);
+    int aOff = (misc.x > 3.5 && misc.x < 4.5) ? 0 : shift;
+    int bOff = misc.x > 4.5 ? 0 : size - shift;
+    int sx = fromSide ? pos + aOff : pos - bOff;
     int src = forward ? sx : size - 1 - sx;
     int2 at = horizontal ? int2(src, xy.y) : int2(xy.x, src);
     float3 color = fromSide ? fromTex.Load(int3(at, 0)).rgb : layerTex.Load(int3(at, 0)).rgb;
@@ -374,7 +382,8 @@ bool GpuFrameConverter::Impl::drawLayerView(ID3D11ShaderResourceView* view, int 
 
 bool GpuFrameConverter::supportsTransition(const std::string& transitionId)
 {
-    return transitionId == "dissolvenza" || transitionId == "dissolvenza-nero" || transitionId == "scorrimento";
+    return transitionId == "dissolvenza" || transitionId == "dissolvenza-nero" || transitionId == "dissolvenza-bianco"
+        || transitionId == "scorrimento" || transitionId == "tendina" || transitionId == "copertura" || transitionId == "scopertura";
 }
 
 bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string& transitionId, double progress, const TransitionParams& params)
@@ -388,6 +397,7 @@ bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string
     float weightTo = 0.0f;
     float shift = 0.0f;
     float effect = 0.0f;
+    float extra = 0.0f;  // peso del bianco o sfumatura del bordo
     if (transitionId == "dissolvenza") {
         weightFrom = static_cast<float>(1.0 - p);
         weightTo = static_cast<float>(p);
@@ -395,11 +405,22 @@ bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string
         effect = 1.0f;
         weightFrom = p < 0.5 ? static_cast<float>(1.0 - 2.0 * p) : 0.0f;
         weightTo = p < 0.5 ? 0.0f : static_cast<float>(2.0 * p - 1.0);
-    } else if (transitionId == "scorrimento") {
-        effect = 2.0f;
+    } else if (transitionId == "dissolvenza-bianco") {
+        effect = 1.0f;
+        weightFrom = p < 0.5 ? static_cast<float>(1.0 - 2.0 * p) : 0.0f;
+        weightTo = p < 0.5 ? 0.0f : static_cast<float>(2.0 * p - 1.0);
+        extra = p < 0.5 ? static_cast<float>(2.0 * p) : static_cast<float>(2.0 - 2.0 * p);
+    } else if (transitionId == "scorrimento" || transitionId == "copertura" || transitionId == "scopertura" || transitionId == "tendina") {
+        effect = transitionId == "scorrimento" ? 2.0f : transitionId == "tendina" ? 3.0f : transitionId == "copertura" ? 4.0f : 5.0f;
         const bool horizontal = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Right;
         const int size = horizontal ? d.width : d.height;
-        shift = static_cast<float>(std::clamp(static_cast<int>(std::lround(p * size)), 0, size));
+        if (effect == 3.0f) {
+            const double feather = wipeFeatherPixels(size);
+            shift = static_cast<float>(p * (size + feather) - feather / 2.0);
+            extra = static_cast<float>(feather);
+        } else {
+            shift = static_cast<float>(std::clamp(static_cast<int>(std::lround(p * size)), 0, size));
+        }
     } else {
         return false;
     }
@@ -407,7 +428,7 @@ bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string
         0, 0, 0, 0, 0, 0, 0, 0,
         weightFrom, weightTo, shift, static_cast<float>(static_cast<int>(params.direction)),
         0, 0, 0, 0,
-        effect, 0.0f, static_cast<float>(d.width), static_cast<float>(d.height),
+        effect, extra, static_cast<float>(d.width), static_cast<float>(d.height),
     };
     d.context->UpdateSubresource(d.layerParams.Get(), 0, nullptr, values, 0, 0);
     ID3D11ShaderResourceView* views[4] = {nullptr, nullptr, d.rgbView.Get(), other.rgbView.Get()};
