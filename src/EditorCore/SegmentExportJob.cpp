@@ -544,6 +544,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             gpuBlend.toTransform = sides.toTransform;
             const AVFrame* blended = compositor().blendTransition(gpuBlend, texts, frame);
             if (blended == nullptr) {
+                ++result_.transitionCpuFrames;
                 const std::shared_ptr<VideoFrame> mixed = transitionRenderer_->fuse(transition.job, sides);
                 if (!mixed)
                     throw MediaError("La transizione non si riesce a fare: i file dei due pezzi non si leggono.");
@@ -1145,6 +1146,7 @@ ExportResult ExportJob::run()
             result_.compositor = blender_->name();
             result_.compositorNote = blender_->fallbackReason();
             result_.compositorDirectFrames = blender_->timing().directFrames;
+            result_.compositorTransitionFrames = blender_->timing().transitionFrames;
             result_.compositorDirectNote = blender_->timing().directNote;
             result_.compositorEncoderFrames = blender_->timing().hardwareOutputFrames;
             result_.compositorEncoderNote = !blender_->timing().hardwareOutputNote.empty() ? blender_->timing().hardwareOutputNote : encoderNote_;

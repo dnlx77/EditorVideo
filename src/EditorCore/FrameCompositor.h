@@ -53,6 +53,7 @@ struct CompositorTiming
     std::string directNote;  // perché la lettura diretta non è partita (vuoto se va o non c'era niente da leggere)
     int hardwareOutputFrames = 0;  // fotogrammi scritti direttamente nelle texture dell'encoder (senza lettura in memoria)
     std::string hardwareOutputNote;  // perché la scrittura diretta nell'encoder non è partita
+    int transitionFrames = 0;  // fotogrammi di transizione fusi dalla GPU (blendTransition)
     int directFrames = 0;  // fotogrammi della scheda video letti direttamente dalla texture del decoder (senza passare dalla memoria)
 };
 

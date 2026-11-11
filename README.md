@@ -246,7 +246,7 @@ Nella timeline del montaggio ogni pezzo mostra un fotogramma all'inizio e, se il
 - **La finestra Esporta** (per il montaggio; il taglio veloce di un solo IN-OUT non ricodifica e non ha queste scelte):
   - **Destinazione** con avviso se il file esiste già; **Profilo**: scelte già pronte (*YouTube 1080p*, *Piccolo per WhatsApp*, *Archivio, qualità massima*) o salvate con un nome (**Salva...**, **Elimina**);
   - **Contenitore** (come i file, MP4, MKV, MOV), **Codec** (come i file, H.264, HEVC, AV1 se c'è un encoder), **Risoluzione** (come i file, 75%, 50%, 25% o 2160p...360p, sempre con misure pari e proporzioni dei file) e **Fotogrammi al secondo** (come i file, 24, 25, 30, 50, 60);
-  - **Decoder**: CPU (di partenza) oppure GPU (D3D11, se la scheda lo gestisce, altrimenti CPU) per leggere i file da ricodificare; **Encoder** (Automatico o uno di quelli disponibili), **Preset** e **Qualità** (cursore CQ: meno = migliore);
+  - **Decoder**: CPU (di partenza) oppure GPU (D3D11, se la scheda lo gestisce, altrimenti CPU) per leggere i file da ricodificare; **Composizione**: Automatica (sulla scheda video se c'è, altrimenti CPU) o Solo CPU (vedi sotto, **Composizione sulla scheda video**); **Encoder** (Automatico o uno di quelli disponibili), **Preset** e **Qualità** (cursore CQ: meno = migliore);
   - **Audio**: includere o no l'audio e, quando è mixato, codec e bitrate;
   - il **riepilogo** dice quanti pezzi si copiano e quanti si ricodificano, e una **stima della dimensione** del file (molto approssimativa: dipende dal contenuto). Encoder, preset, qualità, decoder e audio scelti si ricordano per la volta dopo.
 - L'originale non viene mai modificato. Se si annulla o c'è un errore, non resta un file a metà.
@@ -255,6 +255,16 @@ Nella timeline del montaggio ogni pezzo mostra un fotogramma all'inizio e, se il
 - L'audio è il riferimento per la sincronizzazione: ogni fotogramma viene mostrato quando l'audio arriva al suo tempo. Se il file non ha audio (o non c'è una scheda audio) si usa l'orologio di sistema.
 - **Encoder**: il programma sa codificare video H.264, HEVC e AV1 a qualità costante (CQ) con la scheda video (**NVIDIA NVENC**, Intel QSV, AMD AMF, **Media Foundation** di Windows) o con gli encoder software (x264, x265, SVT-AV1), e audio in AAC, MP3, Opus, AC-3 o FLAC. Al primo uso prova, in background, quali encoder funzionano davvero su questo PC codificando un fotogramma con ognuno: l'elenco è in **Aiuto > Informazioni**. La build di FFmpeg è GPL (con x264 e x265): va bene per uso personale, non per ridistribuire il programma.
 - L'audio esce dalla scheda audio predefinita di Windows (waveOut), così non serve il modulo Qt Multimedia.
+
+### Composizione sulla scheda video
+
+Nell'esportazione, trasformazioni, livelli, scritte e transizioni si compongono sopra i fotogrammi con la **scheda video** (Direct3D 11, in virgola mobile a 16 bit) invece che con il processore. Se la scheda non c'è, non si può usare o dà un errore a metà esportazione, il lavoro prosegue in automatico sulla CPU; **Composizione: Solo CPU** nella finestra Esporta la forza. I colori sono gli stessi nei due casi (una prova della CI li confronta).
+
+- Con il decoder GPU i fotogrammi decodificati restano nella scheda video: il compositore li legge da lì, senza passare dalla memoria, e con NVIDIA NVENC anche il fotogramma finito si scrive direttamente nelle texture dell'encoder.
+- La decodifica, la composizione e la codifica avvengono in **thread separati**: mentre si compone un fotogramma, l'encoder lavora sul precedente e il decoder sul successivo.
+- Il dialogo finale dell'esportazione dice quale compositore ha lavorato, quanti fotogrammi sono stati letti e scritti direttamente (o perché no), e i tempi di lettura del file, decoder, composizione ed encoder.
+- Con il montaggio di prova da 1 minuto e 20 (RTX 5060 Ti): 39 s solo CPU, circa 13 s con la GPU. Oltre non si scende perché decodifica, composizione e codifica usano la stessa scheda video.
+- **Finestra > Mostra i tempi dell'anteprima** scrive sull'immagine il tempo di disegno e di decodifica dell'anteprima, i fotogrammi saltati e, durante una transizione, i tempi dei suoi due decoder. L'anteprima si disegna ancora sulla CPU: non ne ha bisogno (0,3 ms a fotogramma); un 4K senza proxy resta lento nelle transizioni per la decodifica, e lì conviene il proxy.
 
 ## Test
 

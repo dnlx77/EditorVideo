@@ -408,6 +408,10 @@ void MainWindow::showExportResult(const ExportOutcome& outcome, const QString& t
             recoding += QStringLiteral(" Scrittura diretta nell'encoder non riuscita: %1.").arg(qs(r.compositorEncoderNote));
         if (r.compositorDirectFrames == 0 && !r.compositorDirectNote.empty())
             recoding += QStringLiteral(" Lettura diretta della decodifica GPU non riuscita: %1.").arg(qs(r.compositorDirectNote));
+        if (r.compositorTransitionFrames > 0 || r.transitionCpuFrames > 0)
+            recoding += QStringLiteral(" Transizioni: %1 fotogrammi fusi dalla GPU, %2 dalla CPU.")
+                            .arg(r.compositorTransitionFrames)
+                            .arg(r.transitionCpuFrames);
         if (!r.compositorNote.empty())
             recoding += QStringLiteral(" La GPU ha dato un errore (%1): il resto è stato fatto in CPU.").arg(qs(r.compositorNote));
     }
