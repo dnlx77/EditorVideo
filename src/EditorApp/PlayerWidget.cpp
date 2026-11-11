@@ -12,6 +12,7 @@
 
 #include <QtCore/QRegularExpression>
 #include <QtCore/QDir>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QTimer>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QPainter>
@@ -76,6 +77,17 @@ public:
             update();
         }
     }
+
+    // Vedi PlayerWidget::setShowStats.
+    void setShowStats(bool on)
+    {
+        showStats_ = on;
+        paintAvgMs_ = paintMaxMs_ = 0.0;
+        paintSamples_ = 0;
+        update();
+    }
+    // Chi calcola i tempi di decodifica e i fotogrammi saltati (il thread del video) li dà qui, per scriverli sull'immagine.
+    std::function<QString()> statsText;
 
     // Vedi PlayerWidget::setTransformCanvas.
     void setForceCanvas(bool force)
@@ -257,7 +269,38 @@ protected:
 
     void paintEvent(QPaintEvent*) override
     {
+        QElapsedTimer paintTimer;
+        if (showStats_)
+            paintTimer.start();
         QPainter painter(this);
+        // Dichiarata dopo il painter: si distrugge prima, quindi può ancora disegnare. Misura il disegno e lo scrive sull'immagine.
+        struct StatsGuard
+        {
+            VideoView& view;
+            QPainter& painter;
+            const QElapsedTimer& timer;
+            ~StatsGuard()
+            {
+                if (!view.showStats_)
+                    return;
+                const double ms = timer.nsecsElapsed() / 1e6;
+                view.paintAvgMs_ = view.paintSamples_ == 0 ? ms : view.paintAvgMs_ * 0.9 + ms * 0.1;
+                if (view.paintSamples_ % 120 == 0)
+                    view.paintMaxMs_ = ms;
+                view.paintMaxMs_ = std::max(view.paintMaxMs_, ms);
+                ++view.paintSamples_;
+                const QString text = QStringLiteral("disegno %1 ms (max %2)%3")
+                                         .arg(view.paintAvgMs_, 0, 'f', 1)
+                                         .arg(view.paintMaxMs_, 0, 'f', 1)
+                                         .arg(view.statsText ? QStringLiteral("  |  ") + view.statsText() : QString());
+                painter.setRenderHint(QPainter::Antialiasing, false);
+                painter.setOpacity(1.0);
+                const QRect box = painter.fontMetrics().boundingRect(text).adjusted(-6, -3, 6, 3).translated(8, 8);
+                painter.fillRect(box, QColor(0, 0, 0, 170));
+                painter.setPen(QColor(255, 235, 120));
+                painter.drawText(box, Qt::AlignCenter, text);
+            }
+        } statsGuard{*this, painter, paintTimer};
         painter.fillRect(rect(), Qt::black);
         imageRect_ = QRectF();
         if (blank_) {
@@ -323,12 +366,23 @@ private:
     QSize blankSize_;
     QRectF imageRect_;  // dove sta l'immagine, all'ultimo disegno
     bool grabbing_ = false;
+    bool showStats_ = false;
+    double paintAvgMs_ = 0.0;
+    double paintMaxMs_ = 0.0;
+    int paintSamples_ = 0;
 };
 
 PlayerWidget::PlayerWidget(QWidget* parent)
     : QWidget(parent)
 {
     view_ = new VideoView;
+    view_->statsText = [this] {
+        return QStringLiteral("decodifica %1 ms (max %2)  |  fotogrammi saltati %3  |  coda %4")
+            .arg(decodeAvgMs_.load(), 0, 'f', 1)
+            .arg(decodeMaxMs_.load(), 0, 'f', 1)
+            .arg(skippedFrames_.load())
+            .arg(queuedFrameCount());
+    };
 
     transport_ = new TransportBar(TransportBar::Kind::Source);
     transport_->onStart = [this] { seekTo(0.0); };
@@ -530,6 +584,17 @@ void PlayerWidget::reloadVideo()
         startWorkers(at);
     else
         showFrameAt(at);
+}
+
+void PlayerWidget::setShowStats(bool on)
+{
+    view_->setShowStats(on);
+}
+
+int PlayerWidget::queuedFrameCount()
+{
+    std::lock_guard lock(queueMutex_);
+    return static_cast<int>(queue_.size());
 }
 
 void PlayerWidget::setPreviewQuality(int divisor)
@@ -881,7 +946,11 @@ void PlayerWidget::videoWorker()
                 if (stopWorkers_)
                     break;
             }
+            const auto decodeBegan = std::chrono::steady_clock::now();
             auto frame = video_->nextFrame();
+            const double decodeMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - decodeBegan).count();
+            decodeAvgMs_ = decodeAvgMs_ * 0.9 + decodeMs * 0.1;
+            decodeMaxMs_ = std::max(decodeMaxMs_.load() * 0.995, decodeMs);  // il massimo scende piano
             std::lock_guard lock(queueMutex_);
             if (!frame) {
                 videoEnded_ = true;
@@ -1036,6 +1105,8 @@ void PlayerWidget::tick()
             const bool inWindow = windowEnd_ <= 0 || (reverse ? t >= windowStart_ - 0.001 : t < windowEnd_ - 0.001);
             if (!due || !inWindow)
                 break;
+            if (latest)
+                ++skippedFrames_;  // c'era già un fotogramma da mostrare: questo è arrivato in ritardo e quello prima si salta
             latest = std::move(queue_.front());
             queue_.pop_front();
         }
