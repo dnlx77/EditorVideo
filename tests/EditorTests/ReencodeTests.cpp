@@ -514,3 +514,62 @@ TEST(AsyncFrameEncoder, DestroyingItWithFramesQueuedDoesNotHang)
     }
     EXPECT_LE(encoded.load(), 3);
 }
+
+// --- Lettura e decodifica in un thread suo ---
+
+TEST(DecodeThread, DeliversEveryFrameInOrderAndThenEnds)
+{
+    segment::DecodeThread thread(2, [](segment::DecodeThread::Channel& channel) {
+        for (int i = 0; i < 40; ++i)
+            channel.push(testFrame(i));
+    });
+    int expected = 0;
+    while (const detail::FramePtr frame = thread.pop())
+        EXPECT_EQ(frame->pts, expected++);
+    EXPECT_EQ(expected, 40);
+    thread.join();
+}
+
+TEST(DecodeThread, AProducerErrorComesBackToTheConsumer)
+{
+    segment::DecodeThread thread(2, [](segment::DecodeThread::Channel& channel) {
+        channel.push(testFrame(0));
+        throw MediaError("lettura fallita");
+    });
+    bool thrown = false;
+    try {
+        while (thread.pop()) {
+        }
+    } catch (const MediaError& error) {
+        thrown = std::string(error.what()).find("lettura fallita") != std::string::npos;
+    }
+    EXPECT_TRUE(thrown);
+}
+
+TEST(DecodeThread, StoppingTheFramesLetsTheProducerFinishItsOtherWork)
+{
+    std::atomic<int> pushedAfterStop{0};
+    std::atomic<bool> finishedOtherWork{false};
+    {
+        segment::DecodeThread thread(1, [&](segment::DecodeThread::Channel& channel) {
+            for (int i = 0; i < 1000; ++i)
+                if (!channel.push(testFrame(i)))
+                    ++pushedAfterStop;  // scartato: chi consuma non li vuole più
+            finishedOtherWork = true;
+        });
+        ASSERT_NE(thread.pop(), nullptr);
+        thread.stopFrames();
+        thread.join();
+    }
+    EXPECT_TRUE(finishedOtherWork.load());
+    EXPECT_GT(pushedAfterStop.load(), 0);
+}
+
+TEST(DecodeThread, DestroyingItWhileTheProducerIsBlockedDoesNotHang)
+{
+    segment::DecodeThread thread(1, [](segment::DecodeThread::Channel& channel) {
+        for (int i = 0; i < 100; ++i)
+            channel.push(testFrame(i));
+    });
+    SUCCEED();
+}

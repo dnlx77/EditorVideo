@@ -667,18 +667,6 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     FramePtr downloaded(av_frame_alloc());
     if (!downloaded)
         throw MediaError(kOutOfMemory);
-    const auto onDecodedVideo = [&](AVFrame* decoded) {
-        // Con il dispositivo condiviso il fotogramma resta nella scheda video: lo legge il compositore (o l'encoder, o la CPU, che
-        // lo copiano in memoria da soli se serve).
-        if (hardwareFormat == AV_PIX_FMT_NONE || decoded->format != hardwareFormat || gpuDevice_) {
-            onVideoFrame(decoded);
-            return;
-        }
-        if (const int ret = downloadHardwareFrame(downloaded.get(), decoded); ret < 0)
-            throw MediaError("Il fotogramma decodificato dalla GPU non si legge (" + ffmpegError(ret)
-                             + "): nella finestra Esporta scegli il decoder CPU.");
-        onVideoFrame(downloaded.get());
-    };
     using TimingClock = std::chrono::steady_clock;
     const auto secondsSince = [](TimingClock::time_point from) { return std::chrono::duration<double>(TimingClock::now() - from).count(); };
     const auto drain = [&](AVCodecContext* decoder, const auto& onFrame) {
@@ -692,38 +680,76 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             av_frame_unref(frame.get());
         }
     };
-    while (!(videoDone && audioDone)) {
-        const auto readBegan = TimingClock::now();
-        const int ret = av_read_frame(input, pkt.get());
-        result_.readSeconds += secondsSince(readBegan);
-        if (ret == AVERROR_EOF)
-            break;
-        if (ret < 0)
-            throw MediaError("Errore durante la lettura del file originale (" + ffmpegError(ret) + ").");
-        const PacketUnref release{pkt.get()};
-        if (pkt->stream_index == videoIndex && !videoDone) {
-            const auto sendBegan = TimingClock::now();
-            const bool sent = avcodec_send_packet(videoDecoder.get(), pkt.get()) >= 0;  // un pacchetto rovinato si salta
-            result_.decodeSeconds += secondsSince(sendBegan);
-            if (sent)
-                drain(videoDecoder.get(), onDecodedVideo);
-        } else if (pkt->stream_index == audioIndex && !audioDone) {
-            if (copyAudio) {
-                onCopiedAudio(pkt.get());
-            } else if (avcodec_send_packet(audioDecoder.get(), pkt.get()) >= 0) {
-                drain(audioDecoder.get(), onAudioFrame);
+    // Lettura del file e decodifica (video e audio) in un thread suo: la composizione prende i fotogrammi dalla coda, quindi mentre
+    // il decoder lavora sul prossimo si compone e si codifica il precedente. L'audio lo tratta il thread stesso (i suoi pacchetti si
+    // scrivono col lucchetto del file creato).
+    std::atomic<bool> stopVideo{false};  // la composizione ha tutti i fotogrammi che le servono
+    const auto produce = [&](DecodeThread::Channel& channel) {
+        // Chi consuma ha un fotogramma di riserva e uno in composizione: la coda ne tiene qualcuno in più.
+        const auto pushDecoded = [&](AVFrame* decoded) {
+            if (stopVideo.load())
+                return;
+            // Con il dispositivo condiviso il fotogramma resta nella scheda video: lo legge il compositore (o l'encoder, o la CPU, che
+            // lo copiano in memoria da soli se serve).
+            AVFrame* source = decoded;
+            if (!(hardwareFormat == AV_PIX_FMT_NONE || decoded->format != hardwareFormat || gpuDevice_)) {
+                if (const int ret = downloadHardwareFrame(downloaded.get(), decoded); ret < 0)
+                    throw MediaError("Il fotogramma decodificato dalla GPU non si legge (" + ffmpegError(ret)
+                                     + "): nella finestra Esporta scegli il decoder CPU.");
+                source = downloaded.get();
+            }
+            FramePtr copy(av_frame_clone(source));
+            if (!copy)
+                throw MediaError(kOutOfMemory);
+            channel.push(std::move(copy));
+        };
+        while (!(stopVideo.load() && audioDone)) {
+            const auto readBegan = TimingClock::now();
+            const int ret = av_read_frame(input, pkt.get());
+            result_.readSeconds += secondsSince(readBegan);
+            if (ret == AVERROR_EOF)
+                break;
+            if (ret < 0)
+                throw MediaError("Errore durante la lettura del file originale (" + ffmpegError(ret) + ").");
+            const PacketUnref release{pkt.get()};
+            if (pkt->stream_index == videoIndex && !stopVideo.load()) {
+                const auto sendBegan = TimingClock::now();
+                const bool sent = avcodec_send_packet(videoDecoder.get(), pkt.get()) >= 0;  // un pacchetto rovinato si salta
+                result_.decodeSeconds += secondsSince(sendBegan);
+                if (sent)
+                    drain(videoDecoder.get(), pushDecoded);
+            } else if (pkt->stream_index == audioIndex && !audioDone) {
+                if (copyAudio) {
+                    onCopiedAudio(pkt.get());
+                } else if (avcodec_send_packet(audioDecoder.get(), pkt.get()) >= 0) {
+                    drain(audioDecoder.get(), onAudioFrame);
+                }
             }
         }
+        // Fine del file: quello che resta nei decoder.
+        if (!stopVideo.load()) {
+            avcodec_send_packet(videoDecoder.get(), nullptr);
+            drain(videoDecoder.get(), pushDecoded);
+        }
+        if (audioDecoder && !audioDone) {
+            avcodec_send_packet(audioDecoder.get(), nullptr);
+            drain(audioDecoder.get(), onAudioFrame);
+        }
+    };
+    {
+        DecodeThread decoding(3, produce);
+        while (!videoDone) {
+            const FramePtr decoded = decoding.pop();
+            if (!decoded)
+                break;  // il file è finito
+            onVideoFrame(decoded.get());
+        }
+        // Dopo l'ultimo fotogramma il thread finisce solo l'audio (o il file); poi si rilancia un suo eventuale errore.
+        stopVideo = true;
+        decoding.stopFrames();
+        decoding.join();
     }
-    // Fine del file: quello che resta nei decoder, poi l'ultimo fotogramma ripetuto fino alla fine del tratto.
-    if (!videoDone) {
-        avcodec_send_packet(videoDecoder.get(), nullptr);
-        drain(videoDecoder.get(), onDecodedVideo);
-    }
-    if (audioDecoder && !audioDone) {
-        avcodec_send_packet(audioDecoder.get(), nullptr);
-        drain(audioDecoder.get(), onAudioFrame);
-    }
+    // Il flush dell'audio e quello del video sono stati fatti dal thread.
     if (k == 0 && !held)
         throw MediaError("Nel tratto da ricodificare di " + clips_[c].path + " non c'è nessun fotogramma.");
     while (k < frames)
