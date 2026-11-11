@@ -127,6 +127,30 @@ ProgramMonitor::ProgramMonitor(const core::Project& project, QWidget* parent)
     updateLabels();
 }
 
+void ProgramMonitor::setShowStats(bool on)
+{
+    player_->setShowStats(on);
+    if (!on) {
+        player_->setExtraStats(nullptr);
+        return;
+    }
+    // Durante una transizione i fotogrammi non vengono dal decoder del lettore ma da quello delle transizioni (due decodifiche e
+    // la fusione): il suo tempo medio per fotogramma, diviso per fase.
+    player_->setExtraStats([this]() -> QString {
+        if (transitionId_ == 0)
+            return {};
+        const core::TransitionRenderer::Timing t = transitionPlayback_.averageTiming();
+        return QStringLiteral("transizione: %1 ms a fotogramma (decodifica uscente %2 ms, entrante %3 ms, fusione %4 ms)  |  riposizionamenti %5  |  GPU %6/%7")
+            .arg(transitionPlayback_.averageRenderSeconds() * 1000.0, 0, 'f', 1)
+            .arg(t.decodeFrom * 1000.0, 0, 'f', 1)
+            .arg(t.decodeTo * 1000.0, 0, 'f', 1)
+            .arg(t.blend * 1000.0, 0, 'f', 1)
+            .arg(t.seeks)
+            .arg(t.hardwareFrom ? QStringLiteral("sì") : QStringLiteral("no"))
+            .arg(t.hardwareTo ? QStringLiteral("sì") : QStringLiteral("no"));
+    });
+}
+
 ProgramMonitor::~ProgramMonitor()
 {
     // Il lettore (figlio di questo widget) sopravvive ai membri: non deve più chiedere l'orologio all'audio.

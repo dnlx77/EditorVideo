@@ -88,6 +88,7 @@ public:
     }
     // Chi calcola i tempi di decodifica e i fotogrammi saltati (il thread del video) li dà qui, per scriverli sull'immagine.
     std::function<QString()> statsText;
+    std::function<QString()> extraStatsText;  // una seconda riga (es. la transizione), se non è vuota
 
     // Vedi PlayerWidget::setTransformCanvas.
     void setForceCanvas(bool force)
@@ -295,10 +296,15 @@ protected:
                                          .arg(view.statsText ? QStringLiteral("  |  ") + view.statsText() : QString());
                 painter.setRenderHint(QPainter::Antialiasing, false);
                 painter.setOpacity(1.0);
-                const QRect box = painter.fontMetrics().boundingRect(text).adjusted(-6, -3, 6, 3).translated(8, 8);
+                const QString extra = view.extraStatsText ? view.extraStatsText() : QString();
+                const QString lines = extra.isEmpty() ? text : text + QLatin1Char('\n') + extra;
+                const QRect box = painter.fontMetrics()
+                                      .boundingRect(QRect(0, 0, 4000, 400), Qt::AlignLeft, lines)
+                                      .adjusted(-6, -3, 6, 3)
+                                      .translated(8, 8);
                 painter.fillRect(box, QColor(0, 0, 0, 170));
                 painter.setPen(QColor(255, 235, 120));
-                painter.drawText(box, Qt::AlignCenter, text);
+                painter.drawText(box, Qt::AlignCenter, lines);
             }
         } statsGuard{*this, painter, paintTimer};
         painter.fillRect(rect(), Qt::black);
@@ -589,6 +595,11 @@ void PlayerWidget::reloadVideo()
 void PlayerWidget::setShowStats(bool on)
 {
     view_->setShowStats(on);
+}
+
+void PlayerWidget::setExtraStats(std::function<QString()> text)
+{
+    view_->extraStatsText = std::move(text);
 }
 
 int PlayerWidget::queuedFrameCount()

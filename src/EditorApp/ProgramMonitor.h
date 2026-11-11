@@ -94,7 +94,7 @@ public:
     void setVideoSource(std::function<QString(const QString& path)> source);
     void reloadVideo();
     void setPreviewQuality(int divisor);
-    void setShowStats(bool on) { player_->setShowStats(on); }  // vedi PlayerWidget::setShowStats
+    void setShowStats(bool on);  // vedi PlayerWidget::setShowStats (con in più i tempi della transizione)
     std::function<void(int divisor)> onPreviewQualityChosen;
 
     std::function<void(double)> onPositionChanged;
