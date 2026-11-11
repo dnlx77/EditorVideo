@@ -430,3 +430,93 @@ TEST(Transitions, MosaicPixelatesFirstThenRevealsTheSecond)
     EXPECT_EQ(std::memcmp(late.px(0, 0), late.px(block - 1, block - 1), 3), 0);
     EXPECT_EQ(late.px(0, 0)[2], b.px(0, block / 2)[2]);
 }
+
+TEST(Transitions, GrainSwitchesPixelsOneByOneInAFixedOrder)
+{
+    const Frame a(40, 40, 255, 0, 0);
+    const Frame b(40, 40, 0, 0, 255);
+    const Transition& t = *findTransition("dissolvenza-granuli");
+    EXPECT_FALSE(t.usesDirection());
+    int previous = -1;
+    Frame last(40, 40, 0, 0, 0);
+    bool first = true;
+    for (double p = 0.1; p < 1.0; p += 0.2) {
+        const Frame f = run(t, a, b, p);
+        int count = 0;
+        for (int y = 0; y < 40; ++y)
+            for (int x = 0; x < 40; ++x) {
+                const bool isB = f.px(x, y)[2] == 255;
+                EXPECT_TRUE(isB || f.px(x, y)[0] == 255);  // mai colori intermedi
+                count += isB;
+                if (!first && last.px(x, y)[2] == 255)
+                    EXPECT_TRUE(isB);  // un pixel passato a b non torna indietro
+            }
+        EXPECT_GT(count, previous);
+        // La quota di pixel passati segue l'avanzamento (circa).
+        EXPECT_NEAR(count / 1600.0, p, 0.08);
+        previous = count;
+        last = f;
+        first = false;
+    }
+    // Stesso risultato a ogni chiamata.
+    EXPECT_TRUE(same(run(t, a, b, 0.4), run(t, a, b, 0.4)));
+}
+
+TEST(Transitions, DoorsOpenFromTheCenterOrCloseFromTheEdges)
+{
+    const Frame a(100, 20, 255, 0, 0);
+    const Frame b(100, 20, 0, 0, 255);
+    const Transition& t = *findTransition("battenti");
+    EXPECT_TRUE(t.usesDirection());
+    TransitionParams opening;
+    opening.direction = TransitionDirection::Left;
+    const Frame o = run(t, a, b, 0.5, opening);
+    EXPECT_EQ(o.px(50, 5)[2], 255);   // centro: b
+    EXPECT_EQ(o.px(5, 5)[0], 255);    // bordi: ancora a
+    EXPECT_EQ(o.px(94, 5)[0], 255);
+    EXPECT_NEAR(o.px(25, 5)[2], 128, 128);
+    // Metà del quadro (circa) è già b.
+    int count = 0;
+    for (int x = 0; x < 100; ++x)
+        count += o.px(x, 5)[2] > 128;
+    EXPECT_NEAR(count, 50, 3);
+    TransitionParams closing;
+    closing.direction = TransitionDirection::Right;
+    const Frame c = run(t, a, b, 0.5, closing);
+    EXPECT_EQ(c.px(5, 5)[2], 255);    // bordi: b
+    EXPECT_EQ(c.px(94, 5)[2], 255);
+    EXPECT_EQ(c.px(50, 5)[0], 255);   // centro: a
+    TransitionParams vertical;
+    vertical.direction = TransitionDirection::Up;
+    const Frame a2(20, 100, 255, 0, 0);
+    const Frame b2(20, 100, 0, 0, 255);
+    const Frame v = run(t, a2, b2, 0.5, vertical);
+    EXPECT_EQ(v.px(3, 50)[2], 255);
+    EXPECT_EQ(v.px(3, 5)[0], 255);
+}
+
+TEST(Transitions, DiagonalWipeStartsFromTheChosenCorner)
+{
+    const Frame a(60, 60, 255, 0, 0);
+    const Frame b(60, 60, 0, 0, 255);
+    const Transition& t = *findTransition("tendina-diagonale");
+    EXPECT_TRUE(t.usesDirection());
+    TransitionParams p;
+    p.direction = TransitionDirection::Left;  // in basso a destra
+    const Frame f = run(t, a, b, 0.3, p);
+    EXPECT_EQ(f.px(58, 58)[2], 255);
+    EXPECT_EQ(f.px(1, 1)[0], 255);
+    EXPECT_EQ(f.px(58, 1)[0], 255);   // gli altri angoli sono ancora a
+    EXPECT_EQ(f.px(1, 58)[0], 255);
+    // Il bordo è diagonale: pixel sulla stessa antidiagonale hanno lo stesso colore.
+    EXPECT_EQ(std::memcmp(f.px(50, 30), f.px(30, 50), 4), 0);
+    const struct { TransitionDirection d; int x, y; } corners[] = {
+        {TransitionDirection::Right, 1, 1}, {TransitionDirection::Up, 1, 58}, {TransitionDirection::Down, 58, 1}};
+    for (const auto& c : corners) {
+        TransitionParams q;
+        q.direction = c.d;
+        const Frame g = run(t, a, b, 0.3, q);
+        EXPECT_EQ(g.px(c.x, c.y)[2], 255) << static_cast<int>(c.d);
+        EXPECT_EQ(g.px(58 - c.x + 1, 58 - c.y + 1)[0], 255) << static_cast<int>(c.d);  // l'angolo opposto
+    }
+}

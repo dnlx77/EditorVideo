@@ -25,6 +25,15 @@ int mosaicBlockSize(double progress, int width, int height)
     return 1 + static_cast<int>(std::lround(q * (maxBlock - 1)));
 }
 
+// Un valore pseudocasuale in [0, 1) per ogni pixel, fisso (non cambia da un fotogramma all'altro); identico nello shader.
+double grainValue(int x, int y)
+{
+    std::uint32_t n = static_cast<std::uint32_t>(x) * 1973u + static_cast<std::uint32_t>(y) * 9277u + 89173u;
+    n = (n << 13) ^ n;
+    n = n * (n * n * 15731u + 789221u) + 1376312589u;
+    return static_cast<double>(n & 0xFFFFu) / 65536.0;
+}
+
 double irisMaxRadius(int width, int height)
 {
     return 0.5 * std::sqrt(static_cast<double>(width) * width + static_cast<double>(height) * height);
@@ -423,6 +432,85 @@ public:
     }
 };
 
+// Mescola in base a un peso 0..1 del secondo fotogramma, calcolato per pixel da `weightAt(x, y)`.
+template <typename Fn>
+void mixByFunction(const RgbaView& from, const RgbaView& to, RgbaTarget out, Fn weightAt)
+{
+    for (int y = 0; y < from.height; ++y) {
+        const std::uint8_t* a = rowOf(from, y);
+        const std::uint8_t* b = rowOf(to, y);
+        std::uint8_t* o = rowOf(out, y);
+        for (int x = 0; x < from.width; ++x, a += 4, b += 4, o += 4) {
+            const int wt = static_cast<int>(std::lround(weightAt(x, y) * 256.0));
+            for (int k = 0; k < 3; ++k)
+                o[k] = static_cast<std::uint8_t>(std::min(255, (a[k] * (256 - wt) + b[k] * wt + 128) >> 8));
+            o[3] = a[3];
+        }
+    }
+}
+
+// I pixel passano uno a uno dal primo al secondo fotogramma, in ordine casuale.
+class Grain final : public Transition
+{
+public:
+    const char* id() const override { return "dissolvenza-granuli"; }
+    const char* name() const override { return "Dissolvenza a granuli"; }
+    void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        mixByFunction(from, to, out, [p](int x, int y) { return grainValue(x, y) < p ? 1.0 : 0.0; });
+    }
+};
+
+// Il secondo fotogramma si apre dal centro (Left/Up: orizzontale/verticale) o si chiude dai bordi verso il centro
+// (Right/Down), come due battenti.
+class Doors final : public Transition
+{
+public:
+    const char* id() const override { return "battenti"; }
+    const char* name() const override { return "Battenti"; }
+    bool usesDirection() const override { return true; }
+    void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams& params,
+               RgbaTarget out) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const bool horizontal = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Right;
+        const bool opening = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Up;
+        const int size = horizontal ? from.width : from.height;
+        const double half = size / 2.0;
+        const double feather = wipeFeatherPixels(size);
+        const double edge = p * (half + feather) - feather / 2.0;
+        mixByFunction(from, to, out, [&](int x, int y) {
+            const double d = std::abs((horizontal ? x : y) + 0.5 - half);
+            return std::clamp((edge - (opening ? d : half - d)) / feather + 0.5, 0.0, 1.0);
+        });
+    }
+};
+
+// Come la tendina, ma in diagonale: il bordo parte da un angolo (Left = in basso a destra, Right = in alto a sinistra,
+// Up = in basso a sinistra, Down = in alto a destra) e attraversa il quadro fino all'angolo opposto.
+class DiagonalWipe final : public Transition
+{
+public:
+    const char* id() const override { return "tendina-diagonale"; }
+    const char* name() const override { return "Tendina diagonale"; }
+    bool usesDirection() const override { return true; }
+    void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams& params,
+               RgbaTarget out) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const double cornerX = (params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Down) ? 1.0 : 0.0;
+        const double cornerY = (params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Up) ? 1.0 : 0.0;
+        const double edge = p * (1.0 + kDiagonalFeather) - kDiagonalFeather / 2.0;
+        const int w = from.width;
+        const int h = from.height;
+        mixByFunction(from, to, out, [&](int x, int y) {
+            const double t = (std::abs((x + 0.5) / w - cornerX) + std::abs((y + 0.5) / h - cornerY)) / 2.0;
+            return std::clamp((edge - t) / kDiagonalFeather + 0.5, 0.0, 1.0);
+        });
+    }
+};
+
 }  // namespace
 
 const std::vector<const Transition*>& transitionRegistry()
@@ -439,7 +527,10 @@ const std::vector<const Transition*>& transitionRegistry()
     static const Zoom zoom;
     static const Blinds blinds;
     static const Mosaic mosaic;
-    static const std::vector<const Transition*> all = {&crossfade, &dipToBlack, &dipToWhite, &slide, &wipe, &cover, &uncover, &iris, &clock, &zoom, &blinds, &mosaic};
+    static const Grain grain;
+    static const Doors doors;
+    static const DiagonalWipe diagonal;
+    static const std::vector<const Transition*> all = {&crossfade, &dipToBlack, &dipToWhite, &slide, &wipe, &cover, &uncover, &iris, &clock, &zoom, &blinds, &mosaic, &grain, &doors, &diagonal};
     return all;
 }
 

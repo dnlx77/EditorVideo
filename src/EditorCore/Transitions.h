@@ -65,6 +65,10 @@ double irisFeatherPixels(int width, int height);
 // Persiana: larghezza in pixel di una striscia (8 per lato). Mosaico: lato in pixel dei blocchi a quell'avanzamento.
 int blindsBandWidth(int size);
 int mosaicBlockSize(double progress, int width, int height);
+// Tendina diagonale: sfumatura del bordo (0..1 lungo la diagonale).
+constexpr double kDiagonalFeather = 0.04;
+// Dissolvenza a granuli: valore fisso in [0, 1) del pixel (x, y); il pixel passa al secondo fotogramma quando l'avanzamento lo supera.
+double grainValue(int x, int y);
 // Orologio: sfumatura del bordo della lancetta, in radianti.
 constexpr double kClockFeather = 0.05;
 
