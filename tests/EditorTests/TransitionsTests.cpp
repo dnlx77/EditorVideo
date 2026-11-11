@@ -2,7 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstring>
+#include <utility>
 #include <set>
 #include <string>
 #include <vector>
@@ -519,4 +521,103 @@ TEST(Transitions, DiagonalWipeStartsFromTheChosenCorner)
         EXPECT_EQ(g.px(c.x, c.y)[2], 255) << static_cast<int>(c.d);
         EXPECT_EQ(g.px(58 - c.x + 1, 58 - c.y + 1)[0], 255) << static_cast<int>(c.d);  // l'angolo opposto
     }
+}
+
+TEST(Transitions, HeartGrowsFromTheCenterAndCoversTheFrame)
+{
+    const Frame a(160, 90, 255, 0, 0);
+    const Frame b(160, 90, 0, 0, 255);
+    const Transition& t = *findTransition("cuore");
+    EXPECT_FALSE(t.usesDirection());
+    // A fine corsa ogni pixel è b (anche gli angoli e il punto sopra l'incavo), anche in altri formati.
+    for (const auto& size : {std::pair{160, 90}, std::pair{90, 160}, std::pair{100, 100}, std::pair{33, 17}}) {
+        const Frame sa(size.first, size.second, 255, 0, 0);
+        const Frame sb(size.first, size.second, 0, 0, 255);
+        const Frame end = run(t, sa, sb, 1.0);
+        EXPECT_TRUE(same(end, sb)) << size.first << "x" << size.second;
+    }
+    const Frame f = run(t, a, b, 0.3);
+    EXPECT_EQ(f.px(80, 45)[2], 255);   // il centro è b
+    EXPECT_EQ(f.px(1, 1)[0], 255);     // gli angoli sono a
+    EXPECT_EQ(f.px(158, 88)[0], 255);
+    // Simmetrico a destra e a sinistra, e il cuore cresce.
+    for (int x = 0; x < 80; ++x)
+        EXPECT_EQ(f.px(x, 40)[2], f.px(159 - x, 40)[2]) << x;
+    int previous = -1;
+    for (double p = 0.0; p <= 1.0; p += 0.1) {
+        const Frame g = run(t, a, b, p);
+        int count = 0;
+        for (int y = 0; y < 90; ++y)
+            for (int x = 0; x < 160; ++x)
+                count += g.px(x, y)[2] == 255;
+        EXPECT_GE(count, previous);
+        previous = count;
+    }
+    // Ha l'incavo in alto: sulla verticale centrale il cuore arriva meno in alto che sui lobi (a X = 0,6 della scala).
+    const double r = 0.2 * heartMaxScale(160, 90);
+    const Frame mid = run(t, a, b, 0.2);
+    const int lobeX = 80 - static_cast<int>(0.6 * r);
+    int topCenter = 0;
+    int topLobe = 0;
+    for (int y = 0; y < 90; ++y) {
+        if (mid.px(80, y)[2] == 255 && topCenter == 0) topCenter = 90 - y;
+        if (mid.px(lobeX, y)[2] == 255 && topLobe == 0) topLobe = 90 - y;
+    }
+    EXPECT_GT(topLobe, topCenter);
+}
+
+TEST(Transitions, CheckerboardFillsAlternateSquaresInTwoPhases)
+{
+    const Frame a(80, 80, 255, 0, 0);
+    const Frame b(80, 80, 0, 0, 255);
+    const Transition& t = *findTransition("scacchiera");
+    ASSERT_EQ(checkerCellSize(80, 80), 10);
+    const Frame early = run(t, a, b, 0.25);  // quadrati pari a metà, dispari ancora a
+    EXPECT_EQ(early.px(5, 5)[2], 255);       // centro del quadrato (0,0), pari
+    EXPECT_EQ(early.px(0, 0)[0], 255);       // il suo angolo è ancora a
+    EXPECT_EQ(early.px(15, 5)[0], 255);      // quadrato (1,0), dispari: ancora a
+    const Frame half = run(t, a, b, 0.5);    // pari pieni, dispari ancora vuoti
+    EXPECT_EQ(half.px(0, 0)[2], 255);
+    EXPECT_EQ(half.px(9, 9)[2], 255);
+    EXPECT_EQ(half.px(15, 5)[0], 255);
+    EXPECT_EQ(half.px(15, 15)[2], 255);      // quadrato (1,1), pari
+    const Frame late = run(t, a, b, 0.75);
+    EXPECT_EQ(late.px(15, 5)[2], 255);       // dispari centro b
+    EXPECT_EQ(late.px(10, 0)[0], 255);       // ma l'angolo del dispari è ancora a
+}
+
+TEST(Transitions, SpiralOpensClockwiseFromTheCenter)
+{
+    const Frame a(80, 80, 255, 0, 0);
+    const Frame b(80, 80, 0, 0, 255);
+    const Transition& t = *findTransition("spirale");
+    EXPECT_FALSE(t.usesDirection());
+    const Frame early = run(t, a, b, 0.2);
+    EXPECT_EQ(early.px(40, 40)[2], 255);     // il centro è b molto presto
+    EXPECT_EQ(early.px(2, 2)[0], 255);       // gli angoli ancora a
+    EXPECT_EQ(early.px(77, 77)[0], 255);
+    // Non è simmetrica: a raggio uguale, una parte è già b e l'altra no (si apre girando).
+    const Frame f = run(t, a, b, 0.5);
+    int revealed = 0;
+    int pending = 0;
+    for (int i = 0; i < 360; i += 10) {
+        const double rad = i * 3.14159265358979 / 180.0;
+        const int x = 40 + static_cast<int>(25 * std::sin(rad));
+        const int y = 40 - static_cast<int>(25 * std::cos(rad));
+        (f.px(x, y)[2] > 128 ? revealed : pending)++;
+    }
+    EXPECT_GT(revealed, 0);
+    EXPECT_GT(pending, 0);
+    // La zona già scoperta cresce con l'avanzamento.
+    int previous = -1;
+    for (double p = 0.0; p <= 1.0; p += 0.1) {
+        const Frame g = run(t, a, b, p);
+        int count = 0;
+        for (int y = 0; y < 80; ++y)
+            for (int x = 0; x < 80; ++x)
+                count += g.px(x, y)[2] > 128;
+        EXPECT_GE(count, previous);
+        previous = count;
+    }
+    EXPECT_EQ(run(t, a, b, 1.0).px(0, 0)[2], 255);
 }

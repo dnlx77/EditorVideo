@@ -67,7 +67,9 @@ float4 psText(VSOut i) : SV_Target
 // 3 tendina, misc.y = sfumatura in pixel; 4 copertura; 5 scopertura; 6 iris, bounds.z = raggio del bordo, misc.y = sfumatura in pixel;
 // 7 orologio, bounds.z = angolo del bordo, misc.y = sfumatura in radianti; 8 zoom, bounds.z = ingrandimento; 9 persiana, bounds.z = pixel scoperti,
 // misc.y = larghezza della striscia; 10 mosaico, bounds.z = lato dei blocchi, bounds.x > 0.5 = si vede «da»; 11 granuli, bounds.x = avanzamento;
-// 12 battenti, bounds.z = posizione del bordo, misc.y = sfumatura in pixel; 13 tendina diagonale, bounds.z = posizione del bordo, misc.y = sfumatura), misc.zw = misura.
+// 12 battenti, bounds.z = posizione del bordo, misc.y = sfumatura in pixel; 13 tendina diagonale, bounds.z = posizione del bordo, misc.y = sfumatura;
+// 14 cuore, bounds.z = scala in pixel; 15 scacchiera, bounds.y = lato dei quadrati, bounds.z / misc.y = estensione dei pari / dei dispari;
+// 16 spirale, bounds.y = giri, bounds.z = posizione del bordo, misc.y = sfumatura), misc.zw = misura.
 float4 psTransition(VSOut i) : SV_Target
 {
     int2 xy = int2(i.pos.xy);
@@ -113,6 +115,40 @@ float4 psTransition(VSOut i) : SV_Target
         float3 b = layerTex.Load(int3(xy, 0)).rgb;
         return float4(min(lerp(top, bottom, fr.y) * bounds.x + b * bounds.y, 1.0), 1.0);
     }
+    if (misc.x > 13.5 && misc.x < 14.5) {
+        float r = bounds.z;
+        bool inside = false;
+        if (r > 0.0) {
+            float X = (xy.x + 0.5 - misc.z * 0.5) / r;
+            float Y = (misc.w * 0.5 - (xy.y + 0.5)) / r;
+            float x2 = X * X;
+            float a = x2 + Y * Y - 1.0;
+            inside = a * a * a - x2 * Y * Y * Y < 0.0;
+        }
+        float3 color = inside ? layerTex.Load(int3(xy, 0)).rgb : fromTex.Load(int3(xy, 0)).rgb;
+        return float4(color, 1.0);
+    }
+    if (misc.x > 14.5 && misc.x < 15.5) {
+        int cell = (int)(bounds.y + 0.5);
+        int2 cellIdx = xy / cell;
+        int2 local = xy % cell;
+        int extent = ((cellIdx.x + cellIdx.y) % 2 == 0) ? (int)(bounds.z + 0.5) : (int)(misc.y + 0.5);
+        int dx = abs(2 * local.x + 1 - cell);
+        int dy = abs(2 * local.y + 1 - cell);
+        float3 color = max(dx, dy) < extent ? layerTex.Load(int3(xy, 0)).rgb : fromTex.Load(int3(xy, 0)).rgb;
+        return float4(color, 1.0);
+    }
+    if (misc.x > 15.5) {
+        float2 d = float2(xy) + 0.5 - float2(misc.z, misc.w) * 0.5;
+        float dist = length(d);
+        float radius = 0.5 * length(float2(misc.z, misc.w));
+        float angle = dist < 1e-4 ? 0.0 : atan2(d.x, -d.y);
+        if (angle < 0.0)
+            angle += 6.283185307179586;
+        float key = (bounds.y * min(dist / radius, 1.0) + angle / 6.283185307179586) / (bounds.y + 1.0);
+        float w = saturate((bounds.z - key) / misc.y + 0.5);
+        return float4(lerp(fromTex.Load(int3(xy, 0)).rgb, layerTex.Load(int3(xy, 0)).rgb, w), 1.0);
+    }
     if (misc.x > 10.5 && misc.x < 11.5) {
         uint n = uint(xy.x) * 1973u + uint(xy.y) * 9277u + 89173u;
         n = (n << 13) ^ n;
@@ -129,7 +165,7 @@ float4 psTransition(VSOut i) : SV_Target
         float w = saturate((bounds.z - d) / misc.y + 0.5);
         return float4(lerp(fromTex.Load(int3(xy, 0)).rgb, layerTex.Load(int3(xy, 0)).rgb, w), 1.0);
     }
-    if (misc.x > 12.5) {
+    if (misc.x > 12.5 && misc.x < 13.5) {
         float2 n = (float2(xy) + 0.5) / float2(misc.z, misc.w);
         float2 corner = float2(dir == 0 || dir == 3 ? 1.0 : 0.0, dir == 0 || dir == 2 ? 1.0 : 0.0);
         float t = (abs(n.x - corner.x) + abs(n.y - corner.y)) * 0.5;
@@ -453,7 +489,7 @@ bool GpuFrameConverter::supportsTransition(const std::string& transitionId)
         || transitionId == "scorrimento" || transitionId == "tendina" || transitionId == "copertura" || transitionId == "scopertura"
         || transitionId == "iris" || transitionId == "orologio" || transitionId == "zoom" || transitionId == "persiana"
         || transitionId == "mosaico" || transitionId == "dissolvenza-granuli" || transitionId == "battenti"
-        || transitionId == "tendina-diagonale";
+        || transitionId == "tendina-diagonale" || transitionId == "cuore" || transitionId == "scacchiera" || transitionId == "spirale";
 }
 
 bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string& transitionId, double progress, const TransitionParams& params)
@@ -485,6 +521,20 @@ bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string
         weightTo = static_cast<float>(std::lround(p * 256.0) / 256.0);
         weightFrom = 1.0f - weightTo;
         shift = static_cast<float>(1.0 + p);
+    } else if (transitionId == "cuore") {
+        effect = 14.0f;
+        shift = static_cast<float>(p * heartMaxScale(d.width, d.height));
+    } else if (transitionId == "scacchiera") {
+        effect = 15.0f;
+        const int cell = checkerCellSize(d.width, d.height);
+        weightTo = static_cast<float>(cell);
+        shift = static_cast<float>(std::lround(std::clamp(2.0 * p, 0.0, 1.0) * cell));
+        extra = static_cast<float>(std::lround(std::clamp(2.0 * p - 1.0, 0.0, 1.0) * cell));
+    } else if (transitionId == "spirale") {
+        effect = 16.0f;
+        weightTo = static_cast<float>(kSpiralTurns);
+        shift = static_cast<float>(p * (1.0 + kSpiralFeather) - kSpiralFeather / 2.0);
+        extra = static_cast<float>(kSpiralFeather);
     } else if (transitionId == "dissolvenza-granuli") {
         effect = 11.0f;
         weightFrom = static_cast<float>(p);

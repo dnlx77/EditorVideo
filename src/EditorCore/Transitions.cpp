@@ -34,6 +34,49 @@ double grainValue(int x, int y)
     return static_cast<double>(n & 0xFFFFu) / 65536.0;
 }
 
+// Cuore: vero se il punto (X, Y) (X verso destra, Y verso l'alto, in unità del cuore) sta dentro la curva (x²+y²-1)³ = x²y³.
+bool heartContains(double X, double Y)
+{
+    const double x2 = X * X;
+    const double a = x2 + Y * Y - 1.0;
+    return a * a * a - x2 * Y * Y * Y < 0.0;
+}
+
+double heartMaxScale(int width, int height)
+{
+    thread_local int cachedWidth = 0;
+    thread_local int cachedHeight = 0;
+    thread_local double cachedScale = 0.0;
+    if (width == cachedWidth && height == cachedHeight)
+        return cachedScale;
+    const auto allInside = [&](double r) {
+        for (int x = 0; x < width; ++x)
+            for (const int y : {0, height - 1})
+                if (!heartContains((x + 0.5 - width / 2.0) / r, (height / 2.0 - (y + 0.5)) / r))
+                    return false;
+        for (int y = 0; y < height; ++y)
+            for (const int x : {0, width - 1})
+                if (!heartContains((x + 0.5 - width / 2.0) / r, (height / 2.0 - (y + 0.5)) / r))
+                    return false;
+        return true;
+    };
+    double lo = 0.0;                                  // fuori
+    double hi = 2.0 * std::max(width, height) + 4.0;  // dentro
+    for (int i = 0; i < 40; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        (allInside(mid) ? hi : lo) = mid;
+    }
+    cachedWidth = width;
+    cachedHeight = height;
+    cachedScale = hi * 1.02;
+    return cachedScale;
+}
+
+int checkerCellSize(int width, int height)
+{
+    return std::max(2, static_cast<int>(std::lround(std::min(width, height) / 8.0)));
+}
+
 double irisMaxRadius(int width, int height)
 {
     return 0.5 * std::sqrt(static_cast<double>(width) * width + static_cast<double>(height) * height);
@@ -511,6 +554,73 @@ public:
     }
 };
 
+// Un cuore che si ingrandisce dal centro e scopre il secondo fotogramma (bordo netto).
+class Heart final : public Transition
+{
+public:
+    const char* id() const override { return "cuore"; }
+    const char* name() const override { return "Cuore"; }
+    void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
+    {
+        const int w = from.width;
+        const int h = from.height;
+        const double r = std::clamp(progress, 0.0, 1.0) * heartMaxScale(w, h);
+        mixByFunction(from, to, out, [&](int x, int y) {
+            return r > 0.0 && heartContains((x + 0.5 - w / 2.0) / r, (h / 2.0 - (y + 0.5)) / r) ? 1.0 : 0.0;
+        });
+    }
+};
+
+// Il quadro è una scacchiera di 8 righe: i quadrati di un colore si riempiscono dal centro con il secondo fotogramma
+// nella prima metà, quelli dell'altro colore nella seconda.
+class Checkerboard final : public Transition
+{
+public:
+    const char* id() const override { return "scacchiera"; }
+    const char* name() const override { return "Scacchiera"; }
+    void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
+    {
+        const int w = from.width;
+        const int h = from.height;
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const int cell = checkerCellSize(w, h);
+        const int extentEven = static_cast<int>(std::lround(std::clamp(2.0 * p, 0.0, 1.0) * cell));
+        const int extentOdd = static_cast<int>(std::lround(std::clamp(2.0 * p - 1.0, 0.0, 1.0) * cell));
+        mixByFunction(from, to, out, [&](int x, int y) {
+            const int extent = ((x / cell + y / cell) % 2 == 0) ? extentEven : extentOdd;
+            const int dx = std::abs(2 * (x % cell) + 1 - cell);
+            const int dy = std::abs(2 * (y % cell) + 1 - cell);
+            return std::max(dx, dy) < extent ? 1.0 : 0.0;
+        });
+    }
+};
+
+// Il secondo fotogramma si apre a spirale dal centro (in senso orario).
+class Spiral final : public Transition
+{
+public:
+    const char* id() const override { return "spirale"; }
+    const char* name() const override { return "Spirale"; }
+    void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
+    {
+        const int w = from.width;
+        const int h = from.height;
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const double radius = irisMaxRadius(w, h);
+        const double edge = p * (1.0 + kSpiralFeather) - kSpiralFeather / 2.0;
+        mixByFunction(from, to, out, [&](int x, int y) {
+            const double dx = x + 0.5 - w / 2.0;
+            const double dy = y + 0.5 - h / 2.0;
+            const double dist = std::sqrt(dx * dx + dy * dy);
+            double angle = dist < 1e-4 ? 0.0 : std::atan2(dx, -dy);
+            if (angle < 0.0)
+                angle += kTwoPi;
+            const double key = (kSpiralTurns * std::min(dist / radius, 1.0) + angle / kTwoPi) / (kSpiralTurns + 1.0);
+            return std::clamp((edge - key) / kSpiralFeather + 0.5, 0.0, 1.0);
+        });
+    }
+};
+
 }  // namespace
 
 const std::vector<const Transition*>& transitionRegistry()
@@ -530,7 +640,10 @@ const std::vector<const Transition*>& transitionRegistry()
     static const Grain grain;
     static const Doors doors;
     static const DiagonalWipe diagonal;
-    static const std::vector<const Transition*> all = {&crossfade, &dipToBlack, &dipToWhite, &slide, &wipe, &cover, &uncover, &iris, &clock, &zoom, &blinds, &mosaic, &grain, &doors, &diagonal};
+    static const Heart heart;
+    static const Checkerboard checkerboard;
+    static const Spiral spiral;
+    static const std::vector<const Transition*> all = {&crossfade, &dipToBlack, &dipToWhite, &slide, &wipe, &cover, &uncover, &iris, &clock, &zoom, &blinds, &mosaic, &grain, &doors, &diagonal, &heart, &checkerboard, &spiral};
     return all;
 }
 
