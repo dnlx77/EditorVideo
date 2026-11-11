@@ -383,7 +383,10 @@ const AVFrame* GpuCompositor::blendTransition(const TransitionBlend& transition,
 {
     if (failed_ || transition.from == nullptr || transition.to == nullptr || !GpuFrameConverter::supportsTransition(transition.typeId))
         return nullptr;
-    return compose(nullptr, nullptr, 0, Transform{}, texts, props, &transition);
+    const AVFrame* result = compose(nullptr, nullptr, 0, Transform{}, texts, props, &transition);
+    if (result != nullptr)
+        ++timing_.transitionFrames;
+    return result;
 }
 
 const AVFrame* GpuCompositor::blendRaster(const std::uint8_t* bgra, int stride, int width, int height, const std::vector<BlendedText>& texts,
