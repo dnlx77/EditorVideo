@@ -66,7 +66,8 @@ float4 psText(VSOut i) : SV_Target
 // misc.x = effetto (0 dissolvenza incrociata, 1 dissolvenza al nero/bianco: solo i pesi, misc.y = peso del bianco; 2 scorrimento;
 // 3 tendina, misc.y = sfumatura in pixel; 4 copertura; 5 scopertura; 6 iris, bounds.z = raggio del bordo, misc.y = sfumatura in pixel;
 // 7 orologio, bounds.z = angolo del bordo, misc.y = sfumatura in radianti; 8 zoom, bounds.z = ingrandimento; 9 persiana, bounds.z = pixel scoperti,
-// misc.y = larghezza della striscia; 10 mosaico, bounds.z = lato dei blocchi, bounds.x > 0.5 = si vede «da»), misc.zw = misura.
+// misc.y = larghezza della striscia; 10 mosaico, bounds.z = lato dei blocchi, bounds.x > 0.5 = si vede «da»; 11 granuli, bounds.x = avanzamento;
+// 12 battenti, bounds.z = posizione del bordo, misc.y = sfumatura in pixel; 13 tendina diagonale, bounds.z = posizione del bordo, misc.y = sfumatura), misc.zw = misura.
 float4 psTransition(VSOut i) : SV_Target
 {
     int2 xy = int2(i.pos.xy);
@@ -112,13 +113,36 @@ float4 psTransition(VSOut i) : SV_Target
         float3 b = layerTex.Load(int3(xy, 0)).rgb;
         return float4(min(lerp(top, bottom, fr.y) * bounds.x + b * bounds.y, 1.0), 1.0);
     }
-    if (misc.x > 9.5) {
+    if (misc.x > 10.5 && misc.x < 11.5) {
+        uint n = uint(xy.x) * 1973u + uint(xy.y) * 9277u + 89173u;
+        n = (n << 13) ^ n;
+        n = n * (n * n * 15731u + 789221u) + 1376312589u;
+        float h = float(n & 0xFFFFu) / 65536.0;
+        float3 color = h < bounds.x ? layerTex.Load(int3(xy, 0)).rgb : fromTex.Load(int3(xy, 0)).rgb;
+        return float4(color, 1.0);
+    }
+    if (misc.x > 11.5 && misc.x < 12.5) {
+        float halfSize = size * 0.5;
+        float d = abs(c + 0.5 - halfSize);
+        if (!forward)
+            d = halfSize - d;
+        float w = saturate((bounds.z - d) / misc.y + 0.5);
+        return float4(lerp(fromTex.Load(int3(xy, 0)).rgb, layerTex.Load(int3(xy, 0)).rgb, w), 1.0);
+    }
+    if (misc.x > 12.5) {
+        float2 n = (float2(xy) + 0.5) / float2(misc.z, misc.w);
+        float2 corner = float2(dir == 0 || dir == 3 ? 1.0 : 0.0, dir == 0 || dir == 2 ? 1.0 : 0.0);
+        float t = (abs(n.x - corner.x) + abs(n.y - corner.y)) * 0.5;
+        float w = saturate((bounds.z - t) / misc.y + 0.5);
+        return float4(lerp(fromTex.Load(int3(xy, 0)).rgb, layerTex.Load(int3(xy, 0)).rgb, w), 1.0);
+    }
+    if (misc.x > 9.5 && misc.x < 10.5) {
         int block = (int)(bounds.z + 0.5);
         int2 q = min((xy / block) * block + block / 2, int2(misc.z, misc.w) - 1);
         float3 color = bounds.x > 0.5 ? fromTex.Load(int3(q, 0)).rgb : layerTex.Load(int3(q, 0)).rgb;
         return float4(color, 1.0);
     }
-    if (misc.x > 8.5) {
+    if (misc.x > 8.5 && misc.x < 9.5) {
         int band = (int)(misc.y + 0.5);
         int reveal = (int)(bounds.z + 0.5);
         int inBand = c % band;
@@ -428,7 +452,8 @@ bool GpuFrameConverter::supportsTransition(const std::string& transitionId)
     return transitionId == "dissolvenza" || transitionId == "dissolvenza-nero" || transitionId == "dissolvenza-bianco"
         || transitionId == "scorrimento" || transitionId == "tendina" || transitionId == "copertura" || transitionId == "scopertura"
         || transitionId == "iris" || transitionId == "orologio" || transitionId == "zoom" || transitionId == "persiana"
-        || transitionId == "mosaico";
+        || transitionId == "mosaico" || transitionId == "dissolvenza-granuli" || transitionId == "battenti"
+        || transitionId == "tendina-diagonale";
 }
 
 bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string& transitionId, double progress, const TransitionParams& params)
@@ -460,20 +485,32 @@ bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string
         weightTo = static_cast<float>(std::lround(p * 256.0) / 256.0);
         weightFrom = 1.0f - weightTo;
         shift = static_cast<float>(1.0 + p);
+    } else if (transitionId == "dissolvenza-granuli") {
+        effect = 11.0f;
+        weightFrom = static_cast<float>(p);
     } else if (transitionId == "mosaico") {
         effect = 10.0f;
         weightFrom = p < 0.5 ? 1.0f : 0.0f;
         shift = static_cast<float>(mosaicBlockSize(p, d.width, d.height));
     } else if (transitionId == "scorrimento" || transitionId == "copertura" || transitionId == "scopertura" || transitionId == "tendina"
-               || transitionId == "iris" || transitionId == "orologio" || transitionId == "persiana") {
+               || transitionId == "iris" || transitionId == "orologio" || transitionId == "persiana" || transitionId == "battenti"
+               || transitionId == "tendina-diagonale") {
         effect = transitionId == "scorrimento" ? 2.0f : transitionId == "tendina" ? 3.0f : transitionId == "copertura" ? 4.0f
-               : transitionId == "scopertura" ? 5.0f : transitionId == "iris" ? 6.0f : transitionId == "orologio" ? 7.0f : 9.0f;
+               : transitionId == "scopertura" ? 5.0f : transitionId == "iris" ? 6.0f : transitionId == "orologio" ? 7.0f
+               : transitionId == "persiana" ? 9.0f : transitionId == "battenti" ? 12.0f : 13.0f;
         const bool horizontal = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Right;
         const int size = horizontal ? d.width : d.height;
         if (effect == 6.0f) {
             const double feather = irisFeatherPixels(d.width, d.height);
             shift = static_cast<float>(p * (irisMaxRadius(d.width, d.height) + feather) - feather / 2.0);
             extra = static_cast<float>(feather);
+        } else if (effect == 12.0f) {
+            const double feather = wipeFeatherPixels(size);
+            shift = static_cast<float>(p * (size / 2.0 + feather) - feather / 2.0);
+            extra = static_cast<float>(feather);
+        } else if (effect == 13.0f) {
+            shift = static_cast<float>(p * (1.0 + kDiagonalFeather) - kDiagonalFeather / 2.0);
+            extra = static_cast<float>(kDiagonalFeather);
         } else if (effect == 9.0f) {
             const int band = blindsBandWidth(size);
             shift = static_cast<float>(std::lround(p * band));
