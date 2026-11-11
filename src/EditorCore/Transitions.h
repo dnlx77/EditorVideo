@@ -62,6 +62,9 @@ double wipeFeatherPixels(int size);
 // Iris: raggio massimo (dal centro all'angolo) e larghezza in pixel della sfumatura del bordo del cerchio.
 double irisMaxRadius(int width, int height);
 double irisFeatherPixels(int width, int height);
+// Persiana: larghezza in pixel di una striscia (8 per lato). Mosaico: lato in pixel dei blocchi a quell'avanzamento.
+int blindsBandWidth(int size);
+int mosaicBlockSize(double progress, int width, int height);
 // Orologio: sfumatura del bordo della lancetta, in radianti.
 constexpr double kClockFeather = 0.05;
 

@@ -352,3 +352,81 @@ TEST(Transitions, ClockSweepsClockwiseFromTwelve)
     EXPECT_EQ(threeQuarters.px(10, 30)[2], 255);
     EXPECT_EQ(threeQuarters.px(10, 10)[0], 255);  // manca solo in alto a sinistra
 }
+
+TEST(Transitions, ZoomEnlargesTheFirstAroundTheCenterWhileFading)
+{
+    // a: 64x64 con un quadrato bianco (rosso+verde+blu = 255) al centro 16..47 su fondo nero; b: tutto nero.
+    Frame a(64, 64, 0, 0, 0);
+    for (int y = 16; y < 48; ++y)
+        for (int x = 16; x < 48; ++x)
+            a.data[(static_cast<size_t>(y) * 64 + x) * 4] = a.data[(static_cast<size_t>(y) * 64 + x) * 4 + 1] = a.data[(static_cast<size_t>(y) * 64 + x) * 4 + 2] = 255;
+    const Frame b(64, 64, 0, 0, 0);
+    const Transition& t = *findTransition("zoom");
+    const Frame half = run(t, a, b, 0.5);  // ingrandimento 1.5x: il quadrato occupa 8..55, luminosità a metà
+    EXPECT_NEAR(half.px(32, 32)[0], 128, 2);
+    EXPECT_NEAR(half.px(10, 32)[0], 128, 2);  // fuori dall'originale, dentro l'ingrandito
+    EXPECT_EQ(half.px(2, 32)[0], 0);
+    EXPECT_EQ(half.px(32, 2)[0], 0);
+    // Simmetrico rispetto al centro.
+    EXPECT_NEAR(half.px(10, 32)[0], half.px(53, 32)[0], 2);
+    EXPECT_NEAR(half.px(32, 10)[0], half.px(32, 53)[0], 2);
+}
+
+TEST(Transitions, BlindsRevealInEveryStripe)
+{
+    const Frame a(80, 8, 255, 0, 0);
+    const Frame b(80, 8, 0, 0, 255);
+    const Transition& t = *findTransition("persiana");
+    EXPECT_TRUE(t.usesDirection());
+    TransitionParams left;
+    left.direction = TransitionDirection::Left;
+    ASSERT_EQ(blindsBandWidth(80), 10);
+    const Frame half = run(t, a, b, 0.5, left);  // in ogni striscia di 10: 5 colonne di b, sul lato destro
+    for (int stripe = 0; stripe < 8; ++stripe) {
+        EXPECT_EQ(half.px(stripe * 10 + 4, 3)[0], 255) << stripe;
+        EXPECT_EQ(half.px(stripe * 10 + 5, 3)[2], 255) << stripe;
+        EXPECT_EQ(half.px(stripe * 10 + 9, 3)[2], 255) << stripe;
+    }
+    TransitionParams right;
+    right.direction = TransitionDirection::Right;
+    const Frame r = run(t, a, b, 0.5, right);  // lato sinistro di ogni striscia
+    EXPECT_EQ(r.px(0, 3)[2], 255);
+    EXPECT_EQ(r.px(4, 3)[2], 255);
+    EXPECT_EQ(r.px(5, 3)[0], 255);
+    EXPECT_EQ(r.px(9, 3)[0], 255);
+    // Su/giù: strisce orizzontali.
+    const Frame a2(8, 80, 255, 0, 0);
+    const Frame b2(8, 80, 0, 0, 255);
+    TransitionParams down;
+    down.direction = TransitionDirection::Down;
+    const Frame d = run(t, a2, b2, 0.5, down);
+    EXPECT_EQ(d.px(3, 4)[2], 255);
+    EXPECT_EQ(d.px(3, 5)[0], 255);
+    EXPECT_EQ(d.px(3, 14)[2], 255);
+}
+
+TEST(Transitions, MosaicPixelatesFirstThenRevealsTheSecond)
+{
+    Frame a(64, 64, 0, 0, 0);
+    Frame b(64, 64, 0, 0, 0);
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 64; ++x) {
+            a.data[(static_cast<size_t>(y) * 64 + x) * 4] = static_cast<std::uint8_t>(x * 4);
+            b.data[(static_cast<size_t>(y) * 64 + x) * 4 + 2] = static_cast<std::uint8_t>(y * 4);
+        }
+    const Transition& t = *findTransition("mosaico");
+    const int block = mosaicBlockSize(0.25, 64, 64);
+    EXPECT_GT(block, 1);
+    EXPECT_EQ(mosaicBlockSize(0.0, 64, 64), 1);
+    EXPECT_EQ(mosaicBlockSize(1.0, 64, 64), 1);
+    EXPECT_EQ(mosaicBlockSize(0.5, 64, 64), 8);
+    const Frame early = run(t, a, b, 0.25);
+    // Dentro un blocco tutti i pixel sono uguali e vengono da a; il rosso è quello del centro del blocco.
+    EXPECT_EQ(std::memcmp(early.px(0, 0), early.px(block - 1, block - 1), 3), 0);
+    EXPECT_EQ(early.px(0, 0)[0], a.px(block / 2, block / 2)[0]);
+    EXPECT_EQ(early.px(0, 0)[2], 0);
+    const Frame late = run(t, a, b, 0.75);
+    EXPECT_EQ(late.px(5, 0)[0], 0);  // b non ha rosso
+    EXPECT_EQ(std::memcmp(late.px(0, 0), late.px(block - 1, block - 1), 3), 0);
+    EXPECT_EQ(late.px(0, 0)[2], b.px(0, block / 2)[2]);
+}

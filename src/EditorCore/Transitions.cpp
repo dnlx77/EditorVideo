@@ -12,6 +12,19 @@ double wipeFeatherPixels(int size)
     return std::max(2.0, size * 0.04);
 }
 
+int blindsBandWidth(int size)
+{
+    return std::max(1, static_cast<int>(std::lround(size / 8.0)));
+}
+
+int mosaicBlockSize(double progress, int width, int height)
+{
+    const double p = std::clamp(progress, 0.0, 1.0);
+    const double q = p < 0.5 ? 2.0 * p : 2.0 - 2.0 * p;
+    const int maxBlock = std::max(2, std::min(width, height) / 8);
+    return 1 + static_cast<int>(std::lround(q * (maxBlock - 1)));
+}
+
 double irisMaxRadius(int width, int height)
 {
     return 0.5 * std::sqrt(static_cast<double>(width) * width + static_cast<double>(height) * height);
@@ -303,6 +316,113 @@ public:
     }
 };
 
+// Il primo fotogramma si ingrandisce (da 1x a 2x, dal centro) mentre sfuma nel secondo.
+class Zoom final : public Transition
+{
+public:
+    const char* id() const override { return "zoom"; }
+    const char* name() const override { return "Zoom"; }
+    void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
+    {
+        const int w = from.width;
+        const int h = from.height;
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const double scale = 1.0 + p;
+        const int wt = static_cast<int>(std::lround(p * 256.0));
+        std::vector<std::uint8_t> copy(static_cast<std::size_t>(w) * h * 4);
+        for (int y = 0; y < h; ++y) {
+            const double sy = (y + 0.5 - h / 2.0) / scale + h / 2.0 - 0.5;
+            const int y0 = static_cast<int>(std::floor(sy));
+            const int wy = static_cast<int>(std::lround((sy - y0) * 256.0));
+            const int ya = std::clamp(y0, 0, h - 1);
+            const int yb = std::clamp(y0 + 1, 0, h - 1);
+            for (int x = 0; x < w; ++x) {
+                const double sx = (x + 0.5 - w / 2.0) / scale + w / 2.0 - 0.5;
+                const int x0 = static_cast<int>(std::floor(sx));
+                const int wx = static_cast<int>(std::lround((sx - x0) * 256.0));
+                const int xa = std::clamp(x0, 0, w - 1);
+                const int xb = std::clamp(x0 + 1, 0, w - 1);
+                const std::uint8_t* p00 = rowOf(from, ya) + static_cast<std::ptrdiff_t>(xa) * 4;
+                const std::uint8_t* p10 = rowOf(from, ya) + static_cast<std::ptrdiff_t>(xb) * 4;
+                const std::uint8_t* p01 = rowOf(from, yb) + static_cast<std::ptrdiff_t>(xa) * 4;
+                const std::uint8_t* p11 = rowOf(from, yb) + static_cast<std::ptrdiff_t>(xb) * 4;
+                const std::uint8_t* b = rowOf(to, y) + static_cast<std::ptrdiff_t>(x) * 4;
+                std::uint8_t* o = copy.data() + (static_cast<std::size_t>(y) * w + x) * 4;
+                for (int k = 0; k < 3; ++k) {
+                    const int zoomed = (p00[k] * (256 - wx) * (256 - wy) + p10[k] * wx * (256 - wy) + p01[k] * (256 - wx) * wy
+                                        + p11[k] * wx * wy + 32768) >> 16;
+                    o[k] = static_cast<std::uint8_t>(std::min(255, (zoomed * (256 - wt) + b[k] * wt + 128) >> 8));
+                }
+                o[3] = rowOf(from, y)[static_cast<std::ptrdiff_t>(x) * 4 + 3];
+            }
+        }
+        for (int y = 0; y < h; ++y)
+            std::memcpy(rowOf(out, y), copy.data() + static_cast<std::size_t>(y) * w * 4, static_cast<std::size_t>(w) * 4);
+    }
+};
+
+// Il quadro è diviso in 8 strisce (verticali con Left/Right, orizzontali con Up/Down); in ognuna il secondo fotogramma
+// cresce dal lato da cui entra (come la tendina), con bordo netto.
+class Blinds final : public Transition
+{
+public:
+    const char* id() const override { return "persiana"; }
+    const char* name() const override { return "Persiana"; }
+    bool usesDirection() const override { return true; }
+    void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams& params,
+               RgbaTarget out) const override
+    {
+        const int w = from.width;
+        const int h = from.height;
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const bool horizontal = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Right;
+        const bool forward = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Up;
+        const int band = blindsBandWidth(horizontal ? w : h);
+        const int reveal = static_cast<int>(std::lround(p * band));
+        for (int y = 0; y < h; ++y) {
+            const std::uint8_t* a = rowOf(from, y);
+            const std::uint8_t* b = rowOf(to, y);
+            std::uint8_t* o = rowOf(out, y);
+            for (int x = 0; x < w; ++x, a += 4, b += 4, o += 4) {
+                const int inBand = (horizontal ? x : y) % band;
+                const int offset = forward ? band - 1 - inBand : inBand;
+                const std::uint8_t* s = offset < reveal ? b : a;
+                const std::uint8_t alpha = a[3];
+                std::memmove(o, s, 3);
+                o[3] = alpha;
+            }
+        }
+    }
+};
+
+// L'immagine si pixelizza a blocchi sempre più grandi, poi (a metà) compare il secondo fotogramma a blocchi che si rimpiccioliscono.
+class Mosaic final : public Transition
+{
+public:
+    const char* id() const override { return "mosaico"; }
+    const char* name() const override { return "Mosaico"; }
+    void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
+    {
+        const int w = from.width;
+        const int h = from.height;
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const int block = mosaicBlockSize(p, w, h);
+        const RgbaView& source = p < 0.5 ? from : to;
+        std::vector<std::uint8_t> copy(static_cast<std::size_t>(w) * h * 4);
+        for (int y = 0; y < h; ++y) {
+            const int sy = std::min((y / block) * block + block / 2, h - 1);
+            for (int x = 0; x < w; ++x) {
+                const int sx = std::min((x / block) * block + block / 2, w - 1);
+                std::uint8_t* o = copy.data() + (static_cast<std::size_t>(y) * w + x) * 4;
+                std::memcpy(o, rowOf(source, sy) + static_cast<std::ptrdiff_t>(sx) * 4, 3);
+                o[3] = rowOf(from, y)[static_cast<std::ptrdiff_t>(x) * 4 + 3];
+            }
+        }
+        for (int y = 0; y < h; ++y)
+            std::memcpy(rowOf(out, y), copy.data() + static_cast<std::size_t>(y) * w * 4, static_cast<std::size_t>(w) * 4);
+    }
+};
+
 }  // namespace
 
 const std::vector<const Transition*>& transitionRegistry()
@@ -316,7 +436,10 @@ const std::vector<const Transition*>& transitionRegistry()
     static const CoverUncover uncover("scopertura", "Scopertura", false);
     static const Iris iris;
     static const Clock clock;
-    static const std::vector<const Transition*> all = {&crossfade, &dipToBlack, &dipToWhite, &slide, &wipe, &cover, &uncover, &iris, &clock};
+    static const Zoom zoom;
+    static const Blinds blinds;
+    static const Mosaic mosaic;
+    static const std::vector<const Transition*> all = {&crossfade, &dipToBlack, &dipToWhite, &slide, &wipe, &cover, &uncover, &iris, &clock, &zoom, &blinds, &mosaic};
     return all;
 }
 
