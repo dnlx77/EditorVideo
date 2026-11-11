@@ -306,3 +306,49 @@ TEST(Transitions, UncoverSlidesTheFirstAwayAndShowsTheSecondStill)
     EXPECT_EQ(c.px(1, 4)[2], 255);
     EXPECT_EQ(c.px(1, 5)[0], 255);
 }
+
+TEST(Transitions, IrisOpensFromTheCenter)
+{
+    const Frame a(60, 40, 255, 0, 0);
+    const Frame b(60, 40, 0, 0, 255);
+    const Transition& t = *findTransition("iris");
+    EXPECT_FALSE(t.usesDirection());
+    const Frame early = run(t, a, b, 0.2);
+    EXPECT_EQ(early.px(30, 20)[2], 255);  // il centro è già b
+    EXPECT_EQ(early.px(0, 0)[0], 255);    // l'angolo è ancora a
+    EXPECT_EQ(early.px(59, 39)[0], 255);
+    const Frame late = run(t, a, b, 0.99);
+    EXPECT_EQ(late.px(30, 20)[2], 255);
+    EXPECT_EQ(late.px(0, 0)[2], 255);     // quasi alla fine anche l'angolo è b
+    // Il cerchio cresce: i pixel di b non diminuiscono mai con l'avanzamento.
+    int previous = 0;
+    for (double p = 0.0; p <= 1.0; p += 0.1) {
+        const Frame f = run(t, a, b, p);
+        int count = 0;
+        for (int y = 0; y < 40; ++y)
+            for (int x = 0; x < 60; ++x)
+                count += f.px(x, y)[2] > 128;
+        EXPECT_GE(count, previous);
+        previous = count;
+    }
+    // Simmetrico rispetto al centro.
+    const Frame mid = run(t, a, b, 0.4);
+    EXPECT_EQ(std::memcmp(mid.px(10, 5), mid.px(49, 34), 4), 0);
+}
+
+TEST(Transitions, ClockSweepsClockwiseFromTwelve)
+{
+    const Frame a(40, 40, 255, 0, 0);
+    const Frame b(40, 40, 0, 0, 255);
+    const Transition& t = *findTransition("orologio");
+    const Frame quarter = run(t, a, b, 0.25);  // da ore 12 a ore 3 già b
+    EXPECT_EQ(quarter.px(30, 10)[2], 255);     // in alto a destra
+    EXPECT_EQ(quarter.px(30, 30)[0], 255);     // in basso a destra ancora a
+    EXPECT_EQ(quarter.px(10, 10)[0], 255);
+    const Frame half = run(t, a, b, 0.5);
+    EXPECT_EQ(half.px(30, 30)[2], 255);        // metà destra b
+    EXPECT_EQ(half.px(10, 30)[0], 255);        // metà sinistra a
+    const Frame threeQuarters = run(t, a, b, 0.75);
+    EXPECT_EQ(threeQuarters.px(10, 30)[2], 255);
+    EXPECT_EQ(threeQuarters.px(10, 10)[0], 255);  // manca solo in alto a sinistra
+}
