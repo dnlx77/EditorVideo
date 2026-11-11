@@ -203,7 +203,7 @@ La finestra è divisa così:
 
 ### Transizioni
 
-- La scheda **Transizioni** (in alto a sinistra, accanto a File del progetto e Gruppi) elenca le transizioni con una miniatura: **Dissolvenza incrociata**, **Dissolvenza al nero**, **Dissolvenza al bianco**, **Scorrimento**, **Tendina**, **Copertura**, **Scopertura**, **Iris** e **Orologio**. Scegliendone una, la Sorgente ne mostra un'anteprima animata in ciclo.
+- La scheda **Transizioni** (in alto a sinistra, accanto a File del progetto e Gruppi) elenca le transizioni con una miniatura: **Dissolvenza incrociata**, **Dissolvenza al nero**, **Dissolvenza al bianco**, **Scorrimento**, **Tendina**, **Copertura**, **Scopertura**, **Iris**, **Orologio**, **Zoom**, **Persiana** e **Mosaico**. Scegliendone una, la Sorgente ne mostra un'anteprima animata in ciclo.
 - Una transizione si **trascina dall'elenco sulla giunzione fra due pezzi** attaccati: compare un blocco a cavallo della giunzione, che si seleziona, si allarga o si stringe ai bordi e si toglie. Non cambia i tempi dei pezzi: usa un po' di video oltre i loro bordi.
 - Nel monitor del Montaggio si vede al suo posto; anche l'audio dei due pezzi si dissolve in modo incrociato (anche nel mix esportato).
 - All'esportazione si **ricodificano solo i tratti coperti da una transizione**, con i due pezzi fusi; il resto resta copiato.

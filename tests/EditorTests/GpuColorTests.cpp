@@ -635,7 +635,7 @@ TEST(GpuCompositor, TransitionOfTwoTransformedSidesMatchesTheCpuFusion)
     const TextImage text = sampleText(10, 8, 40, 16);
     BlendedText blended;
     blended.image = &text;
-    for (const char* id : {"dissolvenza", "dissolvenza-nero", "dissolvenza-bianco", "scorrimento", "tendina", "copertura", "scopertura", "iris", "orologio"}) {
+    for (const char* id : {"dissolvenza", "dissolvenza-nero", "dissolvenza-bianco", "scorrimento", "tendina", "copertura", "scopertura", "iris", "orologio", "zoom", "persiana", "mosaico"}) {
         TransitionJob job;
         job.typeId = id;
         job.params.direction = TransitionDirection::Left;
