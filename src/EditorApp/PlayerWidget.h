@@ -146,12 +146,13 @@ public:
 
     // Per l'anteprima del montaggio: l'audio lo suona il mixer della sequenza (SequenceAudio), non questo lettore.
     // setAudioEnabled(false): il lettore non apre né suona nessun audio. setExternalClock: l'orologio della
-    // riproduzione è questo (secondi della sequenza, quindi dell'audio che si sente) meno `delta` (secondi della
-    // sequenza meno secondi del file); nessuna funzione = l'orologio di prima (audio del file o tempo reale). Da
-    // chiamare a riproduzione ferma. La funzione può restituire std::nullopt (es. l'audio non sta suonando): allora
+    // riproduzione è questo (secondi della sequenza, quindi dell'audio che si sente) portato nei secondi del file:
+    // `fileStart` + (tempo - `sequenceStart`) * `rate`, con `rate` i secondi di file per secondo di montaggio (la
+    // velocità del pezzo, 1 = normale); nessuna funzione = l'orologio di prima (audio del file o tempo reale), che con
+    // `rate` ≠ 1 va a quella velocità. Da chiamare a riproduzione ferma. La funzione può restituire std::nullopt (es. l'audio non sta suonando): allora
     // l'orologio è quello di sempre (tempo reale).
     void setAudioEnabled(bool enabled);
-    void setExternalClock(std::function<std::optional<double>()> sequenceClock, double delta);
+    void setExternalClock(std::function<std::optional<double>()> sequenceClock, double sequenceStart, double fileStart, double rate = 1.0);
     void setAudioNote(const QString& note);
 
     void seekTo(double seconds);
@@ -239,7 +240,9 @@ private:
     bool ownAudio_ = false;          // il file ha un audio
     bool audioEnabled_ = true;                 // vedi setAudioEnabled()
     std::function<std::optional<double>()> externalClock_;  // vedi setExternalClock()
-    double externalClockDelta_ = 0.0;
+    double externalSequenceStart_ = 0.0;
+    double externalFileStart_ = 0.0;
+    double clockRate_ = 1.0;  // secondi di file per secondo di montaggio (velocità del pezzo)
     QString idleMessage_;
     bool chromeVisible_ = true;  // vedi setChromeVisible
     QString audioNote_;    // es. "audio non disponibile"

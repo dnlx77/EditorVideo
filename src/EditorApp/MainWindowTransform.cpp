@@ -176,6 +176,7 @@ MainWindow::AnimTarget MainWindow::animationTarget() const
         target.from = 0.0;  // i tempi delle chiavi sono dall'inizio della scritta
         target.to = clip->length;
         target.sequenceStart = clip->position;
+        target.map = {0.0, clip->length, 1.0, false};
         target.base = clip->transform;
         target.animation = clip->animation;
     } else if (objects.size() == 1 && objects.front().kind == core::ObjectRef::Kind::LayerPiece) {
@@ -187,6 +188,7 @@ MainWindow::AnimTarget MainWindow::animationTarget() const
         target.from = piece->start;
         target.to = piece->end;
         target.sequenceStart = piece->position;
+        target.map = piece->map();
         target.base = piece->transform;
         target.animation = piece->animation;
     } else {
@@ -200,12 +202,14 @@ MainWindow::AnimTarget MainWindow::animationTarget() const
         target.from = f->start;
         target.to = f->end;
         target.sequenceStart = project_.sequence().startOf(project_.sequence().indexOf(f->id));
+        target.map = f->map();
         target.base = f->transform;
         target.animation = f->animation;
     }
     const double offset = position - target.sequenceStart;
-    target.inside = offset >= -1e-9 && offset <= (target.to - target.from) + 1e-9;
-    target.fileTime = target.from + std::clamp(offset, 0.0, target.to - target.from);
+    const double length = target.map.length();  // durata nel montaggio
+    target.inside = offset >= -1e-9 && offset <= length + 1e-9;
+    target.fileTime = target.map.fileAt(std::clamp(offset, 0.0, length));
     target.valid = true;
     return target;
 }
@@ -474,7 +478,7 @@ void MainWindow::applyAnimationAction(core::AnimGroup group, int actionValue)
             return;
         const double fileTime = previous ? state.prevTime : state.nextTime;
         setProgramActive(true);
-        program_->seekTo(target.sequenceStart + (fileTime - target.from));
+        program_->seekTo(target.sequenceStart + target.map.offsetOf(fileTime));
         return;
     }
     core::Transform base = target.base;

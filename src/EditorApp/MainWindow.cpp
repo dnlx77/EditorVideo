@@ -547,7 +547,7 @@ MainWindow::MainWindow(QWidget* parent)
         mini->onSeek = [this](double fileTime) {
             const AnimTarget target = animationTarget();
             if (target.valid && program_ != nullptr)
-                program_->seekTo(target.sequenceStart + (std::clamp(fileTime, target.from, target.to) - target.from));
+                program_->seekTo(target.sequenceStart + target.map.offsetOf(std::clamp(fileTime, target.from, target.to)));
         };
         mini->onKeyMoved = [this](core::AnimGroup group, double from, double to) { timeline_->onKeyMoved(group, from, to); };
         mini->onKeyRemoved = [this](core::AnimGroup group, double time) { timeline_->onKeyRemoved(group, time); };

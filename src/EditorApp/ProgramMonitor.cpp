@@ -154,7 +154,7 @@ void ProgramMonitor::setShowStats(bool on)
 ProgramMonitor::~ProgramMonitor()
 {
     // Il lettore (figlio di questo widget) sopravvive ai membri: non deve più chiedere l'orologio all'audio.
-    player_->setExternalClock(nullptr, 0.0);
+    player_->setExternalClock(nullptr, 0.0, 0.0);
     sequenceAudio_.stop();
 }
 
@@ -210,23 +210,25 @@ void ProgramMonitor::load(int index, double offset)
     player_->setBlank(false);
     player_->setTransformCanvas(transformMode_ || cropMode_ || layersShown_);
     // Scala, posizione, rotazione... del pezzo (con i fotogrammi chiave, quelli del punto da cui si parte).
-    player_->setFrameTransform(core::evaluateTransform(f.transform, f.animation, f.start + std::clamp(offset, 0.0, f.length())), frameSize());
+    const double startFileTime = f.map().fileAt(std::clamp(offset, 0.0, f.length()));
+    player_->setFrameTransform(core::evaluateTransform(f.transform, f.animation, startFileTime), frameSize());
     if (f.clipId != loadedClipId_) {
         player_->openFile(QString::fromStdString(clip->path));
         loadedClipId_ = f.clipId;
     }
     index_ = index;
     // L'orologio è quello dell'audio del montaggio (che non si ferma ai cambi di pezzo), se sta suonando: al tempo t
-    // del file corrisponde il tempo t + (inizio del pezzo - inizio nel file) della sequenza.
+    // della sequenza corrisponde nel file l'inizio del pezzo più (t - inizio nella sequenza) * velocità del pezzo.
+    // (Il pezzo inverso si legge in avanti finché non c'è la lettura all'indietro, passo V7 del piano velocità.)
     player_->setExternalClock(
         [this]() -> std::optional<double> {
             if (!sequenceAudio_.running())
                 return std::nullopt;
             return sequenceAudio_.position();
         },
-        project_.sequence().startOf(index) - f.start);
+        project_.sequence().startOf(index), f.start, f.speed);
     player_->setPlaybackWindow(f.start, f.end);
-    player_->seekTo(f.start + std::clamp(offset, 0.0, f.length()));
+    player_->seekTo(startFileTime);
 }
 
 std::vector<core::TextClip> ProgramMonitor::visibleText() const
@@ -371,7 +373,7 @@ core::Transform ProgramMonitor::v1Transform() const
     if (f.animation.empty())
         return f.transform;
     // Con i fotogrammi chiave la trasformazione dipende dall'istante: quello sul cursore, nei tempi del file.
-    const double fileTime = f.start + std::clamp(position_ - project_.sequence().startOf(index_), 0.0, f.length());
+    const double fileTime = f.map().fileAt(std::clamp(position_ - project_.sequence().startOf(index_), 0.0, f.length()));
     return core::evaluateTransform(f.transform, f.animation, fileTime);
 }
 
@@ -379,7 +381,7 @@ core::Transform ProgramMonitor::layerPieceTransform(const core::LayerPiece& piec
 {
     if (piece.animation.empty())
         return piece.transform;
-    const double fileTime = piece.start + std::clamp(position_ - piece.position, 0.0, piece.length());
+    const double fileTime = piece.map().fileAt(std::clamp(position_ - piece.position, 0.0, piece.length()));
     return core::evaluateTransform(piece.transform, piece.animation, fileTime);
 }
 
@@ -916,10 +918,10 @@ void ProgramMonitor::updateLayers()
                     slot = std::make_unique<core::LayerPlayback>(path, boxWidth, boxHeight);
                 wanted.push_back(piece.id);
                 if (coming) {
-                    slot->request(piece.start, false);  // il primo fotogramma, pronto prima che serva
+                    slot->request(piece.map().fileAt(0.0), false);  // il primo fotogramma, pronto prima che serva
                     continue;
                 }
-                const double fileTime = piece.start + (position_ - piece.position);
+                const double fileTime = piece.map().fileAt(std::clamp(position_ - piece.position, 0.0, piece.length()));
                 std::shared_ptr<core::VideoFrame> frame;
                 if (playing_) {
                     slot->request(fileTime, true);
@@ -1570,7 +1572,7 @@ void ProgramMonitor::updatePosition()
         }
     } else if (index_ >= 0 && index_ < static_cast<int>(sequence.fragments().size())) {
         const core::Fragment& f = sequence.fragments()[index_];
-        position_ = sequence.startOf(index_) + std::clamp(player_->currentPosition() - f.start, 0.0, f.length());
+        position_ = sequence.startOf(index_) + std::clamp(f.map().offsetOf(player_->currentPosition()), 0.0, f.length());
         // Con i fotogrammi chiave la trasformazione cambia a ogni fotogramma (senza, setFrameTransform non fa nulla).
         if (!f.animation.empty() && !manipDrag_)
             player_->setFrameTransform(v1Transform(), frameSize());
@@ -1595,8 +1597,9 @@ void ProgramMonitor::updatePosition()
             const core::Fragment& f = sequence.fragments()[static_cast<std::size_t>(index_)];
             const auto [cacheFrom, cacheTo] = player_->cachedRange();
             const double start = sequence.startOf(index_);
-            from = start + std::clamp(cacheFrom, f.start, f.end) - f.start;
-            to = start + std::clamp(cacheTo, f.start, f.end) - f.start;
+            const core::TimeRange cached = f.map().offsetsOf(std::clamp(cacheFrom, f.start, f.end), std::clamp(cacheTo, f.start, f.end));
+            from = start + cached.start;
+            to = start + cached.end;
         }
         onCacheRangeChanged(from, to);
     }

@@ -645,10 +645,13 @@ void PlayerWidget::setAudioEnabled(bool enabled)
         openAudio();
 }
 
-void PlayerWidget::setExternalClock(std::function<std::optional<double>()> sequenceClock, double delta)
+void PlayerWidget::setExternalClock(std::function<std::optional<double>()> sequenceClock, double sequenceStart, double fileStart,
+                                    double rate)
 {
     externalClock_ = std::move(sequenceClock);
-    externalClockDelta_ = delta;
+    externalSequenceStart_ = sequenceStart;
+    externalFileStart_ = fileStart;
+    clockRate_ = rate > 0.0 ? rate : 1.0;
 }
 
 void PlayerWidget::setAudioNote(const QString& note)
@@ -1082,7 +1085,7 @@ double PlayerWidget::clock()
 {
     if (externalClock_) {
         if (const std::optional<double> sequenceTime = externalClock_())
-            return *sequenceTime - externalClockDelta_;
+            return externalFileStart_ + (*sequenceTime - externalSequenceStart_) * clockRate_;
     }
     if (audioClock_) {
         const double now =
@@ -1096,7 +1099,7 @@ double PlayerWidget::clock()
         return now;
     }
     return wallBase_
-         + workerSpeed_ * std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart_).count();
+         + workerSpeed_ * clockRate_ * std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart_).count();
 }
 
 void PlayerWidget::tick()
