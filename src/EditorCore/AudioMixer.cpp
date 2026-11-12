@@ -1,6 +1,7 @@
 #include "EditorCore/AudioMixer.h"
 
 #include "EditorCore/AudioDecoder.h"
+#include "EditorCore/TimeStretch.h"
 
 #include <algorithm>
 #include <array>
@@ -223,10 +224,12 @@ std::vector<std::vector<LevelPoint>> segmentEnvelopesOf(const Project& project)
 struct AudioMixer::Reader
 {
     std::unique_ptr<AudioDecoder> decoder;
+    std::unique_ptr<TimeStretch> stretch;  // solo se il tratto ha velocità diversa da 1 (intonazione mantenuta)
     bool failed = false;
     bool ended = false;                 // il file è finito prima della fine del tratto: il resto è silenzio
     long long nextFrame = -1;          // fotogramma della sequenza del prossimo campione di `pending`
     std::vector<std::int16_t> pending;  // stereo interlacciato, già alla frequenza del mix
+    std::vector<std::int16_t> stereoChunk;  // ingresso del TimeStretch (riusato)
     std::size_t pendingPos = 0;         // fotogrammi di `pending` già dati
 
     std::size_t available() const { return pending.size() / kMixChannels - pendingPos; }
@@ -241,6 +244,9 @@ struct AudioMixer::Reader
     {
         if (failed)
             return;
+        if (segment.reverse)
+            return;  // l'audio al contrario arriva con V8: per ora silenzio
+        const SpeedMap map = segment.map();
         if (!decoder) {
             try {
                 decoder = std::make_unique<AudioDecoder>(segment.path, kMixSampleRate);
@@ -251,7 +257,7 @@ struct AudioMixer::Reader
         }
         if (nextFrame != from) {
             try {
-                decoder->seek(segment.fileStart + static_cast<double>(from - segmentFirst) / kMixSampleRate);
+                decoder->seek(map.fileAt(static_cast<double>(from - segmentFirst) / kMixSampleRate));
             } catch (const std::exception&) {
                 failed = true;
                 return;
@@ -260,25 +266,37 @@ struct AudioMixer::Reader
             pendingPos = 0;
             nextFrame = from;
             ended = false;
+            stretch.reset();
+            if (std::abs(segment.speed - 1.0) > 1e-9)
+                stretch = std::make_unique<TimeStretch>(kMixChannels, kMixSampleRate, segment.speed);
         }
         try {
             while (!ended && available() < count) {
                 auto chunk = decoder->next();
                 if (!chunk) {
                     ended = true;
+                    if (stretch)
+                        stretch->flush(pending);
                     break;
                 }
                 if (pendingPos > 0 && pendingPos >= pending.size() / kMixChannels / 2) {
                     pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(pendingPos) * kMixChannels);
                     pendingPos = 0;
                 }
+                std::vector<std::int16_t>& target = stretch ? stereoChunk : pending;
+                if (stretch)
+                    stereoChunk.clear();
                 if (decoder->channels() == 1) {
                     for (std::int16_t v : chunk->samples) {
-                        pending.push_back(v);
-                        pending.push_back(v);
+                        target.push_back(v);
+                        target.push_back(v);
                     }
                 } else {
-                    pending.insert(pending.end(), chunk->samples.begin(), chunk->samples.end());
+                    target.insert(target.end(), chunk->samples.begin(), chunk->samples.end());
+                }
+                if (stretch) {
+                    stretch->push(stereoChunk.data(), stereoChunk.size());
+                    stretch->pull(pending);
                 }
             }
         } catch (const std::exception&) {
@@ -303,7 +321,7 @@ struct AudioMixer::Reader
             const float t = totalFrames > 1 ? static_cast<float>(at) / static_cast<float>(totalFrames) : 1.0f;
             float gain = g0 + (g1 - g0) * t;
             if (!envelope.empty()) {
-                const double fileTime = segment.fileStart + static_cast<double>(frame - segmentFirst) / kMixSampleRate;
+                const double fileTime = map.fileAt(static_cast<double>(frame - segmentFirst) / kMixSampleRate);
                 gain *= static_cast<float>(envelopeGain(envelopeDbAt(envelope, fileTime)));
             }
             if (fadeInFrames > 0 || fadeOutFrames > 0) {
@@ -589,8 +607,9 @@ void AudioMixer::render(long long firstFrame, std::size_t frames, std::vector<st
         std::vector<std::pair<long long, long long>>& mutedFrames = mutedFrames_;
         mutedFrames.clear();
         for (const TimeRange& m : segment.muted) {
-            mutedFrames.emplace_back(segFirst + static_cast<long long>(std::ceil((m.start - segment.fileStart) * kMixSampleRate)),
-                                     segFirst + static_cast<long long>(std::ceil((m.end - segment.fileStart) * kMixSampleRate)));
+            const TimeRange offsets = segment.map().offsetsOf(m.start, m.end);
+            mutedFrames.emplace_back(segFirst + static_cast<long long>(std::ceil(offsets.start * kMixSampleRate)),
+                                     segFirst + static_cast<long long>(std::ceil(offsets.end * kMixSampleRate)));
         }
         std::vector<float>* const buffer = bufferOf(segment.trackId);
         float unusedPeak[2] = {0.0f, 0.0f};  // con un effetto il picco si misura dopo, sul suono filtrato

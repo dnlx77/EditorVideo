@@ -523,3 +523,59 @@ TEST_F(AudioMixerTest, TransitionCrossfadesTheAudioOfBothPieces)
     EXPECT_EQ(plain.segments[0].fadeOut, 0.0);
     EXPECT_EQ(plain.segments[1].fadeIn, 0.0);
 }
+
+namespace {
+
+// Energia (somma dei valori assoluti) dei fotogrammi [from, to) di un mix stereo.
+double energyOf(const std::vector<std::int16_t>& out, long long from, long long to)
+{
+    double sum = 0.0;
+    for (long long f = from; f < to; ++f)
+        sum += std::abs(static_cast<double>(out[static_cast<std::size_t>(f) * 2]));
+    return sum;
+}
+
+}  // namespace
+
+TEST_F(AudioMixerTest, FasterSegmentIsShorterInTheMix)
+{
+    MixSegment s = segment("a.wav", 0.0, 2.0, 0.5);
+    s.speed = 2.0;  // 2 s di file in 1 s di montaggio, da 0,5 s a 1,5 s
+    AudioMixer mixer({s}, {{0, 1.0f}});
+    EXPECT_NEAR(mixer.endTime(), 1.5, 1e-9);
+    const auto out = renderAll(mixer, 2.5, 900);
+    EXPECT_EQ(energyOf(out, 0, kRate / 2), 0.0);
+    EXPECT_GT(energyOf(out, kRate / 2 + 2000, kRate * 3 / 2 - 2000), 1e6);
+    EXPECT_EQ(energyOf(out, kRate * 3 / 2 + 200, 5 * kRate / 2), 0.0);
+}
+
+TEST_F(AudioMixerTest, SlowerSegmentIsLongerInTheMix)
+{
+    MixSegment s = segment("a.wav", 0.0, 1.0, 0.0);
+    s.speed = 0.5;  // 1 s di file in 2 s
+    AudioMixer mixer({s}, {{0, 1.0f}});
+    const auto out = renderAll(mixer, 3.0, 1024);
+    EXPECT_GT(energyOf(out, kRate + 2000, 2 * kRate - 2000), 1e6);
+    EXPECT_EQ(energyOf(out, 2 * kRate + 200, 3 * kRate), 0.0);
+}
+
+TEST_F(AudioMixerTest, MutedRangeFollowsTheSpeed)
+{
+    MixSegment s = segment("a.wav", 0.0, 2.0, 0.0);
+    s.speed = 2.0;
+    s.muted = {{0.5, 0.75}};  // nel file: a 2x diventano [0,25 s, 0,375 s) del montaggio
+    AudioMixer mixer({s}, {{0, 1.0f}});
+    const auto out = renderAll(mixer, 1.0, 1000);
+    EXPECT_EQ(energyOf(out, kRate / 4, kRate * 3 / 8), 0.0);
+    EXPECT_GT(energyOf(out, kRate / 4 - 3000, kRate / 4 - 100), 1e5);
+    EXPECT_GT(energyOf(out, kRate * 3 / 8 + 3000, kRate / 2), 1e5);
+}
+
+TEST_F(AudioMixerTest, ReversedSegmentIsSilentUntilReverseAudioExists)
+{
+    MixSegment s = segment("a.wav", 0.0, 1.0, 0.0);
+    s.reverse = true;
+    AudioMixer mixer({s}, {{0, 1.0f}});
+    const auto out = renderAll(mixer, 1.0, 1000);
+    EXPECT_EQ(energyOf(out, 0, kRate), 0.0);
+}
