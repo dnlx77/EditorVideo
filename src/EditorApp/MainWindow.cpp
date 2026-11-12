@@ -524,6 +524,7 @@ MainWindow::MainWindow(QWidget* parent)
         setTextPosition(isX ? std::optional<double>(percent / 100.0) : std::nullopt, isX ? std::nullopt : std::optional<double>(percent / 100.0));
     };
     propertiesPanel_->onFit = [this](bool fill) { fitSelectedPieces(fill); };
+    propertiesPanel_->onSpeedEdit = [this](std::optional<double> speed, std::optional<bool> reverse) { applySpeedEdit(speed, reverse); };
     propertiesPanel_->onAnimationPreset = [this](core::AnimPreset preset) {
         const AnimTarget target = animationTarget();
         if (!target.valid)
@@ -1458,8 +1459,11 @@ void MainWindow::refreshTimeline()
     std::map<int, Fit> fits;
     for (const core::Fragment& f : sequence.fragments()) {
         const core::Clip* clip = project_.find(f.clipId);
-        blocks.push_back({f.id, project_.indexOf(f.clipId), clip ? fileNameOf(clip->path) : QString(), f.length(), f.start,
-                          f.clipId, clip ? waveforms_->get(clip->path) : nullptr, f.gap});
+        blocks.push_back({f.id, project_.indexOf(f.clipId),
+                          (clip ? fileNameOf(clip->path) : QString()) + speedTag(f.speed, f.reverse), f.length(), f.start, f.clipId,
+                          clip ? waveforms_->get(clip->path) : nullptr, f.gap});
+        blocks.back().speed = f.speed;
+        blocks.back().reverse = f.reverse;
         if (clip != nullptr)
             blocks.back().proxyDivisor = proxies_->sourceDivisor(qs(clip->path));
         blocks.back().audioDetached = f.detached || (clip != nullptr && clip->still);  // un'immagine non ha audio: niente blocco su A1
@@ -1534,8 +1538,10 @@ void MainWindow::refreshTimeline()
             lanes.push_back(laneOf(track.id));
         SequenceTimeline::AudioLane& lane = track.host ? lanes.front() : lanes.back();
         for (const core::AudioClip& c : track.clips) {
-            lane.clips.push_back({c.id, qs(c.path), fileNameOf(c.path), colorIndexFor(c.path), c.position, c.length(),
-                                          c.start, waveforms_->get(c.path), c.envelope});
+            lane.clips.push_back({c.id, qs(c.path), fileNameOf(c.path) + speedTag(c.speed, c.reverse), colorIndexFor(c.path),
+                                  c.position, c.length(), c.start, waveforms_->get(c.path), c.envelope});
+            lane.clips.back().speed = c.speed;
+            lane.clips.back().reverse = c.reverse;
             ++audioClips;
         }
     }
@@ -1565,7 +1571,9 @@ void MainWindow::refreshTimeline()
         for (const core::LayerPiece& piece : layer.pieces) {
             const core::Clip* file = project_.find(piece.clipId);
             const QString name = file != nullptr ? QFileInfo(QString::fromStdString(file->path)).fileName() : QString();
-            SequenceTimeline::TextBlock block{piece.id, name, piece.position, piece.length(), 0.0, 0.0};
+            SequenceTimeline::TextBlock block{piece.id, name + speedTag(piece.speed, piece.reverse), piece.position, piece.length(), 0.0, 0.0};
+            block.speed = piece.speed;
+            block.reverse = piece.reverse;
             block.piece = true;
             block.fileId = piece.clipId;
             block.sourceStart = piece.start;
@@ -2060,6 +2068,39 @@ void MainWindow::createMenus()
         QSettings s = settings();
         s.setValue(QStringLiteral("montaggio/grigliaTerzi"), on);
     });
+    editMenu->addSeparator();
+    // Velocità e inverso dei pezzi scelti (e del loro gruppo); gli stessi comandi sono nel pannello Proprietà.
+    {
+        QMenu* speedMenu = editMenu->addMenu(QStringLiteral("&Velocità del pezzo"));
+        speedMenu->setStatusTip(QStringLiteral("Rallentatore, accelerato e inverso dei pezzi scelti (e di quelli del loro gruppo)"));
+        for (const double factor : {0.25, 0.5, 1.0, 2.0, 4.0, 8.0}) {
+            const QString text = factor == 1.0 ? QStringLiteral("Normale (1x)") : QStringLiteral("%1x").arg(factor);
+            speedMenu->addAction(text, this, [this, factor] { applySpeedEdit(factor, std::nullopt); });
+        }
+        speedMenu->addSeparator();
+        speedMenu->addAction(QStringLiteral("&Inverti"), this, [this] {
+            // Inverte rispetto al primo oggetto scelto che ha una velocità.
+            for (const core::ObjectRef& o : timeline_->allSelectedObjects()) {
+                bool current = false;
+                bool found = false;
+                if (const core::Fragment* f = o.kind == core::ObjectRef::Kind::Piece || o.kind == core::ObjectRef::Kind::PieceAudio
+                                                  ? project_.sequence().find(o.id) : nullptr) {
+                    current = f->reverse;
+                    found = true;
+                } else if (const core::LayerPiece* p = o.kind == core::ObjectRef::Kind::LayerPiece ? project_.textTracks().findPiece(o.id) : nullptr) {
+                    current = p->reverse;
+                    found = true;
+                } else if (const core::AudioClip* c = o.kind == core::ObjectRef::Kind::AudioClip ? project_.audioTracks().find(o.id) : nullptr) {
+                    current = c->reverse;
+                    found = true;
+                }
+                if (found) {
+                    applySpeedEdit(std::nullopt, !current);
+                    return;
+                }
+            }
+        });
+    }
     editMenu->addSeparator();
     QAction* group = editMenu->addAction(QStringLiteral("Crea &gruppo"), this, [this] { groupSelection(); });
     group->setShortcut(QKeySequence(Qt::Key_G));

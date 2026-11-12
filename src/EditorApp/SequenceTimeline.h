@@ -11,6 +11,7 @@
 #include <QtGui/QImage>
 #include <QtGui/QPixmap>
 
+#include <cmath>
 #include <functional>
 #include <initializer_list>
 #include <memory>
@@ -58,6 +59,11 @@ public:
         std::vector<core::LevelPoint> envelope;  // linea del livello dell'audio del pezzo (tempi del file)
         QString transformNote;  // i valori della trasformazione del pezzo, uno per riga; vuoto = nessuna (badge «fx»)
         bool audioDetached = false;  // l'audio è una clip a parte: sotto il pezzo, su A1, non si vede niente
+        // Velocità e inverso (vedi core/Speed.h): `length` è la durata nel montaggio, nel file il pezzo dura length * speed. Con
+        // velocità ≠ 1 o inverso i bordi non si trascinano (il passo V9 del piano velocità lo permetterà).
+        double speed = 1.0;
+        bool reverse = false;
+        bool normalSpeed() const { return std::abs(speed - 1.0) < 1e-9 && !reverse; }
     };
 
     // Una clip audio su una traccia aggiunta.
@@ -72,6 +78,9 @@ public:
         double sourceStart = 0.0;  // inizio nel file
         std::shared_ptr<const core::Waveform> waveform;  // nullptr = in calcolo
         std::vector<core::LevelPoint> envelope;  // linea del livello (tempi del file)
+        double speed = 1.0;  // come per Block
+        bool reverse = false;
+        bool normalSpeed() const { return std::abs(speed - 1.0) < 1e-9 && !reverse; }
     };
 
     // Una corsia audio: A1 (trackId 0: le sue forme d'onda sono quelle dei pezzi video, `clips` non conta) o una
@@ -99,6 +108,9 @@ public:
         bool piece = false;    // un pezzo di video (non una scritta): blu, senza dissolvenze, con le miniature del file
         int fileId = 0;           // il file del pezzo (per le miniature)
         double sourceStart = 0.0;  // dove inizia il pezzo nel file
+        double speed = 1.0;        // (solo per i pezzi) come per Block
+        bool reverse = false;
+        bool normalSpeed() const { return std::abs(speed - 1.0) < 1e-9 && !reverse; }
     };
 
     // Un livello di scritte (V2, V3...), disegnato sopra la corsia video: il livello più alto sta più in alto.

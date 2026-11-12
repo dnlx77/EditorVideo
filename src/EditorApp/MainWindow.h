@@ -192,6 +192,8 @@ public:
     bool commitMonitorTextTransform(int clipId, const core::Transform& transform);
     // "Adatta" / "Riempi" sui pezzi scelti.
     void fitSelectedPieces(bool fill);
+    // Velocità e inverso degli oggetti scelti e di quelli del loro gruppo (Project::setSpeed); un valore mancante resta com'è.
+    void applySpeedEdit(std::optional<double> speed, std::optional<bool> reverse);
     // La Sorgente mostra il file (il lettore) o l'anteprima della transizione scelta.
     void showSourcePlayer();
     std::vector<core::NamedTextStyle> availableTextStyles() const;  // del progetto e dell'elenco globale

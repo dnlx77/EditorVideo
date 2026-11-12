@@ -730,6 +730,78 @@ int Project::lowerToV1(int pieceId, double position, bool push, int* audioClip)
     return id;
 }
 
+Project::SpeedResult Project::setSpeed(const std::vector<ObjectRef>& objects, std::optional<double> speed,
+                                       std::optional<bool> reverse, bool push)
+{
+    SpeedResult result;
+    std::vector<ObjectRef> all;
+    const auto add = [&](ObjectRef o) {
+        if (o.kind == ObjectRef::Kind::PieceAudio)
+            o.kind = ObjectRef::Kind::Piece;  // l'audio di un pezzo cambia con il pezzo
+        if ((o.kind == ObjectRef::Kind::Piece || o.kind == ObjectRef::Kind::LayerPiece || o.kind == ObjectRef::Kind::AudioClip)
+            && std::find(all.begin(), all.end(), o) == all.end())
+            all.push_back(o);
+    };
+    for (const ObjectRef& o : objects) {
+        for (const ObjectRef& m : groupMembers(o))
+            add(m);
+        add(o);
+    }
+    const Project backup = *this;
+    for (const ObjectRef& o : all) {
+        bool done = true;  // false = non ci sta
+        bool changed = false;
+        if (o.kind == ObjectRef::Kind::Piece) {
+            const Fragment* f = sequence_.find(o.id);
+            if (f == nullptr)
+                continue;
+            const Clip* source = find(f->clipId);
+            if (source != nullptr && source->still)
+                continue;  // un'immagine fissa non ha velocità
+            changed = sequence_.setSpeed(o.id, speed.value_or(f->speed), reverse.value_or(f->reverse), push);
+            done = changed || (std::abs(f->speed - clampSpeed(speed.value_or(f->speed))) < 1e-9 && f->reverse == reverse.value_or(f->reverse));
+        } else if (o.kind == ObjectRef::Kind::LayerPiece) {
+            const LayerPiece* p = text_.findPiece(o.id);
+            if (p == nullptr)
+                continue;
+            const Clip* source = find(p->clipId);
+            if (source != nullptr && source->still)
+                continue;
+            changed = text_.setPieceSpeed(o.id, speed.value_or(p->speed), reverse.value_or(p->reverse));
+            done = changed || (std::abs(p->speed - clampSpeed(speed.value_or(p->speed))) < 1e-9 && p->reverse == reverse.value_or(p->reverse));
+        } else {
+            const AudioClip* c = audio_.find(o.id);
+            if (c == nullptr)
+                continue;
+            changed = audio_.setSpeed(o.id, speed.value_or(c->speed), reverse.value_or(c->reverse));
+            done = changed || (std::abs(c->speed - clampSpeed(speed.value_or(c->speed))) < 1e-9 && c->reverse == reverse.value_or(c->reverse));
+        }
+        if (!done) {
+            *this = backup;
+            return {0, true};
+        }
+        result.changed += changed ? 1 : 0;
+    }
+    if (result.changed == 0)
+        return result;
+    // L'audio dei pezzi video (su A1) non deve sovrapporsi alle clip libere di A1.
+    for (const AudioTrack& t : audio_.tracks()) {
+        if (!t.host)
+            continue;
+        const std::vector<TimeRange> linked = linkedAudioRanges();
+        for (const AudioClip& c : t.clips) {
+            for (const TimeRange& r : linked) {
+                if (c.position < r.end - kTimeEpsilon && c.endPosition() > r.start + kTimeEpsilon) {
+                    *this = backup;
+                    return {0, true};
+                }
+            }
+        }
+    }
+    pruneTransitions();
+    return result;
+}
+
 int Project::setTransform(const std::vector<int>& fragmentIds, const Transform& transform)
 {
     int changed = 0;

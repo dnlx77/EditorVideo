@@ -43,6 +43,40 @@ std::vector<AnimMiniTimeline::Mark> keyMarks(const core::TransformAnimation& ani
     return marks;
 }
 
+// Velocità e verso dell'oggetto, se ne ha (un'immagine fissa no).
+struct SpeedValue
+{
+    double speed = 1.0;
+    bool reverse = false;
+    bool audio = false;  // clip audio o audio di un pezzo: la pagina della sola velocità
+};
+
+std::optional<SpeedValue> speedValueOf(const core::Project& project, const core::ObjectRef& o)
+{
+    using Kind = core::ObjectRef::Kind;
+    if (o.kind == Kind::Piece || o.kind == Kind::PieceAudio) {
+        const core::Fragment* f = project.sequence().find(o.id);
+        const core::Clip* clip = f != nullptr ? project.find(f->clipId) : nullptr;
+        if (f == nullptr || (clip != nullptr && clip->still))
+            return std::nullopt;
+        return SpeedValue{f->speed, f->reverse, o.kind == Kind::PieceAudio};
+    }
+    if (o.kind == Kind::LayerPiece) {
+        const core::LayerPiece* p = project.textTracks().findPiece(o.id);
+        const core::Clip* clip = p != nullptr ? project.find(p->clipId) : nullptr;
+        if (p == nullptr || (clip != nullptr && clip->still))
+            return std::nullopt;
+        return SpeedValue{p->speed, p->reverse, false};
+    }
+    if (o.kind == Kind::AudioClip) {
+        const core::AudioClip* c = project.audioTracks().find(o.id);
+        if (c == nullptr)
+            return std::nullopt;
+        return SpeedValue{c->speed, c->reverse, true};
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 void MainWindow::refreshPropertiesPanel(bool cursorOnly)
@@ -80,6 +114,17 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
             return;
         }
     }
+    // La sezione «Velocità» sotto i comandi dei pezzi video (se fra gli oggetti scelti c'è un pezzo con velocità).
+    const auto showVideoSpeed = [&] {
+        for (const core::ObjectRef& o : objects) {
+            if (o.kind != core::ObjectRef::Kind::Piece && o.kind != core::ObjectRef::Kind::LayerPiece)
+                continue;
+            if (const auto value = speedValueOf(project_, o)) {
+                propertiesPanel_->showSpeed(value->speed, value->reverse);
+                return;
+            }
+        }
+    };
     // Un pezzo scelto da solo (di V1 o di un livello): valori al cursore e rombi dei fotogrammi chiave.
     if (const AnimTarget target = animationTarget(); target.valid) {
         const PropertiesPanel::AnimationState state =
@@ -88,12 +133,21 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
         propertiesPanel_->showTransform(core::evaluateTransform(target.base, target.animation, target.fileTime), 1, state);
         propertiesPanel_->miniTimeline()->setData(target.from, target.to, target.inside ? target.fileTime : -1.0,
                                                   keyMarks(target.animation));
+        showVideoSpeed();
         return;
     }
     const std::vector<int> pieces = selectedPieceIds(objects);
     for (int id : pieces) {
         if (const core::Fragment* f = project_.sequence().find(id)) {
             propertiesPanel_->showTransform(f->transform, static_cast<int>(pieces.size()));
+            showVideoSpeed();
+            return;
+        }
+    }
+    // Solo audio (clip audio, audio di un pezzo) o solo pezzi di livello senza trasformazione: la pagina della sola velocità.
+    for (const core::ObjectRef& o : objects) {
+        if (const auto value = speedValueOf(project_, o); value && value->audio) {
+            propertiesPanel_->showAudioSpeed(value->speed, value->reverse);
             return;
         }
     }
@@ -446,6 +500,26 @@ void MainWindow::applyAnimationAction(core::AnimGroup group, int actionValue)
         return;
     transformMerge_.key.clear();
     recordEdit(label, before);
+}
+
+void MainWindow::applySpeedEdit(std::optional<double> speed, std::optional<bool> reverse)
+{
+    const std::vector<core::ObjectRef> objects = timeline_->allSelectedObjects();
+    if (objects.empty())
+        return;
+    const core::Project before = project_;
+    const core::Project::SpeedResult result = project_.setSpeed(objects, speed, reverse, pushPieces_);
+    if (result.blocked) {
+        statusBar()->showMessage(pushPieces_ ? QStringLiteral("La nuova durata non ci sta: c'è un'altra clip o un'altra traccia di mezzo.")
+                                             : QStringLiteral("La nuova durata non ci sta: accendi «Spingi i pezzi successivi» o fai spazio."),
+                                 6000);
+        refreshPropertiesPanel();  // i controlli tornano ai valori veri
+        return;
+    }
+    if (result.changed == 0)
+        return;
+    transformMerge_.key.clear();
+    recordEdit(reverse && !speed ? QStringLiteral("Inverti il pezzo") : QStringLiteral("Cambia velocità"), before);
 }
 
 void MainWindow::fitSelectedPieces(bool fill)
