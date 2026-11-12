@@ -14,7 +14,7 @@ namespace editor::app {
 
 namespace {
 
-constexpr QSize kThumbnail(96, 54);
+constexpr QSize kThumbnail(64, 36);
 
 // L'elenco da cui si trascinano le transizioni: il trascinamento porta l'id della transizione (kTransitionMime).
 class TransitionListWidget : public QListWidget
