@@ -378,9 +378,15 @@ int AudioTracks::split(int trackId, double seconds)
             continue;
         AudioClip second = first;
         second.id = nextClipId_++;
-        second.start = first.start + (seconds - first.position);
+        const SpeedMap map = first.map();
+        const double cutAt = seconds - first.position;
+        const TimeRange firstPart = map.fileRangeOf(0.0, cutAt);
+        const TimeRange secondPart = map.fileRangeOf(cutAt, map.length());
+        second.start = secondPart.start;
+        second.end = secondPart.end;
         second.position = seconds;
-        first.end = second.start;
+        first.start = firstPart.start;
+        first.end = firstPart.end;
         t->clips.insert(t->clips.begin() + static_cast<std::ptrdiff_t>(i) + 1, std::move(second));
         return nextClipId_ - 1;
     }
@@ -396,20 +402,29 @@ double AudioTracks::trimLimit(int clipId, Sequence::Edge edge, double desired, d
     const auto& clips = tracks_[static_cast<std::size_t>(t)].clips;
     const AudioClip& c = clips[static_cast<std::size_t>(index)];
     minLength = std::max(minLength, kTimeEpsilon);
-    if (edge == Sequence::Edge::Start) {
-        // Senza ripple l'inizio nella sequenza si sposta: non prima di 0 né della fine della clip precedente.
-        double lowest = 0.0;
-        if (!ripple) {
+    // Senza ripple il bordo si sposta nel montaggio: a sinistra non prima di 0 né della fine della clip precedente, a destra non
+    // oltre l'inizio della clip dopo. Lo spazio libero (secondi del montaggio) nel file è `room * speed`; con l'inverso il bordo
+    // Start del file sta a destra.
+    const bool onLeft = (edge == Sequence::Edge::Start) != c.reverse;
+    double room = std::numeric_limits<double>::max();
+    if (!ripple) {
+        if (onLeft) {
             const double previousEnd = index > 0 ? clips[static_cast<std::size_t>(index) - 1].endPosition() : 0.0;
-            lowest = std::max(0.0, c.start - (c.position - previousEnd));
+            room = c.position - previousEnd;
+        } else if (static_cast<std::size_t>(index) + 1 < clips.size()) {
+            room = clips[static_cast<std::size_t>(index) + 1].position - c.endPosition();
         }
-        return std::clamp(desired, std::min(lowest, c.start), std::max(c.start, c.end - minLength));
     }
-    // Senza ripple la fine nella sequenza si sposta: non oltre l'inizio della clip dopo.
+    const double roomInFile = room >= std::numeric_limits<double>::max() ? room : room * c.speed;
+    const double minFileLength = minLength * c.speed;
+    if (edge == Sequence::Edge::Start) {
+        const double lowest = ripple ? 0.0 : std::max(0.0, c.start - roomInFile);
+        return std::clamp(desired, std::min(lowest, c.start), std::max(c.start, c.end - minFileLength));
+    }
     double highest = c.sourceDuration > 0 ? c.sourceDuration : std::numeric_limits<double>::max();
-    if (!ripple && static_cast<std::size_t>(index) + 1 < clips.size())
-        highest = std::min(highest, c.end + (clips[static_cast<std::size_t>(index) + 1].position - c.endPosition()));
-    return std::clamp(desired, std::min(c.start + minLength, c.end), std::max(highest, c.end));
+    if (!ripple && roomInFile < std::numeric_limits<double>::max())
+        highest = std::min(highest, c.end + roomInFile);
+    return std::clamp(desired, std::min(c.start + minFileLength, c.end), std::max(highest, c.end));
 }
 
 bool AudioTracks::trim(int clipId, Sequence::Edge edge, double value, double minLength, bool ripple)
@@ -424,22 +439,42 @@ bool AudioTracks::trim(int clipId, Sequence::Edge edge, double value, double min
     const double old = edge == Sequence::Edge::Start ? c.start : c.end;
     if (std::abs(value - old) <= kTimeEpsilon)
         return false;
-    const double delta = value - old;
+    // Quanto si sposta il bordo nel montaggio (con l'inverso il verso è opposto) e se sta a sinistra o a destra.
+    const bool onLeft = (edge == Sequence::Edge::Start) != c.reverse;
+    const double delta = (value - old) / c.speed * (c.reverse ? -1.0 : 1.0);
     c.envelope = envelopeForTrim(c.envelope, edge == Sequence::Edge::Start, old, value, edge == Sequence::Edge::Start ? c.end : c.start);
     double shift = 0.0;  // di quanto scorrono le clip dopo (con ripple)
-    if (edge == Sequence::Edge::Start) {
+    if (edge == Sequence::Edge::Start)
         c.start = value;
+    else
+        c.end = value;
+    if (onLeft) {
         if (ripple)
             shift = -delta;
         else
             c.position = std::max(0.0, c.position + delta);  // la fine resta ferma nella sequenza
-    } else {
-        c.end = value;
-        if (ripple)
-            shift = delta;
+    } else if (ripple) {
+        shift = delta;
     }
     for (std::size_t i = static_cast<std::size_t>(index) + 1; i < clips.size(); ++i)
         clips[i].position = std::max(0.0, clips[i].position + shift);
+    return true;
+}
+
+bool AudioTracks::setSpeed(int clipId, double speed, bool reverse)
+{
+    int t = 0;
+    int index = 0;
+    if (!locate(clipId, t, index))
+        return false;
+    AudioClip& c = tracks_[static_cast<std::size_t>(t)].clips[static_cast<std::size_t>(index)];
+    speed = clampSpeed(speed);
+    if (std::abs(c.speed - speed) < 1e-9 && c.reverse == reverse)
+        return false;
+    if (overlaps(tracks_[static_cast<std::size_t>(t)], c.position, (c.end - c.start) / speed, clipId))
+        return false;
+    c.speed = speed;
+    c.reverse = reverse;
     return true;
 }
 
@@ -459,7 +494,9 @@ bool AudioTracks::removeRange(int trackId, double from, double to)
         bool keptId = false;
         if (c.position < from - kTimeEpsilon) {  // resta la parte prima
             AudioClip before = c;
-            before.end = c.start + (from - c.position);
+            const TimeRange part = c.map().fileRangeOf(0.0, from - c.position);
+            before.start = part.start;
+            before.end = part.end;
             kept.push_back(before);
             keptId = true;
         }
@@ -467,7 +504,9 @@ bool AudioTracks::removeRange(int trackId, double from, double to)
             AudioClip after = c;
             if (keptId)
                 after.id = nextClipId_++;
-            after.start = c.start + (to - c.position);
+            const TimeRange part = c.map().fileRangeOf(to - c.position, c.length());
+            after.start = part.start;
+            after.end = part.end;
             after.position = to;
             kept.push_back(after);
         }

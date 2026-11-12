@@ -21,7 +21,13 @@ struct AudioClip
     double position = 0.0;  // dove inizia nella sequenza, in secondi
     double sourceDuration = 0.0;  // durata del file (0 = non nota: la fine si può allungare senza limite)
 
-    double length() const { return end - start; }
+    // Velocità e lettura all'indietro come per i pezzi video (vedi Speed.h): nel montaggio la clip dura length().
+    double speed = 1.0;
+    bool reverse = false;
+
+    double length() const { return (end - start) / speed; }  // durata nel montaggio
+    double fileLength() const { return end - start; }        // durata nel file
+    SpeedMap map() const { return {start, end, speed, reverse}; }
     double endPosition() const { return position + length(); }
     // Linea del livello della clip (vedi LevelPoint), nei tempi del file: segue la clip.
     std::vector<LevelPoint> envelope;
@@ -133,6 +139,9 @@ public:
     // dopo sulla stessa traccia scorrono della differenza. La clip resta dentro il file e lunga almeno minLength.
     double trimLimit(int clipId, Sequence::Edge edge, double desired, double minLength, bool ripple) const;
     bool trim(int clipId, Sequence::Edge edge, double value, double minLength, bool ripple);
+    // Cambia velocità e verso della clip (inizio nel montaggio invariato); false se non c'è, non cambia o la nuova durata si
+    // sovrappone alla clip dopo (nessuna modifica).
+    bool setSpeed(int clipId, double speed, bool reverse);
 
     // Toglie [from, to) della sequenza dalle clip della traccia (lì resta silenzio; le clip non scorrono). Una clip
     // tagliata nel mezzo diventa due. true se qualcosa è cambiato.
