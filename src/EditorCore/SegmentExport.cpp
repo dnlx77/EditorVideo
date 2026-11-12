@@ -122,14 +122,17 @@ ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdi
                 }
                 if (plan.reencode[c]) {
                     ++preview.reencodedSegments;
-                    preview.reencodedSeconds += clips[c].ranges[r].length();
-                    preview.outputSeconds += clips[c].ranges[r].length();
+                    preview.reencodedSeconds += montageLength(clips[c], r);
+                    preview.outputSeconds += montageLength(clips[c], r);
                     continue;
                 }
                 ++preview.copiedSegments;
                 for (const Piece& piece : plan.pieces[c][r]) {
-                    preview.outputSeconds += piece.range.length();
-                    if (piece.transition >= 0) {
+                    preview.outputSeconds += piece.montageLength();
+                    if (piece.sped()) {
+                        ++preview.speedSegments;
+                        preview.speedSeconds += piece.montageLength();
+                    } else if (piece.transition >= 0) {
                         ++preview.transitionSegments;
                         preview.transitionSeconds += piece.range.length();
                     } else if (piece.transformed) {

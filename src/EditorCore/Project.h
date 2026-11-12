@@ -50,6 +50,10 @@ struct ClipRanges
     // Fotogrammi chiave della trasformazione di ogni tratto (vedi Animation.h; tempi nel file), nello stesso ordine; vuoto =
     // nessuno. Un tratto con fotogrammi chiave si ricodifica e la trasformazione si valuta a ogni fotogramma.
     std::vector<TransformAnimation> animations;
+    // Velocità e verso di lettura di ogni tratto (vedi Speed.h), nello stesso ordine; vuoto = 1x in avanti. `ranges` resta nei
+    // tempi del file: nel montaggio il tratto dura (end - start) / velocità. Un tratto con velocità o inverso si ricodifica.
+    std::vector<double> speeds;
+    std::vector<bool> reverses;
     // Caratteristiche dei flussi già lette (per le anteprime, che altrimenti riaprono ogni file); nullptr = da leggere
     // dal file, come fa sempre l'esportazione vera.
     std::shared_ptr<const MediaSignature> signature;

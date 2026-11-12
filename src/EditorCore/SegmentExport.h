@@ -45,6 +45,7 @@ struct ExportResult
     int blackGaps = 0;          // spazi vuoti diventati nero e silenzio
     int textSegments = 0;       // parti ricodificate perché sotto una scritta
     int transformSegments = 0;   // parti ricodificate perché trasformate (scala, posizione, rotazione, ritaglio)
+    int speedSegments = 0;       // parti ricodificate perché con velocità diversa da 1x (o inverse)
     int transitionSegments = 0;  // parti ricodificate perché dentro una transizione
     int mixedAudioFiles = 0;    // file audio mixati e ricodificati in AAC (AudioEdit::mix); 0 = audio copiato
     // Dove è andato il tempo (secondi di orologio): mix audio, tutta l'esportazione, composizione (scritte, livelli,
@@ -187,6 +188,9 @@ struct ExportPreview
     // Parti trasformate (scala, posizione, rotazione, ritaglio: ricodificate), come sopra non contano nei bordi precisi.
     int transformSegments = 0;
     double transformSeconds = 0.0;
+    // Parti con velocità diversa da 1x (ricodificate), come sopra non contano nei bordi precisi.
+    int speedSegments = 0;
+    double speedSeconds = 0.0;
     // Spazi vuoti del montaggio (ClipRanges::gapsBefore) che diventano nero e silenzio, e quanto durano.
     int blackGaps = 0;
     double blackSeconds = 0.0;

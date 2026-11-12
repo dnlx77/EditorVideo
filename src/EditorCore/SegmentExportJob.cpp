@@ -26,7 +26,7 @@ ExportJob::ExportJob(const std::vector<ClipRanges>& clips, const std::string& ou
             const TimeRange& range = clip.ranges[r];
             if (!(range.end > range.start + kTimeEpsilon))
                 throw MediaError("OUT deve stare dopo IN.");
-            totalLength_ += range.length() + gapBefore(clip, r);
+            totalLength_ += montageLength(clip, r) + gapBefore(clip, r);
             ++rangeCount_;
         }
         if (samePath(clip.path, outputPath_))
@@ -422,7 +422,11 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     const StreamSignature& format = *plan_.reference.video();
     const AVRational fps = projectFrameRate(format);
     const double frameSeconds = av_q2d(av_inv_q(fps));
-    const int frames = std::max(1, static_cast<int>(std::llround(range.length() / frameSeconds)));
+    // Con velocità il tratto del file dura meno (o più) nel montaggio; il fotogramma k del montaggio mostra il file al tempo
+    // range.start + k * frameSeconds * speed (l'inverso arriva con V7).
+    const double speed = piece.speed;
+    const double montageSeconds = piece.montageLength();
+    const int frames = std::max(1, static_cast<int>(std::llround(montageSeconds / frameSeconds)));
     const std::int64_t base = std::llround(outputPosition_ / frameSeconds);
 
     // Un encoder per tratto: alla fine si svuota, così i suoi pacchetti non si mescolano con quelli dopo.
@@ -477,7 +481,8 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         throw ClipsNotJoinable("Il file " + clips_[c].path + " non ha video.");
     const AVStream* inV = input->streams[videoIndex];
     CodecContextPtr videoDecoder = openStreamDecoder(videoIndex);
-    const int audioIndex = outAudio_ >= 0 ? findMainStream(input, AVMEDIA_TYPE_AUDIO) : -1;
+    // L'audio di un tratto con velocità non si prende dal file qui: silenzio (il suono giusto è nel mix, vedi V6).
+    const int audioIndex = outAudio_ >= 0 && !piece.sped() ? findMainStream(input, AVMEDIA_TYPE_AUDIO) : -1;
     const bool copyAudio = audioIndex >= 0 && plan_.copyAudio[c];
     CodecContextPtr audioDecoder = audioIndex >= 0 && !copyAudio ? openStreamDecoder(audioIndex) : nullptr;
     AVStream* outA = outAudio_ >= 0 ? output_->streams[outAudio_] : nullptr;
@@ -558,7 +563,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             // Con i fotogrammi chiave la trasformazione è quella del tempo del fotogramma nel file.
             const Transform now = piece.animation.empty()
                                       ? piece.transform
-                                      : evaluateTransform(piece.transform, piece.animation, range.start + k * frameSeconds);
+                                      : evaluateTransform(piece.transform, piece.animation, range.start + k * frameSeconds * speed);
             const AVFrame* blended = compositor().blendTransformed(frame, now, texts);
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
@@ -597,7 +602,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         if (when == AV_NOPTS_VALUE)
             return;
         const double t = when * av_q2d(inV->time_base) - start;
-        while (k < frames && t > range.start + k * frameSeconds + half)
+        while (k < frames && t > range.start + k * frameSeconds * speed + half)
             emit(held ? held.get() : frame);
         if (k >= frames) {
             videoDone = true;
@@ -762,7 +767,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         // Il file non ha audio: silenzio per tutto il tratto.
         if (audioIndex < 0)
             encodeSilence(*audioEncoder, outRate, outA->codecpar->ch_layout.nb_channels,
-                          std::llround(range.length() * outRate), audioSink);
+                          std::llround(montageSeconds * outRate), audioSink);
         audioEncoder->finish(audioSink);
     }
     for (unsigned i = 0; i < input->nb_streams; ++i)
@@ -1097,6 +1102,8 @@ ExportResult ExportJob::run()
                         const auto [videoEnd, audioEnd] = reencodeRange(current, range, c, piece);
                         if (plan_.reencode[c])
                             ++result_.reencodedSegments;
+                        else if (piece.sped())
+                            ++result_.speedSegments;
                         else if (piece.transition >= 0)
                             ++result_.transitionSegments;
                         else if (piece.transformed)
@@ -1106,8 +1113,8 @@ ExportResult ExportJob::run()
                         else
                             ++result_.preciseCuts;
                         // Dentro lo stesso tratto l'audio continua: la parte dopo riparte esattamente da qui.
-                        outputPosition_ = std::max({outputPosition_ + range.length(), videoEnd, piece.continues ? 0.0 : audioEnd});
-                        doneLength_ += range.length();
+                        outputPosition_ = std::max({outputPosition_ + piece.montageLength(), videoEnd, piece.continues ? 0.0 : audioEnd});
+                        doneLength_ += piece.montageLength();
                         continue;
                     }
                     copyRange(current, c, piece);
