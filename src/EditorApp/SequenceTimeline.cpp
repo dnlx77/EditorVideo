@@ -652,8 +652,8 @@ int SequenceTimeline::edgeAt(const QPointF& pos, bool& atStart) const
     for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
         const double left = xForBlockEdge(i, true);
         const double right = xForBlockEdge(i, false);
-        if (right - left < 12)
-            continue;  // blocco troppo stretto: si prende per spostarlo
+        if (right - left < 12 || !blocks_[static_cast<std::size_t>(i)].normalSpeed())
+            continue;  // blocco troppo stretto (si prende per spostarlo), o con velocità ≠ 1: i bordi non si trascinano
         // Dove due blocchi si toccano vince il lato del bordo su cui sta il mouse.
         for (const bool start : {true, false}) {
             const double edge = start ? left : right;
@@ -898,7 +898,9 @@ bool SequenceTimeline::textEdgeAt(const QPointF& pos, int& lane, int& clip, bool
     lane = textLaneAt(pos.y(), true);
     if (lane < 0 || pos.x() < videoLane().left())
         return false;
-    return nearestEdge(laneRef(lane).clips, pos.x(), [this](double t) { return xForTime(t); }, clip, atStart);
+    if (!nearestEdge(laneRef(lane).clips, pos.x(), [this](double t) { return xForTime(t); }, clip, atStart))
+        return false;
+    return laneRef(lane).clips[static_cast<std::size_t>(clip)].normalSpeed();  // `clip` è la posizione nel livello; con velocità ≠ 1 i bordi non si trascinano
 }
 
 SequenceTimeline::Object::Kind SequenceTimeline::textObjectKind(int clipId) const
@@ -1213,7 +1215,9 @@ bool SequenceTimeline::audioEdgeAt(const QPointF& pos, int& lane, int& clip, boo
     lane = laneAt(pos.y());
     if (lane < 0 || pos.x() < videoLane().left())
         return false;
-    return nearestEdge(lanes_[static_cast<std::size_t>(lane)].clips, pos.x(), [this](double t) { return xForTime(t); }, clip, atStart);
+    if (!nearestEdge(lanes_[static_cast<std::size_t>(lane)].clips, pos.x(), [this](double t) { return xForTime(t); }, clip, atStart))
+        return false;
+    return lanes_[static_cast<std::size_t>(lane)].clips[static_cast<std::size_t>(clip)].normalSpeed();  // `clip` è la posizione nella corsia
 }
 
 double SequenceTimeline::audioDragTarget(double x, int lane) const

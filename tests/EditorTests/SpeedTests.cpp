@@ -279,3 +279,66 @@ TEST(Speed, MixSegmentsCarrySpeedAndSequenceLength)
     EXPECT_NEAR(segments[0].length(), 2.0, 1e-9);
     EXPECT_NEAR(segments[0].fileLength(), 4.0, 1e-9);
 }
+
+TEST(Speed, ProjectSetSpeedChangesGroupsTogether)
+{
+    int file = 0;
+    Project project = oneFile(file);
+    const int piece = project.sequence().insert(-1, file, 0.0, 4.0);
+    const int next = project.sequence().insert(-1, file, 10.0, 12.0);
+    // 2x sul primo pezzo: dura 2 s, il successivo scorre indietro (spinta attiva) e l'audio collegato segue.
+    const Project::SpeedResult r = project.setSpeed({{ObjectRef::Kind::Piece, piece}}, 2.0, std::nullopt, true);
+    EXPECT_EQ(r.changed, 1);
+    EXPECT_FALSE(r.blocked);
+    EXPECT_NEAR(project.sequence().find(piece)->length(), 2.0, 1e-9);
+    EXPECT_NEAR(project.sequence().startOf(project.sequence().indexOf(next)), 2.0 + 0.0, 1e-9);
+    // Solo l'inverso: la velocità resta.
+    EXPECT_EQ(project.setSpeed({{ObjectRef::Kind::PieceAudio, piece}}, std::nullopt, true, true).changed, 1);
+    EXPECT_TRUE(project.sequence().find(piece)->reverse);
+    EXPECT_NEAR(project.sequence().find(piece)->speed, 2.0, 1e-9);
+    // Gli stessi valori: niente da fare.
+    EXPECT_EQ(project.setSpeed({{ObjectRef::Kind::Piece, piece}}, 2.0, true, true).changed, 0);
+}
+
+TEST(Speed, ProjectSetSpeedFollowsTheGroup)
+{
+    int file = 0;
+    Project project = oneFile(file);
+    const int layer = project.textTracks().addLayer();
+    LayerPiece piece;
+    piece.clipId = file;
+    piece.start = 0.0;
+    piece.end = 4.0;
+    piece.position = 0.0;
+    int audio = 0;
+    const int id = project.addLayerPiece(layer, piece, true, &audio);
+    ASSERT_NE(id, 0);
+    ASSERT_NE(audio, 0);
+    // Cambiando il pezzo cambia anche la clip audio del suo gruppo.
+    EXPECT_EQ(project.setSpeed({{ObjectRef::Kind::LayerPiece, id}}, 2.0, std::nullopt, true).changed, 2);
+    EXPECT_NEAR(project.audioTracks().find(audio)->speed, 2.0, 1e-9);
+    EXPECT_NEAR(project.textTracks().findPiece(id)->length(), 2.0, 1e-9);
+}
+
+TEST(Speed, ProjectSetSpeedRefusesWhatDoesNotFitAndChangesNothing)
+{
+    int file = 0;
+    Project project = oneFile(file);
+    const int a = project.sequence().insert(-1, file, 0.0, 2.0);
+    const int b = project.sequence().insert(-1, file, 10.0, 12.0);
+    (void)b;
+    // 0.5x sul primo senza spinta: 4 s, ma il secondo è attaccato.
+    const Project::SpeedResult r = project.setSpeed({{ObjectRef::Kind::Piece, a}}, 0.5, std::nullopt, false);
+    EXPECT_TRUE(r.blocked);
+    EXPECT_EQ(r.changed, 0);
+    EXPECT_NEAR(project.sequence().find(a)->speed, 1.0, 1e-9);
+}
+
+TEST(Speed, StillImagesHaveNoSpeed)
+{
+    Project project;
+    const int image = project.add("foto.png");
+    project.setAnalysis(image, {0.0}, 5.0);
+    const int piece = project.sequence().insert(-1, image, 0.0, 5.0);
+    EXPECT_EQ(project.setSpeed({{ObjectRef::Kind::Piece, piece}}, 2.0, std::nullopt, true).changed, 0);
+}

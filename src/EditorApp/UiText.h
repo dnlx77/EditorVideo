@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 // Testi comuni dell'interfaccia.
 
 #include "EditorCore/MediaProbe.h"
@@ -53,6 +55,19 @@ inline std::string nativeAbsoluteUtf8(const QString& path)
 inline QString fileNameOf(const std::string& utf8Path)
 {
     return QString::fromStdString(core::fileNameOf(utf8Path));
+}
+
+// Il segno di velocità accanto al nome di un pezzo o di una clip: « · 2x», « · ◄ 0.5x» (inverso), vuoto a velocità normale.
+inline QString speedTag(double speed, bool reverse)
+{
+    const bool normal = std::abs(speed - 1.0) < 1e-9;
+    if (normal && !reverse)
+        return QString();
+    QString text = QStringLiteral(" · ");
+    if (reverse)
+        text += QStringLiteral("◄ ");
+    text += normal ? QStringLiteral("inverso") : QStringLiteral("%1x").arg(QString::number(speed, 'g', 3));
+    return text;
 }
 
 }  // namespace editor::app

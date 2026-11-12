@@ -11,6 +11,7 @@
 
 #include <array>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,13 @@ public:
     // La pagina di una transizione: tipo, direzione, durata (fra `minDuration` e `maxDuration`) e dissolvenza incrociata
     // dell'audio. I controlli già uguali non si toccano.
     void showTransitionClip(const core::TransitionClip& clip, double minDuration, double maxDuration);
+    // La velocità degli oggetti scelti (in %: 100 = normale) e l'inverso. Dopo showTransform mostra la sezione «Velocità» in
+    // cima alla pagina dei pezzi video; showAudioSpeed mostra una pagina con la sola velocità (clip audio e audio dei pezzi).
+    // `speed` in secondi di file per secondo di montaggio (1 = normale).
+    void showSpeed(double speed, bool reverse);
+    void showAudioSpeed(double speed, bool reverse);
+    // Un controllo della velocità è cambiato: il valore nuovo (velocità: 1 = normale) e/o il verso; l'altro non cambia.
+    std::function<void(std::optional<double> speed, std::optional<bool> reverse)> onSpeedEdit;
     // I valori com'erano all'ultimo showTransform più le modifiche fatte dopo nei controlli.
     core::Transform transform() const;
 
@@ -105,6 +113,15 @@ private:
     void edited(const std::string& field, std::function<void(core::Transform&)> edit);
     QWidget* buildTransformPage();
     QWidget* buildTransitionPage();
+    // La sezione «Velocità» (valore in %, valori comuni, «Inverti»): ne servono due, nella pagina dei pezzi e in quella dell'audio.
+    struct SpeedControls
+    {
+        QWidget* box = nullptr;
+        QDoubleSpinBox* spin = nullptr;
+        QCheckBox* reverse = nullptr;
+    };
+    SpeedControls buildSpeedBox();
+    void setSpeedControls(SpeedControls& controls, double speed, bool reverse);
     void transitionEdited(const std::string& field);
     QToolButton* resetButton(const QString& tip, const std::string& field, core::AnimGroup group, std::function<void(core::Transform&)> reset);
     void animate(core::AnimGroup group, AnimAction action);
@@ -122,6 +139,9 @@ private:
     QCheckBox* transitionAudio_ = nullptr;
     QLabel* transitionHint_ = nullptr;
     QLabel* message_ = nullptr;
+    SpeedControls speedVideo_;
+    SpeedControls speedAudio_;
+    QWidget* audioPage_ = nullptr;
     QLabel* countNote_ = nullptr;
     Row scaleX_;
     Row scaleY_;
@@ -167,6 +187,7 @@ private:
     bool showingTransform() const;
     bool showingText() const;
     bool showingTransitionClip() const;
+    bool showingAudioSpeed() const;
 };
 
 }  // namespace editor::app

@@ -1,6 +1,7 @@
 #include "EditorApp/PropertiesPanel.h"
 #include "EditorApp/AnimColors.h"
 #include "EditorApp/TextEditorPanel.h"
+#include "EditorCore/Speed.h"
 
 #include <QtCore/QSignalBlocker>
 #include <QtWidgets/QCheckBox>
@@ -41,6 +42,18 @@ PropertiesPanel::PropertiesPanel(QWidget* parent)
     transformPage_ = scroll;
     transitionPage_ = buildTransitionPage();
     stack_->addWidget(transitionPage_);
+    {
+        audioPage_ = new QWidget;
+        auto* audioLayout = new QVBoxLayout(audioPage_);
+        audioLayout->setContentsMargins(6, 4, 6, 4);
+        speedAudio_ = buildSpeedBox();
+        audioLayout->addWidget(speedAudio_.box);
+        auto* note = new QLabel(QStringLiteral("Per l'audio il livello si cambia con la linea sulla clip e con i comandi della corsia."));
+        note->setWordWrap(true);
+        audioLayout->addWidget(note);
+        audioLayout->addStretch(1);
+        stack_->addWidget(audioPage_);
+    }
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(stack_);
@@ -121,6 +134,96 @@ QToolButton* PropertiesPanel::resetButton(const QString& tip, const std::string&
     return button;
 }
 
+PropertiesPanel::SpeedControls PropertiesPanel::buildSpeedBox()
+{
+    SpeedControls controls;
+    controls.box = new QWidget;
+    auto* root = new QVBoxLayout(controls.box);
+    root->setContentsMargins(0, 0, 0, 4);
+    root->setSpacing(2);
+    auto* heading = new QLabel(QStringLiteral("Velocità"));
+    {
+        QFont bold = heading->font();
+        bold.setBold(true);
+        heading->setFont(bold);
+    }
+    root->addWidget(heading);
+    auto* line = new QHBoxLayout;
+    line->setSpacing(4);
+    controls.spin = new QDoubleSpinBox;
+    controls.spin->setObjectName(QStringLiteral("velocita"));
+    controls.spin->setRange(core::kMinSpeed * 100.0, core::kMaxSpeed * 100.0);
+    controls.spin->setDecimals(1);
+    controls.spin->setSingleStep(5.0);
+    controls.spin->setSuffix(QStringLiteral(" %"));
+    controls.spin->setKeyboardTracking(false);  // si applica con Invio o uscendo dal campo
+    controls.spin->setFixedWidth(80);
+    controls.spin->setFixedHeight(20);
+    controls.spin->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    controls.spin->setToolTip(QStringLiteral("Velocità del pezzo: 100% normale, 50% rallentatore, 200% doppia velocità (da 10% a 1000%)"));
+    line->addWidget(controls.spin);
+    QDoubleSpinBox* spin = controls.spin;
+    connect(spin, &QDoubleSpinBox::valueChanged, this, [this](double percent) {
+        if (!updating_ && onSpeedEdit)
+            onSpeedEdit(percent / 100.0, std::nullopt);
+    });
+    // Valori comuni.
+    for (const double factor : {0.25, 0.5, 1.0, 2.0, 4.0, 8.0}) {
+        auto* button = new QToolButton;
+        button->setText(QStringLiteral("%1x").arg(factor));
+        button->setAutoRaise(true);
+        button->setFixedHeight(20);
+        button->setToolTip(QStringLiteral("Velocità %1x").arg(factor));
+        connect(button, &QToolButton::clicked, this, [this, factor] {
+            if (!updating_ && onSpeedEdit)
+                onSpeedEdit(factor, std::nullopt);
+        });
+        line->addWidget(button);
+    }
+    line->addStretch(1);
+    root->addLayout(line);
+    controls.reverse = new QCheckBox(QStringLiteral("Inverti"));
+    controls.reverse->setObjectName(QStringLiteral("inverti"));
+    controls.reverse->setToolTip(QStringLiteral("Il pezzo va al contrario (video e audio)"));
+    connect(controls.reverse, &QCheckBox::toggled, this, [this](bool on) {
+        if (!updating_ && onSpeedEdit)
+            onSpeedEdit(std::nullopt, on);
+    });
+    root->addWidget(controls.reverse);
+    return controls;
+}
+
+void PropertiesPanel::setSpeedControls(SpeedControls& controls, double speed, bool reverse)
+{
+    updating_ = true;
+    {
+        const QSignalBlocker blockSpin(controls.spin);
+        controls.spin->setValue(speed * 100.0);
+    }
+    {
+        const QSignalBlocker blockReverse(controls.reverse);
+        controls.reverse->setChecked(reverse);
+    }
+    updating_ = false;
+}
+
+void PropertiesPanel::showSpeed(double speed, bool reverse)
+{
+    setSpeedControls(speedVideo_, speed, reverse);
+    speedVideo_.box->show();
+}
+
+void PropertiesPanel::showAudioSpeed(double speed, bool reverse)
+{
+    setSpeedControls(speedAudio_, speed, reverse);
+    stack_->setCurrentWidget(audioPage_);
+}
+
+bool PropertiesPanel::showingAudioSpeed() const
+{
+    return stack_->currentWidget() == audioPage_;
+}
+
 QWidget* PropertiesPanel::buildTransformPage()
 {
     auto* page = new QWidget;
@@ -135,6 +238,9 @@ QWidget* PropertiesPanel::buildTransformPage()
     }
 
     body_ = page;
+    speedVideo_ = buildSpeedBox();
+    speedVideo_.box->hide();
+    root->addWidget(speedVideo_.box);
     textHeading_ = new QLabel(QStringLiteral("Trasforma"));
     {
         QFont bold = textHeading_->font();
@@ -556,6 +662,8 @@ void PropertiesPanel::showTransform(const core::Transform& t, int count, const A
 void PropertiesPanel::updateTransformControls(const core::Transform& t, int count, const AnimationState& animation)
 {
     shown_ = t;
+    if (speedVideo_.box != nullptr)
+        speedVideo_.box->hide();  // la sezione «Velocità» la mostra showSpeed(), solo per i pezzi video
     updating_ = true;
     const auto set = [](Row& row, double value) {
         if (std::abs(row.spin->value() - value) > 1e-9) {

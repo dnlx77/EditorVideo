@@ -212,6 +212,17 @@ public:
     // in gruppo con il nuovo pezzo, che ha l'audio scollegato. Restituisce l'id del pezzo in V1, 0 se non si può.
     int lowerToV1(int pieceId, double position, bool push, int* audioClip = nullptr);
 
+    // Cambia velocità e/o verso (vedi Speed.h) degli oggetti indicati (pezzi video, pezzi di livello, clip audio, audio di un
+    // pezzo) e di tutti quelli legati a loro in un gruppo; chi non è uno di questi si salta, e i valori mancanti restano come sono.
+    // I pezzi di V1 che si allungano spingono quelli dopo (con `push` falso solo se c'è lo spazio vuoto); sui livelli e sulle clip audio
+    // la nuova durata deve starci. Se qualcosa non ci sta non cambia niente (changed = 0, blocked = true). Fa parte delle modifiche.
+    struct SpeedResult
+    {
+        int changed = 0;
+        bool blocked = false;  // non ci sta: nessuna modifica
+    };
+    SpeedResult setSpeed(const std::vector<ObjectRef>& objects, std::optional<double> speed, std::optional<bool> reverse, bool push);
+
     // Cambia la trasformazione (scala, posizione, rotazione, ritaglio...) dei pezzi indicati; gli id che non esistono si
     // saltano. Restituisce quanti pezzi sono cambiati davvero (0 = niente da annullare). Fa parte delle modifiche.
     int setTransform(const std::vector<int>& fragmentIds, const Transform& transform);

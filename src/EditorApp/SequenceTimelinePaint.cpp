@@ -351,7 +351,11 @@ void SequenceTimeline::paintVideo(QPainter& p)
             clip.addRoundedRect(r, 3, 3);
             p.setClipPath(clip, Qt::IntersectClip);
             for (int k = first; k <= last; ++k) {
-                const QImage image = thumbnailFor(b.clipId, b.sourceStart + k * b.length / count);
+                // Nel file il pezzo dura length * speed; con l'inverso le miniature vanno dalla fine all'inizio.
+                const double fileLength = b.length * b.speed;
+                const double fraction = static_cast<double>(k) / count;
+                const double fileOffset = b.reverse ? std::max(0.0, fileLength * (1.0 - fraction) - 0.001) : fileLength * fraction;
+                const QImage image = thumbnailFor(b.clipId, b.sourceStart + fileOffset);
                 if (image.isNull())
                     continue;
                 const QSizeF size = QSizeF(image.size()).scaled(QSizeF(slot, full.height()), Qt::KeepAspectRatioByExpanding);
@@ -538,7 +542,10 @@ void SequenceTimeline::paintText(QPainter& p)
                 clip.addRoundedRect(r, 3, 3);
                 p.setClipPath(clip, Qt::IntersectClip);
                 for (int k = first; k <= last; ++k) {
-                    const QImage image = thumbnailFor(c.fileId, c.sourceStart + k * c.length / count);
+                    const double fileLength = c.length * c.speed;
+                    const double fraction = static_cast<double>(k) / count;
+                    const double fileOffset = c.reverse ? std::max(0.0, fileLength * (1.0 - fraction) - 0.001) : fileLength * fraction;
+                    const QImage image = thumbnailFor(c.fileId, c.sourceStart + fileOffset);
                     if (image.isNull())
                         continue;
                     const QSizeF size = QSizeF(image.size()).scaled(QSizeF(slot, full.height()), Qt::KeepAspectRatioByExpanding);
@@ -929,7 +936,7 @@ void SequenceTimeline::paintA1(QPainter& p, const QRectF& lane)
             if (r.width() > 60)
                 p.drawText(r, Qt::AlignCenter, QStringLiteral("senza audio"));
         } else {
-            drawWave(p, full, *b.waveform, b.sourceStart, b.sourceStart + b.length, color.darker(110), visibleLeft(),
+            drawWave(p, full, *b.waveform, b.sourceStart, b.sourceStart + b.length * b.speed, color.darker(110), visibleLeft(),
                      visibleRight());
         }
         const bool audioMate = isMate(Object::Kind::PieceAudio, b.fragmentId);
@@ -981,7 +988,7 @@ void SequenceTimeline::paintTrack(QPainter& p, int index, const QRectF& lane)
         p.setBrush(QColor(color.red(), color.green(), color.blue(), moving ? 40 : 90));
         p.drawRoundedRect(r, 3, 3);
         if (c.waveform && !c.waveform->empty())
-            drawWave(p, full.adjusted(0, 2, 0, -2), *c.waveform, c.sourceStart, c.sourceStart + c.length, color.darker(moving ? 100 : 140),
+            drawWave(p, full.adjusted(0, 2, 0, -2), *c.waveform, c.sourceStart, c.sourceStart + c.length * c.speed, color.darker(moving ? 100 : 140),
                      visibleLeft(), visibleRight());
         else if (!c.waveform && r.width() > 80) {
             p.setPen(pal.color(QPalette::PlaceholderText));
