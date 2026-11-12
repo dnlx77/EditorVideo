@@ -258,6 +258,13 @@ jobs:
           $demo = "$env:TEMP\EditorVideoDemo"
           & ci\run-editorvideo.ps1 -Name manipolatori -Arguments @('--manip-test', "`"$demo\demo_mpeg2_gpu.mkv`"")
 
+      - name: Prova dell'anteprima con la velocità
+        shell: pwsh
+        run: |
+          # Pezzi a velocità diversa nel Montaggio: il punto del file mostrato e la riproduzione a 2x.
+          $demo = "$env:TEMP\EditorVideoDemo"
+          & ci\run-editorvideo.ps1 -Name velocita -Arguments @('--speed-test', "`"$demo\demo_mpeg2_gpu.mkv`"")
+
       - name: Prova dei pezzi di video sui livelli
         shell: pwsh
         run: |

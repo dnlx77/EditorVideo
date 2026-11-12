@@ -61,6 +61,7 @@
     <ClCompile Include="LayerSelfTest.cpp" />
     <ClCompile Include="SelfTests.cpp" />
     <ClCompile Include="TextSelfTest.cpp" />
+    <ClCompile Include="SpeedSelfTest.cpp" />
     <ClCompile Include="TransformMonitorSelfTest.cpp" />
     <ClCompile Include="TransformSelfTest.cpp" />
     <ClCompile Include="TransitionSelfTest.cpp" />

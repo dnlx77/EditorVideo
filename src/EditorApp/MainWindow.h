@@ -163,6 +163,7 @@ public:
         double from = 0.0;      // inizio e fine del pezzo nel file
         double to = 0.0;
         double sequenceStart = 0.0;  // dove inizia nella sequenza
+        core::SpeedMap map{};   // da secondi del montaggio dal suo inizio a tempo del file (velocità e inverso; scritte: 1x)
         double fileTime = 0.0;  // il cursore nel file, limitato al pezzo
         bool inside = false;    // il cursore sta dentro il pezzo
         core::Transform base;
