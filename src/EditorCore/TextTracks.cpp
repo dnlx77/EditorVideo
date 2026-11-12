@@ -456,7 +456,7 @@ bool TextTracks::trimPiece(int pieceId, double position, double sourceStart, dou
     if (piece == nullptr || !(position >= 0.0) || !(sourceStart >= 0.0) || !(sourceEnd - sourceStart >= kMinLength - kEps))
         return false;
     TextLayer& l = layers_[static_cast<std::size_t>(layerIndex(layerOfPiece(pieceId)))];
-    if (!isFree(l, position, position + (sourceEnd - sourceStart), pieceId))
+    if (!isFree(l, position, position + (sourceEnd - sourceStart) / piece->speed, pieceId))
         return false;
     piece->position = position;
     piece->start = sourceStart;
@@ -472,13 +472,34 @@ int TextTracks::splitPiece(int pieceId, double seconds)
         return 0;
     LayerPiece second = *piece;
     second.position = seconds;
-    second.start = piece->start + (seconds - piece->position);
+    const SpeedMap map = piece->map();
+    const TimeRange firstPart = map.fileRangeOf(0.0, seconds - piece->position);
+    const TimeRange secondPart = map.fileRangeOf(seconds - piece->position, map.length());
+    second.start = secondPart.start;
+    second.end = secondPart.end;
     second.id = nextClipId_++;
-    piece->end = second.start;
+    piece->start = firstPart.start;
+    piece->end = firstPart.end;
     TextLayer& l = layers_[static_cast<std::size_t>(layerIndex(layerOfPiece(pieceId)))];
     l.pieces.push_back(std::move(second));
     sortLayer(l);
     return nextClipId_ - 1;
+}
+
+bool TextTracks::setPieceSpeed(int pieceId, double speed, bool reverse)
+{
+    LayerPiece* piece = findPieceMutable(pieceId);
+    if (piece == nullptr)
+        return false;
+    speed = clampSpeed(speed);
+    if (std::abs(piece->speed - speed) < 1e-9 && piece->reverse == reverse)
+        return false;
+    TextLayer& l = layers_[static_cast<std::size_t>(layerIndex(layerOfPiece(pieceId)))];
+    if (!isFree(l, piece->position, piece->position + (piece->end - piece->start) / speed, pieceId))
+        return false;
+    piece->speed = speed;
+    piece->reverse = reverse;
+    return true;
 }
 
 bool TextTracks::setPieceTransform(int pieceId, const Transform& transform)

@@ -82,6 +82,7 @@
     <ClCompile Include="ProxyTests.cpp" />
     <ClCompile Include="SampleMedia.cpp" />
     <ClCompile Include="SequenceTests.cpp" />
+    <ClCompile Include="SpeedTests.cpp" />
     <ClCompile Include="ImageExportTests.cpp" />
     <ClCompile Include="StillImageTests.cpp" />
     <ClCompile Include="TimelineZoomTests.cpp" />

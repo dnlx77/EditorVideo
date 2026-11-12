@@ -26,6 +26,8 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project, const Sequence& se
         s.path = clip->path;
         s.fileStart = f.start;
         s.fileEnd = f.end;
+        s.speed = f.speed;
+        s.reverse = f.reverse;
         s.position = starts[i];
         s.trackId = AudioTracks::kOriginalTrack;
         s.ofPiece = true;
@@ -49,9 +51,16 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project, const Sequence& se
             continue;
         MixSegment& before = segments[static_cast<std::size_t>(a)];
         MixSegment& after = segments[static_cast<std::size_t>(b)];
-        before.fileEnd += t.after;
+        // Le maniglie sono secondi del montaggio: nel file sono `speed` volte più lunghe, dopo il pezzo (prima, se è inverso).
+        if (before.reverse)
+            before.fileStart -= t.after * before.speed;
+        else
+            before.fileEnd += t.after * before.speed;
         before.fadeOut = t.duration();
-        after.fileStart -= t.before;
+        if (after.reverse)
+            after.fileEnd += t.before * after.speed;
+        else
+            after.fileStart -= t.before * after.speed;
         after.position -= t.before;
         after.fadeIn = t.duration();
     }
@@ -63,6 +72,8 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project, const Sequence& se
             s.path = clip.path;
             s.fileStart = clip.start;
             s.fileEnd = clip.end;
+            s.speed = clip.speed;
+            s.reverse = clip.reverse;
             s.position = clip.position;
             s.trackId = track.id;
             s.envelope = clip.envelope;
@@ -101,8 +112,9 @@ std::vector<MixSegment> closeGapsInAddedTracks(const std::vector<MixSegment>& se
             if (b - a <= 1e-6)
                 return;
             MixSegment part = s;
-            part.fileStart = s.fileStart + (a - s.position);
-            part.fileEnd = s.fileStart + (b - s.position);
+            const TimeRange inFile = s.map().fileRangeOf(a - s.position, b - s.position);
+            part.fileStart = inFile.start;
+            part.fileEnd = inFile.end;
             part.position = a - removed;
             result.push_back(std::move(part));
         };

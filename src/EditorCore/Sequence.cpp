@@ -62,12 +62,14 @@ std::vector<TimeRange> clipRanges(const std::vector<TimeRange>& ranges, double f
 
 }  // namespace
 
-int Sequence::insert(int index, int clipId, double start, double end)
+int Sequence::insert(int index, int clipId, double start, double end, double speed, bool reverse)
 {
     start = std::max(0.0, start);
     if (end <= start + kTimeEpsilon)
         return 0;
     Fragment fragment{nextId_++, clipId, start, end};
+    fragment.speed = clampSpeed(speed);
+    fragment.reverse = reverse;
     const int count = static_cast<int>(fragments_.size());
     const int at = index < 0 || index > count ? count : index;
     // Subito dopo il precedente: lo spazio vuoto che c'era lì (prima del pezzo che ora viene dopo) si riempie.
@@ -90,14 +92,14 @@ bool Sequence::remove(int fragmentId, bool leaveGap)
     return true;
 }
 
-int Sequence::insertAt(int clipId, double start, double end, double position, bool push)
+int Sequence::insertAt(int clipId, double start, double end, double position, bool push, double speed, bool reverse)
 {
     position = std::max(0.0, position);
     const std::vector<double> begins = starts();
     int index = 0;
     while (index < static_cast<int>(begins.size()) && begins[static_cast<std::size_t>(index)] < position - kTimeEpsilon)
         ++index;
-    const int id = insert(index, clipId, start, end);
+    const int id = insert(index, clipId, start, end, speed, reverse);
     if (id != 0)
         moveTo(id, position, nullptr, push);
     return id;
@@ -191,16 +193,28 @@ double Sequence::trimLimit(int fragmentId, Edge edge, double desired, double sou
         return -1.0;
     const Fragment& f = fragments_[static_cast<std::size_t>(self)];
     minLength = std::max(minLength, kTimeEpsilon);
-    if (edge == Edge::Start) {
-        // Senza ripple l'inizio nella sequenza si sposta: non prima della fine del pezzo precedente.
-        const double lowest = std::max(0.0, ripple ? 0.0 : f.start - f.gap);
-        return std::clamp(desired, std::min(lowest, f.start), std::max(f.start, f.end - minLength));
+    // Lo spazio vuoto a cui il bordo può arrivare (nel montaggio) è prima del pezzo se il bordo sta a sinistra, dopo se a destra;
+    // nel file diventa gap * speed. Con l'inverso il bordo Start del file sta a destra.
+    const bool onLeft = (edge == Edge::Start) != f.reverse;
+    double room = 0.0;  // spazio vuoto vicino (secondi del montaggio), solo senza ripple
+    if (!ripple) {
+        if (onLeft)
+            room = f.gap;
+        else if (static_cast<std::size_t>(self) + 1 < fragments_.size())
+            room = fragments_[static_cast<std::size_t>(self) + 1].gap;
+        else
+            room = std::numeric_limits<double>::max();
     }
-    // Senza ripple la fine nella sequenza si sposta: non oltre l'inizio del pezzo dopo.
+    const double roomInFile = room >= std::numeric_limits<double>::max() ? room : room * f.speed;
+    const double minFileLength = minLength * f.speed;
+    if (edge == Edge::Start) {
+        const double lowest = std::max(0.0, ripple ? 0.0 : f.start - roomInFile);
+        return std::clamp(desired, std::min(lowest, f.start), std::max(f.start, f.end - minFileLength));
+    }
     double highest = sourceDuration > 0 ? sourceDuration : std::numeric_limits<double>::max();
-    if (!ripple && static_cast<std::size_t>(self) + 1 < fragments_.size())
-        highest = std::min(highest, f.end + fragments_[static_cast<std::size_t>(self) + 1].gap);
-    return std::clamp(desired, std::min(f.start + minLength, f.end), std::max(highest, f.end));
+    if (!ripple && roomInFile < std::numeric_limits<double>::max())
+        highest = std::min(highest, f.end + roomInFile);
+    return std::clamp(desired, std::min(f.start + minFileLength, f.end), std::max(highest, f.end));
 }
 
 bool Sequence::trim(int fragmentId, Edge edge, double value, double sourceDuration, double minLength, bool ripple)
@@ -213,14 +227,18 @@ bool Sequence::trim(int fragmentId, Edge edge, double value, double sourceDurati
     const double old = edge == Edge::Start ? f.start : f.end;
     if (std::abs(value - old) <= kTimeEpsilon)
         return false;
-    const double delta = value - old;
+    // Quanto si sposta il bordo nel montaggio (con l'inverso il verso è opposto) e se sta a sinistra o a destra.
+    const bool onLeft = (edge == Edge::Start) != f.reverse;
+    const double delta = (value - old) / f.speed * (f.reverse ? -1.0 : 1.0);
     f.envelope = envelopeForTrim(f.envelope, edge == Edge::Start, old, value, edge == Edge::Start ? f.end : f.start);
-    if (edge == Edge::Start) {
+    if (edge == Edge::Start)
         f.start = value;
+    else
+        f.end = value;
+    if (onLeft) {
         if (!ripple)
             f.gap = std::max(0.0, f.gap + delta);  // la fine resta ferma nella sequenza
     } else {
-        f.end = value;
         if (!ripple && static_cast<std::size_t>(self) + 1 < fragments_.size()) {
             Fragment& next = fragments_[static_cast<std::size_t>(self) + 1];
             next.gap = std::max(0.0, next.gap - delta);  // il pezzo dopo resta fermo
@@ -395,6 +413,31 @@ bool Sequence::setDetached(int fragmentId, bool detached)
     return false;
 }
 
+bool Sequence::setSpeed(int fragmentId, double speed, bool reverse, bool push)
+{
+    const int self = indexOf(fragmentId);
+    if (self < 0)
+        return false;
+    speed = clampSpeed(speed);
+    Fragment& f = fragments_[static_cast<std::size_t>(self)];
+    if (std::abs(f.speed - speed) < 1e-9 && f.reverse == reverse)
+        return false;
+    const double growth = (f.end - f.start) / speed - f.length();  // di quanto cambia la durata nel montaggio
+    const bool hasNext = static_cast<std::size_t>(self) + 1 < fragments_.size();
+    if (growth > kTimeEpsilon && !push && hasNext && fragments_[static_cast<std::size_t>(self) + 1].gap < growth - kTimeEpsilon)
+        return false;  // non ci sta senza spingere
+    f.speed = speed;
+    f.reverse = reverse;
+    if (hasNext) {
+        Fragment& next = fragments_[static_cast<std::size_t>(self) + 1];
+        if (growth > 0.0)
+            next.gap = std::max(0.0, next.gap - growth);  // riempie lo spazio vuoto, il resto spinge
+        else if (!push)
+            next.gap += -growth;  // quello dopo resta fermo
+    }
+    return true;
+}
+
 bool Sequence::setEnvelope(int fragmentId, std::vector<LevelPoint> points)
 {
     for (Fragment& f : fragments_) {
@@ -444,16 +487,26 @@ int Sequence::split(double seconds)
     if (index < 0)
         return 0;
     Fragment& f = fragments_[index];
-    const double cut = f.start + (seconds - startOf(index));
+    const double cut = f.map().fileAt(seconds - startOf(index));
     if (cut <= f.start + kTimeEpsilon || cut >= f.end - kTimeEpsilon)
         return 0;  // sul bordo del pezzo: non resterebbe niente da una parte
-    Fragment second{nextId_++, f.clipId, cut, f.end, clipRanges(f.muted, cut, f.end)};
+    // Con l'inverso la parte che viene prima nel montaggio è quella del file dopo `cut`.
+    const double secondStart = f.reverse ? f.start : cut;
+    const double secondEnd = f.reverse ? cut : f.end;
+    Fragment second{nextId_++, f.clipId, secondStart, secondEnd, clipRanges(f.muted, secondStart, secondEnd)};
+    second.speed = f.speed;
+    second.reverse = f.reverse;
     second.detached = f.detached;  // l'audio scollegato resta tale anche nella seconda parte
     second.envelope = f.envelope;  // la linea è nei tempi del file: ognuno tiene la sua parte
     second.transform = f.transform;  // la trasformazione vale per tutto il pezzo: tutte e due le parti la mantengono
     second.animation = f.animation;  // chiavi nei tempi del file: le due parti si vedono come prima della divisione
-    f.end = cut;
-    f.muted = clipRanges(f.muted, f.start, cut);
+    if (f.reverse) {
+        f.start = cut;
+        f.muted = clipRanges(f.muted, cut, f.end);
+    } else {
+        f.end = cut;
+        f.muted = clipRanges(f.muted, f.start, cut);
+    }
     fragments_.insert(fragments_.begin() + index + 1, second);
     return second.id;
 }
@@ -480,6 +533,8 @@ Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, doub
             result.back().envelope = f.envelope;
             result.back().transform = f.transform;
             result.back().animation = f.animation;
+            result.back().speed = f.speed;
+            result.back().reverse = f.reverse;
         }
         if (f.end > to + kTimeEpsilon) {
             const bool firstPartKept = f.start < from - kTimeEpsilon;
@@ -487,6 +542,8 @@ Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, doub
             result.back().envelope = f.envelope;
             result.back().transform = f.transform;
             result.back().animation = f.animation;
+            result.back().speed = f.speed;
+            result.back().reverse = f.reverse;
         }
         if (result.size() > before) {
             result[before].gap = f.gap + carriedGap;
@@ -515,7 +572,8 @@ bool Sequence::applyToRange(double from, double to, RangeOp op)
         const double b = std::min(to, end);
         if (b > a + kTimeEpsilon) {
             const auto before = f.muted;
-            op(f.muted, f.start + (a - start), f.start + (b - start));
+            const TimeRange inFile = f.map().fileRangeOf(a - start, b - start);
+            op(f.muted, inFile.start, inFile.end);
             changed = changed || f.muted != before;
             if (f.muted != before && op == subtractRange)
                 f.detached = false;  // l'audio torna a sentirsi: non è più scollegato
@@ -544,7 +602,8 @@ std::vector<TimeRange> Sequence::mutedRanges(bool includeDetached) const
         for (const TimeRange& r : f.muted) {
             if (f.detached && !includeDetached)
                 break;
-            addRange(result, start + (r.start - f.start), start + (r.end - f.start));
+            const TimeRange inSeq = f.map().offsetsOf(r.start, r.end);
+            addRange(result, start + inSeq.start, start + inSeq.end);
         }
         start += f.length();
     }

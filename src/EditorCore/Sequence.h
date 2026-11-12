@@ -2,6 +2,7 @@
 
 #include "EditorCore/Animation.h"
 #include "EditorCore/LevelEnvelope.h"
+#include "EditorCore/Speed.h"
 #include "EditorCore/TimeUtil.h"
 #include "EditorCore/Transform.h"
 
@@ -33,7 +34,14 @@ struct Fragment
     // I tempi sono quelli del file, quindi seguono il pezzo.
     TransformAnimation animation;
 
-    double length() const { return end - start; }
+    // Velocità costante (kMinSpeed..kMaxSpeed) e lettura all'indietro (vedi Speed.h). start/end restano nel file; nel montaggio
+    // il pezzo dura length() = (end - start) / speed. Muti, linea del livello e chiavi restano nei tempi del file.
+    double speed = 1.0;
+    bool reverse = false;
+
+    double length() const { return (end - start) / speed; }  // durata nel montaggio
+    double fileLength() const { return end - start; }        // durata nel file
+    SpeedMap map() const { return {start, end, speed, reverse}; }
 };
 
 // Sequenza: i pezzi, nell'ordine in cui finiranno nel file esportato. Lo stesso file può comparire più volte,
@@ -49,7 +57,7 @@ public:
     // è vuoto.
     // Il pezzo va subito dopo il precedente: se lì c'era uno spazio vuoto lo riempie partendo dal suo inizio, senza
     // spostare gli altri pezzi; se non ci sta, quelli dopo vanno avanti quanto serve.
-    int insert(int index, int clipId, double start, double end);
+    int insert(int index, int clipId, double start, double end, double speed = 1.0, bool reverse = false);
     // La linea del livello del pezzo (normalizzata); false se il pezzo non c'è o non cambia nulla.
     bool setEnvelope(int fragmentId, std::vector<LevelPoint> points);
     bool setDetached(int fragmentId, bool detached);
@@ -62,7 +70,13 @@ public:
     bool remove(int fragmentId, bool leaveGap = false);
     // Mette [start, end) del file in modo che inizi a `position` (la sequenza è in ordine: finisce fra i pezzi giusti; se lì
     // non ci sta spinge, o con `push` falso cerca il posto libero più vicino). Restituisce l'id del pezzo, 0 se è vuoto.
-    int insertAt(int clipId, double start, double end, double position, bool push = true);
+    int insertAt(int clipId, double start, double end, double position, bool push = true, double speed = 1.0,
+                 bool reverse = false);
+    // Cambia la velocità (clampSpeed) e il verso del pezzo; il suo inizio nel montaggio non cambia. Se si allunga, quelli dopo
+    // vengono spinti avanti (o con `push` falso si riempie solo lo spazio vuoto dopo il pezzo e il resto non si sposta: allora,
+    // se non ci sta, false e nessuna modifica); se si accorcia, con `push` quelli dopo scorrono indietro, altrimenti resta uno
+    // spazio vuoto. false anche se il pezzo non c'è o non cambia nulla.
+    bool setSpeed(int fragmentId, double speed, bool reverse, bool push = true);
     void removeClip(int clipId);  // tutti i pezzi di un file (quando il file esce dal progetto)
     void move(int fragmentId, int toIndex);  // cambia l'ordine (gli spazi vuoti restano dove sono)
     void clear();

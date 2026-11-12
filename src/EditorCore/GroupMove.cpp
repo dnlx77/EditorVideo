@@ -444,7 +444,8 @@ Project::MoveResult Project::moveObject(ObjectRef object, int track, double star
         for (const ObjectRef& m : groupMembers(object)) {
             const AudioClip* a = m.kind == ObjectRef::Kind::AudioClip ? audio_.find(m.id) : nullptr;
             if (a != nullptr && source != nullptr && a->path == source->path && std::abs(a->start - layerPiece->start) < 1e-6
-                && std::abs(a->end - layerPiece->end) < 1e-6)
+                && std::abs(a->end - layerPiece->end) < 1e-6 && std::abs(a->speed - layerPiece->speed) < 1e-9
+                && a->reverse == layerPiece->reverse)
                 ownAudio.push_back(m.id);
         }
         const double offset = start - layerPiece->position;

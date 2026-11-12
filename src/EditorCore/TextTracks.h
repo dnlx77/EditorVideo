@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EditorCore/Animation.h"
+#include "EditorCore/Speed.h"
 #include "EditorCore/Transform.h"
 
 #include <algorithm>
@@ -125,7 +126,12 @@ struct LayerPiece
     Transform transform;
     TransformAnimation animation;  // chiavi nei tempi del file (vedi Animation.h)
 
-    double length() const { return end - start; }
+    double speed = 1.0;  // vedi Speed.h
+    bool reverse = false;
+
+    double length() const { return (end - start) / speed; }  // durata nel montaggio
+    double fileLength() const { return end - start; }        // durata nel file
+    SpeedMap map() const { return {start, end, speed, reverse}; }
     double endPosition() const { return position + length(); }
     bool operator==(const LayerPiece&) const = default;
 };
@@ -211,6 +217,9 @@ public:
     // Cambia i bordi di un pezzo: dove inizia nella sequenza e la parte del file (start < end). false, e nessuna modifica, se il
     // pezzo diventa più corto di kMinLength, inizia prima di 0 o si sovrappone a un altro oggetto del livello.
     bool trimPiece(int pieceId, double position, double sourceStart, double sourceEnd);
+    // Cambia velocità e verso del pezzo (inizio nel montaggio invariato); false se non c'è, non cambia o la nuova durata non ci sta
+    // sul livello (nessuna modifica).
+    bool setPieceSpeed(int pieceId, double speed, bool reverse);
     // Divide il pezzo al tempo `seconds` della sequenza; restituisce l'id della seconda parte, 0 se non è dentro il pezzo (con
     // kMinLength per parte).
     int splitPiece(int pieceId, double seconds);

@@ -407,6 +407,23 @@ AudioMix mixFromJson(const JsonValue& value)
 }
 
 // Le tracce audio, quando non sono né quelle di partenza né una traccia sostitutiva (che resta nel formato di prima).
+// Velocità e inverso di un pezzo o di una clip audio: scritti solo se diversi dal normale (1x, in avanti).
+template <typename T>
+void speedToJson(JsonValue::Object& object, const T& item)
+{
+    if (std::abs(item.speed - 1.0) > 1e-9)
+        object["velocita"] = item.speed;
+    if (item.reverse)
+        object["inverso"] = true;
+}
+
+template <typename T>
+void speedFromJson(const JsonValue& json, T& item)
+{
+    item.speed = json["velocita"].isNumber() ? clampSpeed(json["velocita"].asNumber()) : 1.0;
+    item.reverse = json["inverso"].isBool() && json["inverso"].asBool();
+}
+
 JsonValue audioTracksToJson(const std::filesystem::path& dir, const AudioTracks& audio)
 {
     JsonValue::Array tracks;
@@ -418,6 +435,7 @@ JsonValue audioTracksToJson(const std::filesystem::path& dir, const AudioTracks&
                                    {"inizio", ticks(c.start)},
                                    {"fine", ticks(c.end)},
                                    {"posizione", ticks(c.position)}};
+            speedToJson(clip, c);
             if (c.sourceDuration > 0.0)
                 clip["durataFile"] = ticks(c.sourceDuration);
             if (!c.envelope.empty())
@@ -636,6 +654,7 @@ JsonValue textTracksToJson(const TextTracks& text)
                                         {"inizio", ticks(p.start)},
                                         {"fine", ticks(p.end)},
                                         {"posizione", ticks(p.position)}};
+                speedToJson(piece, p);
                 if (!p.transform.isIdentity())
                     piece["trasformazione"] = transformToJson(p.transform);
                 if (!p.animation.empty())
@@ -717,6 +736,7 @@ std::string projectToJson(const std::string& projectPath, const Project& project
             muted.emplace_back(JsonValue::Array{ticks(r.start), ticks(r.end)});
         JsonValue::Object piece{
             {"file", f.clipId}, {"inizio", ticks(f.start)}, {"fine", ticks(f.end)}, {"senzaAudio", std::move(muted)}};
+        speedToJson(piece, f);
         if (f.gap > 0.0)
             piece["spazioPrima"] = ticks(f.gap);
         if (!f.envelope.empty())
@@ -933,6 +953,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                     f.muted.push_back({seconds(pair[0], "senzaAudio"), seconds(pair[1], "senzaAudio")});
                 }
             }
+            speedFromJson(piece, f);
             f.envelope = envelopeFromJson(piece["linea"]);
             f.detached = piece["audioScollegato"].isBool() && piece["audioScollegato"].asBool();
             f.transform = transformFromJson(piece["trasformazione"]);
@@ -976,6 +997,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                     if (c["durataFile"].isInteger())
                         clip.sourceDuration = ticksToSeconds(c["durataFile"].asInteger());
                     clip.envelope = envelopeFromJson(c["linea"]);
+                    speedFromJson(c, clip);
                     if (!(clip.end > clip.start) || clip.start < 0.0 || clip.position < 0.0)
                         throw ProjectFileError(name + " è rovinato: una clip audio non è valida.");
                     if (!found)
@@ -1007,6 +1029,7 @@ LoadedProject projectFromJson(const std::string& projectPath, const std::string&
                         piece.position = seconds(p["posizione"], "posizione");
                         piece.transform = transformFromJson(p["trasformazione"]);
                         piece.animation = animationFromJson(p["animazione"]);
+                        speedFromJson(p, piece);
                         if (!(piece.length() >= TextTracks::kMinLength) || piece.position < 0.0 || piece.start < 0.0)
                             throw ProjectFileError(name + " è rovinato: un pezzo di un livello non è valido.");
                         layer.pieces.push_back(std::move(piece));

@@ -228,7 +228,7 @@ TEST(AnimationFile, SavesAndReloadsPiecesAndLayerPieces)
     ASSERT_NE(project.textTracks().addPiece(layer, piece), 0);
 
     const std::string json = projectToJson("C:/prova/montaggio.evproj", project, view);
-    EXPECT_EQ(parseJson(json)["versione"].asInteger(), 8);
+    EXPECT_EQ(parseJson(json)["versione"].asInteger(), kProjectFormatVersion);
     const LoadedProject loaded = projectFromJson("C:/prova/montaggio.evproj", json);
     ASSERT_EQ(loaded.project.sequence().fragments().size(), 1u);
     const TransformAnimation& got = loaded.project.sequence().fragments()[0].animation;
@@ -587,7 +587,7 @@ TEST(TextAnimation, SavesAndReloadsTheTransformAndTheKeysOfTexts)
     ASSERT_NE(project.textTracks().add(TextTracks::kBaseLayerId, base), 0);
 
     const std::string json = projectToJson("C:/prova/montaggio.evproj", project, view);
-    EXPECT_EQ(parseJson(json)["versione"].asInteger(), 8);
+    EXPECT_EQ(parseJson(json)["versione"].asInteger(), kProjectFormatVersion);
     const LoadedProject loaded = projectFromJson("C:/prova/montaggio.evproj", json);
     ASSERT_EQ(loaded.project.textTracks().layers().size(), 1u);
     const TextClip& got = loaded.project.textTracks().layers()[0].clips[0];

@@ -338,11 +338,10 @@ int Project::groupObjects(const std::vector<ObjectRef>& objects, int* relinked)
         if (source == nullptr)
             continue;
         const double from = sequence_.startOf(sequence_.indexOf(piece.id));
-        const double offset = from - f->start;
         std::vector<ObjectRef> aligned;
         for (const ObjectRef& o : valid) {
             const AudioClip* c = o.kind == ObjectRef::Kind::AudioClip ? audio_.find(o.id) : nullptr;
-            if (c != nullptr && c->path == source->path && std::abs((c->position - c->start) - offset) < 1e-6
+            if (c != nullptr && c->path == source->path && inSync(c->map(), c->position, f->map(), from)
                 && c->position < from + f->length() - 1e-9 && c->endPosition() > from + 1e-9)
                 aligned.push_back(o);
         }
@@ -526,6 +525,8 @@ int Project::unlinkAudio(int fragmentId, int* track)
     clip.path = source->path;
     clip.start = f->start;
     clip.end = f->end;
+    clip.speed = f->speed;
+    clip.reverse = f->reverse;
     clip.position = from;
     clip.sourceDuration = source->duration;
     clip.envelope = f->envelope;
@@ -534,7 +535,10 @@ int Project::unlinkAudio(int fragmentId, int* track)
     if (id == 0)
         return 0;
     for (const TimeRange& r : muted)
-        scratch.removeRange(target, from + (r.start - f->start), from + (r.end - f->start));
+    {
+        const TimeRange inSeq = f->map().offsetsOf(r.start, r.end);
+        scratch.removeRange(target, from + inSeq.start, from + inSeq.end);
+    }
     audio_ = std::move(scratch);
     sequence_.muteRange(from, from + length);
     sequence_.setDetached(fragmentId, true);
@@ -599,6 +603,8 @@ int Project::addLayerPiece(int layerId, const LayerPiece& piece, bool withAudio,
     clip.path = source->path;
     clip.start = piece.start;
     clip.end = piece.end;
+    clip.speed = piece.speed;
+    clip.reverse = piece.reverse;
     clip.position = piece.position;
     clip.sourceDuration = source->duration;
     const int clipId = placeAudioClip(clip, layerId);
@@ -630,6 +636,8 @@ int Project::liftToLayer(int fragmentId, int layerId, double position, int* audi
     piece.clipId = fragment.clipId;
     piece.start = fragment.start;
     piece.end = fragment.end;
+    piece.speed = fragment.speed;
+    piece.reverse = fragment.reverse;
     piece.position = where;
     piece.transform = fragment.transform;
     piece.animation = fragment.animation;
@@ -644,6 +652,8 @@ int Project::liftToLayer(int fragmentId, int layerId, double position, int* audi
         clip.path = source->path;
         clip.start = fragment.start;
         clip.end = fragment.end;
+        clip.speed = fragment.speed;
+        clip.reverse = fragment.reverse;
         clip.position = where;
         clip.sourceDuration = source->duration;
         clip.envelope = fragment.envelope;
@@ -652,7 +662,10 @@ int Project::liftToLayer(int fragmentId, int layerId, double position, int* audi
             // I tratti senza audio restano senza audio.
             const int track = audio_.trackOf(clipId);
             for (const TimeRange& r : fragment.muted)
-                audio_.removeRange(track, where + (r.start - fragment.start), where + (r.end - fragment.start));
+            {
+                const TimeRange inSeq = fragment.map().offsetsOf(r.start, r.end);
+                audio_.removeRange(track, where + inSeq.start, where + inSeq.end);
+            }
         }
     }
     if (clipId != 0) {
@@ -678,7 +691,7 @@ int Project::lowerToV1(int pieceId, double position, bool push, int* audioClip)
         if (m.kind == ObjectRef::Kind::AudioClip && audio_.find(m.id) != nullptr)
             clipId = m.id;
     }
-    const int id = sequence_.insertAt(piece.clipId, piece.start, piece.end, position, push);
+    const int id = sequence_.insertAt(piece.clipId, piece.start, piece.end, position, push, piece.speed, piece.reverse);
     if (id == 0)
         return 0;
     text_.removePiece(pieceId);
@@ -698,7 +711,8 @@ int Project::lowerToV1(int pieceId, double position, bool push, int* audioClip)
         const AudioClip* clip = audio_.find(clipId);
         const Clip* source = find(piece.clipId);
         const bool sameAudio = clip != nullptr && source != nullptr && clip->path == source->path
-                               && std::abs(clip->start - piece.start) < 1e-6 && std::abs(clip->end - piece.end) < 1e-6;
+                               && std::abs(clip->start - piece.start) < 1e-6 && std::abs(clip->end - piece.end) < 1e-6
+                               && std::abs(clip->speed - piece.speed) < 1e-9 && clip->reverse == piece.reverse;
         if (sameAudio) {
             // L'audio è quello del video com'era: torna collegato su A1 (con la sua linea del livello) e la clip sparisce.
             sequence_.setEnvelope(id, clip->envelope);
@@ -740,14 +754,12 @@ bool Project::relinkAudio(int fragmentId)
         return false;
     const double from = sequence_.startOf(sequence_.indexOf(fragmentId));
     const double to = from + f->length();
-    const double offset = from - f->start;  // sequenza - file, per l'audio del pezzo
-    constexpr double kAligned = 1e-6;
     std::vector<int> tracks;
     std::vector<LevelPoint> line;
     int found = 0;
     for (const AudioTrack& t : audio_.tracks()) {
         for (const AudioClip& c : t.clips) {
-            if (c.path == source->path && std::abs((c.position - c.start) - offset) < kAligned && c.position < to - 1e-9
+            if (c.path == source->path && inSync(c.map(), c.position, f->map(), from) && c.position < to - 1e-9
                 && c.endPosition() > from + 1e-9) {
                 tracks.push_back(t.id);
                 line = c.envelope;

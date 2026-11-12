@@ -3,6 +3,7 @@
 #include "EditorCore/AudioEffect.h"
 #include "EditorCore/AudioTracks.h"
 #include "EditorCore/LevelEnvelope.h"
+#include "EditorCore/Speed.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <map>
@@ -32,7 +33,14 @@ struct MixSegment
     double fadeIn = 0.0;
     double fadeOut = 0.0;
 
-    double length() const { return fileEnd - fileStart; }
+    // Velocità e verso (vedi Speed.h): il tratto [fileStart, fileEnd) del file dura length() nel montaggio. (Il mixer li applica
+    // dal passo V4 del piano velocità: finché non lo fa, un tratto con velocità ≠ 1 non si sente giusto.)
+    double speed = 1.0;
+    bool reverse = false;
+
+    double length() const { return (fileEnd - fileStart) / speed; }  // durata nel montaggio
+    double fileLength() const { return fileEnd - fileStart; }        // durata nel file
+    SpeedMap map() const { return {fileStart, fileEnd, speed, reverse}; }
 };
 
 // Tutto quello che serve per mixare l'audio della sequenza (anche in un altro thread, senza il progetto).
