@@ -900,8 +900,7 @@ bool SequenceTimeline::textEdgeAt(const QPointF& pos, int& lane, int& clip, bool
         return false;
     if (!nearestEdge(laneRef(lane).clips, pos.x(), [this](double t) { return xForTime(t); }, clip, atStart))
         return false;
-    const TextBlock* block = findTextClip(clip);
-    return block != nullptr && block->normalSpeed();  // i pezzi con velocità ≠ 1 non si accorciano dai bordi
+    return laneRef(lane).clips[static_cast<std::size_t>(clip)].normalSpeed();  // `clip` è la posizione nel livello; con velocità ≠ 1 i bordi non si trascinano
 }
 
 SequenceTimeline::Object::Kind SequenceTimeline::textObjectKind(int clipId) const
@@ -1218,8 +1217,7 @@ bool SequenceTimeline::audioEdgeAt(const QPointF& pos, int& lane, int& clip, boo
         return false;
     if (!nearestEdge(lanes_[static_cast<std::size_t>(lane)].clips, pos.x(), [this](double t) { return xForTime(t); }, clip, atStart))
         return false;
-    const AudioBlock* block = findAudioClip(clip);
-    return block != nullptr && block->normalSpeed();  // le clip con velocità ≠ 1 non si accorciano dai bordi
+    return lanes_[static_cast<std::size_t>(lane)].clips[static_cast<std::size_t>(clip)].normalSpeed();  // `clip` è la posizione nella corsia
 }
 
 double SequenceTimeline::audioDragTarget(double x, int lane) const
