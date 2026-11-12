@@ -403,6 +403,8 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
     bool textNeeded = false;
     bool transitionNeeded = false;
     bool transformNeeded = false;
+    bool speedNeeded = false;
+    std::string speedProblem;
     int rangeIndex = -1;  // posizione del tratto nel piano (tutti i file, in ordine)
     double sequence = 0.0;  // dove cade il tratto nel montaggio (spazi vuoti compresi)
     plan.pieces.resize(clips.size());
@@ -421,10 +423,34 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
             ++rangeIndex;
             sequence += gapBefore(clips[c], r);
             const double sequenceStart = sequence;
-            sequence += range.length();
+            sequence += montageLength(clips[c], r);
+            const double speed = speedOf(clips[c], r);
+            const bool reverse = reverseOf(clips[c], r);
             const Transform transform = transformOf(clips[c], r);
             const TransformAnimation animation = animationOf(clips[c], r);
             std::vector<Piece> all;
+            if (speed != 1.0 || reverse) {
+                // Un tratto con velocità (o inverso) si ricodifica tutto: i fotogrammi si scelgono nel file al ritmo della
+                // velocità. Con le transizioni non si sa ancora (V9); l'inverso arriva con V7.
+                const std::vector<TransitionPart> touching = splitByTransition(range, rangeIndex, transitions);
+                if (touching.size() > 1 || touching.front().transition >= 0) {
+                    if (speedProblem.empty())
+                        speedProblem = "Un pezzo con velocità diversa da 1x ha una transizione: per ora non si sa esportare.";
+                }
+                if (reverse && speedProblem.empty())
+                    speedProblem = "Un pezzo inverso per ora non si sa esportare (arriva presto).";
+                Piece piece{range, true};
+                piece.speed = speed;
+                piece.reverse = reverse;
+                piece.transformed = !transform.isIdentity() || !animation.empty();
+                piece.transform = transform;
+                piece.animation = animation;
+                all.push_back(piece);
+                speedNeeded = true;
+                preciseNeeded = preciseNeeded || cannotReencode.empty();
+                plan.pieces[c].push_back(std::move(all));
+                continue;
+            }
             for (const TransitionPart& part : splitByTransition(range, rangeIndex, transitions)) {
                 if (part.transition >= 0) {
                     // Dentro una transizione: si ricodifica con i due pezzi fusi.
@@ -535,6 +561,10 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
     if (transformNeeded && !cannotReencode.empty() && plan.problem.empty())
         plan.problem = "Scala, posizione, rotazione e ritaglio si applicano ricodificando i tratti trasformati, ma non si può: "
                      + cannotReencode;
+    if (speedNeeded && !cannotReencode.empty() && plan.problem.empty())
+        plan.problem = "La velocità si applica ricodificando i pezzi, ma non si può: " + cannotReencode;
+    if (!speedProblem.empty() && plan.problem.empty())
+        plan.problem = speedProblem;
     if (transitionNeeded && !cannotReencode.empty() && plan.problem.empty())
         plan.problem = "Le transizioni si fondono ricodificando i tratti che toccano, ma non si può: " + cannotReencode;
     // Spazi vuoti: nero e silenzio nel formato del progetto (con l'encoder, come la ricodifica), se si può.

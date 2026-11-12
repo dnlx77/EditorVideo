@@ -10,6 +10,7 @@
 #include "EditorCore/MixExport.h"
 #include "EditorCore/NalUnits.h"
 #include "EditorCore/PathUtil.h"
+#include "EditorCore/Speed.h"
 #include "EditorCore/LayerFrames.h"
 #include "EditorCore/FrameCompositor.h"
 #include "EditorCore/GpuDevice.h"
@@ -172,6 +173,11 @@ struct Piece
     Transform transform;
     // Fotogrammi chiave della trasformazione (tempi nel file): a ogni fotogramma si valuta `transform` + `animation`.
     TransformAnimation animation;
+    // Velocità e verso del tratto (vedi Speed.h): `range` è nel file, nel montaggio il pezzo dura range.length() / speed.
+    double speed = 1.0;
+    bool reverse = false;
+    bool sped() const { return speed != 1.0 || reverse; }
+    double montageLength() const { return range.length() / speed; }
 };
 
 // Taglio preciso di un tratto copiato (vedi exportClips): ricodificati i bordi fra IN e il primo fotogramma chiave e, con
@@ -232,6 +238,21 @@ inline Transform transformOf(const ClipRanges& clip, std::size_t r)
 inline TransformAnimation animationOf(const ClipRanges& clip, std::size_t r)
 {
     return r < clip.animations.size() ? clip.animations[r] : TransformAnimation{};
+}
+
+// Velocità del tratto `r` di `clip` (1 se il piano non la dice) e verso (false = in avanti).
+inline double speedOf(const ClipRanges& clip, std::size_t r)
+{
+    return r < clip.speeds.size() ? clampSpeed(clip.speeds[r]) : 1.0;
+}
+inline bool reverseOf(const ClipRanges& clip, std::size_t r)
+{
+    return r < clip.reverses.size() && clip.reverses[r];
+}
+// Quanto dura il tratto `r` di `clip` nel montaggio (secondi).
+inline double montageLength(const ClipRanges& clip, std::size_t r)
+{
+    return clip.ranges[r].length() / speedOf(clip, r);
 }
 
 PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectFormat* format, bool replaced, bool reencodeAll,

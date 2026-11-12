@@ -74,6 +74,7 @@
     <ClCompile Include="PreciseCutTests.cpp" />
     <ClCompile Include="TextExportTests.cpp" />
     <ClCompile Include="TransformExportTests.cpp" />
+    <ClCompile Include="SpeedExportTests.cpp" />
     <ClCompile Include="TransformManipTests.cpp" />
     <ClCompile Include="TransitionExportTests.cpp" />
     <ClCompile Include="ProjectFileTests.cpp" />
