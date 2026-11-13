@@ -42,8 +42,12 @@ private:
         std::shared_ptr<VideoFrame> current;  // l'ultimo fotogramma non oltre il tempo chiesto
         std::shared_ptr<VideoFrame> next;     // quello dopo (nullptr a fine file)
         bool failed = false;
+        std::vector<std::shared_ptr<VideoFrame>> block;  // pezzo inverso: fotogrammi in ordine, decodificati in avanti
     };
     std::shared_ptr<VideoFrame> frameFor(const LayerPiece& piece, double fileTime);
+    // Pezzo inverso: il file va all'indietro, quindi si decodifica in avanti un blocco di fotogrammi (da un seek) e li si
+    // dà dal più recente al più vecchio; il blocco prima si prepara quando il tempo ne esce.
+    std::shared_ptr<VideoFrame> reverseFrameFor(Reader& reader, double fileTime);
 
     std::map<int, std::string> files_;
     int width_;

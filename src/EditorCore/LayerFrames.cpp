@@ -51,6 +51,8 @@ std::shared_ptr<VideoFrame> LayerFrameSource::frameFor(const LayerPiece& piece, 
             return nullptr;
         }
     }
+    if (piece.reverse)
+        return reverseFrameFor(reader, fileTime);
     const double ahead = reader.next ? reader.next->time : (reader.current ? reader.current->time : 0.0);
     const bool lost = !reader.current || fileTime < reader.current->time - 0.5 || fileTime > ahead + kJump;
     if (lost) {
@@ -68,6 +70,49 @@ std::shared_ptr<VideoFrame> LayerFrameSource::frameFor(const LayerPiece& piece, 
     return reader.current;
 }
 
+std::shared_ptr<VideoFrame> LayerFrameSource::reverseFrameFor(Reader& reader, double fileTime)
+{
+    const double rate = reader.decoder->frameRate();
+    const double duration = rate > 0.0 ? 1.0 / rate : 0.04;
+    const auto pick = [&]() -> std::shared_ptr<VideoFrame> {
+        std::shared_ptr<VideoFrame> best;
+        for (const std::shared_ptr<VideoFrame>& f : reader.block) {
+            if (f->time > fileTime + 1e-4)
+                break;
+            best = f;
+        }
+        return best;
+    };
+    if (!reader.block.empty() && fileTime >= reader.block.front()->time - 1e-4 && fileTime <= reader.block.back()->time + duration) {
+        if (auto found = pick())
+            return found;
+    }
+    // Nuovo blocco, che finisce poco oltre `fileTime`: ~150 MB di fotogrammi al massimo (da 4 a 40 fotogrammi).
+    constexpr std::int64_t kBudget = 150LL << 20;
+    std::int64_t bytes = 0;
+    if (!reader.block.empty())
+        bytes = static_cast<std::int64_t>(reader.block.front()->stride) * reader.block.front()->height;
+    const int count = bytes > 0 ? static_cast<int>(std::clamp<std::int64_t>(kBudget / bytes, 4, 40)) : 12;
+    reader.block.clear();
+    try {
+        const double from = std::max(0.0, fileTime - count * duration);
+        for (std::shared_ptr<VideoFrame> f = reader.decoder->seek(from); f; f = reader.decoder->nextFrame()) {
+            reader.block.push_back(f);
+            if (f->time > fileTime + 1e-4)
+                break;
+        }
+    } catch (const MediaError&) {
+        reader.block.clear();
+    }
+    if (reader.block.empty()) {
+        reader.failed = true;
+        return nullptr;
+    }
+    if (auto found = pick())
+        return found;
+    return reader.block.front();
+}
+
 std::vector<LayerFrameSource::Visible> LayerFrameSource::at(const TextTracks& tracks, double sequenceTime)
 {
     std::vector<Visible> visible;
@@ -77,7 +122,9 @@ std::vector<LayerFrameSource::Visible> LayerFrameSource::at(const TextTracks& tr
         it = stillVisible ? std::next(it) : readers_.erase(it);
     }
     for (const LayerPiece* piece : pieces) {
-        const double fileTime = std::clamp(piece->start + (sequenceTime - piece->position), piece->start, std::max(piece->start, piece->end - 1e-3));
+        // Con velocità e inverso il tempo del file è quello della mappa del pezzo (tenuto dentro il pezzo).
+        const double fileTime = std::clamp(piece->map().fileAt(std::clamp(sequenceTime - piece->position, 0.0, piece->length())),
+                                           piece->start, std::max(piece->start, piece->end - 1e-3));
         if (std::shared_ptr<VideoFrame> frame = frameFor(*piece, fileTime))
             visible.push_back({std::move(frame), evaluateTransform(piece->transform, piece->animation, fileTime), tracks.levelOf(piece->id)});
     }
