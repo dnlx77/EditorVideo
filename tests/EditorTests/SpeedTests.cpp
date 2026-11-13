@@ -342,3 +342,17 @@ TEST(Speed, StillImagesHaveNoSpeed)
     const int piece = project.sequence().insert(-1, image, 0.0, 5.0);
     EXPECT_EQ(project.setSpeed({{ObjectRef::Kind::Piece, piece}}, 2.0, std::nullopt, true).changed, 0);
 }
+
+TEST(Speed, ASpedPieceMakesTheAudioNeedTheMix)
+{
+    int file = 0;
+    Project project = oneFile(file);
+    const int a = project.sequence().insert(-1, file, 0.0, 2.0);
+    EXPECT_FALSE(project.audioEdit(GapExport::Black).mix);  // come prima: l'audio si copia
+    ASSERT_TRUE(project.sequence().setSpeed(a, 2.0, false, true));
+    const AudioEdit edit = project.audioEdit(GapExport::Black);
+    ASSERT_TRUE(edit.mix);
+    ASSERT_EQ(edit.mix->segments.size(), 1u);
+    EXPECT_NEAR(edit.mix->segments[0].length(), 1.0, 1e-9);
+    EXPECT_NEAR(edit.mixClosed->segments[0].length(), 1.0, 1e-9);
+}

@@ -854,8 +854,9 @@ bool Project::relinkAudio(int fragmentId)
 
 bool Project::audioNeedsMix() const
 {
+    // Un pezzo con velocità o inverso: l'audio va rimescolato (allungato/accorciato, vedi AudioMixer), non si copia com'è.
     if (audio_.needsMix() || std::any_of(sequence_.fragments().begin(), sequence_.fragments().end(),
-                                         [](const Fragment& f) { return !f.envelope.empty(); }))
+                                         [](const Fragment& f) { return !f.envelope.empty() || f.speed != 1.0 || f.reverse; }))
         return true;
     // La dissolvenza incrociata di una transizione: l'audio dei due pezzi non si può più copiare com'è.
     const std::vector<TransitionPlacement> placements = activeTransitions();

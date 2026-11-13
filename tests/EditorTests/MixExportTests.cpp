@@ -417,3 +417,30 @@ TEST_F(MixExportTest, TransitionCrossfadesTheAudioInTheExportedFile)
     ASSERT_TRUE(project.setTransitionSettings(id, clipOfTransition->type, clipOfTransition->params, false));
     EXPECT_FALSE(project.audioNeedsMix());
 }
+
+TEST_F(MixExportTest, SpeedMakesTheExportedAudioFollowTheVideo)
+{
+    // La velocità ricodifica il video: serve un file H.264 (come nelle prove delle trasformazioni) e un encoder.
+    if (!preferredVideoEncoder(VideoCodec::H264) ||
+        !editor::tests::writeEncodedClip(dir_ / "h264.mp4", {.fps = 25, .frames = 100, .gop = 25}))
+        GTEST_SKIP() << "Nessun encoder H.264 su questo PC.";
+    Project project;
+    const int clip = project.add(path("h264.mp4"));
+    project.setAnalysis(clip, {0.0, 1.0, 2.0, 3.0}, 4.0);
+    const int piece = project.sequence().insert(-1, clip, 0.0, 3.0);
+    ASSERT_TRUE(project.sequence().setSpeed(piece, 2.0, false, true));  // 3 s di file in 1,5 s
+    const AudioEdit edit = project.audioEdit(GapExport::Black);
+    ASSERT_TRUE(edit.mix) << "un pezzo con velocità deve passare dal mix";
+    ASSERT_EQ(edit.mix->segments.size(), 1u);
+    EXPECT_NEAR(edit.mix->segments[0].length(), 1.5, 1e-9);
+
+    const std::string out = path("velocita.mkv");
+    exportClips(project.exportPlan(GapExport::Black), out, edit);
+    const auto actual = decodeAll(out);
+    EXPECT_NEAR(static_cast<double>(actual.size()) / 2 / kRate, 1.5, 0.08);
+    EXPECT_NEAR(probeFile(out).durationSeconds, 1.5, 0.1);
+    double loud = 0.0;
+    for (std::size_t i = 0; i < actual.size(); i += 2)
+        loud += std::abs(actual[i]);
+    EXPECT_GT(loud / (static_cast<double>(actual.size()) / 2), 500.0);
+}
