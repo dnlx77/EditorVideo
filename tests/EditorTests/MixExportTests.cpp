@@ -420,8 +420,12 @@ TEST_F(MixExportTest, TransitionCrossfadesTheAudioInTheExportedFile)
 
 TEST_F(MixExportTest, SpeedMakesTheExportedAudioFollowTheVideo)
 {
+    // La velocità ricodifica il video: serve un file H.264 (come nelle prove delle trasformazioni) e un encoder.
+    if (!preferredVideoEncoder(VideoCodec::H264) ||
+        !editor::tests::writeEncodedClip(dir_ / "h264.mp4", {.fps = 25, .frames = 100, .gop = 25}))
+        GTEST_SKIP() << "Nessun encoder H.264 su questo PC.";
     Project project;
-    const int clip = project.add(path("voce.mkv"));
+    const int clip = project.add(path("h264.mp4"));
     project.setAnalysis(clip, {0.0, 1.0, 2.0, 3.0}, 4.0);
     const int piece = project.sequence().insert(-1, clip, 0.0, 3.0);
     ASSERT_TRUE(project.sequence().setSpeed(piece, 2.0, false, true));  // 3 s di file in 1,5 s
