@@ -219,14 +219,14 @@ void ProgramMonitor::load(int index, double offset)
     index_ = index;
     // L'orologio è quello dell'audio del montaggio (che non si ferma ai cambi di pezzo), se sta suonando: al tempo t
     // della sequenza corrisponde nel file l'inizio del pezzo più (t - inizio nella sequenza) * velocità del pezzo.
-    // (Il pezzo inverso si legge in avanti finché non c'è la lettura all'indietro, passo V7 del piano velocità.)
+    // Il pezzo inverso ha velocità negativa: il file si legge all'indietro (come la spola all'indietro).
     player_->setExternalClock(
         [this]() -> std::optional<double> {
             if (!sequenceAudio_.running())
                 return std::nullopt;
             return sequenceAudio_.position();
         },
-        project_.sequence().startOf(index), f.start, f.speed);
+        project_.sequence().startOf(index), f.map().fileAt(0.0), f.reverse ? -f.speed : f.speed);
     player_->setPlaybackWindow(f.start, f.end);
     player_->seekTo(startFileTime);
 }
@@ -923,7 +923,12 @@ void ProgramMonitor::updateLayers()
                 }
                 const double fileTime = piece.map().fileAt(std::clamp(position_ - piece.position, 0.0, piece.length()));
                 std::shared_ptr<core::VideoFrame> frame;
-                if (playing_) {
+                if (playing_ && piece.reverse) {
+                    // Pezzo inverso: il file va all'indietro, quindi niente decodifica in avanti ma il fotogramma di ogni
+                    // istante (la decodifica va per conto suo e si mostra l'ultimo arrivato).
+                    slot->request(fileTime, false);
+                    frame = slot->frame(fileTime);
+                } else if (playing_) {
                     slot->request(fileTime, true);
                     frame = slot->frame(fileTime);
                 } else {

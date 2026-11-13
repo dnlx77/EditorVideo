@@ -49,6 +49,8 @@ using namespace detail;
 
 namespace segment {
 
+inline std::atomic<int> g_reverseBlockFrames{0};  // vedi limitReverseBlockFrames
+
 inline constexpr const char* kOutOfMemory = "Memoria insufficiente per l'esportazione.";
 inline constexpr const char* kOutOfMemoryForOutput = "Memoria insufficiente per preparare il file di destinazione.";
 

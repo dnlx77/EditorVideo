@@ -651,7 +651,7 @@ void PlayerWidget::setExternalClock(std::function<std::optional<double>()> seque
     externalClock_ = std::move(sequenceClock);
     externalSequenceStart_ = sequenceStart;
     externalFileStart_ = fileStart;
-    clockRate_ = rate > 0.0 ? rate : 1.0;
+    clockRate_ = rate != 0.0 ? rate : 1.0;
 }
 
 void PlayerWidget::setAudioNote(const QString& note)
@@ -766,14 +766,14 @@ void PlayerWidget::play()
 {
     if (!hasMedia() || playing_)
         return;
-    if (speed_ < 0) {
+    if (speed_ * (clockRate_ < 0 ? -1.0 : 1.0) < 0) {
         // Con una finestra (montaggio) ci pensa tick(): all'inizio del pezzo avvisa subito onWindowEnd.
         if (position_ <= 0.0005 && windowEnd_ <= 0) {
             speed_ = baseSpeed_;  // all'indietro dall'inizio: non c'è niente da riprodurre
             updateControls();
             return;
         }
-    } else if (duration_ > 0 && position_ >= duration_ - 0.05) {
+    } else if (clockRate_ > 0 && duration_ > 0 && position_ >= duration_ - 0.05) {
         position_ = 0.0;  // alla fine: si ricomincia dall'inizio
     }
     playStart_ = position_;
@@ -911,7 +911,8 @@ void PlayerWidget::startWorkers(double from)
         videoEnded_ = video_ == nullptr;
     }
 
-    workerSpeed_ = speed_;
+    // Un pezzo inverso (clockRate_ < 0) nel montaggio che va avanti si legge all'indietro nel file, e viceversa.
+    workerSpeed_ = clockRate_ < 0 ? -speed_ : speed_;
     audioActive_ = audio_ != nullptr && audioOut_.isOpen() && core::audibleAtSpeed(speed_);
     audioEnded_ = !audioActive_;
     audioFrom_ = from;
@@ -1099,7 +1100,7 @@ double PlayerWidget::clock()
         return now;
     }
     return wallBase_
-         + workerSpeed_ * clockRate_ * std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart_).count();
+         + workerSpeed_ * std::abs(clockRate_) * std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart_).count();
 }
 
 void PlayerWidget::tick()

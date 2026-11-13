@@ -261,6 +261,10 @@ ExportResult exportClips(const std::vector<ClipRanges>& clips, const std::string
 ExportPreview previewExport(const std::vector<ClipRanges>& clips, const AudioEdit& audio, const ProjectFormat* format,
                             const ReencodeOptions& reencode = {});
 
+// Solo per le prove: al massimo `frames` fotogrammi per blocco quando un pezzo inverso si legge all'indietro (0 = il limite
+// normale, dalla memoria), così anche i file corti passano da più blocchi.
+void limitReverseBlockFrames(int frames);
+
 // Problema che impedisce di usare `audioPath` come traccia sostitutiva in un file come `outputPath` (dall'estensione),
 // in italiano; vuoto se va bene. Es. audio PCM in un MP4. Se `durationSeconds` c'è, ci mette la durata dell'audio
 // (0 se non la dichiara), così il file non va riaperto solo per quella.

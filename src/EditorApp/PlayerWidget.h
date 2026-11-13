@@ -148,7 +148,7 @@ public:
     // setAudioEnabled(false): il lettore non apre né suona nessun audio. setExternalClock: l'orologio della
     // riproduzione è questo (secondi della sequenza, quindi dell'audio che si sente) portato nei secondi del file:
     // `fileStart` + (tempo - `sequenceStart`) * `rate`, con `rate` i secondi di file per secondo di montaggio (la
-    // velocità del pezzo, 1 = normale); nessuna funzione = l'orologio di prima (audio del file o tempo reale), che con
+    // velocità del pezzo, 1 = normale; negativo = pezzo inverso, il file si legge all'indietro); nessuna funzione = l'orologio di prima (audio del file o tempo reale), che con
     // `rate` ≠ 1 va a quella velocità. Da chiamare a riproduzione ferma. La funzione può restituire std::nullopt (es. l'audio non sta suonando): allora
     // l'orologio è quello di sempre (tempo reale).
     void setAudioEnabled(bool enabled);

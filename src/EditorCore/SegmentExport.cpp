@@ -194,4 +194,9 @@ std::vector<ExportTransition> exportTransitionsOf(const Project& project)
     return result;
 }
 
+void limitReverseBlockFrames(int frames)
+{
+    segment::g_reverseBlockFrames = std::max(0, frames);
+}
+
 }  // namespace editor::core

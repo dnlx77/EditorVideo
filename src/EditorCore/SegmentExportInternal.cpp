@@ -431,14 +431,12 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
             std::vector<Piece> all;
             if (speed != 1.0 || reverse) {
                 // Un tratto con velocità (o inverso) si ricodifica tutto: i fotogrammi si scelgono nel file al ritmo della
-                // velocità. Con le transizioni non si sa ancora (V9); l'inverso arriva con V7.
+                // velocità (all'indietro a blocchi se inverso). Con le transizioni non si sa ancora (V9).
                 const std::vector<TransitionPart> touching = splitByTransition(range, rangeIndex, transitions);
                 if (touching.size() > 1 || touching.front().transition >= 0) {
                     if (speedProblem.empty())
                         speedProblem = "Un pezzo con velocità diversa da 1x ha una transizione: per ora non si sa esportare.";
                 }
-                if (reverse && speedProblem.empty())
-                    speedProblem = "Un pezzo inverso per ora non si sa esportare (arriva presto).";
                 Piece piece{range, true};
                 piece.speed = speed;
                 piece.reverse = reverse;

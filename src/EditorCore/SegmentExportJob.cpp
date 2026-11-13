@@ -451,7 +451,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         // Video con la GPU, se richiesta e se si può: dispositivo D3D11 (uno solo per tutta l'esportazione); se qualcosa non
         // va si decodifica con la CPU (tutti i core).
         std::optional<HardwareDecoding> gpu;
-        if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && reencode_.decoder == DecoderMode::Hardware) {
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && reencode_.decoder == DecoderMode::Hardware && !piece.reverse) {  // all'indietro si tengono molti fotogrammi: in memoria
             const AVPixelFormat format = d3d11FormatFor(codec);
             if (format != AV_PIX_FMT_NONE)
                 ensureGpuDevice();  // con il compositore GPU il dispositivo è quello condiviso
@@ -509,6 +509,10 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
     int k = 0;
     bool videoDone = false;
     const double half = frameSeconds / 2;
+    // Il tempo del file mostrato dal fotogramma `index` del tratto: in avanti dall'inizio, inverso dalla fine.
+    const auto fileTimeOf = [&](int index) {
+        return piece.reverse ? range.end - (index + 1) * frameSeconds * speed : range.start + index * frameSeconds * speed;
+    };
     FramePtr emitted(av_frame_alloc());  // riferimento al fotogramma da scrivere, col suo tempo
     if (!emitted)
         throw MediaError(kOutOfMemory);
@@ -563,7 +567,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             // Con i fotogrammi chiave la trasformazione è quella del tempo del fotogramma nel file.
             const Transform now = piece.animation.empty()
                                       ? piece.transform
-                                      : evaluateTransform(piece.transform, piece.animation, range.start + k * frameSeconds * speed);
+                                      : evaluateTransform(piece.transform, piece.animation, fileTimeOf(k));
             const AVFrame* blended = compositor().blendTransformed(frame, now, texts);
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
@@ -742,7 +746,86 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
             drain(audioDecoder.get(), onAudioFrame);
         }
     };
-    {
+    if (piece.reverse) {
+        // Inverso: il file si legge all'indietro a blocchi. Ogni blocco si decodifica in avanti dal fotogramma chiave (seek) e si
+        // tiene in memoria (un blocco ha al più ~200 MB di fotogrammi); poi i fotogrammi del montaggio si prendono dal blocco,
+        // dal più recente al più vecchio. Il fotogramma del montaggio k mostra il file al tempo fileTimeOf(k).
+        const double sourceRate = guessFrameRate(input, inV);
+        const double sourceDuration = sourceRate > 0.0 ? 1.0 / sourceRate : frameSeconds;
+        const double tb = av_q2d(inV->time_base);
+        std::int64_t frameBytes = 0;
+        double blockEnd = range.end;
+        bool reachedStart = false;
+        while (k < frames && !reachedStart) {
+            constexpr std::int64_t kBudget = 200LL << 20;
+            auto maxFrames = static_cast<int>(frameBytes > 0 ? std::clamp<std::int64_t>(kBudget / frameBytes, 4, 240) : 30);
+            if (const int limit = g_reverseBlockFrames.load(); limit > 0)
+                maxFrames = std::min(maxFrames, limit);
+            const double blockStart = std::max(range.start - sourceDuration, blockEnd - maxFrames * sourceDuration);
+            std::vector<FramePtr> block;
+            bool blockDone = false;
+            seekBefore(input, videoIndex, blockStart, start);
+            avcodec_flush_buffers(videoDecoder.get());
+            const auto take = [&](AVFrame* decoded) {
+                if (blockDone)
+                    return;
+                const std::int64_t when = frameTimestamp(decoded);
+                if (when == AV_NOPTS_VALUE)
+                    return;
+                const double t = when * tb - start;
+                if (t >= blockEnd - 1e-6) {
+                    blockDone = true;
+                    return;
+                }
+                if (t < blockStart - 1e-6)
+                    return;
+                FramePtr copy(av_frame_clone(decoded));
+                if (!copy)
+                    throw MediaError(kOutOfMemory);
+                if (frameBytes == 0)
+                    frameBytes = std::max<std::int64_t>(1, av_image_get_buffer_size(static_cast<AVPixelFormat>(decoded->format), decoded->width, decoded->height, 1));
+                block.push_back(std::move(copy));
+            };
+            while (!blockDone) {
+                const auto readBegan = TimingClock::now();
+                const int ret = av_read_frame(input, pkt.get());
+                result_.readSeconds += secondsSince(readBegan);
+                if (ret == AVERROR_EOF)
+                    break;
+                if (ret < 0)
+                    throw MediaError("Errore durante la lettura del file originale (" + ffmpegError(ret) + ").");
+                const PacketUnref release{pkt.get()};
+                if (pkt->stream_index != videoIndex)
+                    continue;
+                const auto sendBegan = TimingClock::now();
+                const bool sent = avcodec_send_packet(videoDecoder.get(), pkt.get()) >= 0;
+                result_.decodeSeconds += secondsSince(sendBegan);
+                if (sent)
+                    drain(videoDecoder.get(), take);
+            }
+            if (!blockDone) {  // fine del file: quello che resta nel decoder
+                avcodec_send_packet(videoDecoder.get(), nullptr);
+                drain(videoDecoder.get(), take);
+            }
+            const auto timeOf = [&](const FramePtr& f) { return frameTimestamp(f.get()) * tb - start; };
+            while (k < frames) {
+                const double want = range.end - (k + 1) * frameSeconds * speed + half;
+                int pick = -1;
+                for (int i = static_cast<int>(block.size()) - 1; i >= 0; --i) {
+                    if (timeOf(block[static_cast<std::size_t>(i)]) <= want + 1e-9) {
+                        pick = i;
+                        break;
+                    }
+                }
+                if (pick < 0)
+                    break;  // questo istante è in un blocco più indietro
+                held.reset(av_frame_clone(block[static_cast<std::size_t>(pick)].get()));
+                emit(held.get());
+            }
+            reachedStart = blockStart <= range.start - sourceDuration + 1e-9;
+            blockEnd = block.empty() ? blockStart : timeOf(block.front());
+        }
+    } else {
         DecodeThread decoding(3, produce);
         while (!videoDone) {
             const FramePtr decoded = decoding.pop();
