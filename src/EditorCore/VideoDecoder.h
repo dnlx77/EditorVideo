@@ -74,6 +74,11 @@ public:
     // file. {0, 0} se vuoto. Come setOutputSize, si può chiamare da un altro thread mentre si decodifica.
     std::pair<double, double> cachedRange() const;
 
+    // Riproduzione all'indietro: la lettura anticipata va nel verso opposto (si legge e si tiene in memoria quello che sta
+    // prima dell'ultimo fotogramma decodificato, non quello che sta dopo). Come setOutputSize, si può chiamare da un altro
+    // thread; di solito si cambia a decodifica ferma.
+    void setReadBackward(bool backward);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

@@ -175,6 +175,13 @@ struct VideoDecoder::Impl : OpenedStream
     static constexpr double kCacheBehind = 5.0;
     static constexpr std::size_t kCacheMaxBytes = std::size_t{200} << 20;
     static constexpr int kReadAheadPerFrame = 6;  // pacchetti letti in anticipo a ogni fotogramma, al massimo
+    // Riproduzione all'indietro (setReadBackward): la cache si riempie dietro (gruppi interi prima di quelli già letti, fino a
+    // kBackwardBehind secondi prima dell'ultimo fotogramma) e davanti si tiene poco (kBackwardAhead secondi).
+    static constexpr double kBackwardBehind = 10.0;
+    static constexpr double kBackwardAhead = 3.0;
+    std::atomic<bool> readBackward{false};
+    bool displaced = false;    // il demuxer non è dopo l'ultimo pacchetto della cache (letture all'indietro): prima di leggere avanti si riposiziona
+    bool backAtStart = false;  // non c'è più niente prima del primo gruppo della cache
     std::deque<CachedPacket> cache;
     std::size_t cursor = 0;      // prossimo pacchetto della cache da dare al decoder
     std::size_t cacheBytes = 0;
@@ -282,6 +289,8 @@ struct VideoDecoder::Impl : OpenedStream
     {
         if (demuxerAtEnd)
             return false;
+        if (displaced && !repositionForward())
+            return false;
         for (;;) {
             if (av_read_frame(fmt.get(), packet.get()) < 0) {
                 demuxerAtEnd = true;
@@ -311,11 +320,130 @@ struct VideoDecoder::Impl : OpenedStream
     // ormai troppo indietro.
     void readAhead()
     {
+        if (readBackward.load()) {
+            readBehind();
+            return;
+        }
         trimCache();
         for (int i = 0; readAheadEnabled && i < kReadAheadPerFrame && cacheBytes < kCacheMaxBytes && cacheEnd < lastTime + kCacheAhead; ++i) {
             if (!readPacket())
                 break;
         }
+    }
+
+    static bool samePacket(const AVPacket& a, const AVPacket& b)
+    {
+        return a.pts == b.pts && a.dts == b.dts && a.size == b.size;
+    }
+
+    // Dopo letture all'indietro il demuxer sta prima della fine della cache: lo si riporta subito dopo l'ultimo pacchetto
+    // (si riparte dall'ultimo fotogramma chiave della cache e si saltano i pacchetti già in cache). false se il file finisce.
+    bool repositionForward()
+    {
+        displaced = false;
+        if (cache.empty())
+            return true;
+        std::size_t key = cache.size() - 1;
+        while (key > 0 && !cache[key].key)
+            --key;
+        seekStream(fmt.get(), index, cache[key].time, startOffset);
+        for (int n = 0; n < 1000000; ++n) {
+            if (av_read_frame(fmt.get(), packet.get()) < 0) {
+                demuxerAtEnd = true;
+                publishRange();
+                return false;
+            }
+            const bool video = packet->stream_index == index;
+            const bool same = video && samePacket(*packet, *cache.back().packet);
+            av_packet_unref(packet.get());
+            if (same)
+                return true;
+        }
+        demuxerAtEnd = true;  // non si ritrova il punto: meglio fermarsi che rileggere in disordine
+        return false;
+    }
+
+    // Riproduzione all'indietro: si toglie quello che sta troppo avanti e si legge, un gruppo alla volta, quello che sta
+    // prima del primo della cache (che è quello che servirà).
+    void readBehind()
+    {
+        trimBack();
+        if (!readAheadEnabled || backAtStart || cache.empty() || cacheBytes >= kCacheMaxBytes || lastTime <= 0.0
+            || cache.front().time <= lastTime - kBackwardBehind)
+            return;
+        prependGroup();
+    }
+
+    void prependGroup()
+    {
+        const AVPacket marker = *cache.front().packet;  // (copia dei soli campi: serve per riconoscere il pacchetto)
+        const double target = std::max(0.0, cache.front().time - (fps > 0 ? 0.5 / fps : 0.001));
+        seekStream(fmt.get(), index, target, startOffset);
+        displaced = true;
+        std::vector<CachedPacket> before;
+        std::size_t bytes = 0;
+        bool found = false;
+        double lastSeen = 0.0;
+        for (int n = 0; n < 1000000; ++n) {
+            if (av_read_frame(fmt.get(), packet.get()) < 0)
+                break;
+            if (packet->stream_index != index) {
+                av_packet_unref(packet.get());
+                continue;
+            }
+            if (samePacket(*packet, marker)) {
+                av_packet_unref(packet.get());
+                found = true;
+                break;
+            }
+            CachedPacket cached;
+            cached.packet.reset(av_packet_alloc());
+            if (!cached.packet)
+                throw MediaError("Memoria insufficiente per il decoder video.");
+            av_packet_move_ref(cached.packet.get(), packet.get());
+            const std::int64_t ts = cached.packet->pts != AV_NOPTS_VALUE ? cached.packet->pts : cached.packet->dts;
+            cached.time = ts != AV_NOPTS_VALUE ? ts * timeBase - startOffset : lastSeen;
+            lastSeen = cached.time;
+            cached.key = (cached.packet->flags & AV_PKT_FLAG_KEY) != 0;
+            bytes += static_cast<std::size_t>(std::max(0, cached.packet->size));
+            before.push_back(std::move(cached));
+        }
+        if (!found || before.empty() || !before.front().key) {
+            backAtStart = true;  // niente prima (o non si riesce a ritrovare il punto): si smette di provare
+            return;
+        }
+        cursor += before.size();
+        cacheBytes += bytes;
+        cache.insert(cache.begin(), std::make_move_iterator(before.begin()), std::make_move_iterator(before.end()));
+        publishRange();
+    }
+
+    // All'indietro si tengono al più kBackwardAhead secondi dopo l'ultimo fotogramma (gruppi interi dalla fine, mai quello
+    // dove sta il decoder), o meno se la cache è troppo grande.
+    void trimBack()
+    {
+        for (;;) {
+            std::size_t lastKey = cache.size();
+            for (std::size_t i = cache.size(); i-- > 0;) {
+                if (cache[i].key) {
+                    lastKey = i;
+                    break;
+                }
+            }
+            if (lastKey == cache.size() || lastKey == 0 || lastKey <= cursor)
+                break;
+            if (cache[lastKey].time <= lastTime + kBackwardAhead && cacheBytes <= kCacheMaxBytes)
+                break;
+            for (std::size_t i = lastKey; i < cache.size(); ++i)
+                cacheBytes -= static_cast<std::size_t>(std::max(0, cache[i].packet->size));
+            cache.erase(cache.begin() + static_cast<std::ptrdiff_t>(lastKey), cache.end());
+            cacheEnd = 0.0;
+            for (const CachedPacket& c : cache)
+                cacheEnd = std::max(cacheEnd, c.time);
+            demuxerAtEnd = false;
+            displaced = true;
+        }
+        publishRange();
     }
 
     void trimCache()
@@ -346,6 +474,8 @@ struct VideoDecoder::Impl : OpenedStream
         cacheBytes = 0;
         cacheEnd = 0.0;
         demuxerAtEnd = false;
+        displaced = false;
+        backAtStart = false;
         publishRange();
     }
 
@@ -598,6 +728,11 @@ void VideoDecoder::setOutputSize(int boxWidth, int boxHeight)
 int VideoDecoder::outputHeight() const
 {
     return impl_->outputSize().second;
+}
+
+void VideoDecoder::setReadBackward(bool backward)
+{
+    impl_->readBackward = backward;
 }
 
 std::pair<double, double> VideoDecoder::cachedRange() const

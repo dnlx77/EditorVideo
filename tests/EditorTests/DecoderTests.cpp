@@ -350,3 +350,53 @@ TEST(DemoFiles, DISABLED_GeneraVideoDimostrativi)
 }
 
 }  // namespace
+
+TEST_F(DecoderTest, BackwardReadingFillsTheCacheBehindAndNotAhead)
+{
+    VideoDecoder::Options options;
+    options.allowHardware = false;
+    VideoDecoder decoder(path("lungo.mkv"), options);
+    decoder.setReadBackward(true);
+    ASSERT_NE(decoder.seek(9.0), nullptr);
+    for (int i = 0; i < 30; ++i)
+        ASSERT_NE(decoder.nextFrame(), nullptr);
+    const auto [from, to] = decoder.cachedRange();
+    EXPECT_LE(from, 0.5) << "i 10 s prima dell'ultimo fotogramma sono già in memoria";
+    EXPECT_LT(to, 9.0 + 1.2 + 4.5) << "dietro si legge, davanti poco";
+    // Un salto indietro dentro la cache dà il fotogramma giusto e prosegue in ordine.
+    for (const double target : {5.0, 3.0, 1.0}) {
+        auto frame = decoder.seek(target);
+        ASSERT_NE(frame, nullptr);
+        EXPECT_NEAR(frame->time, target, 0.001);
+        auto next = decoder.nextFrame();
+        ASSERT_NE(next, nullptr);
+        EXPECT_NEAR(next->time, target + kFrameDuration, 0.001);
+    }
+}
+
+TEST_F(DecoderTest, ForwardReadingResumesCorrectlyAfterBackwardReading)
+{
+    for (const char* name : {"lungo.mkv", "bframe.mkv"}) {
+        SCOPED_TRACE(name);
+        VideoDecoder::Options options;
+        options.allowHardware = false;
+        VideoDecoder decoder(path(name), options);
+        decoder.setReadBackward(true);
+        ASSERT_NE(decoder.seek(9.0), nullptr);
+        for (int i = 0; i < 30; ++i)
+            ASSERT_NE(decoder.nextFrame(), nullptr);
+        decoder.setReadBackward(false);
+        // Dalla cache (riempita all'indietro) si riparte in avanti fino alla fine del file: nessun fotogramma perso o doppio.
+        auto frame = decoder.seek(8.0);
+        ASSERT_NE(frame, nullptr);
+        EXPECT_NEAR(frame->time, 8.0, 0.001);
+        int count = 1;
+        double last = frame->time;
+        while (auto next = decoder.nextFrame()) {
+            EXPECT_NEAR(next->time, last + kFrameDuration, 0.001) << "dopo " << count << " fotogrammi";
+            last = next->time;
+            ++count;
+        }
+        EXPECT_EQ(count, 100);
+    }
+}
