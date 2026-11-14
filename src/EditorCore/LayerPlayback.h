@@ -57,6 +57,8 @@ private:
     unsigned long long seekSerial_ = 0;
     bool ended_ = false;          // il file è finito (nessun altro fotogramma in avanti)
     bool decoding_ = false;       // c'è una decodifica in corso (fuori dal mutex)
+    double lastRequested_ = -1.0;  // tempo dell'ultima richiesta: se scende, il file si legge all'indietro
+    std::atomic<bool> backward_{false};
     double lastDecoded_ = -1.0;   // tempo dell'ultimo fotogramma decodificato (-1 = nessuno)
     double frameDuration_ = 0.04;
     int boxWidth_;

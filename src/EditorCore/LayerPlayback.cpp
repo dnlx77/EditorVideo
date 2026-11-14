@@ -42,6 +42,9 @@ void LayerPlayback::request(double fileTime, bool playing)
     {
         std::lock_guard lock(mutex_);
         playing_ = playing;
+        if (lastRequested_ >= 0.0 && std::abs(fileTime - lastRequested_) > 1e-6)
+            backward_ = fileTime < lastRequested_;  // (un pezzo inverso chiede tempi sempre più piccoli)
+        lastRequested_ = fileTime;
         bool seek = false;
         if (!playing) {
             // Il fotogramma giusto è quello che inizia prima di `fileTime` e finisce dopo.
@@ -151,6 +154,7 @@ void LayerPlayback::run()
             lock.unlock();
             std::shared_ptr<VideoFrame> found;
             try {
+                decoder->setReadBackward(backward_.load());
                 found = decoder->seek(target);
             } catch (const std::exception&) {
             }

@@ -926,6 +926,8 @@ void PlayerWidget::startWorkers(double from)
     wallStart_ = std::chrono::steady_clock::now();
 
     stopWorkers_ = false;
+    if (video_)
+        video_->setReadBackward(workerSpeed_ < 0);  // all'indietro anche la lettura anticipata va all'indietro
     decoderAtDisplayed_ = false;  // il thread video porta avanti il decoder
     if (video_ && workerSpeed_ < 0)
         videoThread_ = std::thread([this, from] { videoReverseWorker(from); });
@@ -946,6 +948,8 @@ void PlayerWidget::stopWorkers()
     if (audioThread_.joinable())
         audioThread_.join();
     audioOut_.reset();
+    if (video_)
+        video_->setReadBackward(false);
 
     std::lock_guard lock(queueMutex_);
     queue_.clear();
