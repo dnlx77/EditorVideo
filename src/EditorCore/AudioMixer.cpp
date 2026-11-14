@@ -231,6 +231,8 @@ struct AudioMixer::Reader
     std::vector<std::int16_t> pending;  // stereo interlacciato, già alla frequenza del mix
     std::vector<std::int16_t> stereoChunk;  // ingresso del TimeStretch (riusato)
     std::size_t pendingPos = 0;         // fotogrammi di `pending` già dati
+    double reverseCursor = 0.0;         // tratto inverso: tempo nel file dove finisce il prossimo blocco da leggere
+    std::vector<std::int16_t> reverseBlock;  // tratto inverso: il blocco letto in avanti, poi rovesciato
 
     std::size_t available() const { return pending.size() / kMixChannels - pendingPos; }
 
@@ -244,8 +246,6 @@ struct AudioMixer::Reader
     {
         if (failed)
             return;
-        if (segment.reverse)
-            return;  // l'audio al contrario arriva con V8: per ora silenzio
         const SpeedMap map = segment.map();
         if (!decoder) {
             try {
@@ -267,11 +267,58 @@ struct AudioMixer::Reader
             nextFrame = from;
             ended = false;
             stretch.reset();
+            reverseCursor = map.fileAt(static_cast<double>(from - segmentFirst) / kMixSampleRate);
             if (std::abs(segment.speed - 1.0) > 1e-9)
                 stretch = std::make_unique<TimeStretch>(kMixChannels, kMixSampleRate, segment.speed);
         }
         try {
             while (!ended && available() < count) {
+                if (segment.reverse) {
+                    // Al contrario: si legge in avanti un blocco di file prima del punto raggiunto, lo si rovescia e si va
+                    // al blocco precedente.
+                    constexpr double kBlockSeconds = 4.0;
+                    if (reverseCursor <= segment.fileStart + 1e-6) {
+                        ended = true;
+                        if (stretch)
+                            stretch->flush(pending);
+                        break;
+                    }
+                    const double blockStart = std::max(segment.fileStart, reverseCursor - kBlockSeconds);
+                    const std::size_t wanted =
+                        static_cast<std::size_t>(std::llround((reverseCursor - blockStart) * kMixSampleRate));
+                    reverseBlock.clear();
+                    decoder->seek(blockStart);
+                    while (reverseBlock.size() < wanted * kMixChannels) {
+                        auto part = decoder->next();
+                        if (!part)
+                            break;
+                        if (decoder->channels() == 1) {
+                            for (std::int16_t v : part->samples) {
+                                reverseBlock.push_back(v);
+                                reverseBlock.push_back(v);
+                            }
+                        } else {
+                            reverseBlock.insert(reverseBlock.end(), part->samples.begin(), part->samples.end());
+                        }
+                    }
+                    reverseBlock.resize(std::min(reverseBlock.size(), wanted * kMixChannels));
+                    for (std::size_t a = 0, b = reverseBlock.size() / kMixChannels; a + 1 < b; ++a, --b) {
+                        std::swap(reverseBlock[a * kMixChannels], reverseBlock[(b - 1) * kMixChannels]);
+                        std::swap(reverseBlock[a * kMixChannels + 1], reverseBlock[(b - 1) * kMixChannels + 1]);
+                    }
+                    reverseCursor = blockStart;
+                    if (pendingPos > 0 && pendingPos >= pending.size() / kMixChannels / 2) {
+                        pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(pendingPos) * kMixChannels);
+                        pendingPos = 0;
+                    }
+                    if (stretch) {
+                        stretch->push(reverseBlock.data(), reverseBlock.size());
+                        stretch->pull(pending);
+                    } else {
+                        pending.insert(pending.end(), reverseBlock.begin(), reverseBlock.end());
+                    }
+                    continue;
+                }
                 auto chunk = decoder->next();
                 if (!chunk) {
                     ended = true;
