@@ -101,7 +101,7 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
                                                 textClip != nullptr ? textClip->style.centerX : 0.5,
                                                 textClip != nullptr ? textClip->style.centerY : 0.5, frame.width(), frame.height());
             propertiesPanel_->miniTimeline()->setData(target.from, target.to, target.inside ? target.fileTime : -1.0,
-                                                      keyMarks(target.animation));
+                                                      keyMarks(target.animation), target.map.reverse);
         } else {
             propertiesPanel_->showText();
         }
@@ -132,7 +132,7 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
         propertiesFollowCursor_ = true;
         propertiesPanel_->showTransform(core::evaluateTransform(target.base, target.animation, target.fileTime), 1, state);
         propertiesPanel_->miniTimeline()->setData(target.from, target.to, target.inside ? target.fileTime : -1.0,
-                                                  keyMarks(target.animation));
+                                                  keyMarks(target.animation), target.map.reverse);
         showVideoSpeed();
         return;
     }

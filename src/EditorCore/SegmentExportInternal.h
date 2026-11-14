@@ -199,7 +199,10 @@ struct TransitionPart
     bool ending = false;
 };
 
-std::vector<TransitionPart> splitByTransition(const TimeRange& range, int index, const std::vector<ExportTransition>* transitions);
+// Con `speed`/`reverse` il tratto dura range.length() / speed nel montaggio: le parti (in ordine nel montaggio) sono calcolate sui
+// secondi del montaggio della transizione e date come tratti del file (con l'inverso, la prima parte sta in fondo al tratto).
+std::vector<TransitionPart> splitByTransition(const TimeRange& range, int index, const std::vector<ExportTransition>* transitions,
+                                              double speed = 1.0, bool reverse = false);
 
 // Un tratto del file (`range`, che nella sequenza parte da `sequenceStart`) diviso nelle parti sotto una scritta (true) e
 // nelle altre (false), in ordine. Una sola parte false se non ci sono scritte.

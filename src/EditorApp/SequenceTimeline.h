@@ -5,6 +5,7 @@
 #include "EditorCore/Animation.h"
 #include "EditorCore/AudioTracks.h"
 #include "EditorCore/Groups.h"
+#include "EditorCore/Speed.h"
 #include "EditorCore/TimeUtil.h"
 
 #include <QtCore/QStringList>
@@ -396,9 +397,13 @@ private:
         bool fragment = false;  // pezzo video (A1) o clip audio
         int id = 0;
         double position = 0.0;  // dove inizia nella sequenza
-        double length = 0.0;
-        double source = 0.0;    // inizio nel file
+        double length = 0.0;    // nel montaggio
+        core::SpeedMap map;     // il tratto del file (start, end = start + length * speed), velocità e inverso
         const std::vector<core::LevelPoint>* line = nullptr;
+        // La linea è nei tempi del file: dal tempo della sequenza al tempo del file e ritorno.
+        double fileAt(double sequenceTime) const { return map.fileAt(sequenceTime - position); }
+        double timeOf(double fileTime) const { return position + map.offsetOf(fileTime); }
+        bool inFile(double fileTime) const { return fileTime >= map.start - 1e-9 && fileTime <= map.end + 1e-9; }
     };
     // Una giunzione fra due pezzi o clip attaccati sulla stessa corsia, con il suo pallino se c'è.
     struct JunctionDot
@@ -489,10 +494,13 @@ private:
         double rowHeight = 0.0;
         double position = 0.0;
         double length = 0.0;
-        double source = 0.0;
+        core::SpeedMap map;  // il tratto del file (tempi delle chiavi), velocità e inverso
+        double fileAt(double sequenceTime) const { return map.fileAt(sequenceTime - position); }
+        double timeOf(double fileTime) const { return position + map.offsetOf(fileTime); }
+        bool inFile(double fileTime, double slack) const { return fileTime >= map.start - slack && fileTime <= map.end + slack; }
     };
     KeyGeometry keyGeometry() const;
-    double keyX(const KeyGeometry& g, double fileTime) const { return xForTime(g.position + (fileTime - g.source)); }
+    double keyX(const KeyGeometry& g, double fileTime) const { return xForTime(g.timeOf(fileTime)); }
     double keyY(const KeyGeometry& g, core::AnimGroup group) const;  // il centro della sotto-riga del gruppo
     int keyAt(const QPointF& pos) const;  // indice in keyRow_.keys del rombo sotto il mouse, -1 se nessuno
     void paintKeyRow(QPainter& p);

@@ -37,8 +37,9 @@ std::vector<core::AnimGroup> AnimMiniTimeline::rows() const
     return result;
 }
 
-void AnimMiniTimeline::setData(double from, double to, double cursor, std::vector<Mark> marks)
+void AnimMiniTimeline::setData(double from, double to, double cursor, std::vector<Mark> marks, bool reversed)
 {
+    reversed_ = reversed;
     const std::size_t before = rows().size();
     from_ = from;
     to_ = std::max(to, from + 1e-6);
@@ -67,14 +68,16 @@ double AnimMiniTimeline::x(double time) const
 {
     const double left = kLabelWidth + 6.0;
     const double right = width() - 8.0;
-    return left + (time - from_) / (to_ - from_) * std::max(1.0, right - left);
+    const double fraction = (time - from_) / (to_ - from_);
+    return left + (reversed_ ? 1.0 - fraction : fraction) * std::max(1.0, right - left);
 }
 
 double AnimMiniTimeline::timeAt(double px) const
 {
     const double left = kLabelWidth + 6.0;
     const double right = width() - 8.0;
-    return std::clamp(from_ + (px - left) / std::max(1.0, right - left) * (to_ - from_), from_, to_);
+    const double fraction = std::clamp((px - left) / std::max(1.0, right - left), 0.0, 1.0);
+    return from_ + (reversed_ ? 1.0 - fraction : fraction) * (to_ - from_);
 }
 
 double AnimMiniTimeline::y(core::AnimGroup group) const
@@ -119,8 +122,8 @@ void AnimMiniTimeline::paintEvent(QPaintEvent*)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
     const QPalette pal = palette();
-    const double left = x(from_);
-    const double right = x(to_);
+    const double left = std::min(x(from_), x(to_));
+    const double right = std::max(x(from_), x(to_));
     QFont small = font();
     small.setPointSizeF(std::max(6.5, small.pointSizeF() - 1.0));
     p.setFont(small);

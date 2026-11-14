@@ -22,8 +22,10 @@ struct TransitionJob
     std::string pathB;
     double durationA = 0.0;  // durata dei file (0 = sconosciuta)
     double durationB = 0.0;
-    double fragmentStartA = 0.0;  // inizio dei pezzi nei loro file
-    double fragmentStartB = 0.0;
+    // I tratti dei due pezzi nei loro file, con velocità e inverso: il tempo del file a un certo tempo della sequenza è
+    // mapA.fileAt(tempo - sequenceStartA), anche fuori dal pezzo (le maniglie).
+    SpeedMap mapA;
+    SpeedMap mapB;
     double sequenceStartA = 0.0;  // e nella sequenza
     double sequenceStartB = 0.0;
     double start = 0.0;  // il tratto della transizione nella sequenza

@@ -704,13 +704,13 @@ double SequenceTimeline::envelopeDbForY(const QRectF& lane, double y) const
 SequenceTimeline::EnvTarget SequenceTimeline::targetOfBlock(std::size_t index) const
 {
     const Block& b = blocks_[index];
-    return {0, true, b.fragmentId, starts_[index], b.length, b.sourceStart, &b.envelope};
+    return {0, true, b.fragmentId, starts_[index], b.length, {b.sourceStart, b.sourceStart + b.length * b.speed, b.speed, b.reverse}, &b.envelope};
 }
 
 SequenceTimeline::EnvTarget SequenceTimeline::targetOfClip(int lane, std::size_t index) const
 {
     const AudioBlock& c = lanes_[static_cast<std::size_t>(lane)].clips[index];
-    return {lane, false, c.clipId, c.position, c.length, c.sourceStart, &c.envelope};
+    return {lane, false, c.clipId, c.position, c.length, {c.sourceStart, c.sourceStart + c.length * c.speed, c.speed, c.reverse}, &c.envelope};
 }
 
 const std::vector<core::LevelPoint>& SequenceTimeline::lineOf(const EnvTarget& target) const
@@ -736,8 +736,8 @@ std::vector<SequenceTimeline::JunctionDot> SequenceTimeline::junctionDots() cons
         dot.time = b.position;
         const auto& lineA = lineOf(a);
         const auto& lineB = lineOf(b);
-        const double edgeA = a.source + a.length;
-        const double edgeB = b.source;
+        const double edgeA = a.map.fileAt(a.length);  // il punto del file dove A finisce nel montaggio
+        const double edgeB = b.map.fileAt(0.0);       // e dove B comincia
         dot.firstEdgeDb = core::envelopeDbAt(lineA, edgeA);
         dot.secondEdgeDb = core::envelopeDbAt(lineB, edgeB);
         const core::LevelPoint* pa = core::pointAt(lineA, edgeA);
@@ -789,8 +789,8 @@ bool SequenceTimeline::junctionHit(const QPointF& pos, JunctionDot& dot) const
 
 void SequenceTimeline::updateJointLines()
 {
-    jointFirstLine_ = core::withPointAt(jointBaseFirst_, joint_.first.source + joint_.first.length, jointDb_);
-    jointSecondLine_ = core::withPointAt(jointBaseSecond_, joint_.second.source, jointDb_);
+    jointFirstLine_ = core::withPointAt(jointBaseFirst_, joint_.first.map.fileAt(joint_.first.length), jointDb_);
+    jointSecondLine_ = core::withPointAt(jointBaseSecond_, joint_.second.map.fileAt(0.0), jointDb_);
 }
 
 void SequenceTimeline::paintJunctions(QPainter& p, int lane, const QRectF& rect)
@@ -839,9 +839,9 @@ bool SequenceTimeline::envelopeHit(const QPointF& pos, EnvTarget& target, int& p
         return false;
     const QRectF rect = audioLane(lane);
     const auto& line = lineOf(found);
-    const auto atFile = [&](double fileTime) { return xForTime(found.position + (fileTime - found.source)); };
+    const auto atFile = [&](double fileTime) { return xForTime(found.timeOf(fileTime)); };
     for (std::size_t i = 0; i < line.size(); ++i) {
-        if (line[i].time < found.source || line[i].time > found.source + found.length)
+        if (!found.inFile(line[i].time))
             continue;
         const QPointF at(atFile(line[i].time), envelopeY(rect, line[i].db));
         if (std::hypot(pos.x() - at.x(), pos.y() - at.y()) <= kEnvelopePointNear) {
@@ -850,7 +850,7 @@ bool SequenceTimeline::envelopeHit(const QPointF& pos, EnvTarget& target, int& p
             return true;
         }
     }
-    const double fileTime = found.source + (t - found.position);
+    const double fileTime = found.fileAt(t);
     if (std::abs(pos.y() - envelopeY(rect, core::envelopeDbAt(line, fileTime))) <= kEnvelopeNear) {
         target = found;
         point = -1;
@@ -869,8 +869,8 @@ void SequenceTimeline::paintEnvelope(QPainter& p, const EnvTarget& target, const
         return;
     const auto& line = lineOf(target);
     const QColor accent(255, 190, 40);
-    const auto fileTimeAt = [&](double x) { return target.source + (timeForX(x) - target.position); };
-    const auto xAtFile = [&](double fileTime) { return xForTime(target.position + (fileTime - target.source)); };
+    const auto fileTimeAt = [&](double x) { return target.fileAt(timeForX(x)); };
+    const auto xAtFile = [&](double fileTime) { return xForTime(target.timeOf(fileTime)); };
     QPainterPath path;
     path.moveTo(left, envelopeY(lane, core::envelopeDbAt(line, fileTimeAt(left))));
     for (const core::LevelPoint& pt : line) {
@@ -895,7 +895,7 @@ void SequenceTimeline::paintEnvelope(QPainter& p, const EnvTarget& target, const
     p.setPen(QPen(accent, 1.8));
     p.drawPath(path);
     for (std::size_t i = 0; i < line.size(); ++i) {
-        if (line[i].time < target.source || line[i].time > target.source + target.length)
+        if (!target.inFile(line[i].time))
             continue;
         const QPointF at(xAtFile(line[i].time), envelopeY(lane, line[i].db));
         if (at.x() < visibleLeft() - 8 || at.x() > visibleRight() + 8)
@@ -938,7 +938,7 @@ void SequenceTimeline::paintA1(QPainter& p, const QRectF& lane)
                 p.drawText(r, Qt::AlignCenter, QStringLiteral("senza audio"));
         } else {
             drawWave(p, full, *b.waveform, b.sourceStart, b.sourceStart + b.length * b.speed, color.darker(110), visibleLeft(),
-                     visibleRight());
+                     visibleRight(), b.reverse);
         }
         const bool audioMate = isMate(Object::Kind::PieceAudio, b.fragmentId);
         if ((!multi_.empty() && isSelected(Object::Kind::PieceAudio, b.fragmentId)) || audioMate) {
@@ -990,7 +990,7 @@ void SequenceTimeline::paintTrack(QPainter& p, int index, const QRectF& lane)
         p.drawRoundedRect(r, 3, 3);
         if (c.waveform && !c.waveform->empty())
             drawWave(p, full.adjusted(0, 2, 0, -2), *c.waveform, c.sourceStart, c.sourceStart + c.length * c.speed, color.darker(moving ? 100 : 140),
-                     visibleLeft(), visibleRight());
+                     visibleLeft(), visibleRight(), c.reverse);
         else if (!c.waveform && r.width() > 80) {
             p.setPen(pal.color(QPalette::PlaceholderText));
             p.drawText(r, Qt::AlignCenter, QStringLiteral("forma d'onda..."));

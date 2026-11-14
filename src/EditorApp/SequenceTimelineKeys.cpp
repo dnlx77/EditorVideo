@@ -61,7 +61,7 @@ SequenceTimeline::KeyGeometry SequenceTimeline::keyGeometry() const
             full = rects[i];
             g.position = starts_[i];
             g.length = blocks_[i].length;
-            g.source = blocks_[i].sourceStart;
+            g.map = {blocks_[i].sourceStart, blocks_[i].sourceStart + blocks_[i].length * blocks_[i].speed, blocks_[i].speed, blocks_[i].reverse};
             break;
         }
     } else {
@@ -73,7 +73,9 @@ SequenceTimeline::KeyGeometry SequenceTimeline::keyGeometry() const
         full = QRectF(QPointF(xForTime(c->position) + 1, l.top() + 1), QPointF(xForTime(c->position + c->length) - 1, l.bottom() - 1));
         g.position = c->position;
         g.length = c->length;
-        g.source = keyRow_.text ? 0.0 : c->sourceStart;
+        // Le scritte non hanno file: le chiavi sono nel loro tempo (come velocità 1).
+        g.map = keyRow_.text ? core::SpeedMap{0.0, c->length, 1.0, false}
+                             : core::SpeedMap{c->sourceStart, c->sourceStart + c->length * c->speed, c->speed, c->reverse};
     }
     if (full.isEmpty())
         return g;
@@ -103,7 +105,7 @@ int SequenceTimeline::keyAt(const QPointF& pos) const
     for (int i = 0; i < static_cast<int>(keyRow_.keys.size()); ++i) {
         const KeyMark& mark = keyRow_.keys[static_cast<std::size_t>(i)];
         const double t = mark.time;
-        if (t < g.source - kEdgeSlack || t > g.source + g.length + kEdgeSlack)
+        if (!g.inFile(t, kEdgeSlack))
             continue;
         if (std::abs(pos.y() - keyY(g, mark.group)) > g.rowHeight / 2 + 1.5)
             continue;  // un'altra sotto-riga
@@ -154,7 +156,7 @@ void SequenceTimeline::paintKeyRow(QPainter& p)
         QPolygonF line;
         for (int i = 0; i < static_cast<int>(keyRow_.keys.size()); ++i) {
             const KeyMark& k = keyRow_.keys[static_cast<std::size_t>(i)];
-            if (k.group != group || k.time < g.source - kEdgeSlack || k.time > g.source + g.length + kEdgeSlack)
+            if (k.group != group || !g.inFile(k.time, kEdgeSlack))
                 continue;
             line << QPointF(keyX(g, keyDragging_ && i == keyDragIndex_ ? keyDragValue_ : k.time), y);
         }
@@ -162,7 +164,7 @@ void SequenceTimeline::paintKeyRow(QPainter& p)
     }
     for (int i = 0; i < static_cast<int>(keyRow_.keys.size()); ++i) {
         const KeyMark& k = keyRow_.keys[static_cast<std::size_t>(i)];
-        if (k.time < g.source - kEdgeSlack || k.time > g.source + g.length + kEdgeSlack)
+        if (!g.inFile(k.time, kEdgeSlack))
             continue;
         const bool dragged = keyDragging_ && i == keyDragIndex_;
         const double x = keyX(g, dragged ? keyDragValue_ : k.time);

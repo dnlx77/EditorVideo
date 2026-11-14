@@ -224,7 +224,8 @@ std::vector<TimeRange> textCoverage(const TextTracks* texts)
     return mergeRanges(std::move(spans));
 }
 
-std::vector<TransitionPart> splitByTransition(const TimeRange& range, int index, const std::vector<ExportTransition>* transitions)
+std::vector<TransitionPart> splitByTransition(const TimeRange& range, int index, const std::vector<ExportTransition>* transitions,
+                                              double speed, bool reverse)
 {
     int starting = -1;  // la transizione che comincia in questo tratto (sta sulla giunzione di prima)
     int ending = -1;    // quella che finisce in questo tratto
@@ -236,28 +237,48 @@ std::vector<TransitionPart> splitByTransition(const TimeRange& range, int index,
                 starting = static_cast<int>(i);
         }
     }
-    std::vector<TransitionPart> parts;
-    double at = range.start;
+    // Le parti come scostamenti nel montaggio (secondi dall'inizio del tratto).
+    struct Span
+    {
+        double from;
+        double to;
+        int transition;
+        bool ending;
+    };
+    const SpeedMap map{range.start, range.end, speed, reverse};
+    const double length = map.length();
+    std::vector<Span> spans;
+    double at = 0.0;
     if (starting >= 0) {
-        const double to = std::min(range.end, range.start + (*transitions)[static_cast<std::size_t>(starting)].after);
+        const double to = std::min(length, (*transitions)[static_cast<std::size_t>(starting)].after);
         if (to - at > kTimeEpsilon) {
-            parts.push_back({{at, to}, starting, false});
+            spans.push_back({at, to, starting, false});
             at = to;
         }
     }
-    double middleEnd = range.end;
+    double middleEnd = length;
     if (ending >= 0)
-        middleEnd = std::max(at, range.end - (*transitions)[static_cast<std::size_t>(ending)].before);
+        middleEnd = std::max(at, length - (*transitions)[static_cast<std::size_t>(ending)].before);
     if (middleEnd - at > kTimeEpsilon) {
-        parts.push_back({{at, middleEnd}, -1, false});
+        spans.push_back({at, middleEnd, -1, false});
         at = middleEnd;
     }
-    if (ending >= 0 && range.end - at > kTimeEpsilon)
-        parts.push_back({{at, range.end}, ending, true});
-    if (parts.empty())
+    if (ending >= 0 && length - at > kTimeEpsilon)
+        spans.push_back({at, length, ending, true});
+    if (spans.empty())
         return {{range, -1, false}};
-    parts.front().range.start = range.start;
-    parts.back().range.end = range.end;
+    spans.front().from = 0.0;
+    spans.back().to = length;
+    std::vector<TransitionPart> parts;
+    for (const Span& span : spans) {
+        TimeRange part = map.fileRangeOf(span.from, span.to);
+        // I bordi del tratto restano esatti (senza l'arrotondamento della conversione).
+        if (&span == &spans.front())
+            (reverse ? part.end : part.start) = reverse ? range.end : range.start;
+        if (&span == &spans.back())
+            (reverse ? part.start : part.end) = reverse ? range.start : range.end;
+        parts.push_back({part, span.transition, span.ending});
+    }
     return parts;
 }
 
@@ -404,7 +425,6 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
     bool transitionNeeded = false;
     bool transformNeeded = false;
     bool speedNeeded = false;
-    std::string speedProblem;
     int rangeIndex = -1;  // posizione del tratto nel piano (tutti i file, in ordine)
     double sequence = 0.0;  // dove cade il tratto nel montaggio (spazi vuoti compresi)
     plan.pieces.resize(clips.size());
@@ -431,19 +451,23 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
             std::vector<Piece> all;
             if (speed != 1.0 || reverse) {
                 // Un tratto con velocità (o inverso) si ricodifica tutto: i fotogrammi si scelgono nel file al ritmo della
-                // velocità (all'indietro a blocchi se inverso). Con le transizioni non si sa ancora (V9).
-                const std::vector<TransitionPart> touching = splitByTransition(range, rangeIndex, transitions);
-                if (touching.size() > 1 || touching.front().transition >= 0) {
-                    if (speedProblem.empty())
-                        speedProblem = "Un pezzo con velocità diversa da 1x ha una transizione: per ora non si sa esportare.";
+                // velocità (all'indietro a blocchi se inverso). Dove c'è una transizione il tratto si divide nelle parti
+                // (in secondi del montaggio) e quella dentro la transizione è la fusione dei due pezzi.
+                for (const TransitionPart& part : splitByTransition(range, rangeIndex, transitions, speed, reverse)) {
+                    Piece piece{part.range, true};
+                    piece.speed = speed;
+                    piece.reverse = reverse;
+                    if (part.transition >= 0) {
+                        piece.transition = part.transition;
+                        piece.transitionEnding = part.ending;
+                        transitionNeeded = true;
+                    } else {
+                        piece.transformed = !transform.isIdentity() || !animation.empty();
+                        piece.transform = transform;
+                        piece.animation = animation;
+                    }
+                    all.push_back(piece);
                 }
-                Piece piece{range, true};
-                piece.speed = speed;
-                piece.reverse = reverse;
-                piece.transformed = !transform.isIdentity() || !animation.empty();
-                piece.transform = transform;
-                piece.animation = animation;
-                all.push_back(piece);
                 speedNeeded = true;
                 preciseNeeded = preciseNeeded || cannotReencode.empty();
                 plan.pieces[c].push_back(std::move(all));
@@ -561,8 +585,6 @@ PlanAnalysis analyzePlan(const std::vector<ClipRanges>& clips, const ProjectForm
                      + cannotReencode;
     if (speedNeeded && !cannotReencode.empty() && plan.problem.empty())
         plan.problem = "La velocità si applica ricodificando i pezzi, ma non si può: " + cannotReencode;
-    if (!speedProblem.empty() && plan.problem.empty())
-        plan.problem = speedProblem;
     if (transitionNeeded && !cannotReencode.empty() && plan.problem.empty())
         plan.problem = "Le transizioni si fondono ricodificando i tratti che toccano, ma non si può: " + cannotReencode;
     // Spazi vuoti: nero e silenzio nel formato del progetto (con l'encoder, come la ricodifica), se si può.

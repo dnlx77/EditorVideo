@@ -165,3 +165,75 @@ TEST_F(TransitionExport, DipToBlackGoesThroughBlackAndSlideMovesThePieces)
             EXPECT_LT(luma[60], 40);  // a metà è nero (TV: 16)
     }
 }
+
+TEST_F(TransitionExport, PiecesAtDoubleSpeedCanHaveATransition)
+{
+    // Scuro [0, 3) a 2x (1,5 s nel montaggio) e chiaro [1, 3) a 2x (1 s): i margini sono 0,5 s dopo il primo (1 s di file) e
+    // 0,5 s prima del secondo (1 s di file), quindi la transizione di 1 s sta a cavallo della giunzione a 1,5 s.
+    Project project;
+    const int a = project.add(file("scuro.mp4"));
+    const int b = project.add(file("chiaro.mp4"));
+    project.setAnalysis(a, {0.0, 1.0, 2.0, 3.0}, 4.0);
+    project.setAnalysis(b, {0.0, 1.0, 2.0, 3.0}, 4.0);
+    const int first = project.sequence().insert(-1, a, 0.0, 3.0, 2.0);
+    project.sequence().insert(-1, b, 1.0, 3.0, 2.0);
+    ASSERT_NE(project.addTransition(first, "dissolvenza", 1.0), 0);
+    ReencodeOptions options;
+    options.transitions = exportTransitionsOf(project);
+    ASSERT_EQ(options.transitions.size(), 1u);
+    const auto plan = project.exportPlan(GapExport::Black);
+
+    const ExportPreview preview = previewExport(plan, AudioEdit{}, nullptr, options);
+    EXPECT_TRUE(preview.problem.empty()) << preview.problem;
+    EXPECT_NEAR(preview.outputSeconds, 2.5, 0.05);
+
+    const fs::path out = dir_ / "veloce.mp4";
+    const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
+    EXPECT_EQ(result.transitionSegments, 2);
+    int errors = 0;
+    const std::vector<int> luma = centerLuma(out, &errors);
+    EXPECT_EQ(errors, 0);
+    ASSERT_EQ(luma.size(), static_cast<std::size_t>(75));
+    for (int i = 0; i < 75; ++i) {
+        SCOPED_TRACE("fotogramma " + std::to_string(i));
+        const double t = (i + 0.5) / kFps;
+        const double expected = t < 1.0 ? 60 : t > 2.0 ? 200 : 60 + 140 * (t - 1.0);
+        EXPECT_NEAR(luma[static_cast<std::size_t>(i)], expected, 12);
+    }
+}
+
+TEST_F(TransitionExport, ReversedPiecesCanHaveATransitionToo)
+{
+    // Come sopra ma all'inverso: i margini stanno dall'altra parte nel file. Scuro [1, 4) a 2x (1,5 s nel montaggio, 1 s di file
+    // prima dell'inizio = 0,5 s dopo nel montaggio) e chiaro [0, 2) a 2x (1 s, con 2 s di file dopo la fine).
+    Project project;
+    const int a = project.add(file("scuro.mp4"));
+    const int b = project.add(file("chiaro.mp4"));
+    project.setAnalysis(a, {0.0, 1.0, 2.0, 3.0}, 4.0);
+    project.setAnalysis(b, {0.0, 1.0, 2.0, 3.0}, 4.0);
+    const int first = project.sequence().insert(-1, a, 1.0, 4.0, 2.0, true);
+    project.sequence().insert(-1, b, 0.0, 2.0, 2.0, true);
+    ASSERT_NE(project.addTransition(first, "dissolvenza", 1.0), 0);
+    ReencodeOptions options;
+    options.transitions = exportTransitionsOf(project);
+    ASSERT_EQ(options.transitions.size(), 1u);
+    const auto plan = project.exportPlan(GapExport::Black);
+
+    const ExportPreview preview = previewExport(plan, AudioEdit{}, nullptr, options);
+    EXPECT_TRUE(preview.problem.empty()) << preview.problem;
+    EXPECT_NEAR(preview.outputSeconds, 2.5, 0.05);
+
+    const fs::path out = dir_ / "inverso.mp4";
+    const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
+    EXPECT_EQ(result.transitionSegments, 2);
+    int errors = 0;
+    const std::vector<int> luma = centerLuma(out, &errors);
+    EXPECT_EQ(errors, 0);
+    ASSERT_EQ(luma.size(), static_cast<std::size_t>(75));
+    for (int i = 0; i < 75; ++i) {
+        SCOPED_TRACE("fotogramma " + std::to_string(i));
+        const double t = (i + 0.5) / kFps;
+        const double expected = t < 1.0 ? 60 : t > 2.0 ? 200 : 60 + 140 * (t - 1.0);
+        EXPECT_NEAR(luma[static_cast<std::size_t>(i)], expected, 12);
+    }
+}

@@ -533,7 +533,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
         if (piece.transition >= 0) {
             // Dentro una transizione: il fotogramma è la fusione dei due pezzi (con le scritte sopra, se ci sono).
             const ExportTransition& transition = reencode_.transitions[static_cast<std::size_t>(piece.transition)];
-            const double junction = doneLength_ + (piece.transitionEnding ? range.length() : 0.0);
+            const double junction = doneLength_ + (piece.transitionEnding ? piece.montageLength() : 0.0);
             if (!transitionRenderer_) {
                 transitionRenderer_ = std::make_unique<TransitionRenderer>();
                 transitionRenderer_->setBox(format.width, format.height);
@@ -1185,10 +1185,10 @@ ExportResult ExportJob::run()
                         const auto [videoEnd, audioEnd] = reencodeRange(current, range, c, piece);
                         if (plan_.reencode[c])
                             ++result_.reencodedSegments;
-                        else if (piece.sped())
-                            ++result_.speedSegments;
                         else if (piece.transition >= 0)
                             ++result_.transitionSegments;
+                        else if (piece.sped())
+                            ++result_.speedSegments;
                         else if (piece.transformed)
                             ++result_.transformSegments;
                         else if (piece.text)
