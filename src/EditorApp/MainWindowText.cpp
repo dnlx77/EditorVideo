@@ -279,10 +279,14 @@ bool MainWindow::trimTextClip(int clipId, bool atStart, double value)
     const core::Project before = project_;
     core::TextTracks& text = project_.textTracks();
     if (const core::LayerPiece* piece = text.findPiece(clipId)) {
-        // Il bordo si sposta anche nel file: l'inizio e la posizione cambiano insieme, la fine resta dove è.
-        const double delta = value - (atStart ? piece->position : piece->endPosition());
-        const bool done = atStart ? text.trimPiece(clipId, value, piece->start + delta, piece->end)
-                                  : text.trimPiece(clipId, piece->position, piece->start, piece->end + delta);
+        // Il bordo si sposta anche nel file, di `delta * velocità` (con l'inverso nel verso opposto): a sinistra cambiano la
+        // posizione e un bordo del file, l'altro resta dov'è.
+        const double delta = (value - (atStart ? piece->position : piece->endPosition())) * piece->speed;
+        const double fileDelta = piece->reverse ? -delta : delta;
+        const bool fileStartMoves = atStart != piece->reverse;  // il bordo del file che si sposta
+        const double newStart = fileStartMoves ? piece->start + fileDelta : piece->start;
+        const double newEnd = fileStartMoves ? piece->end : piece->end + fileDelta;
+        const bool done = text.trimPiece(clipId, atStart ? value : piece->position, newStart, newEnd);
         if (!done)
             return false;
         recordEdit(atStart ? QStringLiteral("Sposta inizio del pezzo") : QStringLiteral("Sposta fine del pezzo"), before);

@@ -267,7 +267,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
             audioTrimClip_ = c.clipId;
             audioTrimAtStart_ = atStart;
             audioTrimming_ = false;
-            audioTrimValue_ = atStart ? c.sourceStart : c.sourceStart + c.length;
+            audioTrimValue_ = detail::edgeFileTime(c, atStart);
             audioTrimGrab_ = t - (atStart ? c.position : c.position + c.length);
             setSelectedAudioClip(c.clipId);
             if (onAudioClipSelected)
@@ -335,7 +335,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
         trimAtStart_ = atStart;
         trimming_ = false;
         const Block& b = blocks_[static_cast<std::size_t>(edge)];
-        trimValue_ = atStart ? b.sourceStart : b.sourceStart + b.length;
+        trimValue_ = detail::edgeFileTime(b, atStart);
         trimGrab_ = t - (atStart ? starts_[static_cast<std::size_t>(edge)] : starts_[static_cast<std::size_t>(edge)] + b.length);
         selected_ = b.fragmentId;
         selectedGap_ = 0;
@@ -507,8 +507,8 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         audioTrimRipple_ = (event->modifiers() & Qt::AltModifier) != 0;
         audioTrimValue_ = audioTrimTarget(x, audioTrimRipple_);
         if (const AudioBlock* c = findAudioClip(audioTrimClip_)) {
-            const double before = audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length;
-            const double delta = audioTrimValue_ - before;
+            const double edgeNow = audioTrimAtStart_ ? c->position : c->position + c->length;
+            const double delta = detail::edgeSequenceTime(*c, audioTrimAtStart_, edgeNow, audioTrimValue_) - edgeNow;
             QToolTip::showText(event->globalPosition().toPoint(),
                                QStringLiteral("%1 %2 (%3%4 s)%5")
                                    .arg(audioTrimAtStart_ ? QStringLiteral("Inizio") : QStringLiteral("Fine"),
@@ -611,10 +611,11 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         trimRipple_ = (event->modifiers() & Qt::AltModifier) != 0;
         const double value = trimTarget(x, trimRipple_);
         const Block& b = blocks_[static_cast<std::size_t>(trimIndex_)];
-        const double before = trimAtStart_ ? b.sourceStart : b.sourceStart + b.length;
+        const double blockStart = starts_[static_cast<std::size_t>(trimIndex_)];
+        const double edgeNow = trimAtStart_ ? blockStart : blockStart + b.length;
         const bool changed = std::abs(value - trimValue_) > 1e-9;
         trimValue_ = value;
-        const double delta = value - before;
+        const double delta = detail::edgeSequenceTime(b, trimAtStart_, edgeNow, value) - edgeNow;  // secondi del montaggio
         QToolTip::showText(event->globalPosition().toPoint(),
                            QStringLiteral("%1 %2 (%3%4 s)%5")
                                .arg(trimAtStart_ ? QStringLiteral("Inizio") : QStringLiteral("Fine"),
@@ -626,7 +627,7 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
                            this);
         update();
         if (changed && onTrimPreview)
-            onTrimPreview(b.fragmentId, trimAtStart_, value);
+            onTrimPreview(b.fragmentId, detail::isFileStartEdge(b, trimAtStart_), value);
         return;
     }
     if (scrubbing_) {
@@ -739,12 +740,14 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
     if (audioTrimClip_ != 0) {
         const int clip = audioTrimClip_;
         const bool trimmed = audioTrimming_;
+        const AudioBlock* trimmedBlock = findAudioClip(clip);
+        const bool trimFileStart = trimmedBlock != nullptr ? detail::isFileStartEdge(*trimmedBlock, audioTrimAtStart_) : audioTrimAtStart_;
         audioTrimClip_ = 0;
         audioTrimming_ = false;
         QToolTip::hideText();
         update();
         if (trimmed && onAudioTrim)
-            onAudioTrim(clip, audioTrimAtStart_, audioTrimValue_, audioTrimRipple_);
+            onAudioTrim(clip, trimFileStart, audioTrimValue_, audioTrimRipple_);
         return;
     }
     if (audioDragClip_ != 0) {
@@ -822,13 +825,14 @@ void SequenceTimeline::mouseReleaseEvent(QMouseEvent* event)
     }
     if (trimIndex_ >= 0) {
         const int fragment = blocks_[static_cast<std::size_t>(trimIndex_)].fragmentId;
+        const bool trimFileStart = detail::isFileStartEdge(blocks_[static_cast<std::size_t>(trimIndex_)], trimAtStart_);
         const bool trimmed = trimming_;
         trimIndex_ = -1;
         trimming_ = false;
         QToolTip::hideText();
         update();
         if (trimmed && onTrim)
-            onTrim(fragment, trimAtStart_, trimValue_, trimRipple_);
+            onTrim(fragment, trimFileStart, trimValue_, trimRipple_);
         return;
     }
     if (dragging_ && dragIndex_ >= 0) {

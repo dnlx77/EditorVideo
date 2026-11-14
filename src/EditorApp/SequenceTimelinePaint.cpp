@@ -98,9 +98,10 @@ void SequenceTimeline::paintEvent(QPaintEvent*)
             const QRectF lane = audioLane(trimLane);
             const double oldEdge = audioTrimAtStart_ ? c->position : c->position + c->length;
             const double oldX = xForTime(oldEdge);
-            const double newX = xForTime(oldEdge + audioTrimValue_ - (audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length));
+            const double newEdge = detail::edgeSequenceTime(*c, audioTrimAtStart_, oldEdge, audioTrimValue_);
+            const double newX = xForTime(newEdge);
             paintTrimFeedback(p, lane, oldX, newX, audioTrimAtStart_);
-            paintAlignGuide(p, oldEdge + audioTrimValue_ - (audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length),
+            paintAlignGuide(p, newEdge,
                             edgeMarks(-1, c->clipId, 0, oldEdge));
         }
     }

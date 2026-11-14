@@ -652,8 +652,8 @@ int SequenceTimeline::edgeAt(const QPointF& pos, bool& atStart) const
     for (int i = 0; i < static_cast<int>(blocks_.size()); ++i) {
         const double left = xForBlockEdge(i, true);
         const double right = xForBlockEdge(i, false);
-        if (right - left < 12 || !blocks_[static_cast<std::size_t>(i)].normalSpeed())
-            continue;  // blocco troppo stretto (si prende per spostarlo), o con velocità ≠ 1: i bordi non si trascinano
+        if (right - left < 12)
+            continue;  // blocco troppo stretto (si prende per spostarlo)
         // Dove due blocchi si toccano vince il lato del bordo su cui sta il mouse.
         for (const bool start : {true, false}) {
             const double edge = start ? left : right;
@@ -678,16 +678,17 @@ double SequenceTimeline::trimTarget(double x, bool ripple) const
     const double edge = trimAtStart_ ? start : start + b.length;
     double t = timeForXBeyondEnd(x) - trimGrab_;
     t = snapped(t, edgeMarks(trimIndex_, 0, 0, edge), {0.0});
-    const double desired = (trimAtStart_ ? b.sourceStart : b.sourceStart + b.length) + (t - edge);
-    return trimLimit ? trimLimit(b.fragmentId, trimAtStart_, desired, ripple) : desired;
+    const double desired = detail::edgeFileTimeAt(b, trimAtStart_, edge, t);
+    // Il Montaggio ragiona sul bordo nel file: con l'inverso il bordo a sinistra è la fine del pezzo.
+    return trimLimit ? trimLimit(b.fragmentId, detail::isFileStartEdge(b, trimAtStart_), desired, ripple) : desired;
 }
 
 double SequenceTimeline::trimEdgeSequenceTime(double value) const
 {
     const Block& b = blocks_[static_cast<std::size_t>(trimIndex_)];
     const double start = starts_[static_cast<std::size_t>(trimIndex_)];
-    // Come se il bordo si spostasse nella sequenza della stessa quantità che nel file.
-    return trimAtStart_ ? start + (value - b.sourceStart) : start + b.length + (value - b.sourceStart - b.length);
+    // Il bordo si sposta nel montaggio della quantità che si sposta nel file, divisa per la velocità.
+    return detail::edgeSequenceTime(b, trimAtStart_, trimAtStart_ ? start : start + b.length, value);
 }
 
 int SequenceTimeline::blockAt(double x) const
@@ -900,7 +901,7 @@ bool SequenceTimeline::textEdgeAt(const QPointF& pos, int& lane, int& clip, bool
         return false;
     if (!nearestEdge(laneRef(lane).clips, pos.x(), [this](double t) { return xForTime(t); }, clip, atStart))
         return false;
-    return laneRef(lane).clips[static_cast<std::size_t>(clip)].normalSpeed();  // `clip` è la posizione nel livello; con velocità ≠ 1 i bordi non si trascinano
+    return true;  // `clip` è la posizione nel livello
 }
 
 SequenceTimeline::Object::Kind SequenceTimeline::textObjectKind(int clipId) const
@@ -1217,7 +1218,7 @@ bool SequenceTimeline::audioEdgeAt(const QPointF& pos, int& lane, int& clip, boo
         return false;
     if (!nearestEdge(lanes_[static_cast<std::size_t>(lane)].clips, pos.x(), [this](double t) { return xForTime(t); }, clip, atStart))
         return false;
-    return lanes_[static_cast<std::size_t>(lane)].clips[static_cast<std::size_t>(clip)].normalSpeed();  // `clip` è la posizione nella corsia
+    return true;  // `clip` è la posizione nella corsia
 }
 
 double SequenceTimeline::audioDragTarget(double x, int lane) const
@@ -1240,8 +1241,8 @@ double SequenceTimeline::audioTrimTarget(double x, bool ripple) const
     const double edge = audioTrimAtStart_ ? c->position : c->position + c->length;
     double t = timeForXBeyondEnd(x) - audioTrimGrab_;
     t = snapped(t, edgeMarks(-1, c->clipId, 0, edge), {0.0});
-    const double desired = (audioTrimAtStart_ ? c->sourceStart : c->sourceStart + c->length) + (t - edge);
-    return audioTrimLimit ? audioTrimLimit(c->clipId, audioTrimAtStart_, desired, ripple) : desired;
+    const double desired = detail::edgeFileTimeAt(*c, audioTrimAtStart_, edge, t);
+    return audioTrimLimit ? audioTrimLimit(c->clipId, detail::isFileStartEdge(*c, audioTrimAtStart_), desired, ripple) : desired;
 }
 
 // --- Transizioni
