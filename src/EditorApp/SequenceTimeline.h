@@ -59,8 +59,8 @@ public:
         std::vector<core::LevelPoint> envelope;  // linea del livello dell'audio del pezzo (tempi del file)
         QString transformNote;  // i valori della trasformazione del pezzo, uno per riga; vuoto = nessuna (badge «fx»)
         bool audioDetached = false;  // l'audio è una clip a parte: sotto il pezzo, su A1, non si vede niente
-        // Velocità e inverso (vedi core/Speed.h): `length` è la durata nel montaggio, nel file il pezzo dura length * speed. Con
-        // velocità ≠ 1 o inverso i bordi non si trascinano (il passo V9 del piano velocità lo permetterà).
+        // Velocità e inverso (vedi core/Speed.h): `length` è la durata nel montaggio, nel file il pezzo dura length * speed. I
+        // bordi si trascinano comunque: lo spostamento nel file è quello del montaggio per la velocità (vedi detail::edgeFileTimeAt).
         double speed = 1.0;
         bool reverse = false;
         bool normalSpeed() const { return std::abs(speed - 1.0) < 1e-9 && !reverse; }

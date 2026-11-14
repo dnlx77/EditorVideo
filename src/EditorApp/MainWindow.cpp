@@ -287,7 +287,9 @@ MainWindow::MainWindow(QWidget* parent)
         if (index >= 0) {
             const double start = sequence.startOf(index);
             const double length = sequence.fragments()[static_cast<std::size_t>(index)].length();
-            program_->seekTo(atStart ? start : start + std::max(0.0, length - frame));
+            // `atStart` è il bordo nel file: con l'inverso l'inizio del file sta a destra nel montaggio.
+            const bool onLeft = atStart != f->reverse;
+            program_->seekTo(onLeft ? start : start + std::max(0.0, length - frame / std::max(sequence.fragments()[static_cast<std::size_t>(index)].speed, 1e-9)));
         }
     };
     timeline_->thumbnailFor = [this](int clipId, double sourceTime) -> QImage {
@@ -372,9 +374,12 @@ MainWindow::MainWindow(QWidget* parent)
         const core::Clip* file = piece != nullptr ? project_.find(piece->clipId) : nullptr;
         if (piece == nullptr || file == nullptr)
             return limit;
-        // Il pezzo non può andare prima dell'inizio del file né oltre la sua fine.
-        return atStart ? std::max(limit, piece->position - piece->start)
-                       : std::min(limit, piece->endPosition() + std::max(0.0, file->duration - piece->end));
+        // Il pezzo non può andare prima dell'inizio del file né oltre la sua fine (secondi del montaggio: il margine nel
+        // file diviso per la velocità; con l'inverso il margine a sinistra è quello dopo la fine del file).
+        const double beforeStart = piece->start / piece->speed;
+        const double afterEnd = std::max(0.0, file->duration - piece->end) / piece->speed;
+        return atStart ? std::max(limit, piece->position - (piece->reverse ? afterEnd : beforeStart))
+                       : std::min(limit, piece->endPosition() + (piece->reverse ? beforeStart : afterEnd));
     };
     timeline_->onTextTrim = [this](int clipId, bool atStart, double value) { trimTextClip(clipId, atStart, value); };
     timeline_->onTextFades = [this](int clipId, double fadeIn, double fadeOut) { fadeTextClip(clipId, fadeIn, fadeOut); };

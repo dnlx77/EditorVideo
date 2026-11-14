@@ -12,6 +12,35 @@
 
 namespace editor::app::detail {
 
+// Bordi di un blocco con velocità/inverso. Il bordo che si vede a sinistra (`atLeft`) è l'inizio del pezzo nel file, tranne
+// con l'inverso (allora è la fine). `sourceStart` è l'inizio nel file e il blocco ci sta per length * speed secondi.
+template <class Block>
+bool isFileStartEdge(const Block& b, bool atLeft)
+{
+    return atLeft != b.reverse;
+}
+
+// Il tempo nel file del bordo (a sinistra o a destra).
+template <class Block>
+double edgeFileTime(const Block& b, bool atLeft)
+{
+    return isFileStartEdge(b, atLeft) ? b.sourceStart : b.sourceStart + b.length * b.speed;
+}
+
+// Il tempo nel file che avrà il bordo se nel montaggio lo si porta da `edge` a `t`.
+template <class Block>
+double edgeFileTimeAt(const Block& b, bool atLeft, double edge, double t)
+{
+    return edgeFileTime(b, atLeft) + (t - edge) * b.speed * (b.reverse ? -1.0 : 1.0);
+}
+
+// Dove sta nel montaggio il bordo se nel file è a `value` (`edge` = dove sta ora).
+template <class Block>
+double edgeSequenceTime(const Block& b, bool atLeft, double edge, double value)
+{
+    return edge + (value - edgeFileTime(b, atLeft)) / b.speed * (b.reverse ? -1.0 : 1.0);
+}
+
 inline constexpr double kTop = 6;           // spazio fra il righello e la corsia video
 inline constexpr double kLaneGap = 4;
 inline constexpr double kHeaderWidth = 118;  // a sinistra delle corsie: nome, muto, solo, livello
