@@ -24,6 +24,7 @@ struct AudioClip
     // Velocità e lettura all'indietro come per i pezzi video (vedi Speed.h): nel montaggio la clip dura length().
     double speed = 1.0;
     bool reverse = false;
+    AudioSpeedOptions audioSpeed;  // come si sente l'audio con velocità o inverso (vedi Speed.h)
 
     double length() const { return (end - start) / speed; }  // durata nel montaggio
     double fileLength() const { return end - start; }        // durata nel file
@@ -142,6 +143,7 @@ public:
     // Cambia velocità e verso della clip (inizio nel montaggio invariato); false se non c'è, non cambia o la nuova durata si
     // sovrappone alla clip dopo (nessuna modifica).
     bool setSpeed(int clipId, double speed, bool reverse);
+    bool setAudioSpeed(int clipId, const AudioSpeedOptions& options);  // false se non è cambiato niente
 
     // Toglie [from, to) della sequenza dalle clip della traccia (lì resta silenzio; le clip non scorrono). Una clip
     // tagliata nel mezzo diventa due. true se qualcosa è cambiato.

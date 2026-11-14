@@ -37,6 +37,7 @@ struct MixSegment
     // dal passo V4 del piano velocità: finché non lo fa, un tratto con velocità ≠ 1 non si sente giusto.)
     double speed = 1.0;
     bool reverse = false;
+    AudioSpeedOptions audioSpeed;  // come si sente l'audio con velocità o inverso (vedi Speed.h)
 
     double length() const { return (fileEnd - fileStart) / speed; }  // durata nel montaggio
     double fileLength() const { return fileEnd - fileStart; }        // durata nel file

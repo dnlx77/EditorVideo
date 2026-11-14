@@ -190,10 +190,26 @@ PropertiesPanel::SpeedControls PropertiesPanel::buildSpeedBox()
             onSpeedEdit(std::nullopt, on);
     });
     root->addWidget(controls.reverse);
+    controls.keepPitch = new QCheckBox(QStringLiteral("Mantieni intonazione"));
+    controls.keepPitch->setObjectName(QStringLiteral("mantieniIntonazione"));
+    controls.keepPitch->setToolTip(QStringLiteral("L'audio più lento o più veloce mantiene l'intonazione del file. Spenta, cambia con la velocità, come un disco"));
+    connect(controls.keepPitch, &QCheckBox::toggled, this, [this](bool on) {
+        if (!updating_ && onAudioSpeedEdit)
+            onAudioSpeedEdit(on, std::nullopt);
+    });
+    root->addWidget(controls.keepPitch);
+    controls.muteReversed = new QCheckBox(QStringLiteral("Silenzia l'audio se inverso"));
+    controls.muteReversed->setObjectName(QStringLiteral("silenziaInverso"));
+    controls.muteReversed->setToolTip(QStringLiteral("Con «Inverti» il pezzo non ha audio (altrimenti si sente al contrario)"));
+    connect(controls.muteReversed, &QCheckBox::toggled, this, [this](bool on) {
+        if (!updating_ && onAudioSpeedEdit)
+            onAudioSpeedEdit(std::nullopt, on);
+    });
+    root->addWidget(controls.muteReversed);
     return controls;
 }
 
-void PropertiesPanel::setSpeedControls(SpeedControls& controls, double speed, bool reverse)
+void PropertiesPanel::setSpeedControls(SpeedControls& controls, double speed, bool reverse, const core::AudioSpeedOptions& options)
 {
     updating_ = true;
     {
@@ -204,18 +220,24 @@ void PropertiesPanel::setSpeedControls(SpeedControls& controls, double speed, bo
         const QSignalBlocker blockReverse(controls.reverse);
         controls.reverse->setChecked(reverse);
     }
+    {
+        const QSignalBlocker blockPitch(controls.keepPitch);
+        controls.keepPitch->setChecked(options.keepPitch);
+        const QSignalBlocker blockMute(controls.muteReversed);
+        controls.muteReversed->setChecked(options.muteWhenReversed);
+    }
     updating_ = false;
 }
 
-void PropertiesPanel::showSpeed(double speed, bool reverse)
+void PropertiesPanel::showSpeed(double speed, bool reverse, const core::AudioSpeedOptions& options)
 {
-    setSpeedControls(speedVideo_, speed, reverse);
+    setSpeedControls(speedVideo_, speed, reverse, options);
     speedVideo_.box->show();
 }
 
-void PropertiesPanel::showAudioSpeed(double speed, bool reverse)
+void PropertiesPanel::showAudioSpeed(double speed, bool reverse, const core::AudioSpeedOptions& options)
 {
-    setSpeedControls(speedAudio_, speed, reverse);
+    setSpeedControls(speedAudio_, speed, reverse, options);
     stack_->setCurrentWidget(audioPage_);
 }
 

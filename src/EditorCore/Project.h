@@ -226,6 +226,9 @@ public:
         bool blocked = false;  // non ci sta: nessuna modifica
     };
     SpeedResult setSpeed(const std::vector<ObjectRef>& objects, std::optional<double> speed, std::optional<bool> reverse, bool push);
+    // «Mantieni intonazione» e «Silenzia se inverso» (vedi AudioSpeedOptions) degli oggetti scelti e di quelli del loro gruppo;
+    // un valore mancante resta com'è. Quanti oggetti sono cambiati.
+    int setAudioSpeedOptions(const std::vector<ObjectRef>& objects, std::optional<bool> keepPitch, std::optional<bool> muteWhenReversed);
 
     // Cambia la trasformazione (scala, posizione, rotazione, ritaglio...) dei pezzi indicati; gli id che non esistono si
     // saltano. Restituisce quanti pezzi sono cambiati davvero (0 = niente da annullare). Fa parte delle modifiche.

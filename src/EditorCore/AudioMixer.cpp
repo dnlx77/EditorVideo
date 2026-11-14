@@ -29,6 +29,7 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project, const Sequence& se
         s.fileEnd = f.end;
         s.speed = f.speed;
         s.reverse = f.reverse;
+        s.audioSpeed = f.audioSpeed;
         s.position = starts[i];
         s.trackId = AudioTracks::kOriginalTrack;
         s.ofPiece = true;
@@ -75,6 +76,7 @@ std::vector<MixSegment> mixSegmentsOf(const Project& project, const Sequence& se
             s.fileEnd = clip.end;
             s.speed = clip.speed;
             s.reverse = clip.reverse;
+            s.audioSpeed = clip.audioSpeed;
             s.position = clip.position;
             s.trackId = track.id;
             s.envelope = clip.envelope;
@@ -219,12 +221,81 @@ std::vector<std::vector<LevelPoint>> segmentEnvelopesOf(const Project& project)
     return envelopes;
 }
 
+// Velocità che cambia anche l'intonazione (come un disco), per i tratti con «Mantieni intonazione» spento: il campione n
+// dell'uscita è il campione n * speed dell'ingresso, per interpolazione lineare. Stessa interfaccia di TimeStretch (stereo).
+class Varispeed
+{
+public:
+    explicit Varispeed(double speed) : speed_(speed) {}
+
+    void push(const std::int16_t* samples, std::size_t count)
+    {
+        for (std::size_t i = 0; i < count; ++i)
+            input_.push_back(samples[i] * (1.0f / 32768.0f));
+    }
+
+    void pull(std::vector<std::int16_t>& out) { produce(out, false); }
+    void flush(std::vector<std::int16_t>& out) { produce(out, true); }
+
+private:
+    static std::int16_t toSample(float v)
+    {
+        return static_cast<std::int16_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 32767.0f));
+    }
+
+    void produce(std::vector<std::int16_t>& out, bool last)
+    {
+        const std::size_t frames = input_.size() / kMixChannels;
+        for (;;) {
+            const std::size_t i0 = static_cast<std::size_t>(position_);
+            if (i0 >= frames || (!last && i0 + 1 >= frames))
+                break;
+            const std::size_t i1 = std::min(i0 + 1, frames - 1);
+            const float t = static_cast<float>(position_ - static_cast<double>(i0));
+            for (int c = 0; c < kMixChannels; ++c) {
+                const float a = input_[i0 * kMixChannels + static_cast<std::size_t>(c)];
+                const float b = input_[i1 * kMixChannels + static_cast<std::size_t>(c)];
+                out.push_back(toSample(a + (b - a) * t));
+            }
+            position_ += speed_;
+        }
+        // Si tolgono i fotogrammi già superati.
+        const std::size_t used = std::min(static_cast<std::size_t>(position_), frames);
+        input_.erase(input_.begin(), input_.begin() + static_cast<std::ptrdiff_t>(used * kMixChannels));
+        position_ -= static_cast<double>(used);
+    }
+
+    double speed_;
+    double position_ = 0.0;  // dove sta il prossimo campione d'uscita nell'ingresso (fotogrammi da input_[0])
+    std::vector<float> input_;
+};
+
 // Il file di un tratto, letto in avanti: ricorda dove è arrivato e si riposiziona solo se il blocco richiesto non
 // segue quello di prima.
 struct AudioMixer::Reader
 {
     std::unique_ptr<AudioDecoder> decoder;
     std::unique_ptr<TimeStretch> stretch;  // solo se il tratto ha velocità diversa da 1 (intonazione mantenuta)
+    std::unique_ptr<Varispeed> varispeed;  // oppure questo (intonazione che cambia con la velocità)
+
+    bool rated() const { return stretch != nullptr || varispeed != nullptr; }
+    void feed(const std::int16_t* samples, std::size_t count)
+    {
+        if (stretch) {
+            stretch->push(samples, count);
+            stretch->pull(pending);
+        } else if (varispeed) {
+            varispeed->push(samples, count);
+            varispeed->pull(pending);
+        }
+    }
+    void finishRate()
+    {
+        if (stretch)
+            stretch->flush(pending);
+        else if (varispeed)
+            varispeed->flush(pending);
+    }
     bool failed = false;
     bool ended = false;                 // il file è finito prima della fine del tratto: il resto è silenzio
     long long nextFrame = -1;          // fotogramma della sequenza del prossimo campione di `pending`
@@ -246,6 +317,8 @@ struct AudioMixer::Reader
     {
         if (failed)
             return;
+        if (segment.reverse && segment.audioSpeed.muteWhenReversed)
+            return;  // «Silenzia se inverso»: niente audio
         const SpeedMap map = segment.map();
         if (!decoder) {
             try {
@@ -267,9 +340,14 @@ struct AudioMixer::Reader
             nextFrame = from;
             ended = false;
             stretch.reset();
+            varispeed.reset();
             reverseCursor = map.fileAt(static_cast<double>(from - segmentFirst) / kMixSampleRate);
-            if (std::abs(segment.speed - 1.0) > 1e-9)
-                stretch = std::make_unique<TimeStretch>(kMixChannels, kMixSampleRate, segment.speed);
+            if (std::abs(segment.speed - 1.0) > 1e-9) {
+                if (segment.audioSpeed.keepPitch)
+                    stretch = std::make_unique<TimeStretch>(kMixChannels, kMixSampleRate, segment.speed);
+                else
+                    varispeed = std::make_unique<Varispeed>(segment.speed);
+            }
         }
         try {
             while (!ended && available() < count) {
@@ -279,8 +357,7 @@ struct AudioMixer::Reader
                     constexpr double kBlockSeconds = 4.0;
                     if (reverseCursor <= segment.fileStart + 1e-6) {
                         ended = true;
-                        if (stretch)
-                            stretch->flush(pending);
+                        finishRate();
                         break;
                     }
                     const double blockStart = std::max(segment.fileStart, reverseCursor - kBlockSeconds);
@@ -311,9 +388,8 @@ struct AudioMixer::Reader
                         pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(pendingPos) * kMixChannels);
                         pendingPos = 0;
                     }
-                    if (stretch) {
-                        stretch->push(reverseBlock.data(), reverseBlock.size());
-                        stretch->pull(pending);
+                    if (rated()) {
+                        feed(reverseBlock.data(), reverseBlock.size());
                     } else {
                         pending.insert(pending.end(), reverseBlock.begin(), reverseBlock.end());
                     }
@@ -322,16 +398,15 @@ struct AudioMixer::Reader
                 auto chunk = decoder->next();
                 if (!chunk) {
                     ended = true;
-                    if (stretch)
-                        stretch->flush(pending);
+                    finishRate();
                     break;
                 }
                 if (pendingPos > 0 && pendingPos >= pending.size() / kMixChannels / 2) {
                     pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(pendingPos) * kMixChannels);
                     pendingPos = 0;
                 }
-                std::vector<std::int16_t>& target = stretch ? stereoChunk : pending;
-                if (stretch)
+                std::vector<std::int16_t>& target = rated() ? stereoChunk : pending;
+                if (rated())
                     stereoChunk.clear();
                 if (decoder->channels() == 1) {
                     for (std::int16_t v : chunk->samples) {
@@ -341,10 +416,8 @@ struct AudioMixer::Reader
                 } else {
                     target.insert(target.end(), chunk->samples.begin(), chunk->samples.end());
                 }
-                if (stretch) {
-                    stretch->push(stereoChunk.data(), stereoChunk.size());
-                    stretch->pull(pending);
-                }
+                if (rated())
+                    feed(stereoChunk.data(), stereoChunk.size());
             }
         } catch (const std::exception&) {
             failed = true;

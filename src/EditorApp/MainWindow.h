@@ -195,6 +195,8 @@ public:
     void fitSelectedPieces(bool fill);
     // Velocità e inverso degli oggetti scelti e di quelli del loro gruppo (Project::setSpeed); un valore mancante resta com'è.
     void applySpeedEdit(std::optional<double> speed, std::optional<bool> reverse);
+    // «Mantieni intonazione» e «Silenzia se inverso» (Project::setAudioSpeedOptions); un valore mancante resta com'è.
+    void applyAudioSpeedEdit(std::optional<bool> keepPitch, std::optional<bool> muteWhenReversed);
     // La Sorgente mostra il file (il lettore) o l'anteprima della transizione scelta.
     void showSourcePlayer();
     std::vector<core::NamedTextStyle> availableTextStyles() const;  // del progetto e dell'elenco globale

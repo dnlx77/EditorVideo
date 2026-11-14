@@ -49,6 +49,7 @@ struct SpeedValue
     double speed = 1.0;
     bool reverse = false;
     bool audio = false;  // clip audio o audio di un pezzo: la pagina della sola velocità
+    core::AudioSpeedOptions options;  // «Mantieni intonazione» e «Silenzia se inverso»
 };
 
 std::optional<SpeedValue> speedValueOf(const core::Project& project, const core::ObjectRef& o)
@@ -59,20 +60,20 @@ std::optional<SpeedValue> speedValueOf(const core::Project& project, const core:
         const core::Clip* clip = f != nullptr ? project.find(f->clipId) : nullptr;
         if (f == nullptr || (clip != nullptr && clip->still))
             return std::nullopt;
-        return SpeedValue{f->speed, f->reverse, o.kind == Kind::PieceAudio};
+        return SpeedValue{f->speed, f->reverse, o.kind == Kind::PieceAudio, f->audioSpeed};
     }
     if (o.kind == Kind::LayerPiece) {
         const core::LayerPiece* p = project.textTracks().findPiece(o.id);
         const core::Clip* clip = p != nullptr ? project.find(p->clipId) : nullptr;
         if (p == nullptr || (clip != nullptr && clip->still))
             return std::nullopt;
-        return SpeedValue{p->speed, p->reverse, false};
+        return SpeedValue{p->speed, p->reverse, false, p->audioSpeed};
     }
     if (o.kind == Kind::AudioClip) {
         const core::AudioClip* c = project.audioTracks().find(o.id);
         if (c == nullptr)
             return std::nullopt;
-        return SpeedValue{c->speed, c->reverse, true};
+        return SpeedValue{c->speed, c->reverse, true, c->audioSpeed};
     }
     return std::nullopt;
 }
@@ -120,7 +121,7 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
             if (o.kind != core::ObjectRef::Kind::Piece && o.kind != core::ObjectRef::Kind::LayerPiece)
                 continue;
             if (const auto value = speedValueOf(project_, o)) {
-                propertiesPanel_->showSpeed(value->speed, value->reverse);
+                propertiesPanel_->showSpeed(value->speed, value->reverse, value->options);
                 return;
             }
         }
@@ -147,7 +148,7 @@ void MainWindow::refreshPropertiesPanel(bool cursorOnly)
     // Solo audio (clip audio, audio di un pezzo) o solo pezzi di livello senza trasformazione: la pagina della sola velocità.
     for (const core::ObjectRef& o : objects) {
         if (const auto value = speedValueOf(project_, o); value && value->audio) {
-            propertiesPanel_->showAudioSpeed(value->speed, value->reverse);
+            propertiesPanel_->showAudioSpeed(value->speed, value->reverse, value->options);
             return;
         }
     }
@@ -524,6 +525,18 @@ void MainWindow::applySpeedEdit(std::optional<double> speed, std::optional<bool>
         return;
     transformMerge_.key.clear();
     recordEdit(reverse && !speed ? QStringLiteral("Inverti il pezzo") : QStringLiteral("Cambia velocità"), before);
+}
+
+void MainWindow::applyAudioSpeedEdit(std::optional<bool> keepPitch, std::optional<bool> muteWhenReversed)
+{
+    const std::vector<core::ObjectRef> objects = timeline_->allSelectedObjects();
+    if (objects.empty())
+        return;
+    const core::Project before = project_;
+    if (project_.setAudioSpeedOptions(objects, keepPitch, muteWhenReversed) == 0)
+        return;
+    transformMerge_.key.clear();
+    recordEdit(keepPitch ? QStringLiteral("Cambia intonazione con la velocità") : QStringLiteral("Cambia audio del pezzo inverso"), before);
 }
 
 void MainWindow::fitSelectedPieces(bool fill)

@@ -128,6 +128,7 @@ struct LayerPiece
 
     double speed = 1.0;  // vedi Speed.h
     bool reverse = false;
+    AudioSpeedOptions audioSpeed;  // come si sente l'audio con velocità o inverso (vedi Speed.h)
 
     double length() const { return (end - start) / speed; }  // durata nel montaggio
     double fileLength() const { return end - start; }        // durata nel file
@@ -220,6 +221,7 @@ public:
     // Cambia velocità e verso del pezzo (inizio nel montaggio invariato); false se non c'è, non cambia o la nuova durata non ci sta
     // sul livello (nessuna modifica).
     bool setPieceSpeed(int pieceId, double speed, bool reverse);
+    bool setPieceAudioSpeed(int pieceId, const AudioSpeedOptions& options);  // false se non è cambiato niente
     // Divide il pezzo al tempo `seconds` della sequenza; restituisce l'id della seconda parte, 0 se non è dentro il pezzo (con
     // kMinLength per parte).
     int splitPiece(int pieceId, double seconds);

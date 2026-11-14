@@ -461,6 +461,19 @@ bool AudioTracks::trim(int clipId, Sequence::Edge edge, double value, double min
     return true;
 }
 
+bool AudioTracks::setAudioSpeed(int clipId, const AudioSpeedOptions& options)
+{
+    int t = 0;
+    int index = 0;
+    if (!locate(clipId, t, index))
+        return false;
+    AudioClip& c = tracks_[static_cast<std::size_t>(t)].clips[static_cast<std::size_t>(index)];
+    if (c.audioSpeed == options)
+        return false;
+    c.audioSpeed = options;
+    return true;
+}
+
 bool AudioTracks::setSpeed(int clipId, double speed, bool reverse)
 {
     int t = 0;

@@ -529,6 +529,7 @@ int Project::unlinkAudio(int fragmentId, int* track)
     clip.end = f->end;
     clip.speed = f->speed;
     clip.reverse = f->reverse;
+    clip.audioSpeed = f->audioSpeed;
     clip.position = from;
     clip.sourceDuration = source->duration;
     clip.envelope = f->envelope;
@@ -607,6 +608,7 @@ int Project::addLayerPiece(int layerId, const LayerPiece& piece, bool withAudio,
     clip.end = piece.end;
     clip.speed = piece.speed;
     clip.reverse = piece.reverse;
+    clip.audioSpeed = piece.audioSpeed;
     clip.position = piece.position;
     clip.sourceDuration = source->duration;
     const int clipId = placeAudioClip(clip, layerId);
@@ -640,6 +642,7 @@ int Project::liftToLayer(int fragmentId, int layerId, double position, int* audi
     piece.end = fragment.end;
     piece.speed = fragment.speed;
     piece.reverse = fragment.reverse;
+    piece.audioSpeed = fragment.audioSpeed;
     piece.position = where;
     piece.transform = fragment.transform;
     piece.animation = fragment.animation;
@@ -656,6 +659,7 @@ int Project::liftToLayer(int fragmentId, int layerId, double position, int* audi
         clip.end = fragment.end;
         clip.speed = fragment.speed;
         clip.reverse = fragment.reverse;
+        clip.audioSpeed = fragment.audioSpeed;
         clip.position = where;
         clip.sourceDuration = source->duration;
         clip.envelope = fragment.envelope;
@@ -696,6 +700,7 @@ int Project::lowerToV1(int pieceId, double position, bool push, int* audioClip)
     const int id = sequence_.insertAt(piece.clipId, piece.start, piece.end, position, push, piece.speed, piece.reverse);
     if (id == 0)
         return 0;
+    sequence_.setAudioSpeed(id, piece.audioSpeed);
     text_.removePiece(pieceId);
     sequence_.setTransform(id, piece.transform);
     sequence_.setAnimation(id, piece.animation);
@@ -714,7 +719,8 @@ int Project::lowerToV1(int pieceId, double position, bool push, int* audioClip)
         const Clip* source = find(piece.clipId);
         const bool sameAudio = clip != nullptr && source != nullptr && clip->path == source->path
                                && std::abs(clip->start - piece.start) < 1e-6 && std::abs(clip->end - piece.end) < 1e-6
-                               && std::abs(clip->speed - piece.speed) < 1e-9 && clip->reverse == piece.reverse;
+                               && std::abs(clip->speed - piece.speed) < 1e-9 && clip->reverse == piece.reverse
+                               && clip->audioSpeed == piece.audioSpeed;
         if (sameAudio) {
             // L'audio è quello del video com'era: torna collegato su A1 (con la sua linea del livello) e la clip sparisce.
             sequence_.setEnvelope(id, clip->envelope);
@@ -802,6 +808,42 @@ Project::SpeedResult Project::setSpeed(const std::vector<ObjectRef>& objects, st
     }
     pruneTransitions();
     return result;
+}
+
+int Project::setAudioSpeedOptions(const std::vector<ObjectRef>& objects, std::optional<bool> keepPitch,
+                                  std::optional<bool> muteWhenReversed)
+{
+    std::vector<ObjectRef> all;
+    const auto add = [&](ObjectRef o) {
+        if (o.kind == ObjectRef::Kind::PieceAudio)
+            o.kind = ObjectRef::Kind::Piece;  // l'audio di un pezzo segue il pezzo
+        if ((o.kind == ObjectRef::Kind::Piece || o.kind == ObjectRef::Kind::LayerPiece || o.kind == ObjectRef::Kind::AudioClip)
+            && std::find(all.begin(), all.end(), o) == all.end())
+            all.push_back(o);
+    };
+    for (const ObjectRef& o : objects) {
+        for (const ObjectRef& m : groupMembers(o))
+            add(m);
+        add(o);
+    }
+    const auto next = [&](AudioSpeedOptions options) {
+        options.keepPitch = keepPitch.value_or(options.keepPitch);
+        options.muteWhenReversed = muteWhenReversed.value_or(options.muteWhenReversed);
+        return options;
+    };
+    int changed = 0;
+    for (const ObjectRef& o : all) {
+        if (o.kind == ObjectRef::Kind::Piece) {
+            if (const Fragment* f = sequence_.find(o.id))
+                changed += sequence_.setAudioSpeed(o.id, next(f->audioSpeed)) ? 1 : 0;
+        } else if (o.kind == ObjectRef::Kind::LayerPiece) {
+            if (const LayerPiece* p = text_.findPiece(o.id))
+                changed += text_.setPieceAudioSpeed(o.id, next(p->audioSpeed)) ? 1 : 0;
+        } else if (const AudioClip* c = audio_.find(o.id)) {
+            changed += audio_.setAudioSpeed(o.id, next(c->audioSpeed)) ? 1 : 0;
+        }
+    }
+    return changed;
 }
 
 int Project::setTransform(const std::vector<int>& fragmentIds, const Transform& transform)
