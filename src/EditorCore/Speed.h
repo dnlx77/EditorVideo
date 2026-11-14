@@ -17,6 +17,16 @@ inline double clampSpeed(double speed)
     return std::clamp(speed, kMinSpeed, kMaxSpeed);
 }
 
+// Come si sente l'audio di un pezzo o di una clip con velocità diversa da 1 o inverso. `keepPitch` (di partenza): l'intonazione
+// resta quella del file (la voce più lenta o più veloce ma non più bassa o più acuta); spento cambia con la velocità, come
+// un disco. `muteWhenReversed`: l'audio di un pezzo inverso non si sente.
+struct AudioSpeedOptions
+{
+    bool keepPitch = true;
+    bool muteWhenReversed = false;
+    bool operator==(const AudioSpeedOptions&) const = default;
+};
+
 // Il tratto [start, end) del file visto con `speed`: la durata nel montaggio, e le conversioni fra tempo del file e scostamento
 // (secondi dall'inizio del pezzo nel montaggio). Con `reverse` l'inizio del pezzo nel montaggio è la fine del tratto del file.
 struct SpeedMap

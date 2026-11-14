@@ -415,6 +415,10 @@ void speedToJson(JsonValue::Object& object, const T& item)
         object["velocita"] = item.speed;
     if (item.reverse)
         object["inverso"] = true;
+    if (!item.audioSpeed.keepPitch)
+        object["intonazioneLibera"] = true;  // l'intonazione cambia con la velocità
+    if (item.audioSpeed.muteWhenReversed)
+        object["silenzioInverso"] = true;
 }
 
 template <typename T>
@@ -422,6 +426,8 @@ void speedFromJson(const JsonValue& json, T& item)
 {
     item.speed = json["velocita"].isNumber() ? clampSpeed(json["velocita"].asNumber()) : 1.0;
     item.reverse = json["inverso"].isBool() && json["inverso"].asBool();
+    item.audioSpeed.keepPitch = !(json["intonazioneLibera"].isBool() && json["intonazioneLibera"].asBool());
+    item.audioSpeed.muteWhenReversed = json["silenzioInverso"].isBool() && json["silenzioInverso"].asBool();
 }
 
 JsonValue audioTracksToJson(const std::filesystem::path& dir, const AudioTracks& audio)

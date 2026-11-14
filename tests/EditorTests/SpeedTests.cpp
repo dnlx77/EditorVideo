@@ -356,3 +356,52 @@ TEST(Speed, ASpedPieceMakesTheAudioNeedTheMix)
     EXPECT_NEAR(edit.mix->segments[0].length(), 1.0, 1e-9);
     EXPECT_NEAR(edit.mixClosed->segments[0].length(), 1.0, 1e-9);
 }
+
+TEST(Speed, AudioOptionsDefaultToKeepPitchAndSoundWhenReversed)
+{
+    int file = 0;
+    Project project = oneFile(file);
+    const int id = project.sequence().insert(-1, file, 10.0, 14.0, 2.0, true);
+    EXPECT_TRUE(project.sequence().find(id)->audioSpeed.keepPitch);
+    EXPECT_FALSE(project.sequence().find(id)->audioSpeed.muteWhenReversed);
+    const std::string json = projectToJson("C:/prova/montaggio.evproj", project, ProjectView{});
+    EXPECT_EQ(json.find("intonazioneLibera"), std::string::npos);  // i progetti normali non cambiano
+    EXPECT_EQ(json.find("silenzioInverso"), std::string::npos);
+}
+
+TEST(Speed, AudioOptionsChangeTogetherWithTheGroupAndSurviveSplitSaveAndUnlink)
+{
+    int file = 0;
+    Project project = oneFile(file);
+    const int id = project.sequence().insert(-1, file, 10.0, 18.0, 2.0, true);
+    EXPECT_EQ(project.setAudioSpeedOptions({{ObjectRef::Kind::Piece, id}}, false, true), 1);
+    EXPECT_EQ(project.setAudioSpeedOptions({{ObjectRef::Kind::Piece, id}}, false, true), 0);  // già così
+    const Fragment* f = project.sequence().find(id);
+    EXPECT_FALSE(f->audioSpeed.keepPitch);
+    EXPECT_TRUE(f->audioSpeed.muteWhenReversed);
+    // L'audio nel mix porta le due scelte.
+    const std::vector<MixSegment> segments = mixSegmentsOf(project);
+    ASSERT_EQ(segments.size(), 1u);
+    EXPECT_FALSE(segments[0].audioSpeed.keepPitch);
+    EXPECT_TRUE(segments[0].audioSpeed.muteWhenReversed);
+    // Dividere il pezzo le tiene in tutte e due le parti.
+    const int second = project.sequence().split(1.0);  // un secondo dopo l'inizio del montaggio
+    ASSERT_NE(second, 0);
+    EXPECT_EQ(project.sequence().find(second)->audioSpeed, project.sequence().find(id)->audioSpeed);
+    // Si salvano e si rileggono.
+    const std::string json = projectToJson("C:/prova/montaggio.evproj", project, ProjectView{});
+    const LoadedProject loaded = projectFromJson("C:/prova/montaggio.evproj", json);
+    for (const Fragment& g : loaded.project.sequence().fragments()) {
+        EXPECT_FALSE(g.audioSpeed.keepPitch);
+        EXPECT_TRUE(g.audioSpeed.muteWhenReversed);
+    }
+    // Scollegare l'audio e ricollegarlo le conserva.
+    int track = 0;
+    const int clip = project.unlinkAudio(id, &track);
+    ASSERT_NE(clip, 0);
+    EXPECT_FALSE(project.audioTracks().find(clip)->audioSpeed.keepPitch);
+    EXPECT_TRUE(project.audioTracks().find(clip)->audioSpeed.muteWhenReversed);
+    EXPECT_EQ(project.setAudioSpeedOptions({{ObjectRef::Kind::AudioClip, clip}}, true, std::nullopt), 1);
+    EXPECT_TRUE(project.audioTracks().find(clip)->audioSpeed.keepPitch);
+    EXPECT_TRUE(project.audioTracks().find(clip)->audioSpeed.muteWhenReversed);
+}

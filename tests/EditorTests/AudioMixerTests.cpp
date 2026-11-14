@@ -619,3 +619,35 @@ TEST_F(AudioMixerTest, ReversedAndSlowedSegmentLastsLonger)
     EXPECT_GT(energyOf(out, 3 * kRate / 2 + 2000, 2 * kRate - 2000), 1e5);
     EXPECT_EQ(energyOf(out, 2 * kRate + 200, 3 * kRate), 0.0);
 }
+
+TEST_F(AudioMixerTest, ReversedSegmentCanBeSilenced)
+{
+    MixSegment s = segment("a.wav", 0.0, 1.0, 0.0);
+    s.reverse = true;
+    s.audioSpeed.muteWhenReversed = true;
+    AudioMixer mixer({s}, {{0, 1.0f}});
+    const auto out = renderAll(mixer, 1.0, 1000);
+    EXPECT_EQ(energyOf(out, 0, kRate), 0.0);
+    // Senza l'opzione, e in avanti, l'audio resta.
+    s.audioSpeed.muteWhenReversed = false;
+    AudioMixer sounding({s}, {{0, 1.0f}});
+    EXPECT_GT(energyOf(renderAll(sounding, 1.0, 1000), 0, kRate), 1e6);
+    MixSegment forward = segment("a.wav", 0.0, 1.0, 0.0);
+    forward.audioSpeed.muteWhenReversed = true;  // vale solo per l'inverso
+    AudioMixer straight({forward}, {{0, 1.0f}});
+    EXPECT_GT(energyOf(renderAll(straight, 1.0, 1000), 0, kRate), 1e6);
+}
+
+TEST_F(AudioMixerTest, WithoutKeepPitchTheSpeedChangesThePitchLikeARecord)
+{
+    // A 2x con l'intonazione libera il campione n dell'uscita è il campione 2n del file (nessun WSOLA).
+    MixSegment s = segment("a.wav", 0.0, 2.0, 0.0);
+    s.speed = 2.0;
+    s.audioSpeed.keepPitch = false;
+    AudioMixer mixer({s}, {{0, 1.0f}});
+    EXPECT_NEAR(mixer.endTime(), 1.0, 1e-9);
+    const auto out = renderAll(mixer, 1.2, 777);
+    for (long long f = 1000; f < kRate - 1000; f += 37)
+        ASSERT_NEAR(out[f * 2], sampleAudio(2 * f), 2) << "fotogramma " << f;
+    EXPECT_EQ(energyOf(out, kRate + 100, kRate * 6 / 5), 0.0);
+}

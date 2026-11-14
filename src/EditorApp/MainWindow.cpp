@@ -530,6 +530,9 @@ MainWindow::MainWindow(QWidget* parent)
     };
     propertiesPanel_->onFit = [this](bool fill) { fitSelectedPieces(fill); };
     propertiesPanel_->onSpeedEdit = [this](std::optional<double> speed, std::optional<bool> reverse) { applySpeedEdit(speed, reverse); };
+    propertiesPanel_->onAudioSpeedEdit = [this](std::optional<bool> keepPitch, std::optional<bool> muteWhenReversed) {
+        applyAudioSpeedEdit(keepPitch, muteWhenReversed);
+    };
     propertiesPanel_->onAnimationPreset = [this](core::AnimPreset preset) {
         const AnimTarget target = animationTarget();
         if (!target.valid)

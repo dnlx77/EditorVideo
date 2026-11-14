@@ -38,6 +38,7 @@ struct Fragment
     // il pezzo dura length() = (end - start) / speed. Muti, linea del livello e chiavi restano nei tempi del file.
     double speed = 1.0;
     bool reverse = false;
+    AudioSpeedOptions audioSpeed;  // come si sente l'audio con velocità o inverso (vedi Speed.h)
 
     double length() const { return (end - start) / speed; }  // durata nel montaggio
     double fileLength() const { return end - start; }        // durata nel file
@@ -77,6 +78,8 @@ public:
     // se non ci sta, false e nessuna modifica); se si accorcia, con `push` quelli dopo scorrono indietro, altrimenti resta uno
     // spazio vuoto. false anche se il pezzo non c'è o non cambia nulla.
     bool setSpeed(int fragmentId, double speed, bool reverse, bool push = true);
+    // Come si sente l'audio con velocità o inverso (vedi AudioSpeedOptions); false se non è cambiato niente.
+    bool setAudioSpeed(int fragmentId, const AudioSpeedOptions& options);
     void removeClip(int clipId);  // tutti i pezzi di un file (quando il file esce dal progetto)
     void move(int fragmentId, int toIndex);  // cambia l'ordine (gli spazi vuoti restano dove sono)
     void clear();

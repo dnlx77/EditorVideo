@@ -413,6 +413,15 @@ bool Sequence::setDetached(int fragmentId, bool detached)
     return false;
 }
 
+bool Sequence::setAudioSpeed(int fragmentId, const AudioSpeedOptions& options)
+{
+    const int self = indexOf(fragmentId);
+    if (self < 0 || fragments_[static_cast<std::size_t>(self)].audioSpeed == options)
+        return false;
+    fragments_[static_cast<std::size_t>(self)].audioSpeed = options;
+    return true;
+}
+
 bool Sequence::setSpeed(int fragmentId, double speed, bool reverse, bool push)
 {
     const int self = indexOf(fragmentId);
@@ -496,6 +505,7 @@ int Sequence::split(double seconds)
     Fragment second{nextId_++, f.clipId, secondStart, secondEnd, clipRanges(f.muted, secondStart, secondEnd)};
     second.speed = f.speed;
     second.reverse = f.reverse;
+    second.audioSpeed = f.audioSpeed;
     second.detached = f.detached;  // l'audio scollegato resta tale anche nella seconda parte
     second.envelope = f.envelope;  // la linea è nei tempi del file: ognuno tiene la sua parte
     second.transform = f.transform;  // la trasformazione vale per tutto il pezzo: tutte e due le parti la mantengono
@@ -535,6 +545,7 @@ Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, doub
             result.back().animation = f.animation;
             result.back().speed = f.speed;
             result.back().reverse = f.reverse;
+            result.back().audioSpeed = f.audioSpeed;
         }
         if (f.end > to + kTimeEpsilon) {
             const bool firstPartKept = f.start < from - kTimeEpsilon;
@@ -544,6 +555,7 @@ Sequence::RemoveResult Sequence::removeSourceRange(int clipId, double from, doub
             result.back().animation = f.animation;
             result.back().speed = f.speed;
             result.back().reverse = f.reverse;
+            result.back().audioSpeed = f.audioSpeed;
         }
         if (result.size() > before) {
             result[before].gap = f.gap + carriedGap;

@@ -486,6 +486,15 @@ int TextTracks::splitPiece(int pieceId, double seconds)
     return nextClipId_ - 1;
 }
 
+bool TextTracks::setPieceAudioSpeed(int pieceId, const AudioSpeedOptions& options)
+{
+    LayerPiece* piece = findPieceMutable(pieceId);
+    if (piece == nullptr || piece->audioSpeed == options)
+        return false;
+    piece->audioSpeed = options;
+    return true;
+}
+
 bool TextTracks::setPieceSpeed(int pieceId, double speed, bool reverse)
 {
     LayerPiece* piece = findPieceMutable(pieceId);

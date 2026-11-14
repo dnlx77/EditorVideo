@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EditorCore/Animation.h"
+#include "EditorCore/Speed.h"
 #include "EditorCore/Transform.h"
 #include "EditorCore/TransitionList.h"
 #include "EditorCore/Transitions.h"
@@ -70,10 +71,12 @@ public:
     // La velocità degli oggetti scelti (in %: 100 = normale) e l'inverso. Dopo showTransform mostra la sezione «Velocità» in
     // cima alla pagina dei pezzi video; showAudioSpeed mostra una pagina con la sola velocità (clip audio e audio dei pezzi).
     // `speed` in secondi di file per secondo di montaggio (1 = normale).
-    void showSpeed(double speed, bool reverse);
-    void showAudioSpeed(double speed, bool reverse);
+    void showSpeed(double speed, bool reverse, const core::AudioSpeedOptions& options);
+    void showAudioSpeed(double speed, bool reverse, const core::AudioSpeedOptions& options);
     // Un controllo della velocità è cambiato: il valore nuovo (velocità: 1 = normale) e/o il verso; l'altro non cambia.
     std::function<void(std::optional<double> speed, std::optional<bool> reverse)> onSpeedEdit;
+    // «Mantieni intonazione» o «Silenzia se inverso» è cambiato (l'altro non cambia).
+    std::function<void(std::optional<bool> keepPitch, std::optional<bool> muteWhenReversed)> onAudioSpeedEdit;
     // I valori com'erano all'ultimo showTransform più le modifiche fatte dopo nei controlli.
     core::Transform transform() const;
 
@@ -119,9 +122,11 @@ private:
         QWidget* box = nullptr;
         QDoubleSpinBox* spin = nullptr;
         QCheckBox* reverse = nullptr;
+        QCheckBox* keepPitch = nullptr;
+        QCheckBox* muteReversed = nullptr;
     };
     SpeedControls buildSpeedBox();
-    void setSpeedControls(SpeedControls& controls, double speed, bool reverse);
+    void setSpeedControls(SpeedControls& controls, double speed, bool reverse, const core::AudioSpeedOptions& options);
     void transitionEdited(const std::string& field);
     QToolButton* resetButton(const QString& tip, const std::string& field, core::AnimGroup group, std::function<void(core::Transform&)> reset);
     void animate(core::AnimGroup group, AnimAction action);
