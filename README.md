@@ -208,6 +208,16 @@ La finestra è divisa così:
 - Nel monitor del Montaggio si vede al suo posto; anche l'audio dei due pezzi si dissolve in modo incrociato (anche nel mix esportato).
 - All'esportazione si **ricodificano solo i tratti coperti da una transizione**, con i due pezzi fusi; il resto resta copiato.
 
+### Velocità dei pezzi
+
+- **Rallentatore, accelerato e inverso** valgono per i pezzi video di V1 e dei livelli e per le clip audio libere (non per scritte e immagini). Si regolano nella sezione **Velocità** del pannello Proprietà (da **10%** a **1000%**, cioè da 0,1x a 10x, con i valori pronti 0,25x, 0,5x, 2x, 4x, 8x e la casella **Inverti**) o dal menu **Montaggio > Velocità del pezzo**. Il comando vale per tutti i pezzi scelti e per quelli del loro gruppo: il video e il suo audio cambiano insieme.
+- Sulla linea del tempo il pezzo diventa più corto (accelerato) o più lungo (rallentato) e porta l'etichetta della velocità, per esempio `2x` o `◄ 0.5x` se è inverso. Con **Montaggio > Spingi i pezzi successivi** acceso un pezzo che si allunga spinge quelli dopo, e accorciandolo resta uno spazio vuoto; spento, si ferma contro il vicino.
+- **Video**: nel rallentatore si ripete il fotogramma più vicino (nessuna miscela fra fotogrammi, quindi sotto 0,5x può andare a scatti); in accelerato si saltano fotogrammi. Il frame rate del file esportato resta quello del progetto.
+- **Audio**: segue il video. La voce mantiene la stessa intonazione (più lenta o più veloce, ma non più bassa o più acuta); con **Inverti** si sente al contrario. Non c'è un'opzione per cambiare l'intonazione né per silenziare l'audio inverso (per quello c'è la linea del livello).
+- **Bordi, divisione, transizioni**: i bordi si trascinano come per gli altri pezzi (lo spostamento nel file è quello nel montaggio per la velocità); **S** divide il pezzo e le due parti tengono velocità e inverso; le transizioni funzionano anche fra pezzi a velocità diverse, con i margini contati nel montaggio. Linea del livello, dissolvenze, fotogrammi chiave e forma d'onda seguono la velocità, e con l'inverso si girano.
+- **Esportazione**: un pezzo con velocità o inverso si **ricodifica sempre** (e l'audio passa dal mix AAC); la finestra Esporta li conta come «con velocità». L'inverso del video legge il pezzo a blocchi (circa 200 MB alla volta, con il decoder software) ed è più lento di un pezzo normale.
+- Una velocità si cambia da 0,1x a 10x e resta costante per tutto il pezzo (non ci sono rampe di velocità né fotogrammi fermi).
+
 ### Annulla e Ripeti
 
 - **Modifica > Annulla** (Ctrl+Z) torna indietro di una modifica; la voce del menu dice quale (es. "Annulla Dividi pezzo"). **Ripeti** (Ctrl+Y o Ctrl+Maiusc+Z) la rifà. Valgono per tutto ciò che cambia il progetto: aggiungere o togliere file, aggiungere, togliere (anche con X), spostare, dividere ed eliminare pezzi, svuotare il montaggio, togliere e rimettere l'audio, sostituirlo, spostarlo e tornare all'originale. IN e OUT della Sorgente no: si rimettono con un tasto.
