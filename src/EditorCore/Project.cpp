@@ -922,10 +922,15 @@ TransitionLimits Project::transitionLimits(int beforeFragment) const
     const std::size_t index = static_cast<std::size_t>(sequence_.indexOf(beforeFragment));
     const Fragment& a = fragments[index];
     const Fragment& b = fragments[index + 1];
-    const double tail = std::max(0.0, find(a.clipId)->duration - a.end);
+    // Le maniglie sono materiale del file oltre i bordi del pezzo, contato in secondi del montaggio (diviso la velocità): dopo
+    // il pezzo che finisce, prima di quello che comincia; con l'inverso sono dall'altra parte del tratto nel file.
+    const double durationA = find(a.clipId)->duration;
+    const double durationB = find(b.clipId)->duration > 0.0 ? find(b.clipId)->duration : b.end;
+    const double tailFile = a.reverse ? a.start : std::max(0.0, durationA - a.end);
+    const double headFile = b.reverse ? std::max(0.0, durationB - b.end) : b.start;
     TransitionLimits limits;
-    limits.before = std::min(b.start, a.length());
-    limits.after = std::min(tail, b.length());
+    limits.before = std::min(headFile / b.speed, a.length());
+    limits.after = std::min(tailFile / a.speed, b.length());
     // Le transizioni si contano da sinistra: quella sulla giunzione prima di `a` ha già preso la sua parte di `a`.
     if (index > 0) {
         if (const TransitionClip* previous = transitions_.atJunction(fragments[index - 1].id)) {

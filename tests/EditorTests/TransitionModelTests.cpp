@@ -226,3 +226,30 @@ TEST(TransitionModel, UnanalyzedFilesDoNotLoseTheirTransitionsOnPrune)
     project.setAnalysis(clip, {0.0}, 30.0);
     EXPECT_TRUE(project.transitionPlacement(id).has_value());
 }
+
+TEST(TransitionModel, MarginsAreCountedInMontageSecondsWithSpeed)
+{
+    // Il file dura 30 s. Pezzo A [26, 28) a 2x (1 s nel montaggio), pezzo B [1, 5) a 2x (2 s): dopo A restano 2 s di file =
+    // 1 s del montaggio; prima di B c'è 1 s di file = 0,5 s del montaggio.
+    Project project;
+    const int clip = project.add("C:/prova/video.mp4");
+    project.setAnalysis(clip, {0.0}, 30.0);
+    const int a = project.sequence().insert(-1, clip, 26.0, 28.0, 2.0);
+    project.sequence().insert(-1, clip, 1.0, 5.0, 2.0);
+    const TransitionLimits limits = project.transitionLimits(a);
+    EXPECT_NEAR(limits.before, 0.5, 1e-9);
+    EXPECT_NEAR(limits.after, 1.0, 1e-9);
+}
+
+TEST(TransitionModel, ReversedPiecesHaveTheirMarginsOnTheOtherSide)
+{
+    // Con l'inverso il materiale dopo la fine del pezzo (nel montaggio) è quello prima del suo inizio nel file, e viceversa.
+    Project project;
+    const int clip = project.add("C:/prova/video.mp4");
+    project.setAnalysis(clip, {0.0}, 30.0);
+    const int a = project.sequence().insert(-1, clip, 26.0, 28.0, 2.0, true);  // 1 s nel montaggio; dopo ci sono 26 s di file
+    project.sequence().insert(-1, clip, 1.0, 5.0, 2.0, true);                  // 2 s; prima ci sono 25 s di file
+    const TransitionLimits limits = project.transitionLimits(a);
+    EXPECT_NEAR(limits.before, 1.0, 1e-9);  // al massimo quanto dura A
+    EXPECT_NEAR(limits.after, 2.0, 1e-9);   // al massimo quanto dura B
+}

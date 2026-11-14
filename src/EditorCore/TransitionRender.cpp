@@ -164,8 +164,8 @@ std::optional<TransitionJob> makeTransitionJob(const Project& project, const Tra
     job.pathB = clipB->path;
     job.durationA = clipA->duration;
     job.durationB = clipB->duration;
-    job.fragmentStartA = a->start;
-    job.fragmentStartB = b->start;
+    job.mapA = a->map();
+    job.mapB = b->map();
     job.transformA = a->transform;
     job.transformB = b->transform;
     job.animationA = a->animation;
@@ -197,8 +197,8 @@ bool TransitionRenderer::renderSides(const TransitionJob& job, double sequenceTi
 
     const double t = std::clamp(sequenceTime, job.start, job.end);
     // Tempi nei file: il pezzo che finisce continua oltre la sua fine, quello che inizia parte prima del suo inizio.
-    double timeA = job.fragmentStartA + (t - job.sequenceStartA);
-    double timeB = job.fragmentStartB + (t - job.sequenceStartB);
+    double timeA = job.mapA.fileAt(t - job.sequenceStartA);
+    double timeB = job.mapB.fileAt(t - job.sequenceStartB);
     if (job.durationA > 0)
         timeA = std::min(timeA, job.durationA);
     timeA = std::max(timeA, 0.0);

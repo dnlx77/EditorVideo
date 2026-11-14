@@ -63,7 +63,7 @@ inline QPen matePen()
 // Forma d'onda di [sourceFrom, sourceTo) di un file, disegnata in `r` (una linea verticale per pixel), solo fra
 // visibleLeft e visibleRight: con lo zoom `r` può essere molto più largo della parte che si vede.
 inline void drawWave(QPainter& p, const QRectF& r, const core::Waveform& wave, double sourceFrom, double sourceTo,
-              const QColor& color, double visibleLeft, double visibleRight)
+              const QColor& color, double visibleLeft, double visibleRight, bool reverse = false)
 {
     if (r.width() < 1 || sourceTo <= sourceFrom)
         return;
@@ -74,7 +74,8 @@ inline void drawWave(QPainter& p, const QRectF& r, const core::Waveform& wave, d
     const double first = std::ceil(std::max(r.left(), visibleLeft - 1));
     const double last = std::min(r.right(), visibleRight + 1);
     for (double x = first; x < last; x += 1) {
-        const double t = sourceFrom + (x - r.left()) * perPixel;
+        // Con l'inverso il file si vede da destra a sinistra.
+        const double t = reverse ? sourceTo - (x - r.left() + 1) * perPixel : sourceFrom + (x - r.left()) * perPixel;
         // Radice quadrata: i suoni deboli si vedono comunque.
         const double h = std::max(0.5, std::sqrt(wave.peak(t, t + perPixel)) * half);
         p.drawLine(QPointF(x, middle - h), QPointF(x, middle + h));

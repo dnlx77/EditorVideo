@@ -48,7 +48,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
             keyDragIndex_ = key;
             keyDragging_ = false;
             keyDragValue_ = time;
-            keyDragGrab_ = timeForX(pos.x()) - (g.position + (time - g.source));
+            keyDragGrab_ = timeForX(pos.x()) - g.timeOf(time);
             selectedKey_ = time;
             invalidate();
             return;
@@ -247,7 +247,7 @@ void SequenceTimeline::mousePressEvent(QMouseEvent* event)
             envMoved_ = false;
             if (envPoint < 0) {
                 // Un punto nuovo, sulla linea dove si è cliccato (tempo del file, dentro il pezzo o la clip).
-                const double fileTime = envTarget.source + std::clamp(t - envTarget.position, 0.0, envTarget.length);
+                const double fileTime = envTarget.fileAt(envTarget.position + std::clamp(t - envTarget.position, 0.0, envTarget.length));
                 const core::LevelPoint added{fileTime, core::envelopeDbAt(envPoints_, fileTime)};
                 const auto at = std::upper_bound(envPoints_.begin(), envPoints_.end(), added.time,
                                                  [](double time, const core::LevelPoint& q) { return time < q.time; });
@@ -414,7 +414,7 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
         // Si aggancia al cursore se è vicino.
         if (std::abs(xForTime(sequenceTime) - xForTime(playhead_)) < 8.0)
             sequenceTime = playhead_;
-        keyDragValue_ = std::clamp(g.source + (sequenceTime - g.position), g.source, g.source + g.length);
+        keyDragValue_ = std::clamp(g.fileAt(sequenceTime), std::min(g.map.start, g.map.end), std::max(g.map.start, g.map.end));
         keyDragging_ = true;
         invalidate();
         return;
@@ -478,7 +478,7 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
                                 ? envPoints_[static_cast<std::size_t>(envPoint_) + 1].time - 1e-3
                                 : std::numeric_limits<double>::max();
         if (envMoved_ || std::abs(x - pressX_) >= 2 || std::abs(pos.y() - pressY_) >= 2) {
-            const double fileTime = envTarget_.source + std::clamp(timeForX(x) - envTarget_.position, 0.0, envTarget_.length);
+            const double fileTime = envTarget_.fileAt(envTarget_.position + std::clamp(timeForX(x) - envTarget_.position, 0.0, envTarget_.length));
             point.time = std::clamp(fileTime, previous, std::max(previous, next));
             point.db = envelopeDbForY(audioLane(envTarget_.lane), pos.y());
             envMoved_ = true;
@@ -487,7 +487,7 @@ void SequenceTimeline::mouseMoveEvent(QMouseEvent* event)
                            QStringLiteral("%1: %2 dB a %3").arg(lanes_[static_cast<std::size_t>(envTarget_.lane)].name,
                                                                   QString::number(point.db, 'f', 1),
                                                                   QString::fromStdString(core::formatDuration(
-                                                                      envTarget_.position + point.time - envTarget_.source))),
+                                                                      envTarget_.timeOf(point.time)))),
                            this);
         invalidate();
         return;
@@ -959,7 +959,7 @@ void SequenceTimeline::mouseDoubleClickEvent(QMouseEvent* event)
     if (const int key = keyAt(pos); key >= 0) {
         // Doppio clic su un rombo: il cursore va a quell'istante.
         const KeyGeometry g = keyGeometry();
-        playhead_ = std::max(0.0, g.position + (keyRow_.keys[static_cast<std::size_t>(key)].time - g.source));
+        playhead_ = std::max(0.0, g.timeOf(keyRow_.keys[static_cast<std::size_t>(key)].time));
         invalidate();
         if (onSeek)
             onSeek(playhead_);

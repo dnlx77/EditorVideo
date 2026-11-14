@@ -26,7 +26,8 @@ public:
 
     // Le chiavi del pezzo (tempi nel file) che va da `from` a `to`; `cursor` = il cursore nel file (negativo: fuori dal pezzo).
     // Senza chiavi il widget si nasconde.
-    void setData(double from, double to, double cursor, std::vector<Mark> marks);
+    // `reversed`: il pezzo è inverso, quindi la fine del file sta a sinistra.
+    void setData(double from, double to, double cursor, std::vector<Mark> marks, bool reversed = false);
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
@@ -54,6 +55,7 @@ private:
     double from_ = 0.0;
     double to_ = 0.0;
     double cursor_ = -1.0;
+    bool reversed_ = false;
     std::vector<Mark> marks_;
     int dragIndex_ = -1;
     bool dragMoved_ = false;
