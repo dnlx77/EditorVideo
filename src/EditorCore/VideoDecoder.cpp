@@ -274,8 +274,7 @@ struct VideoDecoder::Impl : OpenedStream
                 continue;
             }
             const AVDiscard discard = cache[cursor].time < skipBefore ? AVDISCARD_NONREF : AVDISCARD_DEFAULT;
-            if (ctx->skip_frame != discard)
-                ctx->skip_frame = discard;
+            ctx->skip_frame = discard;
             const int sent = avcodec_send_packet(ctx.get(), cache[cursor].packet.get());
             ++cursor;
             if (sent < 0 && sent != AVERROR(EAGAIN))

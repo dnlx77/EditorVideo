@@ -1392,7 +1392,7 @@ void PlayerWidget::stepToKeyframe(int direction)
     if (playing_)
         pause();
     const double at = markTime();
-    double target = at;
+    double target = 0.0;
     if (direction > 0) {
         const auto next = std::upper_bound(keyframes.begin(), keyframes.end(), at + 0.001);
         if (next == keyframes.end())

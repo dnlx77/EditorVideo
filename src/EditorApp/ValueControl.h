@@ -32,7 +32,6 @@ public:
         valueChanged();
         update();
     }
-    void setDefault(double v) { default_ = v; }
     bool dragging() const { return dragging_; }
 
     std::function<void(double)> onChanging;  // mentre si trascina

@@ -751,8 +751,6 @@ private:
     // I pezzi dei livelli sopra V1 che si vedono al tempo `sequenceTime`: li passa al blender, che li compone sopra il
     // fotogramma della prossima chiamata. true se ce n'è almeno uno (e quindi il fotogramma deve passare dal blender).
     bool prepareLayers(double sequenceTime);
-    // Il fotogramma con le scritte sopra (alla misura del progetto), da dare all'encoder al posto di `frame`.
-    const AVFrame* withText(const AVFrame* frame, const std::vector<BlendedText>& texts);
     // Il compositore dei fotogrammi (GPU o CPU, vedi ReencodeOptions::compositor), creato al primo uso.
     IFrameCompositor& compositor();
 
