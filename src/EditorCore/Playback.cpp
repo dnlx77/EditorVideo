@@ -1,5 +1,7 @@
 #include "EditorCore/Playback.h"
 
+#include "EditorCore/TimeStretch.h"
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -44,6 +46,42 @@ bool writeSilence(std::size_t frames, int channels, int sampleRate,
         left -= n;
     }
     return true;
+}
+
+AudioRatePipe::AudioRatePipe(int channels, int sampleRate, double speed)
+{
+    if (speed != 1.0)
+        stretch_ = std::make_unique<TimeStretch>(channels, sampleRate, speed);
+}
+
+AudioRatePipe::~AudioRatePipe() = default;
+
+bool AudioRatePipe::send(std::int16_t* samples, std::size_t count, float gain, const Write& write) const
+{
+    if (gain != 1.0f) {
+        for (std::size_t i = 0; i < count; ++i)
+            samples[i] = static_cast<std::int16_t>(std::clamp(std::lround(samples[i] * gain), -32768L, 32767L));
+    }
+    return count == 0 || write(samples, count);
+}
+
+bool AudioRatePipe::process(std::int16_t* samples, std::size_t count, float gain, const Write& write)
+{
+    if (!stretch_)
+        return send(samples, count, gain, write);
+    out_.clear();
+    stretch_->push(samples, count);
+    stretch_->pull(out_);
+    return send(out_.data(), out_.size(), gain, write);
+}
+
+bool AudioRatePipe::finish(float gain, const Write& write)
+{
+    if (!stretch_)
+        return true;
+    out_.clear();
+    stretch_->flush(out_);
+    return send(out_.data(), out_.size(), gain, write);
 }
 
 }  // namespace editor::core

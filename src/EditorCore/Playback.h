@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <vector>
 
 namespace editor::core {
 
@@ -41,5 +43,30 @@ bool audibleAtSpeed(double speed);
 // false.
 bool writeSilence(std::size_t frames, int channels, int sampleRate,
                   const std::function<bool(const std::int16_t* samples, std::size_t count)>& write);
+
+// L'ultimo tratto prima della scheda audio, per le anteprime: cambia la velocità senza cambiare l'intonazione (TimeStretch,
+// solo se la velocità non è 1), applica il volume e consegna a `write` (campioni interlacciati e il loro numero; false = fermarsi).
+// Un thread solo. A velocità 1 i campioni passano così come sono (il volume si applica sul posto: `samples` si modifica).
+class AudioRatePipe
+{
+public:
+    using Write = std::function<bool(const std::int16_t* samples, std::size_t count)>;
+
+    AudioRatePipe(int channels, int sampleRate, double speed);
+    ~AudioRatePipe();
+    AudioRatePipe(const AudioRatePipe&) = delete;
+    AudioRatePipe& operator=(const AudioRatePipe&) = delete;
+
+    // Il blocco seguente di campioni (non vuoto o vuoto, a velocità 1 anche uguale a prima). false se `write` ha detto di fermarsi.
+    bool process(std::int16_t* samples, std::size_t count, float gain, const Write& write);
+    // Fine dell'ingresso: consegna quello che il TimeStretch tiene ancora (niente a velocità 1). false se `write` ha detto di fermarsi.
+    bool finish(float gain, const Write& write);
+
+private:
+    bool send(std::int16_t* samples, std::size_t count, float gain, const Write& write) const;
+
+    std::unique_ptr<class TimeStretch> stretch_;
+    std::vector<std::int16_t> out_;
+};
 
 }  // namespace editor::core
