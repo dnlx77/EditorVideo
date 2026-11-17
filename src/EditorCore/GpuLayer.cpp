@@ -485,11 +485,8 @@ bool GpuFrameConverter::Impl::drawLayerView(ID3D11ShaderResourceView* view, int 
 
 bool GpuFrameConverter::supportsTransition(const std::string& transitionId)
 {
-    return transitionId == "dissolvenza" || transitionId == "dissolvenza-nero" || transitionId == "dissolvenza-bianco"
-        || transitionId == "scorrimento" || transitionId == "tendina" || transitionId == "copertura" || transitionId == "scopertura"
-        || transitionId == "iris" || transitionId == "orologio" || transitionId == "zoom" || transitionId == "persiana"
-        || transitionId == "mosaico" || transitionId == "dissolvenza-granuli" || transitionId == "battenti"
-        || transitionId == "tendina-diagonale" || transitionId == "cuore" || transitionId == "scacchiera" || transitionId == "spirale";
+    const Transition* transition = findTransition(transitionId);
+    return transition != nullptr && transition->gpu(2, 2, 0.0, TransitionParams{}).supported;
 }
 
 bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string& transitionId, double progress, const TransitionParams& params)
@@ -498,91 +495,17 @@ bool GpuFrameConverter::blendTransition(GpuFrameConverter& to, const std::string
     Impl& other = *to.impl_;
     if (other.width != d.width || other.height != d.height || other.device != d.device || !d.ensureLayerResources())
         return false;
-    const double p = std::clamp(progress, 0.0, 1.0);
-    float weightFrom = 0.0f;
-    float weightTo = 0.0f;
-    float shift = 0.0f;
-    float effect = 0.0f;
-    float extra = 0.0f;  // peso del bianco o sfumatura del bordo
-    if (transitionId == "dissolvenza") {
-        weightFrom = static_cast<float>(1.0 - p);
-        weightTo = static_cast<float>(p);
-    } else if (transitionId == "dissolvenza-nero") {
-        effect = 1.0f;
-        weightFrom = p < 0.5 ? static_cast<float>(1.0 - 2.0 * p) : 0.0f;
-        weightTo = p < 0.5 ? 0.0f : static_cast<float>(2.0 * p - 1.0);
-    } else if (transitionId == "dissolvenza-bianco") {
-        effect = 1.0f;
-        weightFrom = p < 0.5 ? static_cast<float>(1.0 - 2.0 * p) : 0.0f;
-        weightTo = p < 0.5 ? 0.0f : static_cast<float>(2.0 * p - 1.0);
-        extra = p < 0.5 ? static_cast<float>(2.0 * p) : static_cast<float>(2.0 - 2.0 * p);
-    } else if (transitionId == "zoom") {
-        effect = 8.0f;
-        weightTo = static_cast<float>(std::lround(p * 256.0) / 256.0);
-        weightFrom = 1.0f - weightTo;
-        shift = static_cast<float>(1.0 + p);
-    } else if (transitionId == "cuore") {
-        effect = 14.0f;
-        shift = static_cast<float>(p * heartMaxScale(d.width, d.height));
-    } else if (transitionId == "scacchiera") {
-        effect = 15.0f;
-        const int cell = checkerCellSize(d.width, d.height);
-        weightTo = static_cast<float>(cell);
-        shift = static_cast<float>(std::lround(std::clamp(2.0 * p, 0.0, 1.0) * cell));
-        extra = static_cast<float>(std::lround(std::clamp(2.0 * p - 1.0, 0.0, 1.0) * cell));
-    } else if (transitionId == "spirale") {
-        effect = 16.0f;
-        weightTo = static_cast<float>(kSpiralTurns);
-        shift = static_cast<float>(p * (1.0 + kSpiralFeather) - kSpiralFeather / 2.0);
-        extra = static_cast<float>(kSpiralFeather);
-    } else if (transitionId == "dissolvenza-granuli") {
-        effect = 11.0f;
-        weightFrom = static_cast<float>(p);
-    } else if (transitionId == "mosaico") {
-        effect = 10.0f;
-        weightFrom = p < 0.5 ? 1.0f : 0.0f;
-        shift = static_cast<float>(mosaicBlockSize(p, d.width, d.height));
-    } else if (transitionId == "scorrimento" || transitionId == "copertura" || transitionId == "scopertura" || transitionId == "tendina"
-               || transitionId == "iris" || transitionId == "orologio" || transitionId == "persiana" || transitionId == "battenti"
-               || transitionId == "tendina-diagonale") {
-        effect = transitionId == "scorrimento" ? 2.0f : transitionId == "tendina" ? 3.0f : transitionId == "copertura" ? 4.0f
-               : transitionId == "scopertura" ? 5.0f : transitionId == "iris" ? 6.0f : transitionId == "orologio" ? 7.0f
-               : transitionId == "persiana" ? 9.0f : transitionId == "battenti" ? 12.0f : 13.0f;
-        const bool horizontal = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Right;
-        const int size = horizontal ? d.width : d.height;
-        if (effect == 6.0f) {
-            const double feather = irisFeatherPixels(d.width, d.height);
-            shift = static_cast<float>(p * (irisMaxRadius(d.width, d.height) + feather) - feather / 2.0);
-            extra = static_cast<float>(feather);
-        } else if (effect == 12.0f) {
-            const double feather = wipeFeatherPixels(size);
-            shift = static_cast<float>(p * (size / 2.0 + feather) - feather / 2.0);
-            extra = static_cast<float>(feather);
-        } else if (effect == 13.0f) {
-            shift = static_cast<float>(p * (1.0 + kDiagonalFeather) - kDiagonalFeather / 2.0);
-            extra = static_cast<float>(kDiagonalFeather);
-        } else if (effect == 9.0f) {
-            const int band = blindsBandWidth(size);
-            shift = static_cast<float>(std::lround(p * band));
-            extra = static_cast<float>(band);
-        } else if (effect == 7.0f) {
-            shift = static_cast<float>(p * (6.283185307179586 + kClockFeather) - kClockFeather / 2.0);
-            extra = static_cast<float>(kClockFeather);
-        } else if (effect == 3.0f) {
-            const double feather = wipeFeatherPixels(size);
-            shift = static_cast<float>(p * (size + feather) - feather / 2.0);
-            extra = static_cast<float>(feather);
-        } else {
-            shift = static_cast<float>(std::clamp(static_cast<int>(std::lround(p * size)), 0, size));
-        }
-    } else {
+    const Transition* transition = findTransition(transitionId);
+    if (transition == nullptr)
         return false;
-    }
+    const GpuTransition gpu = transition->gpu(d.width, d.height, progress, params);
+    if (!gpu.supported)
+        return false;
     const float values[20] = {
         0, 0, 0, 0, 0, 0, 0, 0,
-        weightFrom, weightTo, shift, static_cast<float>(static_cast<int>(params.direction)),
+        gpu.weightFrom, gpu.weightTo, gpu.shift, static_cast<float>(static_cast<int>(params.direction)),
         0, 0, 0, 0,
-        effect, extra, static_cast<float>(d.width), static_cast<float>(d.height),
+        static_cast<float>(static_cast<int>(gpu.effect)), gpu.extra, static_cast<float>(d.width), static_cast<float>(d.height),
     };
     d.context->UpdateSubresource(d.layerParams.Get(), 0, nullptr, values, 0, 0);
     ID3D11ShaderResourceView* views[4] = {nullptr, nullptr, d.rgbView.Get(), other.rgbView.Get()};

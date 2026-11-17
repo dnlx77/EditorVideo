@@ -38,6 +38,42 @@ struct RgbaTarget
     int stride = 0;
 };
 
+// Gli effetti dello shader delle transizioni (psTransition in GpuLayer.cpp): i numeri sono quelli che lo shader si aspetta, non
+// vanno cambiati senza cambiare anche lui.
+enum class GpuEffect : int
+{
+    Mix = 0,  // dissolvenza incrociata
+    Dip = 1,  // dissolvenza al nero o al bianco
+    Slide = 2,
+    Wipe = 3,
+    Cover = 4,
+    Uncover = 5,
+    Iris = 6,
+    Clock = 7,
+    Zoom = 8,
+    Blinds = 9,
+    Mosaic = 10,
+    Grain = 11,
+    Doors = 12,
+    DiagonalWipe = 13,
+    Heart = 14,
+    Checkerboard = 15,
+    Spiral = 16,
+};
+
+// Come disegnare una transizione sulla scheda video a un certo avanzamento: l'effetto e quattro numeri, il cui significato lo
+// decide lo shader per ogni effetto (pesi dei due fotogrammi, posizione del bordo, sfumatura...). `supported` false = niente
+// shader per questa transizione: si usa la CPU.
+struct GpuTransition
+{
+    bool supported = false;
+    GpuEffect effect = GpuEffect::Mix;
+    float weightFrom = 0.0f;
+    float weightTo = 0.0f;
+    float shift = 0.0f;
+    float extra = 0.0f;
+};
+
 // Una transizione: passa da un fotogramma "da" a uno "a". Aggiungerne una nuova = una classe che deriva da questa e una
 // riga in transitionRegistry(): l'elenco, l'anteprima, la timeline, il salvataggio e l'esportazione la usano tramite
 // l'interfaccia. Lo stesso blend serve anteprima ed esportazione, così coincidono.
@@ -54,6 +90,16 @@ public:
     // hanno la stessa misura; `out` può essere uno dei due. Il canale alfa è quello di `from`.
     virtual void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams& params,
                        RgbaTarget out) const = 0;
+    // I parametri per lo shader a quell'avanzamento (fotogrammi di `width` x `height`); di serie niente GPU. Una transizione nuova
+    // che li dà si disegna sulla scheda video senza toccare altro: l'elenco della GPU legge solo questo.
+    virtual GpuTransition gpu(int width, int height, double progress, const TransitionParams& params) const
+    {
+        (void)width;
+        (void)height;
+        (void)progress;
+        (void)params;
+        return {};
+    }
 };
 
 // Larghezza in pixel della sfumatura del bordo della tendina, per un quadro di `size` pixel nella direzione del movimento.
