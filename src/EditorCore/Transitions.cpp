@@ -1,5 +1,7 @@
 #include "EditorCore/Transitions.h"
 
+#include "EditorCore/ParallelFor.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -108,20 +110,30 @@ std::uint8_t* rowOf(const RgbaTarget& t, int y)
     return t.data + static_cast<std::ptrdiff_t>(y) * t.stride;
 }
 
+// Esegue fn(y0, y1) su fasce di 16 righe, su più thread (ogni fascia scrive righe sue: `out` può essere uno degli ingressi).
+template <typename Fn>
+void forRowBands(int height, Fn fn)
+{
+    constexpr int kBand = 16;
+    parallelFor((height + kBand - 1) / kBand, [&](int band) { fn(band * kBand, std::min(height, band * kBand + kBand)); });
+}
+
 // Combina due fotogrammi pixel per pixel: `weightTo` (0..256) dice quanto pesa `to`, `weightFrom` quanto pesa `from`
 // (0..256, di solito 256 - weightTo; nelle dissolvenze al nero e al bianco no); `weightWhite` (0..256) quanto pesa il bianco.
 void mixFrames(const RgbaView& from, const RgbaView& to, int weightFrom, int weightTo, RgbaTarget out, int weightWhite = 0)
 {
-    for (int y = 0; y < from.height; ++y) {
-        const std::uint8_t* a = rowOf(from, y);
-        const std::uint8_t* b = rowOf(to, y);
-        std::uint8_t* o = rowOf(out, y);
-        for (int x = 0; x < from.width; ++x, a += 4, b += 4, o += 4) {
-            for (int c = 0; c < 3; ++c)
-                o[c] = static_cast<std::uint8_t>(std::min(255, (a[c] * weightFrom + b[c] * weightTo + 255 * weightWhite + 128) >> 8));
-            o[3] = a[3];
+    forRowBands(from.height, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const std::uint8_t* a = rowOf(from, y);
+            const std::uint8_t* b = rowOf(to, y);
+            std::uint8_t* o = rowOf(out, y);
+            for (int x = 0; x < from.width; ++x, a += 4, b += 4, o += 4) {
+                for (int c = 0; c < 3; ++c)
+                    o[c] = static_cast<std::uint8_t>(std::min(255, (a[c] * weightFrom + b[c] * weightTo + 255 * weightWhite + 128) >> 8));
+                o[3] = a[3];
+            }
         }
-    }
+    });
 }
 
 class Crossfade final : public Transition
@@ -352,17 +364,19 @@ private:
 template <typename Fn>
 void mixByFunction(const RgbaView& from, const RgbaView& to, RgbaTarget out, Fn weightAt)
 {
-    for (int y = 0; y < from.height; ++y) {
-        const std::uint8_t* a = rowOf(from, y);
-        const std::uint8_t* b = rowOf(to, y);
-        std::uint8_t* o = rowOf(out, y);
-        for (int x = 0; x < from.width; ++x, a += 4, b += 4, o += 4) {
-            const int wt = static_cast<int>(std::lround(weightAt(x, y) * 256.0));
-            for (int k = 0; k < 3; ++k)
-                o[k] = static_cast<std::uint8_t>(std::min(255, (a[k] * (256 - wt) + b[k] * wt + 128) >> 8));
-            o[3] = a[3];
+    forRowBands(from.height, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const std::uint8_t* a = rowOf(from, y);
+            const std::uint8_t* b = rowOf(to, y);
+            std::uint8_t* o = rowOf(out, y);
+            for (int x = 0; x < from.width; ++x, a += 4, b += 4, o += 4) {
+                const int wt = static_cast<int>(std::lround(weightAt(x, y) * 256.0));
+                for (int k = 0; k < 3; ++k)
+                    o[k] = static_cast<std::uint8_t>(std::min(255, (a[k] * (256 - wt) + b[k] * wt + 128) >> 8));
+                o[3] = a[3];
+            }
         }
-    }
+    });
 }
 
 double irisWeight(int x, int y, int w, int h, double edge, double feather)
@@ -447,32 +461,34 @@ public:
         const double scale = 1.0 + p;
         const int wt = static_cast<int>(std::lround(p * 256.0));
         std::vector<std::uint8_t> copy(static_cast<std::size_t>(w) * h * 4);
-        for (int y = 0; y < h; ++y) {
-            const double sy = (y + 0.5 - h / 2.0) / scale + h / 2.0 - 0.5;
-            const int y0 = static_cast<int>(std::floor(sy));
-            const int wy = static_cast<int>(std::lround((sy - y0) * 256.0));
-            const int ya = std::clamp(y0, 0, h - 1);
-            const int yb = std::clamp(y0 + 1, 0, h - 1);
-            for (int x = 0; x < w; ++x) {
-                const double sx = (x + 0.5 - w / 2.0) / scale + w / 2.0 - 0.5;
-                const int x0 = static_cast<int>(std::floor(sx));
-                const int wx = static_cast<int>(std::lround((sx - x0) * 256.0));
-                const int xa = std::clamp(x0, 0, w - 1);
-                const int xb = std::clamp(x0 + 1, 0, w - 1);
-                const std::uint8_t* p00 = rowOf(from, ya) + static_cast<std::ptrdiff_t>(xa) * 4;
-                const std::uint8_t* p10 = rowOf(from, ya) + static_cast<std::ptrdiff_t>(xb) * 4;
-                const std::uint8_t* p01 = rowOf(from, yb) + static_cast<std::ptrdiff_t>(xa) * 4;
-                const std::uint8_t* p11 = rowOf(from, yb) + static_cast<std::ptrdiff_t>(xb) * 4;
-                const std::uint8_t* b = rowOf(to, y) + static_cast<std::ptrdiff_t>(x) * 4;
-                std::uint8_t* o = copy.data() + (static_cast<std::size_t>(y) * w + x) * 4;
-                for (int k = 0; k < 3; ++k) {
-                    const int zoomed = (p00[k] * (256 - wx) * (256 - wy) + p10[k] * wx * (256 - wy) + p01[k] * (256 - wx) * wy
-                                        + p11[k] * wx * wy + 32768) >> 16;
-                    o[k] = static_cast<std::uint8_t>(std::min(255, (zoomed * (256 - wt) + b[k] * wt + 128) >> 8));
+        forRowBands(h, [&](int r0, int r1) {
+            for (int y = r0; y < r1; ++y) {
+                const double sy = (y + 0.5 - h / 2.0) / scale + h / 2.0 - 0.5;
+                const int y0 = static_cast<int>(std::floor(sy));
+                const int wy = static_cast<int>(std::lround((sy - y0) * 256.0));
+                const int ya = std::clamp(y0, 0, h - 1);
+                const int yb = std::clamp(y0 + 1, 0, h - 1);
+                for (int x = 0; x < w; ++x) {
+                    const double sx = (x + 0.5 - w / 2.0) / scale + w / 2.0 - 0.5;
+                    const int x0 = static_cast<int>(std::floor(sx));
+                    const int wx = static_cast<int>(std::lround((sx - x0) * 256.0));
+                    const int xa = std::clamp(x0, 0, w - 1);
+                    const int xb = std::clamp(x0 + 1, 0, w - 1);
+                    const std::uint8_t* p00 = rowOf(from, ya) + static_cast<std::ptrdiff_t>(xa) * 4;
+                    const std::uint8_t* p10 = rowOf(from, ya) + static_cast<std::ptrdiff_t>(xb) * 4;
+                    const std::uint8_t* p01 = rowOf(from, yb) + static_cast<std::ptrdiff_t>(xa) * 4;
+                    const std::uint8_t* p11 = rowOf(from, yb) + static_cast<std::ptrdiff_t>(xb) * 4;
+                    const std::uint8_t* b = rowOf(to, y) + static_cast<std::ptrdiff_t>(x) * 4;
+                    std::uint8_t* o = copy.data() + (static_cast<std::size_t>(y) * w + x) * 4;
+                    for (int k = 0; k < 3; ++k) {
+                        const int zoomed = (p00[k] * (256 - wx) * (256 - wy) + p10[k] * wx * (256 - wy) + p01[k] * (256 - wx) * wy
+                                            + p11[k] * wx * wy + 32768) >> 16;
+                        o[k] = static_cast<std::uint8_t>(std::min(255, (zoomed * (256 - wt) + b[k] * wt + 128) >> 8));
+                    }
+                    o[3] = rowOf(from, y)[static_cast<std::ptrdiff_t>(x) * 4 + 3];
                 }
-                o[3] = rowOf(from, y)[static_cast<std::ptrdiff_t>(x) * 4 + 3];
             }
-        }
+        });
         for (int y = 0; y < h; ++y)
             std::memcpy(rowOf(out, y), copy.data() + static_cast<std::size_t>(y) * w * 4, static_cast<std::size_t>(w) * 4);
     }
