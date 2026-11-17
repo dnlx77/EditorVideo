@@ -91,6 +91,13 @@ namespace {
 
 constexpr double kTwoPi = 6.283185307179586;
 
+// Lato del quadro lungo la direzione del movimento (larghezza con Left/Right, altezza con Up/Down).
+int sizeAlong(const TransitionParams& params, int width, int height)
+{
+    const bool horizontal = params.direction == TransitionDirection::Left || params.direction == TransitionDirection::Right;
+    return horizontal ? width : height;
+}
+
 const std::uint8_t* rowOf(const RgbaView& v, int y)
 {
     return v.data + static_cast<std::ptrdiff_t>(y) * v.stride;
@@ -122,6 +129,11 @@ class Crossfade final : public Transition
 public:
     const char* id() const override { return "dissolvenza"; }
     const char* name() const override { return "Dissolvenza incrociata"; }
+    GpuTransition gpu(int /*width*/, int /*height*/, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        return {true, GpuEffect::Mix, static_cast<float>(1.0 - p), static_cast<float>(p), 0.0f, 0.0f};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
         const int w = static_cast<int>(std::lround(std::clamp(progress, 0.0, 1.0) * 256.0));
@@ -135,6 +147,11 @@ class DipToBlack final : public Transition
 public:
     const char* id() const override { return "dissolvenza-nero"; }
     const char* name() const override { return "Dissolvenza al nero"; }
+    GpuTransition gpu(int /*width*/, int /*height*/, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        return {true, GpuEffect::Dip, static_cast<float>(p < 0.5 ? 1.0 - 2.0 * p : 0.0), static_cast<float>(p < 0.5 ? 0.0 : 2.0 * p - 1.0), 0.0f, 0.0f};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
         const double p = std::clamp(progress, 0.0, 1.0);
@@ -152,6 +169,12 @@ public:
     const char* id() const override { return "scorrimento"; }
     const char* name() const override { return "Scorrimento"; }
     bool usesDirection() const override { return true; }
+    GpuTransition gpu(int width, int height, double progress, const TransitionParams& params) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const int size = sizeAlong(params, width, height);
+        return {true, GpuEffect::Slide, 0.0f, 0.0f, static_cast<float>(std::clamp(static_cast<int>(std::lround(p * size)), 0, size)), 0.0f};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams& params,
                RgbaTarget out) const override
     {
@@ -208,6 +231,11 @@ class DipToWhite final : public Transition
 public:
     const char* id() const override { return "dissolvenza-bianco"; }
     const char* name() const override { return "Dissolvenza al bianco"; }
+    GpuTransition gpu(int /*width*/, int /*height*/, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        return {true, GpuEffect::Dip, static_cast<float>(p < 0.5 ? 1.0 - 2.0 * p : 0.0), static_cast<float>(p < 0.5 ? 0.0 : 2.0 * p - 1.0), 0.0f, static_cast<float>(p < 0.5 ? 2.0 * p : 2.0 - 2.0 * p)};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
         const double p = std::clamp(progress, 0.0, 1.0);
@@ -229,6 +257,13 @@ public:
     const char* id() const override { return "tendina"; }
     const char* name() const override { return "Tendina"; }
     bool usesDirection() const override { return true; }
+    GpuTransition gpu(int width, int height, double progress, const TransitionParams& params) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const int size = sizeAlong(params, width, height);
+        const double feather = wipeFeatherPixels(size);
+        return {true, GpuEffect::Wipe, 0.0f, 0.0f, static_cast<float>(p * (size + feather) - feather / 2.0), static_cast<float>(feather)};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams& params,
                RgbaTarget out) const override
     {
@@ -267,6 +302,13 @@ public:
     const char* id() const override { return id_; }
     const char* name() const override { return name_; }
     bool usesDirection() const override { return true; }
+    GpuTransition gpu(int width, int height, double progress, const TransitionParams& params) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const int size = sizeAlong(params, width, height);
+        return {true, cover_ ? GpuEffect::Cover : GpuEffect::Uncover, 0.0f, 0.0f,
+                static_cast<float>(std::clamp(static_cast<int>(std::lround(p * size)), 0, size)), 0.0f};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams& params,
                RgbaTarget out) const override
     {
@@ -306,16 +348,16 @@ private:
     bool cover_;
 };
 
-// Peso (0..1) del secondo fotogramma nel pixel (x, y) per gli effetti che hanno un bordo sfumato; poi mescolati in 8 bit.
-void mixByWeight(const RgbaView& from, const RgbaView& to, RgbaTarget out, double (*weightAt)(int, int, int, int, double, double),
-                 double edge, double feather)
+// Mescola in base a un peso 0..1 del secondo fotogramma, calcolato per pixel da `weightAt(x, y)`.
+template <typename Fn>
+void mixByFunction(const RgbaView& from, const RgbaView& to, RgbaTarget out, Fn weightAt)
 {
     for (int y = 0; y < from.height; ++y) {
         const std::uint8_t* a = rowOf(from, y);
         const std::uint8_t* b = rowOf(to, y);
         std::uint8_t* o = rowOf(out, y);
         for (int x = 0; x < from.width; ++x, a += 4, b += 4, o += 4) {
-            const int wt = static_cast<int>(std::lround(weightAt(x, y, from.width, from.height, edge, feather) * 256.0));
+            const int wt = static_cast<int>(std::lround(weightAt(x, y) * 256.0));
             for (int k = 0; k < 3; ++k)
                 o[k] = static_cast<std::uint8_t>(std::min(255, (a[k] * (256 - wt) + b[k] * wt + 128) >> 8));
             o[3] = a[3];
@@ -346,12 +388,21 @@ class Iris final : public Transition
 public:
     const char* id() const override { return "iris"; }
     const char* name() const override { return "Iris"; }
+    GpuTransition gpu(int width, int height, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const double feather = irisFeatherPixels(width, height);
+        return {true, GpuEffect::Iris, 0.0f, 0.0f, static_cast<float>(p * (irisMaxRadius(width, height) + feather) - feather / 2.0), static_cast<float>(feather)};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
         const double p = std::clamp(progress, 0.0, 1.0);
         const double radius = irisMaxRadius(from.width, from.height);
         const double feather = irisFeatherPixels(from.width, from.height);
-        mixByWeight(from, to, out, irisWeight, p * (radius + feather) - feather / 2.0, feather);
+        const double edge = p * (radius + feather) - feather / 2.0;
+        const int w = from.width;
+        const int h = from.height;
+        mixByFunction(from, to, out, [&](int x, int y) { return irisWeight(x, y, w, h, edge, feather); });
     }
 };
 
@@ -361,10 +412,18 @@ class Clock final : public Transition
 public:
     const char* id() const override { return "orologio"; }
     const char* name() const override { return "Orologio"; }
+    GpuTransition gpu(int /*width*/, int /*height*/, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        return {true, GpuEffect::Clock, 0.0f, 0.0f, static_cast<float>(p * (kTwoPi + kClockFeather) - kClockFeather / 2.0), static_cast<float>(kClockFeather)};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
         const double p = std::clamp(progress, 0.0, 1.0);
-        mixByWeight(from, to, out, clockWeight, p * (kTwoPi + kClockFeather) - kClockFeather / 2.0, kClockFeather);
+        const double edge = p * (kTwoPi + kClockFeather) - kClockFeather / 2.0;
+        const int w = from.width;
+        const int h = from.height;
+        mixByFunction(from, to, out, [&](int x, int y) { return clockWeight(x, y, w, h, edge, kClockFeather); });
     }
 };
 
@@ -374,6 +433,12 @@ class Zoom final : public Transition
 public:
     const char* id() const override { return "zoom"; }
     const char* name() const override { return "Zoom"; }
+    GpuTransition gpu(int /*width*/, int /*height*/, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const float weightTo = static_cast<float>(std::lround(p * 256.0) / 256.0);
+        return {true, GpuEffect::Zoom, 1.0f - weightTo, weightTo, static_cast<float>(1.0 + p), 0.0f};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
         const int w = from.width;
@@ -421,6 +486,13 @@ public:
     const char* id() const override { return "persiana"; }
     const char* name() const override { return "Persiana"; }
     bool usesDirection() const override { return true; }
+    GpuTransition gpu(int width, int height, double progress, const TransitionParams& params) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const int size = sizeAlong(params, width, height);
+        const int band = blindsBandWidth(size);
+        return {true, GpuEffect::Blinds, 0.0f, 0.0f, static_cast<float>(std::lround(p * band)), static_cast<float>(band)};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams& params,
                RgbaTarget out) const override
     {
@@ -453,6 +525,11 @@ class Mosaic final : public Transition
 public:
     const char* id() const override { return "mosaico"; }
     const char* name() const override { return "Mosaico"; }
+    GpuTransition gpu(int width, int height, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        return {true, GpuEffect::Mosaic, p < 0.5 ? 1.0f : 0.0f, 0.0f, static_cast<float>(mosaicBlockSize(p, width, height)), 0.0f};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
         const int w = from.width;
@@ -475,29 +552,17 @@ public:
     }
 };
 
-// Mescola in base a un peso 0..1 del secondo fotogramma, calcolato per pixel da `weightAt(x, y)`.
-template <typename Fn>
-void mixByFunction(const RgbaView& from, const RgbaView& to, RgbaTarget out, Fn weightAt)
-{
-    for (int y = 0; y < from.height; ++y) {
-        const std::uint8_t* a = rowOf(from, y);
-        const std::uint8_t* b = rowOf(to, y);
-        std::uint8_t* o = rowOf(out, y);
-        for (int x = 0; x < from.width; ++x, a += 4, b += 4, o += 4) {
-            const int wt = static_cast<int>(std::lround(weightAt(x, y) * 256.0));
-            for (int k = 0; k < 3; ++k)
-                o[k] = static_cast<std::uint8_t>(std::min(255, (a[k] * (256 - wt) + b[k] * wt + 128) >> 8));
-            o[3] = a[3];
-        }
-    }
-}
-
 // I pixel passano uno a uno dal primo al secondo fotogramma, in ordine casuale.
 class Grain final : public Transition
 {
 public:
     const char* id() const override { return "dissolvenza-granuli"; }
     const char* name() const override { return "Dissolvenza a granuli"; }
+    GpuTransition gpu(int /*width*/, int /*height*/, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        return {true, GpuEffect::Grain, static_cast<float>(p), 0.0f, 0.0f, 0.0f};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
         const double p = std::clamp(progress, 0.0, 1.0);
@@ -513,6 +578,13 @@ public:
     const char* id() const override { return "battenti"; }
     const char* name() const override { return "Battenti"; }
     bool usesDirection() const override { return true; }
+    GpuTransition gpu(int width, int height, double progress, const TransitionParams& params) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const int size = sizeAlong(params, width, height);
+        const double feather = wipeFeatherPixels(size);
+        return {true, GpuEffect::Doors, 0.0f, 0.0f, static_cast<float>(p * (size / 2.0 + feather) - feather / 2.0), static_cast<float>(feather)};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams& params,
                RgbaTarget out) const override
     {
@@ -538,6 +610,11 @@ public:
     const char* id() const override { return "tendina-diagonale"; }
     const char* name() const override { return "Tendina diagonale"; }
     bool usesDirection() const override { return true; }
+    GpuTransition gpu(int /*width*/, int /*height*/, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        return {true, GpuEffect::DiagonalWipe, 0.0f, 0.0f, static_cast<float>(p * (1.0 + kDiagonalFeather) - kDiagonalFeather / 2.0), static_cast<float>(kDiagonalFeather)};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams& params,
                RgbaTarget out) const override
     {
@@ -560,6 +637,11 @@ class Heart final : public Transition
 public:
     const char* id() const override { return "cuore"; }
     const char* name() const override { return "Cuore"; }
+    GpuTransition gpu(int width, int height, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        return {true, GpuEffect::Heart, 0.0f, 0.0f, static_cast<float>(p * heartMaxScale(width, height)), 0.0f};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
         const int w = from.width;
@@ -578,6 +660,12 @@ class Checkerboard final : public Transition
 public:
     const char* id() const override { return "scacchiera"; }
     const char* name() const override { return "Scacchiera"; }
+    GpuTransition gpu(int width, int height, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        const int cell = checkerCellSize(width, height);
+        return {true, GpuEffect::Checkerboard, 0.0f, static_cast<float>(cell), static_cast<float>(std::lround(std::clamp(2.0 * p, 0.0, 1.0) * cell)), static_cast<float>(std::lround(std::clamp(2.0 * p - 1.0, 0.0, 1.0) * cell))};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
         const int w = from.width;
@@ -601,6 +689,11 @@ class Spiral final : public Transition
 public:
     const char* id() const override { return "spirale"; }
     const char* name() const override { return "Spirale"; }
+    GpuTransition gpu(int /*width*/, int /*height*/, double progress, const TransitionParams& /*params*/) const override
+    {
+        const double p = std::clamp(progress, 0.0, 1.0);
+        return {true, GpuEffect::Spiral, 0.0f, static_cast<float>(kSpiralTurns), static_cast<float>(p * (1.0 + kSpiralFeather) - kSpiralFeather / 2.0), static_cast<float>(kSpiralFeather)};
+    }
     void blend(const RgbaView& from, const RgbaView& to, double progress, const TransitionParams&, RgbaTarget out) const override
     {
         const int w = from.width;

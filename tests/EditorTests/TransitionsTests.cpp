@@ -621,3 +621,46 @@ TEST(Transitions, SpiralOpensClockwiseFromTheCenter)
     }
     EXPECT_EQ(run(t, a, b, 1.0).px(0, 0)[2], 255);
 }
+
+// I parametri per la scheda video: ogni transizione ha il suo effetto (i numeri sono quelli dello shader) e pochi valori noti.
+TEST(TransitionGpu, EveryTransitionHasItsOwnShaderEffect)
+{
+    const std::vector<std::pair<std::string, int>> expected = {
+        {"dissolvenza", 0}, {"dissolvenza-nero", 1}, {"dissolvenza-bianco", 1}, {"scorrimento", 2}, {"tendina", 3},
+        {"copertura", 4}, {"scopertura", 5}, {"iris", 6}, {"orologio", 7}, {"zoom", 8}, {"persiana", 9}, {"mosaico", 10},
+        {"dissolvenza-granuli", 11}, {"battenti", 12}, {"tendina-diagonale", 13}, {"cuore", 14}, {"scacchiera", 15}, {"spirale", 16},
+    };
+    EXPECT_EQ(expected.size(), transitionRegistry().size());
+    for (const auto& [id, effect] : expected) {
+        const Transition* t = findTransition(id);
+        ASSERT_NE(t, nullptr) << id;
+        const GpuTransition g = t->gpu(1920, 1080, 0.3, {});
+        EXPECT_TRUE(g.supported) << id;
+        EXPECT_EQ(static_cast<int>(g.effect), effect) << id;
+    }
+}
+
+TEST(TransitionGpu, KnownValues)
+{
+    const GpuTransition mix = findTransition("dissolvenza")->gpu(100, 100, 0.25, {});
+    EXPECT_FLOAT_EQ(mix.weightFrom, 0.75f);
+    EXPECT_FLOAT_EQ(mix.weightTo, 0.25f);
+    const GpuTransition black = findTransition("dissolvenza-nero")->gpu(100, 100, 0.25, {});
+    EXPECT_FLOAT_EQ(black.weightFrom, 0.5f);
+    EXPECT_FLOAT_EQ(black.weightTo, 0.0f);
+    const GpuTransition white = findTransition("dissolvenza-bianco")->gpu(100, 100, 0.75, {});
+    EXPECT_FLOAT_EQ(white.weightTo, 0.5f);
+    EXPECT_FLOAT_EQ(white.extra, 0.5f);
+    // Scorrimento: di quanto è andato il primo, sulla larghezza con Left e sull'altezza con Up.
+    TransitionParams left;
+    left.direction = TransitionDirection::Left;
+    TransitionParams up;
+    up.direction = TransitionDirection::Up;
+    EXPECT_FLOAT_EQ(findTransition("scorrimento")->gpu(200, 100, 0.5, left).shift, 100.0f);
+    EXPECT_FLOAT_EQ(findTransition("scorrimento")->gpu(200, 100, 0.5, up).shift, 50.0f);
+    EXPECT_FLOAT_EQ(findTransition("copertura")->gpu(200, 100, 1.0, left).shift, 200.0f);
+    // Scacchiera: peso del secondo = lato dei quadrati.
+    EXPECT_FLOAT_EQ(findTransition("scacchiera")->gpu(1920, 1080, 0.0, {}).weightTo, static_cast<float>(checkerCellSize(1920, 1080)));
+    // Fuori da 0..1 si limita.
+    EXPECT_FLOAT_EQ(findTransition("dissolvenza")->gpu(10, 10, 2.0, {}).weightTo, 1.0f);
+}
