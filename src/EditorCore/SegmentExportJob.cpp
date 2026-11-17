@@ -574,7 +574,7 @@ std::pair<double, double> ExportJob::reencodeRange(InputFile& current, const Tim
                 throw MediaError(kOutOfMemory);
         } else if (!texts.empty() || layered) {
             // Sotto una scritta o un pezzo di un livello: il fotogramma passa dal disegno (testo e livelli).
-            const AVFrame* blended = withText(frame, texts);
+            const AVFrame* blended = compositor().blend(frame, texts);
             av_frame_unref(emitted.get());
             if (av_frame_ref(emitted.get(), blended) < 0)
                 throw MediaError(kOutOfMemory);
@@ -948,11 +948,6 @@ bool ExportJob::prepareLayers(double sequenceTime)
     return true;
 }
 
-const AVFrame* ExportJob::withText(const AVFrame* frame, const std::vector<BlendedText>& texts)
-{
-    return compositor().blend(frame, texts);
-}
-
 // Con il compositore GPU (modalità Automatica) c'è un solo dispositivo D3D11 per tutta l'esportazione: lo usano la decodifica, la
 // composizione e l'encoder NVENC, così i fotogrammi restano nella scheda video. Va creato prima di tutto il resto (il compositore
 // può servire già per uno spazio nero all'inizio, prima di aprire un decoder).
@@ -1028,7 +1023,7 @@ std::pair<double, double> ExportJob::writeBlack(double seconds)
         const double frameTime = doneLength_ + (k + 0.5) * frameSeconds;
         const std::vector<BlendedText> texts = textsAt(frameTime);
         if (prepareLayers(frameTime) || !texts.empty())
-            shown = withText(black.get(), texts);
+            shown = compositor().blend(black.get(), texts);
         video.encoder.encode(shown, k == 0, videoSink);
         if (progress_ && !progress_(std::clamp((doneLength_ + (k + 1) * frameSeconds) / totalLength_, 0.0, 1.0)))
             throw ExportCancelled();

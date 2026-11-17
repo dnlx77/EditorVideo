@@ -160,7 +160,6 @@ public:
             update();
         spectrumShown_ = any;
     }
-    bool hasSpectrum() const { return spectrumShown_; }
 
     // La posizione (in pixel) del punto di una banda: per i test.
     QPointF pointOf(int band) const

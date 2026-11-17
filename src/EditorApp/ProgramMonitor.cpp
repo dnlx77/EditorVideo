@@ -18,7 +18,6 @@
 
 #include <QtCore/QSignalBlocker>
 #include <QtGui/QGuiApplication>
-#include <QtGui/QPainter>
 #include <QtGui/QPolygonF>
 
 #include <algorithm>

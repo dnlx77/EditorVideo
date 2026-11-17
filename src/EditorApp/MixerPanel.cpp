@@ -242,7 +242,6 @@ public:
         update();
     }
     double levelDb(int channel) const { return level_[channel]; }
-    double holdDb(int channel) const { return hold_[channel]; }
 
 protected:
     void paintEvent(QPaintEvent*) override
@@ -445,15 +444,10 @@ public:
     double level() const { return fader_->value(); }
     bool muted() const { return mute_->isChecked(); }
     bool solo() const { return solo_->isChecked(); }
-    Fader* fader() const { return fader_; }
     Meter* meter() const { return meter_; }
     PanKnob* pan() const { return pan_; }
-    QDoubleSpinBox* readout() const { return readout_; }
-    QPushButton* muteButton() const { return mute_; }
-    QPushButton* soloButton() const { return solo_; }
 
     const std::vector<core::AudioEffect>& effects() const { return effects_; }
-    QWidget* slotBox() const { return slotBox_; }
     EqualizerDialog* dialog() const { return dialog_; }
     // Apre la finestra dell'effetto nello slot `index` (una per tipo e per colonna).
     void openEffect(int index)
@@ -618,7 +612,6 @@ public:
             }
         }
     }
-    QPushButton* plusButton() const { return plus_; }
 
     void setTrack(const MixerPanel::Track& t)
     {

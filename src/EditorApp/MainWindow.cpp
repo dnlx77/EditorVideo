@@ -634,12 +634,12 @@ MainWindow::MainWindow(QWidget* parent)
                 return;
             // Windows comincia o finisce di spostare la linea del tempo staccata (la si sta trascinando dal titolo).
             nativeMoveLoop_ = moving;
-            if (moving)
+            if (moving) {
                 movedByWindows_ = true;
-            if (moving)
                 timelinePollStep(true, cursorNow());
-            else
+            } else {
                 QTimer::singleShot(0, this, [this] { timelinePollStep(false, cursorNow()); });
+            }
         });
     qApp->installNativeEventFilter(titleDoubleClick_.get());
     // Finché è staccata la si sposta solo con lo spostamento di Windows (WM_ENTERSIZEMOVE .. WM_EXITSIZEMOVE): un
