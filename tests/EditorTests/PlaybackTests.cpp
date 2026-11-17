@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 using editor::core::PlaybackState;
 using editor::core::playbackFinished;
@@ -130,3 +131,54 @@ TEST(Playback, AudioOnlyForwardUpToDoubleSpeed)
 }
 
 }  // namespace
+
+// AudioRatePipe: velocità 1 = i campioni passano così come sono (con il volume); altrimenti passano dal TimeStretch.
+TEST(AudioRatePipe, UnitSpeedPassesSamplesWithGain)
+{
+    editor::core::AudioRatePipe pipe(2, 48000, 1.0);
+    std::vector<std::int16_t> got;
+    const editor::core::AudioRatePipe::Write write = [&](const std::int16_t* s, std::size_t n) {
+        got.insert(got.end(), s, s + n);
+        return true;
+    };
+    std::vector<std::int16_t> block = {1000, -1000, 40000 / 2, -20000};
+    EXPECT_TRUE(pipe.process(block.data(), block.size(), 0.5f, write));
+    EXPECT_EQ(got, (std::vector<std::int16_t>{500, -500, 10000, -10000}));
+    EXPECT_TRUE(pipe.finish(0.5f, write));
+    EXPECT_EQ(got.size(), 4u);  // a velocità 1 non resta niente da consegnare
+}
+
+TEST(AudioRatePipe, GainClipsAndStopsWhenWriteSaysSo)
+{
+    editor::core::AudioRatePipe pipe(2, 48000, 1.0);
+    std::vector<std::int16_t> got;
+    std::vector<std::int16_t> block = {30000, -30000};
+    EXPECT_FALSE(pipe.process(block.data(), block.size(), 2.0f, [&](const std::int16_t* s, std::size_t n) {
+        got.assign(s, s + n);
+        return false;
+    }));
+    EXPECT_EQ(got, (std::vector<std::int16_t>{32767, -32768}));
+    // Blocco vuoto: niente da scrivere, e non è un errore.
+    int calls = 0;
+    EXPECT_TRUE(pipe.process(block.data(), 0, 1.0f, [&](const std::int16_t*, std::size_t) {
+        ++calls;
+        return false;
+    }));
+    EXPECT_EQ(calls, 0);
+}
+
+TEST(AudioRatePipe, DoubleSpeedGivesAboutHalfTheSamplesAndFlushes)
+{
+    editor::core::AudioRatePipe pipe(2, 48000, 2.0);
+    std::size_t total = 0;
+    const editor::core::AudioRatePipe::Write write = [&](const std::int16_t*, std::size_t n) {
+        total += n;
+        return true;
+    };
+    std::vector<std::int16_t> block(2 * 4800, 1000);  // 100 ms
+    for (int i = 0; i < 20; ++i)                       // 2 s di ingresso
+        ASSERT_TRUE(pipe.process(block.data(), block.size(), 1.0f, write));
+    ASSERT_TRUE(pipe.finish(1.0f, write));
+    const double seconds = static_cast<double>(total) / 2 / 48000;
+    EXPECT_NEAR(seconds, 1.0, 0.1);
+}

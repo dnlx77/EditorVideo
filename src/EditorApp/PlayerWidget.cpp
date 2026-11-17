@@ -7,7 +7,6 @@
 #include "EditorCore/MediaProbe.h"
 #include "EditorCore/Playback.h"
 #include "EditorCore/StillImage.h"
-#include "EditorCore/TimeStretch.h"
 #include "EditorCore/VideoDecoder.h"
 
 #include <QtCore/QRegularExpression>
@@ -1028,18 +1027,10 @@ void PlayerWidget::audioWorker()
         const int channels = audio_->channels();
         const double rate = audio_->sampleRate();
         const double speed = workerSpeed_;
-        // A velocità diverse da 1x i campioni passano dal TimeStretch (stessa intonazione).
-        std::optional<core::TimeStretch> stretch;
-        if (speed != 1.0)
-            stretch.emplace(channels, static_cast<int>(rate), speed);
-        std::vector<std::int16_t> out;
-        const auto send = [&](std::vector<std::int16_t>& samples) {
-            const float gain = gain_;
-            if (gain != 1.0f) {
-                for (std::int16_t& v : samples)
-                    v = static_cast<std::int16_t>(std::clamp(std::lround(v * gain), -32768L, 32767L));
-            }
-            return samples.empty() || audioOut_.write(samples.data(), samples.size(), stopWorkers_);
+        // A velocità diverse da 1x i campioni passano dal TimeStretch (stessa intonazione), con il volume dell'anteprima.
+        core::AudioRatePipe pipe(channels, static_cast<int>(rate), speed);
+        const core::AudioRatePipe::Write write = [this](const std::int16_t* samples, std::size_t count) {
+            return audioOut_.write(samples, count, stopWorkers_);
         };
         while (!stopWorkers_) {
             auto chunk = audio_->next();
@@ -1053,31 +1044,15 @@ void PlayerWidget::audioWorker()
                 const double gap = std::round((time - audioFrom_) * rate / speed);
                 if (gap > 0 && gap < rate * 3600) {
                     audioStart_ = audioFrom_;
-                    const bool written = core::writeSilence(
-                        static_cast<std::size_t>(gap), channels, static_cast<int>(rate),
-                        [this](const std::int16_t* samples, std::size_t count) {
-                            return audioOut_.write(samples, count, stopWorkers_);
-                        });
-                    if (!written)
+                    if (!core::writeSilence(static_cast<std::size_t>(gap), channels, static_cast<int>(rate), write))
                         break;
                 }
             }
-            if (stretch) {
-                out.clear();
-                stretch->push(chunk->samples.data(), chunk->samples.size());
-                stretch->pull(out);
-                if (!send(out))
-                    break;
-            } else if (!send(chunk->samples)) {
+            if (!pipe.process(chunk->samples.data(), chunk->samples.size(), gain_, write))
                 break;
-            }
         }
         if (!stopWorkers_) {
-            if (stretch) {
-                out.clear();
-                stretch->flush(out);
-                send(out);
-            }
+            pipe.finish(gain_, write);
             audioOut_.flush();
         }
     } catch (const std::exception&) {

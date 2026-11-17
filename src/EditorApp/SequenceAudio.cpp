@@ -1,13 +1,11 @@
 #include "EditorApp/SequenceAudio.h"
 
 #include "EditorCore/Playback.h"
-#include "EditorCore/TimeStretch.h"
 
 #include <QtCore/QtGlobal>
 
 #include <algorithm>
 #include <cmath>
-#include <optional>
 
 namespace editor::app {
 
@@ -122,40 +120,21 @@ void SequenceAudio::work()
     try {
         const auto totalFrames = static_cast<long long>(std::llround(length_ * core::kMixSampleRate));
         long long frame = static_cast<long long>(std::llround(from_ * core::kMixSampleRate));
-        std::optional<core::TimeStretch> stretch;
-        if (speed_ != 1.0)
-            stretch.emplace(core::kMixChannels, core::kMixSampleRate, speed_);
-        std::vector<std::int16_t> block;
-        std::vector<std::int16_t> out;
-        const auto send = [&](std::vector<std::int16_t>& samples) {
-            const float volume = volume_;
-            if (volume != 1.0f) {
-                for (std::int16_t& v : samples)
-                    v = static_cast<std::int16_t>(std::clamp(std::lround(v * volume), -32768L, 32767L));
-            }
-            return samples.empty() || out_.write(samples.data(), samples.size(), stop_);
+        // Il mix si calcola alla velocità 1x; a velocità diverse ci pensa AudioRatePipe (ingresso e uscita differiscono).
+        core::AudioRatePipe pipe(core::kMixChannels, core::kMixSampleRate, speed_);
+        const core::AudioRatePipe::Write write = [this](const std::int16_t* samples, std::size_t count) {
+            return out_.write(samples, count, stop_);
         };
-        // Il mix si calcola alla velocità 1x; a velocità diverse ci pensa TimeStretch (ingresso e uscita differiscono).
+        std::vector<std::int16_t> block;
         while (!stop_ && frame < totalFrames) {
             const auto n = static_cast<std::size_t>(std::min<long long>(kBlockFrames, totalFrames - frame));
             mixer_->render(frame, n, block);
             frame += static_cast<long long>(n);
-            if (stretch) {
-                out.clear();
-                stretch->push(block.data(), block.size());
-                stretch->pull(out);
-                if (!send(out))
-                    break;
-            } else if (!send(block)) {
+            if (!pipe.process(block.data(), block.size(), volume_, write))
                 break;
-            }
         }
         if (!stop_) {
-            if (stretch) {
-                out.clear();
-                stretch->flush(out);
-                send(out);
-            }
+            pipe.finish(volume_, write);
             out_.flush();
         }
     } catch (const std::exception&) {
