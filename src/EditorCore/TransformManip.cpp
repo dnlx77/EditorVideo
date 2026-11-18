@@ -64,7 +64,14 @@ Point2 manipRotationHandle(const Transform& transform, const ManipSize& size, do
         dy /= length;
     }
     const double offset = kManipRotateDistance / std::max(pxPerUnit, 1e-9);
-    return {mid.x + dx * offset, mid.y + dy * offset};
+    // Se fuori dal fotogramma finirebbe fuori schermo (pezzo grande quanto il fotogramma), la maniglia passa dentro il riquadro.
+    const double margin = kManipHandleRadius / std::max(pxPerUnit, 1e-9);
+    const Point2 outside{mid.x + dx * offset, mid.y + dy * offset};
+    const bool visible = outside.x >= margin && outside.x <= size.projW - margin && outside.y >= margin &&
+                         outside.y <= size.projH - margin;
+    if (visible || size.projW <= 0.0 || size.projH <= 0.0)
+        return outside;
+    return {mid.x - dx * offset, mid.y - dy * offset};
 }
 
 ManipHit manipHitTest(const Transform& transform, const ManipSize& size, Point2 at, double pxPerUnit)

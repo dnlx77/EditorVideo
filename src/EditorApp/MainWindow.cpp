@@ -2233,6 +2233,7 @@ void MainWindow::createMenus()
     exitFull->setShortcut(QKeySequence(Qt::Key_Escape));
     windowMenu->addSeparator();
     QAction* previewStats = windowMenu->addAction(QStringLiteral("Mostra i tempi dell'anteprima"));
+    previewStats->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
     previewStats->setCheckable(true);
     previewStats->setChecked(settings().value(QStringLiteral("anteprima/mostraTempi"), false).toBool());
     const auto applyPreviewStats = [this](bool on) {
@@ -2769,6 +2770,7 @@ void MainWindow::showShortcuts()
         {"S", "Dividi il pezzo (o la scritta, o la clip audio) sotto il cursore del montaggio"},
         {"T", "Nuova scritta al cursore del montaggio (si apre l'editor)"},
         {"Ctrl+T / doppio clic", "Modifica la scritta scelta"},
+        {"Ctrl+Maiusc+D", "Mostra / nascondi i tempi dell'anteprima sui monitor"},
         {"Canc", "Elimina l'oggetto selezionato (o il file, se il fuoco è sull'elenco dei file)"},
         {"Ctrl+Z", "Annulla"},
         {"Ctrl+Y / Ctrl+Maiusc+Z", "Ripeti"},
