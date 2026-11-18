@@ -9,7 +9,6 @@ extern "C" {
 #include <algorithm>
 #include <chrono>
 #include <cstring>
-#include <set>
 
 namespace editor::core {
 
@@ -89,12 +88,12 @@ void GpuCompositor::purgeTexts(const std::vector<BlendedText>& texts)
 {
     if (textCache_.empty())
         return;
-    std::set<std::uint64_t> used;
-    for (const BlendedText& text : texts)
-        if (text.cacheId != 0)
-            used.insert(text.cacheId);
+    // Le scritte di un fotogramma sono poche: un confronto diretto costa meno di costruire un insieme a ogni fotogramma.
+    const auto inUse = [&texts](std::uint64_t id) {
+        return id != 0 && std::any_of(texts.begin(), texts.end(), [id](const BlendedText& text) { return text.cacheId == id; });
+    };
     for (auto it = textCache_.begin(); it != textCache_.end();)
-        it = used.count(it->first) != 0 ? std::next(it) : textCache_.erase(it);
+        it = inUse(it->first) ? std::next(it) : textCache_.erase(it);
 }
 
 void GpuCompositor::setHardwareOutput(AVBufferRef* frames)
