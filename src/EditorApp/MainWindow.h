@@ -274,6 +274,20 @@ protected:
 
 private:
     void createMenus();
+    // Pezzi del costruttore, nell'ordine in cui vengono chiamati.
+    QWidget* buildFilesPanel();
+    QWidget* buildSourcePanel();
+    void buildProgramMonitor();
+    void setupProxies();
+    QWidget* buildTimeline();
+    QDockWidget* makeDock(const QString& title, const QString& name, QWidget* content);
+    void buildDocks(QWidget* filesPanel, QWidget* sourcePanel, QWidget* sequencePanel);
+    void buildFilesDock(QWidget* leftPanel);
+    void buildPropertiesDock();
+    void buildMixerDock();
+    void setupDockAreas();
+    void setupTimelineFloating();
+    void setupDockAppearance();
     void openFile();
     void addFilesDialog();
     void showAbout();

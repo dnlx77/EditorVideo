@@ -25,6 +25,30 @@ MainWindow::MainWindow(QWidget* parent)
     setWindowTitle(QStringLiteral("EditorVideo"));
     resize(1500, 900);
 
+    QWidget* filesPanel = buildFilesPanel();
+    QWidget* sourcePanel = buildSourcePanel();
+    buildProgramMonitor();
+    setupProxies();
+    QWidget* sequencePanel = buildTimeline();
+    buildDocks(filesPanel, sourcePanel, sequencePanel);
+    setupDockAreas();
+    setupTimelineFloating();
+    setupDockAppearance();
+
+    // Un clic in qualsiasi punto di un'anteprima (anche sulla sua linea del tempo) la rende quella attiva.
+    for (QWidget* w : player_->findChildren<QWidget*>())
+        w->installEventFilter(this);
+    for (QWidget* w : program_->findChildren<QWidget*>())
+        w->installEventFilter(this);
+
+    createMenus();
+    setProgramActive(false);
+    sequenceChanged();
+    statusBar()->showMessage(QStringLiteral("Pronto  ·  ") + versionSummary());
+}
+
+QWidget* MainWindow::buildFilesPanel()
+{
     // --- Sinistra: file del progetto, informazioni, fotogrammi chiave
     auto* clipList = new ClipListWidget;
     clipList->pathOf = [this](int clipId) {
@@ -103,7 +127,11 @@ MainWindow::MainWindow(QWidget* parent)
     leftPanel->installEventFilter(this);
     filesPanel_ = leftPanel;
     filesTabs_ = tabs;
+    return leftPanel;
+}
 
+QWidget* MainWindow::buildSourcePanel()
+{
     // --- Centro: Sorgente (il file scelto) e Montaggio (il risultato)
     player_ = new PlayerWidget;
     player_->setIdleMessage(QStringLiteral("Apri un file video da File > Apri file video..."));
@@ -120,7 +148,11 @@ MainWindow::MainWindow(QWidget* parent)
     sourceStack_->addWidget(player_);
     sourceStack_->addWidget(transitionPreview_);
     sourceLayout->addWidget(sourceStack_, 1);
+    return sourcePanel;
+}
 
+void MainWindow::buildProgramMonitor()
+{
     program_ = new ProgramMonitor(project_);
     program_->onActivated = [this] { setProgramActive(true); };
     program_->onPositionChanged = [this](double seconds) {
@@ -193,7 +225,10 @@ MainWindow::MainWindow(QWidget* parent)
         if (cropAction_ != nullptr && cropAction_->isChecked() != on)
             cropAction_->setChecked(on);
     };
+}
 
+void MainWindow::setupProxies()
+{
     // Proxy: le due anteprime leggono il video dal proxy quando è pronto. Ogni file ha la sua qualità: il menu della
     // Sorgente cambia quella del file nella Sorgente, quello del Montaggio quella del file del pezzo mostrato.
     const auto videoSource = [this](const QString& path) { return proxies_->videoSource(path); };
@@ -220,7 +255,10 @@ MainWindow::MainWindow(QWidget* parent)
         refreshClipList();
     };
     proxies_->setFolder(proxyFolder());
+}
 
+QWidget* MainWindow::buildTimeline()
+{
     // --- In basso: la sequenza
     timeline_ = new SequenceTimeline;
     timeline_->installEventFilter(this);
@@ -439,16 +477,49 @@ MainWindow::MainWindow(QWidget* parent)
     sequencePanel->setMinimumSize(100, 76);
     sequencePanel->installEventFilter(this);
     sequencePanel_ = sequencePanel;
+    return sequencePanel;
+}
 
-    // --- Pannelli: tutto sta in pannelli spostabili; al centro non resta niente.
-    const auto makeDock = [this](const QString& title, const QString& name, QWidget* content) {
-        auto* dock = new QDockWidget(title, this);
-        dock->setObjectName(name);  // serve per salvare e ripristinare la disposizione
-        dock->setWidget(content);
-        dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable
-                          | QDockWidget::DockWidgetClosable);
-        return dock;
+QDockWidget* MainWindow::makeDock(const QString& title, const QString& name, QWidget* content)
+{
+    auto* dock = new QDockWidget(title, this);
+    dock->setObjectName(name);  // serve per salvare e ripristinare la disposizione
+    dock->setWidget(content);
+    dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable
+                      | QDockWidget::DockWidgetClosable);
+    return dock;
+}
+
+void MainWindow::buildDocks(QWidget* filesPanel, QWidget* sourcePanel, QWidget* sequencePanel)
+{
+    buildFilesDock(filesPanel);
+    // L'editor della scritta scelta sta nel pannello Proprietà (le modifiche valgono subito e si vedono nel Montaggio).
+    textPanel_ = new TextEditorPanel;
+    textPanel_->onPositionPreset = [this](double x, double y) { setTextPosition(x, y); };
+    textPanel_->onEdited = [this](const core::TextClip& edited) { applyTextEdit(edited, nullptr, true); };
+    textPanel_->onStylesChanged = [this](const std::vector<core::NamedTextStyle>& styles) {
+        const core::Project before = project_;
+        keepTextStyles(styles);
+        recordEdit(QStringLiteral("Cambia stili delle scritte"), before);
     };
+    sourceDock_ = makeDock(QStringLiteral("Sorgente"), QStringLiteral("pannelloSorgente"), sourcePanel);
+    programDock_ = makeDock(QStringLiteral("Montaggio"), QStringLiteral("pannelloMontaggio"), program_);
+    buildPropertiesDock();
+    buildMixerDock();
+    timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),
+                             sequencePanel);
+    // Spiegazioni, nel suggerimento sul titolo del pannello (vedi eventFilter).
+    filesDock_->setProperty("spiegazione", QStringLiteral("I file del progetto: clic per mostrarne uno nella Sorgente, "
+                                                          "Canc per toglierlo; si aggiungono anche trascinandoli qui. "
+                                                          "Nella scheda Transizioni, le transizioni disponibili"));
+    sourceDock_->setProperty("spiegazione", QStringLiteral("Il file scelto: segna I e O, poi A per metterlo nel montaggio"));
+    programDock_->setProperty("spiegazione", QStringLiteral("Il risultato: i pezzi del montaggio uno dopo l'altro"));
+    propertiesDock_->setProperty("spiegazione", QStringLiteral("Le proprietà dell'oggetto scelto sulla linea del tempo: per un pezzo video scala, posizione, rotazione e ritaglio"));
+    mixerDock_->setProperty("spiegazione", QStringLiteral("Livello, muto e solo di ogni traccia audio: come le intestazioni delle corsie sulla linea del tempo"));
+}
+
+void MainWindow::buildFilesDock(QWidget* leftPanel)
+{
     // Il blocco in alto a sinistra ha due schede: i file del progetto e l'elenco delle transizioni.
     transitionPanel_ = new TransitionListPanel;
     transitionPanel_->onSelected = [this](const core::Transition* transition) {
@@ -505,17 +576,10 @@ MainWindow::MainWindow(QWidget* parent)
         });
     }
     filesDock_ = makeDock(QStringLiteral("File del progetto"), QStringLiteral("pannelloFile"), leftTabs_);
-    // L'editor della scritta scelta sta nel pannello Proprietà (le modifiche valgono subito e si vedono nel Montaggio).
-    textPanel_ = new TextEditorPanel;
-    textPanel_->onPositionPreset = [this](double x, double y) { setTextPosition(x, y); };
-    textPanel_->onEdited = [this](const core::TextClip& edited) { applyTextEdit(edited, nullptr, true); };
-    textPanel_->onStylesChanged = [this](const std::vector<core::NamedTextStyle>& styles) {
-        const core::Project before = project_;
-        keepTextStyles(styles);
-        recordEdit(QStringLiteral("Cambia stili delle scritte"), before);
-    };
-    sourceDock_ = makeDock(QStringLiteral("Sorgente"), QStringLiteral("pannelloSorgente"), sourcePanel);
-    programDock_ = makeDock(QStringLiteral("Montaggio"), QStringLiteral("pannelloMontaggio"), program_);
+}
+
+void MainWindow::buildPropertiesDock()
+{
     // Pannello Proprietà: a destra, il contenuto dipende da ciò che è scelto sulla linea del tempo.
     propertiesPanel_ = new PropertiesPanel;
     propertiesPanel_->onTransformEdit = [this](const std::function<void(core::Transform&)>& edit, const std::string& field) {
@@ -565,6 +629,10 @@ MainWindow::MainWindow(QWidget* parent)
     }
     propertiesPanel_->setTextPage(textPanel_);
     propertiesDock_ = makeDock(QStringLiteral("Proprietà"), QStringLiteral("pannelloProprieta"), propertiesPanel_);
+}
+
+void MainWindow::buildMixerDock()
+{
     mixerPanel_ = new MixerPanel;
     mixerPanel_->onLevel = [this](int trackId, double db) {
         if (trackId == core::kMasterTrackId)
@@ -586,16 +654,10 @@ MainWindow::MainWindow(QWidget* parent)
     meterTimer_->setInterval(40);
     connect(meterTimer_, &QTimer::timeout, this, [this] { updateMeters(); });
     meterTimer_->start();
-    timelineDock_ = makeDock(QStringLiteral("Linea del tempo del montaggio"), QStringLiteral("pannelloLineaDelTempo"),
-                             sequencePanel);
-    // Spiegazioni, nel suggerimento sul titolo del pannello (vedi eventFilter).
-    filesDock_->setProperty("spiegazione", QStringLiteral("I file del progetto: clic per mostrarne uno nella Sorgente, "
-                                                          "Canc per toglierlo; si aggiungono anche trascinandoli qui. "
-                                                          "Nella scheda Transizioni, le transizioni disponibili"));
-    sourceDock_->setProperty("spiegazione", QStringLiteral("Il file scelto: segna I e O, poi A per metterlo nel montaggio"));
-    programDock_->setProperty("spiegazione", QStringLiteral("Il risultato: i pezzi del montaggio uno dopo l'altro"));
-    propertiesDock_->setProperty("spiegazione", QStringLiteral("Le proprietà dell'oggetto scelto sulla linea del tempo: per un pezzo video scala, posizione, rotazione e ritaglio"));
-    mixerDock_->setProperty("spiegazione", QStringLiteral("Livello, muto e solo di ogni traccia audio: come le intestazioni delle corsie sulla linea del tempo"));
+}
+
+void MainWindow::setupDockAreas()
+{
     auto* center = new QWidget(this);
     center->hide();
     setCentralWidget(center);
@@ -614,6 +676,10 @@ MainWindow::MainWindow(QWidget* parent)
     setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
     setCorner(Qt::BottomRightCorner, Qt::BottomDockWidgetArea);
     timelineDock_->setAllowedAreas(Qt::BottomDockWidgetArea);
+}
+
+void MainWindow::setupTimelineFloating()
+{
     // Qt la riaggancia solo se la si porta a filo del bordo inferiore della finestra (la zona in basso, vuota, è
     // sottilissima): troppo difficile. Quindi: lasciata ovunque nella metà bassa della finestra si riaggancia da sola;
     // con il doppio clic sul titolo (o in qualsiasi altro modo) torna sempre in basso a tutta larghezza.
@@ -679,6 +745,10 @@ MainWindow::MainWindow(QWidget* parent)
                 applyTimelineHeight();
         });
     });
+}
+
+void MainWindow::setupDockAppearance()
+{
     for (QDockWidget* dock : {filesDock_, sourceDock_, programDock_, propertiesDock_, mixerDock_})
         dock->setAllowedAreas(Qt::TopDockWidgetArea | Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     // Il titolo di un pannello agganciato si evidenzia con il mouse sopra (cursore a mano: da lì si trascina). I pannelli
@@ -691,18 +761,8 @@ MainWindow::MainWindow(QWidget* parent)
     }
     setMouseTracking(true);  // per il cursore sugli incroci fra separatori
     resetLayout();
-
-    // Un clic in qualsiasi punto di un'anteprima (anche sulla sua linea del tempo) la rende quella attiva.
-    for (QWidget* w : player_->findChildren<QWidget*>())
-        w->installEventFilter(this);
-    for (QWidget* w : program_->findChildren<QWidget*>())
-        w->installEventFilter(this);
-
-    createMenus();
-    setProgramActive(false);
-    sequenceChanged();
-    statusBar()->showMessage(QStringLiteral("Pronto  ·  ") + versionSummary());
 }
+
 
 MainWindow::~MainWindow()
 {
