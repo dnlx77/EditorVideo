@@ -17,8 +17,8 @@ extern "C" {
 
 namespace fs = std::filesystem;
 using namespace editor::core;
-using editor::tests::decodeVideoFrames;
-using editor::tests::lumaAt;
+using editor::tests::CenterLuma;
+using editor::tests::decodeCenterLuma;
 using editor::tests::writeEncodedClip;
 
 namespace {
@@ -36,19 +36,6 @@ int lumaOf(int index)
 bool writeClip(const fs::path& path, int bFrames)
 {
     return writeEncodedClip(path, {.fps = kFps, .frames = kFrames, .gop = kFps, .bFrames = bFrames, .luma = lumaOf(0), .lumaStep = 1});
-}
-
-struct Decoded
-{
-    std::vector<int> luma;  // al centro, per ogni fotogramma in ordine di visualizzazione
-    int errors = 0;
-};
-
-Decoded decodeAll(const fs::path& path)
-{
-    Decoded d;
-    d.errors = decodeVideoFrames(path, [&](const AVFrame& f) { d.luma.push_back(lumaAt(f, f.width / 2, f.height / 2)); }, true);
-    return d;
 }
 
 // I fotogrammi da `first` (compreso) a `last` (escluso) del file di prova.
@@ -118,7 +105,7 @@ protected:
             const fs::path out = dir_ / (std::string(name) + extension);
             const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{});
             EXPECT_EQ(result.preciseCuts, preciseCuts);
-            const Decoded decoded = decodeAll(out);
+            const CenterLuma decoded = decodeCenterLuma(out);
             EXPECT_EQ(decoded.errors, 0);
             EXPECT_EQ(wrongFrames(decoded.luma, expected), 0)
                 << "primo fotogramma " << (decoded.luma.empty() ? -1 : decoded.luma.front()) << ", atteso "

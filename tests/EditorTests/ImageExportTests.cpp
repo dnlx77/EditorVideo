@@ -24,8 +24,8 @@ extern "C" {
 
 namespace fs = std::filesystem;
 using namespace editor::core;
-using editor::tests::decodeVideoFrames;
-using editor::tests::lumaAt;
+using editor::tests::ThreePoints;
+using editor::tests::sampleThreePoints;
 using editor::tests::writeEncodedClip;
 
 namespace {
@@ -40,21 +40,6 @@ constexpr int kHeight = 360;
 bool writeClip(const fs::path& path, int luma = 100)
 {
     return writeEncodedClip(path, {.width = kWidth, .height = kHeight, .fps = kFps, .frames = kFrames, .gop = kFps, .luma = luma});
-}
-
-struct Sampled
-{
-    std::vector<std::array<int, 3>> pixels;  // per fotogramma: centro, angolo in alto a sinistra, centro del quarto destro
-    int errors = 0;
-};
-
-Sampled sample(const fs::path& path)
-{
-    Sampled d;
-    d.errors = decodeVideoFrames(path, [&](const AVFrame& f) {
-        d.pixels.push_back({lumaAt(f, kWidth / 2, kHeight / 2), lumaAt(f, 20, 20), lumaAt(f, kWidth * 3 / 4 + 40, kHeight / 2)});
-    });
-    return d;
 }
 
 
@@ -156,7 +141,7 @@ TEST_F(ImageExport, ImageOnLayerIsComposedOverTheMainVideo)
     const fs::path out = dir_ / "immagineSuLivello.mp4";
     const ExportResult result = exportClips({clip}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
     EXPECT_EQ(result.textSegments, 1);
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     EXPECT_EQ(d.errors, 0);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFrames));
     for (int i = 0; i < kFrames; ++i) {
@@ -189,7 +174,7 @@ TEST_F(ImageExport, ImageOnV1BetweenVideoPieces)
     const fs::path out = dir_ / "immagineInV1.mp4";
     const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, &format, {});
     EXPECT_NEAR(probeFile(utf8FromPath(out)).durationSeconds, 4.0, 0.1);
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     EXPECT_EQ(d.errors, 0);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(4 * kFps));
     for (std::size_t i = 0; i < d.pixels.size(); ++i) {
@@ -254,7 +239,7 @@ TEST_F(ImageExport, DissolveBetweenAVideoPieceAndAnImagePiece)
         exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, &project.format(), options);
     // La parte nel file video conta come transizione, quella nell'immagine (un file sempre ricodificato) come ricodifica.
     EXPECT_GE(result.transitionSegments + result.reencodedSegments, 2);
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     EXPECT_EQ(d.errors, 0);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(4 * kFps));
     EXPECT_NEAR(d.pixels[20][0], 100, 8);   // prima: il video
@@ -270,7 +255,7 @@ TEST_F(ImageExport, ImageWithOtherProportionsIsFittedWithBlackBars)
     image.transforms = {Transform{}};
     const fs::path out = dir_ / "verticale.mp4";
     exportClips({image}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, &format, {});
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     EXPECT_EQ(d.errors, 0);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFps));
     EXPECT_GT(d.pixels[10][0], 170);  // al centro l'immagine

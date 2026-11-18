@@ -17,8 +17,8 @@ extern "C" {
 
 namespace fs = std::filesystem;
 using namespace editor::core;
-using editor::tests::decodeVideoFrames;
-using editor::tests::lumaAt;
+using editor::tests::CenterLuma;
+using editor::tests::decodeCenterLuma;
 using editor::tests::writeEncodedClip;
 using editor::tests::SampleDirTest;
 
@@ -38,19 +38,6 @@ int lumaOf(int index)
 bool writeClip(const fs::path& path)
 {
     return writeEncodedClip(path, {.fps = kFps, .frames = kFrames, .gop = kFps, .luma = lumaOf(0), .lumaStep = 1});
-}
-
-struct Decoded
-{
-    std::vector<int> luma;
-    int errors = 0;
-};
-
-Decoded decodeAll(const fs::path& path)
-{
-    Decoded d;
-    d.errors = decodeVideoFrames(path, [&](const AVFrame& f) { d.luma.push_back(lumaAt(f, f.width / 2, f.height / 2)); }, true);
-    return d;
 }
 
 // Fotogrammi attesi: neri, oppure dal fotogramma `first` (compreso) a `last` (escluso) del file di prova.
@@ -122,7 +109,7 @@ TEST_F(BlackGaps, GapsBecomeBlackAndSilenceAsLongAsInTheMontage)
         const fs::path out = dir_ / (std::string("spazi") + extension);
         const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{});
         EXPECT_EQ(result.blackGaps, 3);
-        const Decoded decoded = decodeAll(out);
+        const CenterLuma decoded = decodeCenterLuma(out);
         EXPECT_EQ(decoded.errors, 0);
         EXPECT_EQ(wrongFrames(decoded.luma, expected), 0) << "fotogrammi " << decoded.luma.size() << " su " << expected.size();
         EXPECT_NEAR(probeFile(utf8FromPath(out)).durationSeconds, total, 0.05);
@@ -147,7 +134,7 @@ TEST_F(BlackGaps, TailAfterTheLastPieceIsBlackWithSilence)
     std::vector<int> expected;
     addFrames(expected, 0, 30);
     addBlack(expected, 45);
-    const Decoded decoded = decodeAll(out);
+    const CenterLuma decoded = decodeCenterLuma(out);
     EXPECT_EQ(decoded.errors, 0);
     EXPECT_EQ(wrongFrames(decoded.luma, expected), 0) << "fotogrammi " << decoded.luma.size() << " su " << expected.size();
     const editor::tests::AudioTimeline audio = editor::tests::audioTimeline(utf8FromPath(out));
@@ -181,7 +168,7 @@ TEST_F(BlackGaps, MixedAudioBeyondTheLastPieceContinuesInTheTail)
     options.tailSeconds = 1.5;
     const fs::path out = dir_ / "codaMix.mp4";
     exportClips(plan, utf8FromPath(out), edit, {}, MuteMethod::Silence, nullptr, options);
-    EXPECT_EQ(decodeAll(out).luma.size(), static_cast<std::size_t>(75));
+    EXPECT_EQ(decodeCenterLuma(out).luma.size(), static_cast<std::size_t>(75));
     const editor::tests::AudioTimeline audio = editor::tests::audioTimeline(utf8FromPath(out));
     EXPECT_NEAR(audio.totalSeconds, 2.5, 0.1);
     EXPECT_FALSE(audio.overlaps);
@@ -200,7 +187,7 @@ TEST_F(BlackGaps, CloseGapsKeepsThePiecesTogether)
     std::vector<int> expected;
     addFrames(expected, 0, 30);
     addFrames(expected, 60, 90);
-    const Decoded decoded = decodeAll(out);
+    const CenterLuma decoded = decodeCenterLuma(out);
     EXPECT_EQ(decoded.errors, 0);
     EXPECT_EQ(wrongFrames(decoded.luma, expected), 0);
 }
@@ -213,7 +200,7 @@ TEST_F(BlackGaps, AGapShorterThanHalfAFrameLeavesNothing)
     std::vector<int> expected;
     addFrames(expected, 0, 30);
     addFrames(expected, 60, 90);
-    const Decoded decoded = decodeAll(out);
+    const CenterLuma decoded = decodeCenterLuma(out);
     EXPECT_EQ(decoded.errors, 0);
     EXPECT_EQ(wrongFrames(decoded.luma, expected), 0);
 }
