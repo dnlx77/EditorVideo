@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace editor::core {
@@ -83,6 +84,24 @@ Transform evaluateTransform(const Transform& base, const TransformAnimation& ani
 
 // Sistema l'animazione: chiavi in ordine, senza tempi doppi (vince l'ultima), valori e tempi finiti, punti Bézier con x in 0..1.
 void normalizeAnimation(TransformAnimation& animation);
+
+// Assegna `value` a `target` solo se è diverso; true se è cambiato. Lo usano i setter di trasformazione e animazione di
+// pezzi, scritte e pezzi dei livelli.
+template <typename T>
+bool assignIfChanged(T& target, T value)
+{
+    if (target == value)
+        return false;
+    target = std::move(value);
+    return true;
+}
+
+// Come assignIfChanged, dopo aver sistemato l'animazione (normalizeAnimation).
+inline bool assignAnimation(TransformAnimation& target, TransformAnimation value)
+{
+    normalizeAnimation(value);
+    return assignIfChanged(target, std::move(value));
+}
 
 // Modifiche. Tutte restituiscono true se è cambiato qualcosa.
 // Mette la chiave (se a quel tempo ce n'è già una la sostituisce).
