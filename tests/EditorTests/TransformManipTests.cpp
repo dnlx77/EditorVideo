@@ -39,6 +39,12 @@ TEST(Manip, HitTestFindsHandlesInsideAndOutside)
     EXPECT_NEAR(handle.x, 960.0, 1e-9);
     EXPECT_NEAR(handle.y, 270.0 - 24.0 / 0.5, 1e-9);  // sopra il lato alto, a 24 px dello schermo
     EXPECT_EQ(manipHitTest(t, kSize, handle, 0.5).part, ManipPart::Rotate);
+    // Pezzo grande quanto il fotogramma: la maniglia fuori non si vedrebbe, quindi sta dentro, sotto il lato alto.
+    const Transform full;
+    const Point2 inner = manipRotationHandle(full, kSize, 0.5);
+    EXPECT_NEAR(inner.x, 960.0, 1e-9);
+    EXPECT_NEAR(inner.y, 24.0 / 0.5, 1e-9);
+    EXPECT_EQ(manipHitTest(full, kSize, inner, 0.5).part, ManipPart::Rotate);
     EXPECT_EQ(manipHitTest(t, kSize, {100, 100}, 0.5).part, ManipPart::None);
     // La presa è in pixel dello schermo: a 1 px = 1 unità servono pochi pixel, a 0,1 ce ne vogliono molti di più.
     EXPECT_EQ(manipHitTest(t, kSize, {1440 + 20, 810 + 20}, 1.0).part, ManipPart::None);

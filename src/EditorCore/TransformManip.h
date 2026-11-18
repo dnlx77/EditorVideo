@@ -36,6 +36,7 @@ inline constexpr double kManipHandleRadius = 8.0;
 inline constexpr double kManipRotateDistance = 24.0;
 
 // La maniglia di rotazione: sopra il lato alto del riquadro, fuori, a kManipRotateDistance pixel dello schermo.
+// Se lì sarebbe fuori dal fotogramma (non si vedrebbe) sta invece dentro il riquadro, sotto il lato alto.
 Point2 manipRotationHandle(const Transform& transform, const ManipSize& size, double pxPerUnit);
 
 // Cosa c'è sotto `at`: prima le maniglie (angoli, rotazione), poi l'interno del riquadro (spostamento).
