@@ -156,9 +156,11 @@ public:
     // cursore rispetto a lui (tempi nel file). Serve ai rombi e all'auto-key del pannello Proprietà.
     struct AnimTarget
     {
+        // Che cos'è: un pezzo di V1, una scritta (tempi delle chiavi: secondi dall'inizio della scritta, quindi from = 0) o un pezzo
+        // di un livello sopra V1.
+        enum class Kind { Clip, Text, LayerPiece };
         bool valid = false;
-        bool layer = false;
-        bool text = false;      // una scritta (tempi delle chiavi: secondi dall'inizio della scritta, quindi from = 0)
+        Kind kind = Kind::Clip;
         int id = 0;
         double from = 0.0;      // inizio e fine del pezzo nel file
         double to = 0.0;
@@ -189,7 +191,7 @@ public:
     bool commitMonitorTransform(int fragmentId, const core::Transform& transform);
     bool commitMonitorLayerTransform(int pieceId, const core::Transform& transform);
     // Il gesto sul monitor di un pezzo con l'animazione: chiavi sul cursore per i parametri animati (false se il pezzo non è animato).
-    bool commitAnimatedMonitorTransform(bool layer, int id, const core::Transform& edited, bool text = false);
+    bool commitAnimatedMonitorTransform(AnimTarget::Kind kind, int id, const core::Transform& edited);
     bool commitMonitorTextTransform(int clipId, const core::Transform& transform);
     // "Adatta" / "Riempi" sui pezzi scelti.
     void fitSelectedPieces(bool fill);

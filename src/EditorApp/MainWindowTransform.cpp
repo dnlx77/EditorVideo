@@ -172,7 +172,7 @@ MainWindow::AnimTarget MainWindow::animationTarget() const
         const core::TextClip* clip = project_.textTracks().find(objects.front().id);
         if (clip == nullptr)
             return target;
-        target.text = true;
+        target.kind = AnimTarget::Kind::Text;
         target.id = clip->id;
         target.from = 0.0;  // i tempi delle chiavi sono dall'inizio della scritta
         target.to = clip->length;
@@ -184,7 +184,7 @@ MainWindow::AnimTarget MainWindow::animationTarget() const
         const core::LayerPiece* piece = project_.textTracks().findPiece(objects.front().id);
         if (piece == nullptr)
             return target;
-        target.layer = true;
+        target.kind = AnimTarget::Kind::LayerPiece;
         target.id = piece->id;
         target.from = piece->start;
         target.to = piece->end;
@@ -251,8 +251,8 @@ void MainWindow::refreshKeyRow()
         return;
     SequenceTimeline::KeyRow row;
     if (const AnimTarget target = animationTarget(); target.valid) {
-        row.layerPiece = target.layer;
-        row.text = target.text;
+        row.layerPiece = target.kind == AnimTarget::Kind::LayerPiece;
+        row.text = target.kind == AnimTarget::Kind::Text;
         row.id = target.id;
         for (int g = 0; g < core::kAnimGroupCount; ++g) {
             const auto group = static_cast<core::AnimGroup>(g);
@@ -282,12 +282,12 @@ bool MainWindow::editAnimationKeys(const QString& label, const std::function<boo
 
 bool MainWindow::writeAnimTarget(const AnimTarget& target, const core::Transform& base, const core::TransformAnimation& animation)
 {
-    if (target.text) {
+    if (target.kind == AnimTarget::Kind::Text) {
         const bool a = project_.textTracks().setTransform(target.id, core::normalized(base));
         const bool b = project_.textTracks().setAnimation(target.id, animation);
         return a || b;
     }
-    if (target.layer) {
+    if (target.kind == AnimTarget::Kind::LayerPiece) {
         const bool a = project_.textTracks().setPieceTransform(target.id, core::normalized(base));
         const bool b = project_.textTracks().setPieceAnimation(target.id, animation);
         return a || b;
@@ -300,7 +300,7 @@ bool MainWindow::writeAnimTarget(const AnimTarget& target, const core::Transform
 bool MainWindow::setTextPosition(std::optional<double> x, std::optional<double> y)
 {
     const AnimTarget target = animationTarget();
-    if (!target.valid || !target.text || (!x && !y))
+    if (!target.valid || target.kind != AnimTarget::Kind::Text || (!x && !y))
         return false;
     const core::TextClip* clip = project_.textTracks().find(target.id);
     if (clip == nullptr)
@@ -363,7 +363,7 @@ bool MainWindow::applyTransformEdit(const std::function<void(core::Transform&)>&
         if (!core::applyEditWithKeys(animation, base, shown, edited, target.fileTime))
             return false;
         // Un cursore o una casella girati più volte di fila sullo stesso campo (e sullo stesso istante) sono una sola voce di Annulla.
-        std::string key = field + (target.text ? ":T" : target.layer ? ":L" : ":") + std::to_string(target.id) + ":"
+        std::string key = field + (target.kind == AnimTarget::Kind::Text ? ":T" : target.kind == AnimTarget::Kind::LayerPiece ? ":L" : ":") + std::to_string(target.id) + ":"
                           + std::to_string(std::lround(target.fileTime * 1000.0));
         std::optional<core::Project> before;
         if (!continuesEdit(transformMerge_, key, label))
@@ -404,7 +404,7 @@ bool MainWindow::commitMonitorTransform(int fragmentId, const core::Transform& t
 {
     if (project_.sequence().find(fragmentId) == nullptr)
         return false;
-    if (commitAnimatedMonitorTransform(false, fragmentId, transform))
+    if (commitAnimatedMonitorTransform(AnimTarget::Kind::Clip, fragmentId, transform))
         return true;
     const core::Project before = project_;
     if (project_.setTransform({fragmentId}, transform) == 0)
@@ -419,7 +419,7 @@ bool MainWindow::commitMonitorTextTransform(int clipId, const core::Transform& t
     const core::TextClip* clip = project_.textTracks().find(clipId);
     if (clip == nullptr)
         return false;
-    if (commitAnimatedMonitorTransform(false, clipId, transform, true))
+    if (commitAnimatedMonitorTransform(AnimTarget::Kind::Text, clipId, transform))
         return true;
     if (!clip->animation.empty())
         return false;  // (con l'animazione serve un solo oggetto scelto: così non si cambierebbe quello che si vede)
@@ -435,7 +435,7 @@ bool MainWindow::commitMonitorLayerTransform(int pieceId, const core::Transform&
 {
     if (project_.textTracks().findPiece(pieceId) == nullptr)
         return false;
-    if (commitAnimatedMonitorTransform(true, pieceId, transform))
+    if (commitAnimatedMonitorTransform(AnimTarget::Kind::LayerPiece, pieceId, transform))
         return true;
     const core::Project before = project_;
     if (!project_.textTracks().setPieceTransform(pieceId, transform))
@@ -445,13 +445,13 @@ bool MainWindow::commitMonitorLayerTransform(int pieceId, const core::Transform&
     return true;
 }
 
-bool MainWindow::commitAnimatedMonitorTransform(bool layer, int id, const core::Transform& edited, bool text)
+bool MainWindow::commitAnimatedMonitorTransform(AnimTarget::Kind kind, int id, const core::Transform& edited)
 {
     // Un pezzo con l'animazione: il monitor mostrava la trasformazione dell'istante sul cursore e `edited` è quella dopo il
     // gesto. I parametri animati che sono cambiati ricevono una chiave sul cursore (come nel pannello), gli altri cambiano la
     // trasformazione fissa del pezzo.
     const AnimTarget target = animationTarget();
-    if (!target.valid || target.text != text || target.layer != layer || target.id != id || target.animation.empty() || !target.inside)
+    if (!target.valid || target.kind != kind || target.id != id || target.animation.empty() || !target.inside)
         return false;
     const core::Transform shown = core::evaluateTransform(target.base, target.animation, target.fileTime);
     core::Transform base = target.base;
