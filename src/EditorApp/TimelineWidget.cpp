@@ -119,19 +119,7 @@ QRectF TimelineWidget::trackRect() const
 
 void TimelineWidget::paintEvent(QPaintEvent*)
 {
-    const qreal ratio = devicePixelRatioF();
-    const QSize pixels = (QSizeF(size()) * ratio).toSize();
-    if (!cacheValid_ || cache_.size() != pixels || cache_.devicePixelRatio() != ratio) {
-        cache_ = QPixmap(pixels);
-        cache_.setDevicePixelRatio(ratio);
-        cache_.fill(Qt::transparent);
-        QPainter cp(&cache_);
-        // Come un QPainter sul widget: carattere (con i punti calcolati per lo schermo del widget) e penna.
-        cp.setFont(QFont(font(), this));
-        cp.setPen(palette().color(foregroundRole()));
-        paintStatic(cp);
-        cacheValid_ = true;
-    }
+    ensureCache(cache_, cacheValid_, [this](QPainter& cp) { paintStatic(cp); });
     QPainter p(this);
     p.drawPixmap(0, 0, cache_);
     if (isEnabled() && duration_ > 0) {

@@ -1056,6 +1056,14 @@ void SequenceTimeline::setSelectedTextLayer(int layerId)
     invalidate();
 }
 
+// Toglie dalla selezione multipla le scritte e i pezzi dei livelli che non ci sono più (e la svuota se ne resta uno solo).
+void SequenceTimeline::pruneTextSelection()
+{
+    std::erase_if(multi_, [this](const Object& o) { return (o.kind == Object::Kind::TextClip || o.kind == Object::Kind::LayerPiece) && findTextClip(o.id) == nullptr; });
+    if (multi_.size() < 2)
+        multi_.clear();
+}
+
 void SequenceTimeline::setBaseTexts(std::vector<TextBlock> clips)
 {
     baseTexts_.layerId = 0;
@@ -1064,9 +1072,7 @@ void SequenceTimeline::setBaseTexts(std::vector<TextBlock> clips)
     // Come per i livelli: quello che non c'è più si toglie dalle selezioni e dai trascinamenti.
     if (selectedTextClip_ != 0 && findTextClip(selectedTextClip_) == nullptr)
         selectedTextClip_ = 0;
-    std::erase_if(multi_, [this](const Object& o) { return (o.kind == Object::Kind::TextClip || o.kind == Object::Kind::LayerPiece) && findTextClip(o.id) == nullptr; });
-    if (multi_.size() < 2)
-        multi_.clear();
+    pruneTextSelection();
     if (textDragClip_ != 0 && findTextClip(textDragClip_) == nullptr) {
         textDragClip_ = 0;
         textDragging_ = false;
@@ -1088,9 +1094,7 @@ void SequenceTimeline::setTextLanes(std::vector<TextLane> lanes)
     if (selectedTextLayer_ != 0
         && std::none_of(textLanes_.begin(), textLanes_.end(), [this](const TextLane& l) { return l.layerId == selectedTextLayer_; }))
         selectedTextLayer_ = 0;
-    std::erase_if(multi_, [this](const Object& o) { return (o.kind == Object::Kind::TextClip || o.kind == Object::Kind::LayerPiece) && findTextClip(o.id) == nullptr; });
-    if (multi_.size() < 2)
-        multi_.clear();
+    pruneTextSelection();
     if (textDragClip_ != 0 && findTextClip(textDragClip_) == nullptr) {
         textDragClip_ = 0;
         textDragging_ = false;
