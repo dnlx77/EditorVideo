@@ -122,12 +122,14 @@ int runManipTest(const QStringList& args, qsizetype at)
         check(edits[0].second.scaleX > 1.1 && std::abs(edits[0].second.scaleX - edits[0].second.scaleY) < 1e-6,
               "l'angolo ingrandisce mantenendo le proporzioni");
 
-    // La maniglia di rotazione, sopra il bordo alto: spostandola di lato il pezzo ruota.
+    // La maniglia di rotazione: a pezzo grande quanto il fotogramma sta dentro, sotto il bordo alto. Spostandola di lato
+    // il pezzo ruota.
     edits.clear();
-    const QPointF handle = toScreen(projW / 2.0, 0.0) - QPointF(0, core::kManipRotateDistance);
+    const QPointF handle = toScreen(projW / 2.0, 0.0) + QPointF(0, core::kManipRotateDistance);
+    const QPointF dragTo = toScreen(projW / 2.0, 0.0) + QPointF(projW * scale / 4, 0);
     send(QEvent::MouseButtonPress, handle);
-    send(QEvent::MouseMove, handle + QPointF(projW * scale / 4, core::kManipRotateDistance));
-    send(QEvent::MouseButtonRelease, handle + QPointF(projW * scale / 4, core::kManipRotateDistance));
+    send(QEvent::MouseMove, dragTo);
+    send(QEvent::MouseButtonRelease, dragTo);
     check(edits.size() == 1 && std::abs(edits[0].second.rotation) > 5.0, "la maniglia di rotazione ruota il pezzo");
 
     // Un clic fermo sul corpo non cambia niente.
