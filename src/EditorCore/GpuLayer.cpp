@@ -250,7 +250,7 @@ bool GpuFrameConverter::Impl::ensureLayerResources()
     return true;
 }
 
-GpuFrameConverter::Impl::SourceTexture* GpuFrameConverter::Impl::uploadSource(const BgraImage& source, bool mips)
+GpuFrameConverter::Impl::SourceTexture* GpuFrameConverter::Impl::uploadSource(const BgraImage& source)
 {
     if (source.data == nullptr || source.width <= 0 || source.height <= 0 || source.stride < source.width * 4)
         return nullptr;
@@ -267,8 +267,6 @@ GpuFrameConverter::Impl::SourceTexture* GpuFrameConverter::Impl::uploadSource(co
         }
     }
     context->UpdateSubresource(entry.texture.Get(), 0, nullptr, source.data, static_cast<UINT>(source.stride), 0);
-    if (mips)
-        context->GenerateMips(entry.view.Get());
     return &entry;
 }
 
@@ -285,7 +283,7 @@ bool GpuFrameConverter::setCanvasBgra(const BgraImage& image)
     Impl& d = *impl_;
     if (image.width != d.width || image.height != d.height || !d.ensureLayerResources())
         return false;
-    const Impl::SourceTexture* texture = d.uploadSource(image, false);
+    const Impl::SourceTexture* texture = d.uploadSource(image);
     if (texture == nullptr)
         return false;
     ID3D11ShaderResourceView* views[4] = {nullptr, nullptr, nullptr, texture->view.Get()};
@@ -302,7 +300,7 @@ bool GpuFrameConverter::drawLayer(const BgraImage& source, const Transform& tran
         return true;  // niente da disegnare
     if (!d.ensureLayerResources())
         return false;
-    const Impl::SourceTexture* texture = d.uploadSource(source, true);
+    const Impl::SourceTexture* texture = d.uploadSource(source);
     if (texture == nullptr)
         return false;
     return d.drawLayerView(texture->view.Get(), source.width, source.height, transform);
@@ -330,7 +328,6 @@ bool GpuFrameConverter::drawNv12(const AVFrame* nv12, const GpuColorSpace& color
     d.setParams(colors);
     ID3D11ShaderResourceView* views[2] = {source.yView.Get(), source.uvView.Get()};
     d.pass(source.rgbTarget.Get(), 0, 0, w, h, d.psToRgb.Get(), views, 2);
-    d.context->GenerateMips(source.rgbView.Get());
     return d.drawLayerView(source.rgbView.Get(), w, h, t);
 }
 
@@ -445,7 +442,6 @@ bool GpuFrameConverter::drawD3d11Frame(const AVFrame* frame, const GpuColorSpace
     d.setParams(colors);
     ID3D11ShaderResourceView* views[2] = {source.packedY.Get(), source.packedUV.Get()};
     d.pass(source.rgbTarget.Get(), 0, 0, w, h, d.psToRgb.Get(), views, 2);
-    d.context->GenerateMips(source.rgbView.Get());
     return d.drawLayerView(source.rgbView.Get(), w, h, t);
 }
 
@@ -464,6 +460,9 @@ bool GpuFrameConverter::Impl::drawLayerView(ID3D11ShaderResourceView* view, int 
     // Quanto si rimpicciolisce il file: da qui il livello di mip (rimpicciolito 4 volte = livello 2).
     const double scale = std::sqrt(std::abs(g.toProject.a * g.toProject.d - g.toProject.b * g.toProject.c));
     const float lod = scale > 0.0 && scale < 1.0 ? static_cast<float>(std::log2(1.0 / scale)) : 0.0f;
+    // I mipmap servono solo se il file si rimpicciolisce: a scala 100% o più grande si legge il livello 0.
+    if (lod > 0.0f)
+        context->GenerateMips(view);
     // I pixel leggibili restano dentro la parte visibile (così non entra il colore di quello ritagliato).
     const int minIx = std::clamp(static_cast<int>(std::floor(g.sourceLeft)), 0, sourceWidth - 1);
     const int maxIx = std::clamp(static_cast<int>(std::ceil(g.sourceRight)) - 1, minIx, sourceWidth - 1);

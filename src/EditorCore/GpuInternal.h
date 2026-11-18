@@ -96,7 +96,7 @@ struct GpuFrameConverter::Impl
     // Le texture di un fotogramma NV12 di quella misura e la sua versione RGBA16F (create al primo uso); nullptr se non si riesce.
     Nv12Source* nv12Source(int w, int h);
     // Una texture BGRA 8 bit di quella misura (con tutti i livelli di mip) con `source` caricato dentro.
-    SourceTexture* uploadSource(const BgraImage& source, bool mips);
+    SourceTexture* uploadSource(const BgraImage& source);
     // Disegna la texture `view` (di `sourceWidth` x `sourceHeight`, con i mipmap se serve) sul fotogramma con `transform`.
     bool drawLayerView(ID3D11ShaderResourceView* view, int sourceWidth, int sourceHeight, const Transform& transform);
 };
