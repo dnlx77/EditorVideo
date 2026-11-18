@@ -26,21 +26,31 @@
 namespace editor::app {
 using namespace detail;
 
+namespace {
+
+// Miniature di un blocco: una ogni `slot` pixel a partire dal bordo sinistro `full` (in 16:9 dell'altezza). Le
+// posizioni si contano su tutto il blocco, ma si chiedono solo quelle che cadono nella parte visibile `r`.
+struct ThumbSlots
+{
+    double slot;
+    int count;
+    int first;
+    int last;
+};
+
+ThumbSlots thumbSlots(const QRectF& full, const QRectF& r)
+{
+    const double slot = full.height() * 16.0 / 9.0;
+    const int count = std::max(1, static_cast<int>(full.width() / slot));
+    return {slot, count, std::clamp(static_cast<int>(std::floor((r.left() - full.left()) / slot)), 0, count - 1),
+            std::clamp(static_cast<int>(std::floor((r.right() - full.left()) / slot)), 0, count - 1)};
+}
+
+}  // namespace
+
 void SequenceTimeline::paintEvent(QPaintEvent*)
 {
-    const qreal ratio = devicePixelRatioF();
-    const QSize pixels = (QSizeF(size()) * ratio).toSize();
-    if (!cacheValid_ || cache_.size() != pixels || cache_.devicePixelRatio() != ratio) {
-        cache_ = QPixmap(pixels);
-        cache_.setDevicePixelRatio(ratio);
-        cache_.fill(Qt::transparent);
-        QPainter cp(&cache_);
-        // Come un QPainter sul widget: carattere (con i punti calcolati per lo schermo del widget) e penna.
-        cp.setFont(QFont(font(), this));
-        cp.setPen(palette().color(foregroundRole()));
-        paintStatic(cp);
-        cacheValid_ = true;
-    }
+    ensureCache(cache_, cacheValid_, [this](QPainter& cp) { paintStatic(cp); });
     QPainter p(this);
     p.drawPixmap(0, 0, cache_);
     if (!blocks_.empty())
@@ -343,10 +353,7 @@ void SequenceTimeline::paintVideo(QPainter& p)
         if (thumbnailFor && full.width() > 24) {
             // Le posizioni si contano su tutto il blocco (così non cambiano scorrendo), ma si chiedono solo
             // quelle visibili.
-            const double slot = full.height() * 16.0 / 9.0;
-            const int count = std::max(1, static_cast<int>(full.width() / slot));
-            const int first = std::clamp(static_cast<int>(std::floor((r.left() - full.left()) / slot)), 0, count - 1);
-            const int last = std::clamp(static_cast<int>(std::floor((r.right() - full.left()) / slot)), 0, count - 1);
+            const auto [slot, count, first, last] = thumbSlots(full, r);
             p.save();
             QPainterPath clip;
             clip.addRoundedRect(r, 3, 3);
@@ -534,10 +541,7 @@ void SequenceTimeline::paintText(QPainter& p)
             p.drawRoundedRect(r, 3, 3);
             // Un pezzo di video: le miniature del file come in V1 (una all'inizio e altre a distanza regolare).
             if (c.piece && thumbnailFor && c.fileId != 0 && full.width() > 24) {
-                const double slot = full.height() * 16.0 / 9.0;
-                const int count = std::max(1, static_cast<int>(full.width() / slot));
-                const int first = std::clamp(static_cast<int>(std::floor((r.left() - full.left()) / slot)), 0, count - 1);
-                const int last = std::clamp(static_cast<int>(std::floor((r.right() - full.left()) / slot)), 0, count - 1);
+                const auto [slot, count, first, last] = thumbSlots(full, r);
                 p.save();
                 QPainterPath clip;
                 clip.addRoundedRect(r, 3, 3);

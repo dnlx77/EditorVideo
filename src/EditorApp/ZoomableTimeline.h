@@ -2,6 +2,9 @@
 
 #include "EditorCore/TimelineZoom.h"
 
+#include <QtGui/QFont>
+#include <QtGui/QPainter>
+#include <QtGui/QPixmap>
 #include <QtWidgets/QWidget>
 
 class QPainter;
@@ -48,6 +51,26 @@ protected:
     virtual void viewChanged() = 0;
     // Dove sta il cursore di riproduzione (per centrare lo zoom da tastiera).
     virtual double playheadTime() const = 0;
+
+    // Rifà la cache di disegno (tutto tranne il cursore) se non vale più: cambiati misura o rapporto dello schermo, oppure
+    // `valid` è falso. `paint` disegna sulla cache come su un QPainter del widget (carattere e penna sono già impostati).
+    template <typename Paint>
+    void ensureCache(QPixmap& cache, bool& valid, Paint&& paint)
+    {
+        const qreal ratio = devicePixelRatioF();
+        const QSize pixels = (QSizeF(size()) * ratio).toSize();
+        if (valid && cache.size() == pixels && cache.devicePixelRatio() == ratio)
+            return;
+        cache = QPixmap(pixels);
+        cache.setDevicePixelRatio(ratio);
+        cache.fill(Qt::transparent);
+        QPainter cp(&cache);
+        // Come un QPainter sul widget: carattere (con i punti calcolati per lo schermo del widget) e penna.
+        cp.setFont(QFont(font(), this));
+        cp.setPen(palette().color(foregroundRole()));
+        paint(cp);
+        valid = true;
+    }
 
     void setTimelineDuration(double seconds);
     // Il cursore si è spostato: se la vista lo segue e lui è uscito dalla parte visibile, si gira pagina.

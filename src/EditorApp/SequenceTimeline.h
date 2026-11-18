@@ -619,6 +619,7 @@ private:
     int transDropIndex_ = -1;       // blocco prima della giunzione evidenziata (-1 = nessuna)
     bool transDropValid_ = false;
 
+    void pruneTextSelection();
     QPixmap cache_;
     bool cacheValid_ = false;
 
