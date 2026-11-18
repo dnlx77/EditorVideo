@@ -464,13 +464,8 @@ bool Sequence::setEnvelope(int fragmentId, std::vector<LevelPoint> points)
 bool Sequence::setTransform(int fragmentId, const Transform& transform)
 {
     for (Fragment& f : fragments_) {
-        if (f.id != fragmentId)
-            continue;
-        const Transform value = normalized(transform);
-        if (f.transform == value)
-            return false;
-        f.transform = value;
-        return true;
+        if (f.id == fragmentId)
+            return assignIfChanged(f.transform, normalized(transform));
     }
     return false;
 }
@@ -478,14 +473,8 @@ bool Sequence::setTransform(int fragmentId, const Transform& transform)
 bool Sequence::setAnimation(int fragmentId, const TransformAnimation& animation)
 {
     for (Fragment& f : fragments_) {
-        if (f.id != fragmentId)
-            continue;
-        TransformAnimation value = animation;
-        normalizeAnimation(value);
-        if (f.animation == value)
-            return false;
-        f.animation = std::move(value);
-        return true;
+        if (f.id == fragmentId)
+            return assignAnimation(f.animation, animation);
     }
     return false;
 }

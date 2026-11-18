@@ -351,23 +351,13 @@ bool TextTracks::setStyle(int clipId, const TextStyle& style)
 bool TextTracks::setTransform(int clipId, const Transform& transform)
 {
     TextClip* clip = findMutable(clipId);
-    if (clip == nullptr || clip->transform == transform)
-        return false;
-    clip->transform = transform;
-    return true;
+    return clip != nullptr && assignIfChanged(clip->transform, transform);
 }
 
 bool TextTracks::setAnimation(int clipId, const TransformAnimation& animation)
 {
     TextClip* clip = findMutable(clipId);
-    if (clip == nullptr)
-        return false;
-    TransformAnimation value = animation;
-    normalizeAnimation(value);
-    if (clip->animation == value)
-        return false;
-    clip->animation = std::move(value);
-    return true;
+    return clip != nullptr && assignAnimation(clip->animation, animation);
 }
 
 // ---- Pezzi di video sui livelli
@@ -514,23 +504,13 @@ bool TextTracks::setPieceSpeed(int pieceId, double speed, bool reverse)
 bool TextTracks::setPieceTransform(int pieceId, const Transform& transform)
 {
     LayerPiece* piece = findPieceMutable(pieceId);
-    if (piece == nullptr || piece->transform == transform)
-        return false;
-    piece->transform = transform;
-    return true;
+    return piece != nullptr && assignIfChanged(piece->transform, transform);
 }
 
 bool TextTracks::setPieceAnimation(int pieceId, const TransformAnimation& animation)
 {
     LayerPiece* piece = findPieceMutable(pieceId);
-    if (piece == nullptr)
-        return false;
-    TransformAnimation value = animation;
-    normalizeAnimation(value);
-    if (piece->animation == value)
-        return false;
-    piece->animation = std::move(value);
-    return true;
+    return piece != nullptr && assignAnimation(piece->animation, animation);
 }
 
 std::vector<const LayerPiece*> TextTracks::piecesVisibleAt(double seconds) const
