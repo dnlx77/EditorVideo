@@ -391,4 +391,20 @@ int lumaAt(const AVFrame& frame, int x, int y)
     return frame.data[0][y * frame.linesize[0] + x];
 }
 
+CenterLuma decodeCenterLuma(const std::filesystem::path& path)
+{
+    CenterLuma d;
+    d.errors = decodeVideoFrames(path, [&](const AVFrame& f) { d.luma.push_back(lumaAt(f, f.width / 2, f.height / 2)); }, true);
+    return d;
+}
+
+ThreePoints sampleThreePoints(const std::filesystem::path& path)
+{
+    ThreePoints d;
+    d.errors = decodeVideoFrames(path, [&](const AVFrame& f) {
+        d.pixels.push_back({lumaAt(f, f.width / 2, f.height / 2), lumaAt(f, 20, 20), lumaAt(f, f.width * 3 / 4 + 40, f.height / 2)});
+    });
+    return d;
+}
+
 }  // namespace editor::tests

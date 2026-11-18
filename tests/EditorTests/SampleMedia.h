@@ -5,11 +5,13 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string>
 #include <system_error>
+#include <vector>
 
 struct AVFrame;
 
@@ -78,6 +80,22 @@ int decodeVideoFrames(const std::filesystem::path& path, const std::function<voi
 
 // Luminanza (Y) del pixel (x, y) di un fotogramma decodificato.
 int lumaAt(const AVFrame& frame, int x, int y);
+
+// Luminanza al centro di ogni fotogramma del file, in ordine di visualizzazione (decodifica severa, vedi decodeVideoFrames).
+struct CenterLuma
+{
+    std::vector<int> luma;
+    int errors = 0;
+};
+CenterLuma decodeCenterLuma(const std::filesystem::path& path);
+
+// Tre punti di ogni fotogramma: il centro, l'angolo in alto a sinistra e il centro del quarto destro.
+struct ThreePoints
+{
+    std::vector<std::array<int, 3>> pixels;
+    int errors = 0;
+};
+ThreePoints sampleThreePoints(const std::filesystem::path& path);
 
 // Base dei test che lavorano su file di prova generati in una cartella temporanea propria (una per gruppo di test).
 // La classe derivata dichiara, pubblici, kDirName (nome della cartella in %TEMP%) e prepareSamples() (genera i file

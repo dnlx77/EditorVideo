@@ -17,8 +17,8 @@ extern "C" {
 
 namespace fs = std::filesystem;
 using namespace editor::core;
-using editor::tests::decodeVideoFrames;
-using editor::tests::lumaAt;
+using editor::tests::ThreePoints;
+using editor::tests::sampleThreePoints;
 using editor::tests::writeEncodedClip;
 
 namespace {
@@ -33,21 +33,6 @@ constexpr int kHeight = 360;
 bool writeClip(const fs::path& path, int luma = 100)
 {
     return writeEncodedClip(path, {.width = kWidth, .height = kHeight, .fps = kFps, .frames = kFrames, .gop = kFps, .luma = luma});
-}
-
-struct Sampled
-{
-    std::vector<std::array<int, 3>> pixels;  // per fotogramma: centro, angolo in alto a sinistra, centro del quarto destro
-    int errors = 0;
-};
-
-Sampled sample(const fs::path& path)
-{
-    Sampled d;
-    d.errors = decodeVideoFrames(path, [&](const AVFrame& f) {
-        d.pixels.push_back({lumaAt(f, kWidth / 2, kHeight / 2), lumaAt(f, 20, 20), lumaAt(f, kWidth * 3 / 4 + 40, kHeight / 2)});
-    });
-    return d;
 }
 
 class TransformExport : public ::testing::Test
@@ -92,7 +77,7 @@ TEST_F(TransformExport, OnlyTheTransformedStretchIsReencodedAndDrawnSmaller)
     const fs::path out = dir_ / "scala.mp4";
     const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, {});
     EXPECT_EQ(result.transformSegments, 1);
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     EXPECT_EQ(d.errors, 0);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFrames));
     EXPECT_NEAR(probeFile(utf8FromPath(out)).durationSeconds, 4.0, 0.05);
@@ -121,7 +106,7 @@ TEST_F(TransformExport, PositionMovesThePicture)
     const fs::path out = dir_ / "posizione.mp4";
     const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, {});
     EXPECT_EQ(result.transformSegments, 1);
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFrames));
     for (std::size_t i = 4; i < d.pixels.size(); ++i) {
         SCOPED_TRACE("fotogramma " + std::to_string(i));
@@ -163,7 +148,7 @@ TEST_F(TransformExport, LayerPiecesAreComposedOverTheMainVideo)
     const fs::path out = dir_ / "livelli.mp4";
     const ExportResult result = exportClips({clip}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
     EXPECT_EQ(result.textSegments, 1);
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     EXPECT_EQ(d.errors, 0);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFrames));
     for (int i = 0; i < kFrames; ++i) {
@@ -195,7 +180,7 @@ TEST_F(TransformExport, LayerPieceOverAGapIsDrawnOnBlack)
     options.layerFiles[7] = file("chiaro.mp4");
     const fs::path out = dir_ / "livelloNelloSpazio.mp4";
     exportClips({clip}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(4 * kFps));
     // Nello spazio (1..3 s) c'è il pezzo chiaro a tutto schermo, non il nero.
     EXPECT_NEAR(d.pixels[2 * kFps][0], 200, 8);
@@ -222,7 +207,7 @@ TEST_F(TransformExport, LayerPieceBeyondTheEndOfV1IsExportedOnBlack)
     const ExportPreview preview = previewExport({clip}, AudioEdit{}, nullptr, options);
     EXPECT_NEAR(preview.outputSeconds, 4.0, 0.1);
     exportClips({clip}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(4 * kFps));
     EXPECT_NEAR(d.pixels[static_cast<std::size_t>(kFps / 2)][0], 100, 8);  // V1 da solo
     EXPECT_NEAR(d.pixels[static_cast<std::size_t>(3 * kFps)][0], 200, 8);  // la coda: il pezzo del livello
@@ -247,7 +232,7 @@ TEST_F(TransformExport, AnimatedOpacityIsEvaluatedFrameByFrame)
     const fs::path out = dir_ / "opacitaAnimata.mp4";
     const ExportResult result = exportClips(plan, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, {});
     EXPECT_EQ(result.transformSegments, 1);
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     EXPECT_EQ(d.errors, 0);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFrames));
     for (int i = 4; i < kFrames - 4; i += 7) {
@@ -267,7 +252,7 @@ TEST_F(TransformExport, AnimationKeysFollowTheFileTimeOfTheStretch)
     const fs::path out = dir_ / "opacitaSecondoTratto.mp4";
     const ExportResult result = exportClips({clip}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, {});
     EXPECT_EQ(result.transformSegments, 1);
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFrames));
     EXPECT_NEAR(d.pixels[static_cast<std::size_t>(kFps)][0], 100, 6);         // primo tratto: pieno
     EXPECT_NEAR(d.pixels[static_cast<std::size_t>(2 * kFps + 5)][0], 16.0 + 84.0 * (1.0 - 5.0 / 60.0), 7.0);  // inizio della dissolvenza
@@ -291,7 +276,7 @@ TEST_F(TransformExport, AnimatedLayerPieceIsEvaluatedFrameByFrame)
     options.layerFiles[7] = file("chiaro.mp4");
     const fs::path out = dir_ / "livelloAnimato.mp4";
     exportClips({clip}, utf8FromPath(out), AudioEdit{}, {}, MuteMethod::Silence, nullptr, options);
-    const Sampled d = sample(out);
+    const ThreePoints d = sampleThreePoints(out);
     ASSERT_EQ(d.pixels.size(), static_cast<std::size_t>(kFrames));
     EXPECT_NEAR(d.pixels[static_cast<std::size_t>(kFps + 3)][0], 200, 10);      // all'inizio del pezzo: opaco
     EXPECT_NEAR(d.pixels[static_cast<std::size_t>(2 * kFps)][0], 150, 10);      // a metà: metà e metà
