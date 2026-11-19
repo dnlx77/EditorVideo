@@ -481,9 +481,83 @@ PlayerWidget::PlayerWidget(QWidget* parent)
     updatePositionLabel(0.0);
 }
 
+// Quello che prepareFile() fa in un thread a parte: i decodificatori del file aperti e il video già posizionato.
+struct PlayerWidget::Standby
+{
+    QString path;
+    QString source;      // il file da cui leggere il video (path o il suo proxy) al momento della richiesta
+    QString videoPath;   // quello che si è aperto davvero
+    double start = 0.0;
+    QSize box;
+    std::unique_ptr<core::VideoDecoder> video;
+    std::unique_ptr<core::AudioDecoder> audio;
+    std::shared_ptr<core::VideoFrame> frame;  // il fotogramma di `start`
+    std::atomic<bool> cancel{false};
+    std::thread thread;
+
+    ~Standby()
+    {
+        cancel = true;
+        if (thread.joinable())
+            thread.join();
+    }
+};
+
 PlayerWidget::~PlayerWidget()
 {
     stopWorkers();
+    standby_.reset();
+}
+
+void PlayerWidget::prepareFile(const QString& path, double startSeconds)
+{
+    if (path.isEmpty())
+        return;
+    if (standby_ && standby_->path == path && std::abs(standby_->start - startSeconds) < 1e-6)
+        return;
+    const QString source = videoSourceFor ? videoSourceFor(path) : path;
+    auto standby = std::make_unique<Standby>();
+    Standby* work = standby.get();
+    work->path = path;
+    work->source = source;
+    work->start = std::max(0.0, startSeconds);
+    work->box = view_->pixelSize();
+    standby_.reset();  // la preparazione di prima (se c'è) finisce o si interrompe
+    work->thread = std::thread([work, source, path] {
+        const std::string utf8Path = nativeUtf8(path);
+        if (source != path) {
+            try {
+                work->video = std::make_unique<core::VideoDecoder>(nativeUtf8(source));
+                work->videoPath = source;
+            } catch (const std::exception&) {
+                // Proxy non leggibile: si usa l'originale.
+            }
+        }
+        if (!work->video && !work->cancel) {
+            try {
+                work->video = std::make_unique<core::VideoDecoder>(utf8Path);
+                work->videoPath = path;
+            } catch (const std::exception&) {
+                // Senza video (o non apribile): ci penserà openFile come al solito.
+            }
+        }
+        if (work->video && !work->cancel) {
+            try {
+                work->video->setOutputSize(work->box.width(), work->box.height());
+                work->frame = work->video->seek(work->start);
+            } catch (const std::exception&) {
+                work->video.reset();  // decodifica che non riesce: openFile rifà tutto da solo
+            }
+        }
+        if (!work->cancel) {
+            try {
+                work->audio = std::make_unique<core::AudioDecoder>(utf8Path);
+            } catch (const std::exception&) {
+                // File senza audio.
+            }
+        }
+    });
+    standby_ = std::move(standby);
 }
 
 bool PlayerWidget::hasMedia() const
@@ -493,13 +567,31 @@ bool PlayerWidget::hasMedia() const
 
 void PlayerWidget::openFile(const QString& path)
 {
+    // Preparato in anticipo (prepareFile)? Si usa se è lo stesso file, letto dalla stessa origine (proxy compreso).
+    std::unique_ptr<Standby> prepared = std::move(standby_);
+    if (prepared) {
+        const QString source = videoSourceFor ? videoSourceFor(path) : path;
+        if (prepared->path != path || prepared->source != source) {
+            prepared.reset();
+        } else {
+            prepared->thread.join();  // di solito ha già finito
+            if (!prepared->video || !prepared->frame)
+                prepared.reset();
+        }
+    }
     closeFile();
     const std::string utf8Path = nativeUtf8(path);
 
     QString videoError;
     bool noVideoStream = false;  // un file solo audio: niente da segnalare
     videoPath_ = path;
-    if (const QString source = videoSourceFor ? videoSourceFor(path) : path; source != path) {
+    std::shared_ptr<core::VideoFrame> preparedFrame;
+    if (prepared) {
+        video_ = std::move(prepared->video);
+        videoPath_ = prepared->videoPath;
+        preparedFrame = std::move(prepared->frame);
+        ++standbyAdopted_;
+    } else if (const QString source = videoSourceFor ? videoSourceFor(path) : path; source != path) {
         try {
             video_ = std::make_unique<core::VideoDecoder>(nativeUtf8(source));
             videoPath_ = source;
@@ -519,7 +611,7 @@ void PlayerWidget::openFile(const QString& path)
     path_ = path;
     std::unique_ptr<core::AudioDecoder> own;
     try {
-        own = std::make_unique<core::AudioDecoder>(utf8Path);
+        own = prepared && prepared->audio ? std::move(prepared->audio) : std::make_unique<core::AudioDecoder>(utf8Path);
         ownAudioDuration_ = std::max(0.0, own->durationSeconds());
         ownAudio_ = true;
     } catch (const std::exception&) {
@@ -540,8 +632,10 @@ void PlayerWidget::openFile(const QString& path)
     if (core::isImagePath(utf8Path))
         duration_ = std::min(duration_, kStillSourceView);
     timeline_->setDuration(duration_);
-    position_ = 0.0;
-    displayedTime_ = 0.0;
+    // Preparato in anticipo: si resta dove il decoder è già (il punto da cui il montaggio vuole partire), non si torna a 0.
+    const double firstAt = preparedFrame ? prepared->start : 0.0;
+    position_ = firstAt;
+    displayedTime_ = firstAt;
     frameDuration_ = video_ && video_->frameRate() > 0 ? 1.0 / video_->frameRate() : 0.04;
     timeline_->setFrameDuration(frameDuration_);
     // Per un video i fotogrammi chiave arrivano dall'analisi del file (setKeyframes); senza video non servono.
@@ -552,14 +646,21 @@ void PlayerWidget::openFile(const QString& path)
     if (video_) {
         const QSize pixels = view_->pixelSize();
         video_->setOutputSize(pixels.width(), pixels.height());
-        showFrameAt(0.0);
+        if (preparedFrame && prepared->box == pixels) {
+            displayedTime_ = preparedFrame->time;
+            view_->setFrame(std::move(preparedFrame));
+            decoderAtDisplayed_ = true;
+            refreshDecoderText();
+        } else {
+            showFrameAt(0.0);
+        }
     } else if (!videoError.isEmpty() && !noVideoStream)
         view_->setMessage(QStringLiteral("Video non riproducibile, solo audio.\n%1").arg(videoError));
     else
         view_->setMessage(QStringLiteral("Solo audio"));
 
     updateControls();
-    updatePositionLabel(0.0);
+    updatePositionLabel(firstAt);
 }
 
 void PlayerWidget::reloadVideo()
@@ -877,7 +978,7 @@ void PlayerWidget::seekTo(double seconds)
     position_ = target;
     if (wasPlaying)
         startWorkers(target);
-    else if (video_)
+    else if (video_ && !alreadyShowing(target))
         showFrameAt(target);
     updateControls();
     updatePositionLabel(target);
@@ -901,7 +1002,7 @@ QString PlayerWidget::statusText() const
 void PlayerWidget::startWorkers(double from)
 {
     // Il fotogramma di partenza si decodifica qui (a thread fermi), poi il thread video prosegue dal successivo.
-    if (video_)
+    if (video_ && !alreadyShowing(from))
         showFrameAt(from);
 
     {
@@ -1211,6 +1312,16 @@ void PlayerWidget::showFrameAt(double seconds)
     } catch (const std::exception& e) {
         showDecodeError(e);
     }
+    refreshDecoderText();
+}
+
+bool PlayerWidget::alreadyShowing(double seconds) const
+{
+    return video_ && decoderAtDisplayed_ && std::abs(displayedTime_ - seconds) <= frameDuration_ * 0.5 + 1e-6;
+}
+
+void PlayerWidget::refreshDecoderText()
+{
     // Qui i thread sono fermi: si può leggere in sicurezza quale decoder è in uso.
     decoderText_ = QStringLiteral("Decodifica: %1").arg(QString::fromStdString(video_->decoderDescription()));
     if (videoPath_ != path_) {

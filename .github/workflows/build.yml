@@ -265,6 +265,13 @@ jobs:
           $demo = "$env:TEMP\EditorVideoDemo"
           & ci\run-editorvideo.ps1 -Name velocita -Arguments @('--speed-test', "`"$demo\demo_mpeg2_gpu.mkv`"")
 
+      - name: Prova del cambio di pezzo nell'anteprima
+        shell: pwsh
+        run: |
+          # Il pezzo dopo si prepara in anticipo (decodificatori già aperti) e al cambio non si riapre da capo.
+          $demo = "$env:TEMP\EditorVideoDemo"
+          & ci\run-editorvideo.ps1 -Name cambio-pezzo -Arguments @('--standby-test', "`"$demo\demo_mpeg2_gpu.mkv`"")
+
       - name: Prova dei pezzi di video sui livelli
         shell: pwsh
         run: |

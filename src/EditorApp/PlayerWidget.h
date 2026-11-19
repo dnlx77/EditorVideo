@@ -53,6 +53,11 @@ public:
     ~PlayerWidget() override;
 
     void openFile(const QString& path);
+    // Prepara in anticipo, in un thread a parte, l'apertura di un file (decodificatore video e audio) e il suo posizionamento
+    // su `startSeconds`: il prossimo openFile(`path`) li usa invece di aprire tutto da capo, e il passaggio da un pezzo del
+    // montaggio al successivo non si ferma ad aspettare il disco e la GPU. Una nuova chiamata sostituisce la preparazione
+    // precedente; chiamarla di nuovo con lo stesso file e lo stesso punto non fa nulla.
+    void prepareFile(const QString& path, double startSeconds);
     void closeFile();
     bool hasMedia() const;
 
@@ -215,6 +220,12 @@ private:
     // Ferma la riproduzione in `position`; con signalWindowEnd avvisa poi onWindowEnd (fine del pezzo).
     void stopAt(double position, bool signalWindowEnd);
     void showFrameAt(double seconds);
+    // true se il fotogramma di `seconds` è già quello mostrato e il decoder gli sta subito dopo: non serve cercarlo di nuovo.
+    bool alreadyShowing(double seconds) const;
+    void refreshDecoderText();  // dopo un fotogramma mostrato: quale decodificatore (e proxy) lo ha fatto
+    struct Standby;             // vedi prepareFile
+    std::unique_ptr<Standby> standby_;
+    int standbyAdopted_ = 0;    // quante volte openFile ha usato una preparazione (per le prove)
     void showDecodeError(const std::exception& e);
     void updateControls();
     void updatePositionLabel(double seconds);
@@ -297,6 +308,7 @@ private:
     // Solo per le prove (EditorVideoTests.exe e --smoke-test), che li raggiungono attraverso TestAccess (TestAccess.h).
     friend class TestAccess;
     QString statusText() const;  // es. "Decodifica: GPU (D3D11VA)"
+    int standbyAdopted() const { return standbyAdopted_; }
 };
 
 }  // namespace editor::app
