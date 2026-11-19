@@ -1060,6 +1060,53 @@ void ProgramMonitor::primeTransition()
     }
 }
 
+void ProgramMonitor::prepareNext()
+{
+    if (!playing_ || speed_ <= 0.0)
+        return;
+    const core::Sequence& sequence = project_.sequence();
+    const auto& fragments = sequence.fragments();
+    const int count = static_cast<int>(fragments.size());
+    const double window = std::max(2.0, 2.0 * speed_);
+    int next = -1;
+    double offset = 0.0;  // dove nel pezzo `next` si entra (secondi del pezzo)
+    if (transitionId_ != 0) {
+        // Nella transizione: dopo c'è il pezzo che la segue, da dove finisce la transizione.
+        const auto placement = project_.transitionPlacement(transitionId_);
+        if (!placement)
+            return;
+        next = sequence.indexOf(placement->afterFragment);
+        if (next >= 0)
+            offset = std::max(0.0, placement->end() - sequence.startOf(next));
+    } else if (gapIndex_ >= 0 && gapIndex_ < count) {
+        const double gapEnd = sequence.startOf(gapIndex_);
+        if (gapEnd - position_ > window)
+            return;
+        next = gapIndex_;
+    } else if (index_ >= 0 && index_ < count - 1) {
+        const double end = sequence.startOf(index_) + fragments[static_cast<std::size_t>(index_)].length();
+        if (end - position_ > window)
+            return;
+        next = index_ + 1;
+        if (fragments[static_cast<std::size_t>(next)].gap <= 0.0) {
+            // Attaccato: se c'è una transizione, il pezzo dopo si apre dove finisce lei.
+            for (const core::TransitionPlacement& placement : project_.activeTransitions()) {
+                if (placement.afterFragment == fragments[static_cast<std::size_t>(next)].id) {
+                    offset = std::max(0.0, placement.end() - sequence.startOf(next));
+                    break;
+                }
+            }
+        }
+    }
+    if (next < 0 || next >= count)
+        return;
+    const core::Fragment& f = fragments[static_cast<std::size_t>(next)];
+    const core::Clip* clip = project_.find(f.clipId);
+    if (clip == nullptr || f.clipId == loadedClipId_)
+        return;  // lo stesso file è già aperto: si va avanti con quello
+    player_->prepareFile(QString::fromStdString(clip->path), f.map().fileAt(std::clamp(offset, 0.0, f.length())));
+}
+
 void ProgramMonitor::updateOverlayFrame()
 {
     const QSize frame = frameSize();
@@ -1588,6 +1635,7 @@ void ProgramMonitor::updatePosition()
                 primeTransition();
         }
     }
+    prepareNext();
     updateLayers();
     updateLabels();
     updateTextOverlay();

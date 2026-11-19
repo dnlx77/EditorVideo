@@ -66,6 +66,7 @@ public:
     EDITORVIDEO_TEST_ACCESS(showingTransitionClip)
     // PlayerWidget
     EDITORVIDEO_TEST_ACCESS(statusText)
+    EDITORVIDEO_TEST_ACCESS(standbyAdopted)
     // MixerPanel
     EDITORVIDEO_TEST_ACCESS(resetMeters)
     EDITORVIDEO_TEST_ACCESS(meterDb)

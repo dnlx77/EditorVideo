@@ -222,6 +222,9 @@ private:
     void enterTransition(const core::TransitionPlacement& placement, double seconds, bool wait);
     void showTransitionFrame(const core::TransitionPlacement& placement, double seconds, bool wait);
     void primeTransition();  // in riproduzione: apre in anticipo i file della transizione che sta per arrivare
+    // In riproduzione in avanti: a pochi secondi dal pezzo (o dallo spazio vuoto, o dalla transizione) dopo, prepara in un thread
+    // a parte il suo file nel lettore (decodifica aperta e già sul punto di partenza), così al cambio non ci si ferma.
+    void prepareNext();
     void setTransitionBox();
     double transitionClock() const;  // il tempo della sequenza adesso, nel tratto di una transizione in riproduzione
     void transitionTick();           // mostra il fotogramma pronto per questo momento

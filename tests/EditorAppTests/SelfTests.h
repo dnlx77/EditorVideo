@@ -53,6 +53,8 @@ int runManipTest(const QStringList& arguments, qsizetype at);
 
 // --speed-test: l'anteprima del Montaggio con pezzi a velocità diversa (vedi SpeedSelfTest.cpp).
 int runSpeedTest(const QStringList& arguments, qsizetype at);
+// --standby-test: il pezzo dopo si prepara in anticipo e al cambio non si riapre da capo (vedi StandbySelfTest.cpp).
+int runStandbyTest(const QStringList& arguments, qsizetype at);
 
 // --export-panel-test: la finestra "Esporta" con un riepilogo inventato: avviso di sovrascrittura, destinazioni che non
 // vanno, scelte che arrivano alle opzioni (vedi ExportSelfTest.cpp).
