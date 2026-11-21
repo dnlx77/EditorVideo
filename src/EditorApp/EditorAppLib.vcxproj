@@ -42,6 +42,7 @@
     <ClInclude Include="MainWindow.h" />
     <ClInclude Include="EqualizerDialog.h" />
     <ClInclude Include="MixerPanel.h" />
+    <ClInclude Include="VuMeter.h" />
     <ClInclude Include="MainWindowShared.h" />
     <ClInclude Include="PlayerWidget.h" />
     <ClInclude Include="QtImageLoader.h" />

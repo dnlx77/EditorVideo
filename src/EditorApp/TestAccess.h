@@ -39,6 +39,7 @@ public:
     EDITORVIDEO_TEST_ACCESS(textPanel)
     EDITORVIDEO_TEST_ACCESS(propertiesPanel)
     EDITORVIDEO_TEST_ACCESS(mixerPanel)
+    EDITORVIDEO_TEST_ACCESS(masterMeter)
     EDITORVIDEO_TEST_ACCESS(leftTabs)
     EDITORVIDEO_TEST_ACCESS(transitionPanel)
     EDITORVIDEO_TEST_ACCESS(groupPanel)

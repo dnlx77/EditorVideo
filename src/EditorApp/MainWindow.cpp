@@ -2,6 +2,7 @@
 
 #include "EditorApp/MainWindowShared.h"
 #include "EditorApp/MixerPanel.h"
+#include "EditorApp/VuMeter.h"
 #include "EditorCore/AudioMixer.h"
 #include "EditorCore/GpuDevice.h"
 #include "EditorApp/PropertiesPanel.h"
@@ -11,6 +12,7 @@
 #include "EditorApp/TransitionListPanel.h"
 #include "EditorApp/TransitionPreviewWidget.h"
 
+#include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QStackedWidget>
 
 namespace editor::app {
@@ -472,7 +474,15 @@ QWidget* MainWindow::buildTimeline()
     auto* sequenceLayout = new QVBoxLayout(sequencePanel);
     sequenceLayout->setContentsMargins(0, 0, 0, 0);
     sequenceLayout->addWidget(sequenceLabel_, 0);
-    sequenceLayout->addWidget(timeline_, 1);
+    // Il vu-meter del Master (stereo) sta a sinistra della linea del tempo, sempre visibile.
+    masterMeter_ = new VuMeter(nullptr, true);
+    masterMeter_->setToolTip(QStringLiteral("Livello di picco del Master (tutto il mix), sinistra e destra, in dB"));
+    auto* timelineRow = new QHBoxLayout;
+    timelineRow->setContentsMargins(0, 0, 0, 0);
+    timelineRow->setSpacing(2);
+    timelineRow->addWidget(masterMeter_, 0);
+    timelineRow->addWidget(timeline_, 1);
+    sequenceLayout->addLayout(timelineRow, 1);
     // Anche questo può diventare basso: sotto una certa altezza la riga sopra le corsie si nasconde (vedi eventFilter).
     sequencePanel->setMinimumSize(100, 76);
     sequencePanel->installEventFilter(this);
@@ -1440,14 +1450,27 @@ double MainWindow::frameDurationOf(int clipId) const
 
 void MainWindow::updateMeters()
 {
-    if (mixerPanel_ == nullptr || program_ == nullptr || !mixerPanel_->isVisible()) {
+    const bool mixerShown = mixerPanel_ != nullptr && mixerPanel_->isVisible();
+    const bool masterShown = masterMeter_ != nullptr && masterMeter_->isVisible();
+    if (program_ == nullptr || (!mixerShown && !masterShown)) {
         meterClock_.invalidate();
         return;
     }
     const double seconds = meterClock_.isValid() ? static_cast<double>(meterClock_.restart()) / 1000.0 : 0.04;
     if (!meterClock_.isValid())
         meterClock_.start();
-    mixerPanel_->feedPeaks(program_->takeTrackPeaks(), std::min(seconds, 0.25));
+    const auto peaks = program_->takeTrackPeaks();
+    const double step = std::min(seconds, 0.25);
+    if (masterShown) {
+        const auto it = peaks.find(core::kMasterTrackId);
+        if (it != peaks.end())
+            masterMeter_->feed(it->second[0], it->second[1], step);
+        else
+            masterMeter_->feed(0.0f, 0.0f, step);
+    }
+    if (!mixerShown)
+        return;
+    mixerPanel_->feedPeaks(peaks, step);
     // Lo spettro serve solo se è aperta la finestra di un equalizzatore.
     const int watched = mixerPanel_->spectrumTrack();
     program_->setSpectrumWatch(watched);
