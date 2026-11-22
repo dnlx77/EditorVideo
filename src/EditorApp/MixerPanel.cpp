@@ -2,6 +2,7 @@
 
 #include "EditorApp/EqualizerDialog.h"
 #include "EditorApp/ValueControl.h"
+#include "EditorApp/VuMeter.h"
 #include "EditorCore/AudioMixer.h"
 #include "EditorCore/AudioTracks.h"
 
@@ -32,32 +33,6 @@ namespace {
 
 constexpr double kMinDb = core::AudioTracks::kMinLevelDb;
 constexpr double kMaxDb = core::AudioTracks::kMaxLevelDb;
-
-// Le tacche della scala in dB (le stesse di fader e vu-meter, come nello screenshot di riferimento): i tratti fra una
-// tacca e l'altra sono uguali, con interpolazione lineare in mezzo.
-const std::vector<double>& scaleMarks()
-{
-    static const std::vector<double> m = {12, 6, 0, -6, -12, -20, -30, -40, -60};
-    return m;
-}
-// Da dB a frazione dell'altezza della guida: 0 in alto (+12), 1 in basso (-60).
-double dbFraction(double db)
-{
-    const auto& m = scaleMarks();
-    db = std::clamp(db, kMinDb, kMaxDb);
-    for (std::size_t i = 0; i + 1 < m.size(); ++i) {
-        if (db <= m[i] && db >= m[i + 1])
-            return (static_cast<double>(i) + (m[i] - db) / (m[i] - m[i + 1])) / static_cast<double>(m.size() - 1);
-    }
-    return 1.0;
-}
-double fractionDb(double f)
-{
-    const auto& m = scaleMarks();
-    const double pos = std::clamp(f, 0.0, 1.0) * static_cast<double>(m.size() - 1);
-    const std::size_t i = std::min(static_cast<std::size_t>(pos), m.size() - 2);
-    return m[i] + (m[i + 1] - m[i]) * (pos - static_cast<double>(i));
-}
 
 // Il fader: una guida verticale con le tacche in dB e il cursore. Trascinando si vede il valore, che si consegna al
 // rilascio (un solo passo di Annulla per movimento, come il cursore del livello nella linea del tempo).
@@ -201,88 +176,6 @@ private:
     double lastY_ = 0.0;
 };
 
-// Il vu-meter stereo: due barre (sinistra e destra) con la stessa scala del fader, verde fino a -6 dB, giallo fino a 0,
-// rosso oltre; una lineetta tiene il picco per un attimo. Il livello scende piano (come i vu-meter veri).
-class Meter : public QWidget
-{
-public:
-    explicit Meter(QWidget* parent = nullptr) : QWidget(parent)
-    {
-        setFixedWidth(22);
-        setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-        setToolTip(QStringLiteral("Livello di picco della traccia, sinistra e destra"));
-    }
-
-    // `peak` è il picco (0..1) dall'ultimo aggiornamento, `seconds` il tempo passato.
-    void feed(float left, float right, double seconds)
-    {
-        const std::array<double, 4> before = {level_[0], level_[1], hold_[0], hold_[1]};
-        const std::array<float, 2> in = {left, right};
-        for (int c = 0; c < 2; ++c) {
-            const double db = in[static_cast<std::size_t>(c)] > 1e-6f ? 20.0 * std::log10(in[static_cast<std::size_t>(c)]) : kMinDb;
-            double& level = level_[c];
-            level = std::max(db, level - kFallDbPerSecond * seconds);
-            level = std::max(level, kMinDb);
-            if (level >= hold_[c]) {
-                hold_[c] = level;
-                holdAge_[c] = 0.0;
-            } else {
-                holdAge_[c] += seconds;
-                if (holdAge_[c] > kHoldSeconds)
-                    hold_[c] = std::max(level, hold_[c] - kFallDbPerSecond * seconds);
-            }
-        }
-        // Si ridisegna solo se si vede qualcosa di diverso (a riproduzione ferma i livelli restano in fondo).
-        if (level_[0] != before[0] || level_[1] != before[1] || hold_[0] != before[2] || hold_[1] != before[3])
-            update();
-    }
-    void reset()
-    {
-        level_[0] = level_[1] = hold_[0] = hold_[1] = kMinDb;
-        update();
-    }
-    double levelDb(int channel) const { return level_[channel]; }
-
-protected:
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter p(this);
-        const QPalette& pal = palette();
-        const double top = 10;
-        const double height = this->height() - 20;
-        const double barWidth = 8;
-        const double gap = 2;
-        const double x0 = (width() - 2 * barWidth - gap) / 2.0;
-        for (int c = 0; c < 2; ++c) {
-            const QRectF bar(x0 + c * (barWidth + gap), top, barWidth, height);
-            p.fillRect(bar, pal.color(QPalette::Dark));
-            const auto fill = [&](double fromDb, double toDb, const QColor& color) {
-                const double hi = std::min(toDb, level_[c]);
-                if (hi <= fromDb)
-                    return;
-                const double y1 = top + dbFraction(hi) * height;
-                const double y2 = top + dbFraction(fromDb) * height;
-                p.fillRect(QRectF(bar.left(), y1, barWidth, y2 - y1), color);
-            };
-            fill(kMinDb, -6.0, QColor(46, 204, 64));
-            fill(-6.0, 0.0, QColor(240, 196, 25));
-            fill(0.0, kMaxDb, QColor(230, 57, 70));
-            if (hold_[c] > kMinDb + 0.5) {
-                const double y = top + dbFraction(hold_[c]) * height;
-                p.fillRect(QRectF(bar.left(), y - 1, barWidth, 2),
-                           hold_[c] > 0.0 ? QColor(230, 57, 70) : pal.color(QPalette::Text));
-            }
-        }
-    }
-
-private:
-    static constexpr double kFallDbPerSecond = 40.0;
-    static constexpr double kHoldSeconds = 1.2;
-    double level_[2] = {kMinDb, kMinDb};
-    double hold_[2] = {kMinDb, kMinDb};
-    double holdAge_[2] = {0.0, 0.0};
-};
-
 // La finestra di «Normalizza» (solo Master): il livello a cui portare il picco di tutto il mix.
 class NormalizeDialog : public QDialog
 {
@@ -395,7 +288,7 @@ public:
         col->addLayout(buttons);
 
         fader_ = new Fader;
-        meter_ = new Meter;
+        meter_ = new VuMeter;
         auto* faderRow = new QHBoxLayout;
         faderRow->setSpacing(0);
         faderRow->addWidget(fader_, 1);
@@ -444,7 +337,7 @@ public:
     double level() const { return fader_->value(); }
     bool muted() const { return mute_->isChecked(); }
     bool solo() const { return solo_->isChecked(); }
-    Meter* meter() const { return meter_; }
+    VuMeter* meter() const { return meter_; }
     PanKnob* pan() const { return pan_; }
 
     const std::vector<core::AudioEffect>& effects() const { return effects_; }
@@ -662,7 +555,7 @@ private:
     QPushButton* solo_ = nullptr;
     QPushButton* mute_ = nullptr;
     Fader* fader_ = nullptr;
-    Meter* meter_ = nullptr;
+    VuMeter* meter_ = nullptr;
     PanKnob* pan_ = nullptr;
     QDoubleSpinBox* readout_ = nullptr;
     QLabel* label_ = nullptr;

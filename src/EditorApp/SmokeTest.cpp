@@ -10,6 +10,7 @@
 #include "EditorApp/TestAccess.h"
 #include "EditorApp/TextEditorPanel.h"
 #include "EditorApp/TransitionMime.h"
+#include "EditorApp/VuMeter.h"
 #include "EditorApp/SequenceTimeline.h"
 #include "EditorApp/TimelineWidget.h"
 #include "EditorCore/AudioDecoder.h"
@@ -1350,6 +1351,17 @@ bool checkMixAndAudioOnly(SmokeRun& run)
     const bool meterFalls = TestAccess::meterDb(*mixer, 1, 0) < -20.0 && TestAccess::meterDb(*mixer, 1, 0) > -40.0;
     TestAccess::resetMeters(*mixer);
     mixerOk = mixerOk && meterUp && meterFalls && TestAccess::meterDb(*mixer, 1, 0) <= -59.9 && TestAccess::masterMeterDb(*mixer, 0) <= -59.9;
+    // Vu-meter del Master accanto alla linea del tempo: stesso contenitore, prima della linea del tempo, e segue i picchi.
+    VuMeter* masterMeter = TestAccess::masterMeter(*window);
+    SequenceTimeline* seqTimeline = TestAccess::sequenceTimeline(*window);
+    bool sideMeterOk = masterMeter != nullptr && seqTimeline != nullptr && masterMeter->parentWidget() == seqTimeline->parentWidget();
+    if (sideMeterOk) {
+        masterMeter->feed(0.5f, 0.25f, 0.04);
+        sideMeterOk = std::abs(masterMeter->levelDb(0) + 6.02) < 0.1 && std::abs(masterMeter->levelDb(1) + 12.04) < 0.1;
+        masterMeter->reset();
+        sideMeterOk = sideMeterOk && masterMeter->levelDb(0) <= -59.9;
+    }
+    mixerOk = mixerOk && sideMeterOk;
     std::printf("Mixer: colonne come le corsie e comandi che cambiano il progetto, vu-meter %s\n", mixerOk ? "sì" : "NO");
     std::fflush(stdout);
     ok = ok && mixerOk;

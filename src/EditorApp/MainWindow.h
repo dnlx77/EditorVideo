@@ -49,6 +49,7 @@ class ProgramMonitor;
 class TextEditorPanel;
 class PropertiesPanel;
 class MixerPanel;
+class VuMeter;
 class TransitionListPanel;
 class GroupListPanel;
 class TransitionPreviewWidget;
@@ -497,6 +498,7 @@ private:
     ProgramMonitor* program_ = nullptr;
     SequenceTimeline* timeline_ = nullptr;
     QLabel* sequenceLabel_ = nullptr;
+    VuMeter* masterMeter_ = nullptr;  // vu-meter del Master, a sinistra della linea del tempo
     QAction* openAction_ = nullptr;
     QAction* exportAction_ = nullptr;
     QAction* removeClipAction_ = nullptr;
@@ -579,6 +581,7 @@ private:
     TextEditorPanel* textPanel() const { return textPanel_; }
     PropertiesPanel* propertiesPanel() const { return propertiesPanel_; }
     MixerPanel* mixerPanel() const { return mixerPanel_; }
+    VuMeter* masterMeter() const { return masterMeter_; }
     QTabWidget* leftTabs() const { return leftTabs_; }
     TransitionListPanel* transitionPanel() const { return transitionPanel_; }
     GroupListPanel* groupPanel() const { return groupPanel_; }
